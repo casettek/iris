@@ -3,8 +3,8 @@
 `model import` is the shared setup step for every workflow. It reads a Gemma bundle and writes the committed artifacts the repo uses afterward.
 
 ```bash
-cargo run --release -p raster-inference-cli -- model import \
-  --model ../raster-inference/assets/tiny-gemma-dev
+cargo run --release -p iris-cli -- model import \
+  --model ../iris/assets/tiny-gemma-dev
 ```
 
 Inputs:

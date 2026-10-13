@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 # The canonical deterministic fixed-point kernels, vendored **verbatim** from
-# `casettek/raster-inference`'s `src/shared/numerics/det_num/`.
+# `casettek/iris`'s `src/shared/numerics/det_num/`.
 #
 # Vendored rather than reimplemented on purpose. These routines decide the exact
 # bit pattern of every activation the chain produces, and the whole point of the

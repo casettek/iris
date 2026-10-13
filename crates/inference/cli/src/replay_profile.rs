@@ -1149,9 +1149,9 @@ mod tests {
     #[test]
     fn cli_requires_exact_stage_and_positive_top_n() {
         for args in [
-            vec!["raster-inference", "replay-profile"],
+            vec!["iris", "replay-profile"],
             vec![
-                "raster-inference",
+                "iris",
                 "replay-profile",
                 "--stage",
                 "prompt_merge_b1",
@@ -1162,7 +1162,7 @@ mod tests {
             assert!(crate::parse_for_test(args).is_err());
         }
         let cli = crate::Cli::try_parse_from([
-            "raster-inference",
+            "iris",
             "replay-profile",
             "--stage",
             "prompt_merge_b1",

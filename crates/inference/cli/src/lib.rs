@@ -32,7 +32,7 @@ pub use inference_artifacts::{
 };
 
 #[derive(Debug, Parser)]
-#[command(name = "raster-inference")]
+#[command(name = "iris")]
 struct Cli {
     #[command(subcommand)]
     command: Option<Commands>,
@@ -313,7 +313,7 @@ fn execute(cli: Cli) -> Result<ExitCode> {
         }
         Some(Commands::Challenge { command }) => match command {
             ChallengeCommand::Locate => {
-                bail!("raster-inference challenge locate is not implemented yet")
+                bail!("iris challenge locate is not implemented yet")
             }
             ChallengeCommand::Build(args) => {
                 warn_if_debug_build("challenge build");
@@ -323,10 +323,10 @@ fn execute(cli: Cli) -> Result<ExitCode> {
             }
         },
         Some(Commands::Fault { command }) => match command {
-            FaultCommand::Prove => bail!("raster-inference fault prove is not implemented yet"),
+            FaultCommand::Prove => bail!("iris fault prove is not implemented yet"),
         },
         None => bail!(
-            "raster-inference requires a workflow command; try `model import`, `claim build`, or `infer`"
+            "iris requires a workflow command; try `model import`, `claim build`, or `infer`"
         ),
     }
 }
@@ -334,8 +334,8 @@ fn execute(cli: Cli) -> Result<ExitCode> {
 #[cfg(debug_assertions)]
 fn warn_if_debug_build(workflow: &str) {
     eprintln!(
-        "warning: raster-inference {workflow} is running from a debug build; \
-         use `cargo run --release -p raster-inference-cli -- {workflow}` \
+        "warning: iris {workflow} is running from a debug build; \
+         use `cargo run --release -p iris-cli -- {workflow}` \
          for the optimized staged-infer path"
     );
 }
@@ -942,7 +942,7 @@ mod tests {
     #[test]
     fn parses_phase_one_workflows() {
         parse_for_test([
-            "raster-inference",
+            "iris",
             "model",
             "import",
             "--model",
@@ -950,7 +950,7 @@ mod tests {
         ])
         .unwrap();
         parse_for_test([
-            "raster-inference",
+            "iris",
             "claim",
             "build",
             "--run",
@@ -958,7 +958,7 @@ mod tests {
         ])
         .unwrap();
         parse_for_test([
-            "raster-inference",
+            "iris",
             "claim",
             "corrupt",
             "--checkpoints",
@@ -968,7 +968,7 @@ mod tests {
         ])
         .unwrap();
         parse_for_test([
-            "raster-inference",
+            "iris",
             "challenge",
             "build",
             "--trace",
@@ -976,7 +976,7 @@ mod tests {
         ])
         .unwrap();
         parse_for_test([
-            "raster-inference",
+            "iris",
             "challenge",
             "build",
             "--checkpoints",
@@ -985,9 +985,9 @@ mod tests {
             "claim_bundle.json",
         ])
         .unwrap();
-        parse_for_test(["raster-inference", "infer", "--run", "inference.toml"]).unwrap();
+        parse_for_test(["iris", "infer", "--run", "inference.toml"]).unwrap();
         parse_for_test([
-            "raster-inference",
+            "iris",
             "model",
             "import",
             "--model",
@@ -1001,7 +1001,7 @@ mod tests {
     fn challenge_run_spec_defaults_and_overrides_reach_options() {
         for run in [None, Some("specs/model-b.toml")] {
             let mut argv = vec![
-                "raster-inference",
+                "iris",
                 "challenge",
                 "build",
                 "--claim",
@@ -1027,7 +1027,7 @@ mod tests {
 
     #[test]
     fn infer_requires_an_imported_workspace() {
-        let error = execute_from(["raster-inference", "infer"]).unwrap_err();
+        let error = execute_from(["iris", "infer"]).unwrap_err();
 
         assert!(format!("{error:#}").contains("failed to load run spec"));
     }

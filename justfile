@@ -4,25 +4,25 @@ default:
     just --list
 
 import model:
-    cargo run --release -p raster-inference-cli -- model import --model "{{model}}"
+    cargo run --release -p iris-cli -- model import --model "{{model}}"
 
 infer run="inference.toml":
-    cargo run --release -p raster-inference-cli -- infer --run "{{run}}"
+    cargo run --release -p iris-cli -- infer --run "{{run}}"
 
 claim run="inference.toml":
-    cargo run --release -p raster-inference-cli -- claim build --run "{{run}}"
+    cargo run --release -p iris-cli -- claim build --run "{{run}}"
 
 replay-profile stage top_n="3" run="inference.toml":
-    cargo run --release -p raster-inference-cli -- replay-profile --run "{{run}}" --stage "{{stage}}" --top-n "{{top_n}}"
+    cargo run --release -p iris-cli -- replay-profile --run "{{run}}" --stage "{{stage}}" --top-n "{{top_n}}"
 
 corrupt checkpoints:
-    cargo run --release -p raster-inference-cli -- claim corrupt --checkpoints "{{checkpoints}}"
+    cargo run --release -p iris-cli -- claim corrupt --checkpoints "{{checkpoints}}"
 
 challenge claim_context checkpoints run="inference.toml":
-    cargo run --release -p raster-inference-cli -- challenge build --claim-context "{{claim_context}}" --checkpoints "{{checkpoints}}" --run "{{run}}"
+    cargo run --release -p iris-cli -- challenge build --claim-context "{{claim_context}}" --checkpoints "{{checkpoints}}" --run "{{run}}"
 
 challenge-claim claim run="inference.toml":
-    cargo run --release -p raster-inference-cli -- challenge build --claim "{{claim}}" --run "{{run}}"
+    cargo run --release -p iris-cli -- challenge build --claim "{{claim}}" --run "{{run}}"
 
 test-workspace:
     cargo test --workspace
@@ -34,7 +34,7 @@ test-staged:
     cargo test -p staged-infer
 
 test-cli:
-    cargo test -p raster-inference-cli
+    cargo test -p iris-cli
 
 test-artifacts:
     cargo test -p inference-artifacts
@@ -44,4 +44,4 @@ stage-check stage:
 
 # Full local host parity gate; all logs and outputs are kept under target/parity.
 test-parity:
-    cargo run --release --locked -p raster-inference-cli -- test-parity
+    cargo run --release --locked -p iris-cli -- test-parity

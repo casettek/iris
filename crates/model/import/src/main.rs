@@ -2,7 +2,7 @@
 //!
 //! ```sh
 //! cargo run -p model-import -- \
-//!   --model ../raster-inference/assets/tiny-gemma-dev
+//!   --model ../iris/assets/tiny-gemma-dev
 //! ```
 //!
 //! Reads `model.detwgt` (deterministic Q16.16 weights), `config.json` (shapes,
@@ -346,8 +346,7 @@ pub fn import_model(args: ImportConfig) -> Result<ImportResult, Box<dyn Error>> 
     write_transformer_layers(&weights, &shape, &layout, &mut stages)?;
     write_head(&weights, &shape, text, &layout, &mut stages)?;
 
-    let mut manifest =
-        String::from("[chain]\nname = \"raster-chain-inference\"\nversion = \"0.1.0\"\n");
+    let mut manifest = String::from("[chain]\nname = \"iris\"\nversion = \"0.1.0\"\n");
     manifest.push_str(&indexed_model_inputs(&shape, &layout, &stages)?);
     for stage in &stages {
         manifest.push('\n');
@@ -904,7 +903,7 @@ fn write_tokenizer(
     let pieces_line = external_line(
         "initial_pieces",
         layout,
-        "target/raster-inference/run-prompt-placeholder",
+        "target/iris/run-prompt-placeholder",
         "initial_pieces",
         INITIAL_PIECES_PLACEHOLDER_COMMITMENT,
     );
@@ -1682,13 +1681,13 @@ mod tests {
         let line = external_line(
             "initial_pieces",
             &layout,
-            "target/raster-inference/run-prompt-placeholder",
+            "target/iris/run-prompt-placeholder",
             "initial_pieces",
             "abc",
         );
 
         assert!(line.contains(
-            r#"path = "target/raster-inference/run-prompt-placeholder/initial_pieces.rastered""#
+            r#"path = "target/iris/run-prompt-placeholder/initial_pieces.rastered""#
         ));
         assert!(!line.contains("runtime/model-artifacts"));
     }

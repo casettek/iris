@@ -1,6 +1,6 @@
 //! Reader for `.detwgt` v2 — the deterministic weight artifact.
 //!
-//! Layout per `docs/plans/DETWGT_V2_FORMAT.md` in `raster-inference`:
+//! Layout per `docs/plans/DETWGT_V2_FORMAT.md` in `iris`:
 //!
 //! ```text
 //!   header:  magic "DNWGTV0\0" | detwgt_version u32 | spec_version u32 | tensor_count u64

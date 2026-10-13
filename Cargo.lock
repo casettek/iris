@@ -1633,6 +1633,28 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6a756c3fac73139e83f14c2d742155dd2b78d3ee56597b419a0579b7bdd6dd78"
 
 [[package]]
+name = "iris-cli"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "direct-infer",
+ "hex",
+ "inference-artifacts",
+ "model-import",
+ "postcard",
+ "raster",
+ "raster-analysis",
+ "raster-runtime",
+ "run-prep",
+ "serde",
+ "serde_json",
+ "sha2",
+ "staged-infer",
+ "toml",
+]
+
+[[package]]
 name = "is_terminal_polyfill"
 version = "1.70.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2451,28 +2473,6 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
-]
-
-[[package]]
-name = "raster-inference-cli"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "clap",
- "direct-infer",
- "hex",
- "inference-artifacts",
- "model-import",
- "postcard",
- "raster",
- "raster-analysis",
- "raster-runtime",
- "run-prep",
- "serde",
- "serde_json",
- "sha2",
- "staged-infer",
- "toml",
 ]
 
 [[package]]

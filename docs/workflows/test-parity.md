@@ -5,7 +5,7 @@ Run the local regression gate from the repository root:
 ```sh
 just test-parity
 # Equivalent:
-cargo run --release --locked -p raster-inference-cli -- test-parity
+cargo run --release --locked -p iris-cli -- test-parity
 ```
 
 The command runs the pinned synthetic Gemma model through the complete Raster

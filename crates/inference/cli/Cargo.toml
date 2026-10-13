@@ -1,11 +1,11 @@
 [package]
-name = "raster-inference-cli"
+name = "iris-cli"
 version = "0.1.0"
 edition = "2021"
-default-run = "raster-inference"
+default-run = "iris"
 
 [[bin]]
-name = "raster-inference"
+name = "iris"
 path = "src/main.rs"
 
 [dependencies]

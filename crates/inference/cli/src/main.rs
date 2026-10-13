@@ -1,10 +1,10 @@
 use std::process::ExitCode;
 
 fn main() -> ExitCode {
-    match raster_inference_cli::run_from_env() {
+    match iris_cli::run_from_env() {
         Ok(code) => code,
         Err(error) => {
-            eprintln!("raster-inference: {error:#}");
+            eprintln!("iris: {error:#}");
             ExitCode::from(1)
         }
     }

@@ -30,7 +30,7 @@ The full-attention layers are `l ≡ 4 (mod 5)`. A template has no conditional a
 `start` / `count` select a contiguous run, so the third row cannot be carved out of the second.
 The 20 bindings stay hand-written in `Raster.toml`, and nothing cross-checks them — the cost
 `chain-repeat`'s own problem statement names: *"Every one of those is a `from = "..."` string that
-is correct or silently wrong. `raster-inference` already carries twenty such hand-written donor
+is correct or silently wrong. `iris` already carries twenty such hand-written donor
 bindings."*
 
 Multi-token decode multiplies the exposure by `max_new_tokens`: the same 20 bindings, re-derived

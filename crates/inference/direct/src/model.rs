@@ -10,7 +10,7 @@ use inference_kernels::tensor::MatrixSource;
 
 const ONE: i32 = 1 << 16;
 pub const MISSING_DIRECT_MANIFEST: &str =
-    "run raster-inference model import ... to generate a model manifest";
+    "run iris model import ... to generate a model manifest";
 
 pub struct DirectInferenceModel {
     pub manifest: ModelManifest,

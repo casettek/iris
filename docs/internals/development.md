@@ -10,7 +10,7 @@ cargo test --workspace
 cargo test -p direct-infer
 cargo test -p staged-infer
 cargo test -p inference-artifacts
-cargo test -p raster-inference-cli
+cargo test -p iris-cli
 ```
 
 Equivalent shortcuts:

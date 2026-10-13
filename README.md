@@ -1,6 +1,6 @@
-# raster-chain-inference
+# iris
 
-`raster-chain-inference` provides four workflows over the same imported Gemma model inputs:
+`iris` provides four workflows over the same imported Gemma model inputs:
 
 - `infer`: fast deterministic inference from a run spec and `runtime/model-artifacts/<model-id>/manifest.json`.
 - `claim build`: a checkpointed deterministic rerun that emits a compact claim.
@@ -13,21 +13,21 @@
 
 ```bash
 # Import committed externals and the direct-infer manifest.
-cargo run --release -p raster-inference-cli -- model import \
-  --model ../raster-inference/assets/tiny-gemma-dev
+cargo run --release -p iris-cli -- model import \
+  --model ../iris/assets/tiny-gemma-dev
 
 # Fast deterministic inference, no checkpoint tree.
-cargo run --release -p raster-inference-cli -- infer --run inference.toml
+cargo run --release -p iris-cli -- infer --run inference.toml
 
 # Proposer claim with every staged checkpoint.
-cargo run --release -p raster-inference-cli -- claim build --run inference.toml
+cargo run --release -p iris-cli -- claim build --run inference.toml
 
 # Manual replay-cost measurements for one stage.
-cargo run --release -p raster-inference-cli -- replay-profile \
+cargo run --release -p iris-cli -- replay-profile \
   --run inference.toml --stage prefill_range_l13 --top-n 3
 
 # Verifier challenge from a prior claim bundle.
-cargo run --release -p raster-inference-cli -- challenge build \
+cargo run --release -p iris-cli -- challenge build \
   --run inference.toml \
   --claim-context target/staged-infer/runs/.../claim_bundle.json \
   --checkpoints target/staged-infer/runs/.../checkpoints.txt
@@ -36,7 +36,7 @@ cargo run --release -p raster-inference-cli -- challenge build \
 The same commands are available through `just` recipes:
 
 ```bash
-just import ../raster-inference/assets/tiny-gemma-dev
+just import ../iris/assets/tiny-gemma-dev
 just infer inference.toml
 just claim inference.toml
 just replay-profile prefill_range_l13

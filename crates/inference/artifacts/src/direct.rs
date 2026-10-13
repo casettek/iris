@@ -55,7 +55,7 @@ impl ModelManifest {
     /// Claims and challenges must use the template tied to this model import.
     pub fn verified_raster_template(&self, manifest_path: &Path) -> Result<(PathBuf, String)> {
         let provenance = self.provenance.as_ref().context(
-            "model manifest has no Raster template provenance; run a full `raster-inference model import --model <bundle-dir>` before building claims or challenges",
+            "model manifest has no Raster template provenance; run a full `iris model import --model <bundle-dir>` before building claims or challenges",
         )?;
         let dir = manifest_path
             .parent()

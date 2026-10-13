@@ -3,7 +3,7 @@
 `challenge build` consumes a compact claimed checkpoint hash list plus frozen run context, recomputes the checkpointed run, stops at the first observed divergent hash, and replays that one divergent stage through Raster.
 
 ```bash
-cargo run --release -p raster-inference-cli -- challenge build \
+cargo run --release -p iris-cli -- challenge build \
   --run inference.toml \
   --claim-context target/staged-infer/runs/.../claim_bundle.json \
   --checkpoints target/staged-infer/runs/.../checkpoints.txt

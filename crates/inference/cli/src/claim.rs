@@ -213,7 +213,7 @@ pub(crate) fn prepare_claim_run(options: &ClaimBuildOptions) -> Result<PreparedC
     let run_dir = options
         .base_dir
         .join("target")
-        .join("raster-inference")
+        .join("iris")
         .join("runs")
         .join(run_id(
             &run_spec_path,
@@ -439,7 +439,7 @@ mod tests {
         std::env::set_current_dir(&base).unwrap();
 
         let options = ClaimBuildOptions::from_current_dir(
-            PathBuf::from("raster-inference"),
+            PathBuf::from("iris"),
             StagedExecutionBackend::InProcess,
             PathBuf::from("inference.toml"),
         )
@@ -450,7 +450,7 @@ mod tests {
 
         assert_eq!(options.base_dir, expected_base);
         assert_eq!(options.run_spec_path, PathBuf::from("inference.toml"));
-        assert_eq!(options.current_exe, PathBuf::from("raster-inference"));
+        assert_eq!(options.current_exe, PathBuf::from("iris"));
         assert_eq!(options.staged_backend, StagedExecutionBackend::InProcess);
     }
 
@@ -721,7 +721,7 @@ project = "raster-stages/decode-select-token"
             .unwrap()
             .as_nanos();
         std::env::temp_dir().join(format!(
-            "raster-inference-cli-{label}-{}-{nanos}",
+            "iris-cli-{label}-{}-{nanos}",
             std::process::id()
         ))
     }

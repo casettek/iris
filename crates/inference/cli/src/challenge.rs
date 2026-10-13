@@ -953,7 +953,7 @@ mod tests {
             .unwrap()
             .as_nanos();
         std::env::temp_dir().join(format!(
-            "raster-inference-cli-challenge-{label}-{}-{nanos}",
+            "iris-cli-challenge-{label}-{}-{nanos}",
             std::process::id()
         ))
     }

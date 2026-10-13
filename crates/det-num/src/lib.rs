@@ -1,5 +1,5 @@
 //! Deterministic fixed-point kernels — vendored verbatim from
-//! `casettek/raster-inference`'s `src/shared/numerics/det_num/`.
+//! `casettek/iris`'s `src/shared/numerics/det_num/`.
 //!
 //! `types.rs` and `ops.rs` are byte-for-byte copies apart from the module's
 //! `use` header, which is rewritten for `alloc`. Keep them that way: the value

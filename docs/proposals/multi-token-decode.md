@@ -3,7 +3,7 @@
 Status: **implemented** 2026-08-28.
 
 Ports the decode loop of the reference implementation
-(`casettek/raster-inference`, `src/runtime/executors/native.rs:265-450`) onto this chain, using the
+(`casettek/iris`, `src/runtime/executors/native.rs:265-450`) onto this chain, using the
 same decomposition prefill already uses: one chain stage per (step × layer), the layer loop
 unrolled into the manifest, the weight sweep a `call_recur!` over pages.
 

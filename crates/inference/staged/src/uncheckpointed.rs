@@ -511,7 +511,7 @@ impl InferenceTempDir {
             .context("system clock is before UNIX_EPOCH")?
             .as_nanos();
         let path = std::env::temp_dir().join(format!(
-            "raster-inference-infer-{}-{nanos}",
+            "iris-infer-{}-{nanos}",
             std::process::id()
         ));
         fs::create_dir_all(&path)

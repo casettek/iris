@@ -17,8 +17,8 @@ under `raster-stages/*`; chain manifests bind those programs to explicit
 external `path` / `index_path` entries in the model artifact directory.
 
 Prompt-specific inputs are not model artifacts. `initial_pieces` is generated
-from each run's prompt under `target/raster-inference/runs/<run-id>/prompt/`,
-and prompt-free chain templates use a `target/raster-inference/run-prompt-placeholder/`
+from each run's prompt under `target/iris/runs/<run-id>/prompt/`,
+and prompt-free chain templates use a `target/iris/run-prompt-placeholder/`
 binding that run preparation replaces. The standalone prompt-prepare fixture
 can point at `runtime/prompt-fixtures/default/` for local stage smoke tests.
 

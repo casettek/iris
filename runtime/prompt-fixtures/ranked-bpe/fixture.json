@@ -1,6 +1,6 @@
 {
   "case": "after-eight",
-  "native_chain": "/Users/caszete/Development/raster-inference/runtime/prompt-fixtures/ranked-bpe/target/staged-infer/runs/01789062788620649000-pid41682",
+  "native_chain": "/Users/caszete/Development/iris/runtime/prompt-fixtures/ranked-bpe/target/staged-infer/runs/01789062788620649000-pid41682",
   "native_seconds": 0.009692875,
   "piece_count": 10,
   "repeat_count": 1,

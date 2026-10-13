@@ -4,7 +4,7 @@ Use `replay-profile` to investigate whether an inference stage's tile boundaries
 produce expensive replay units on a representative workload:
 
 ```sh
-cargo run --release -p raster-inference-cli -- replay-profile \
+cargo run --release -p iris-cli -- replay-profile \
   --run inference.toml --stage prefill_range_l13 --top-n 3
 # Equivalent shortcut:
 just replay-profile prefill_range_l13
@@ -147,7 +147,7 @@ for manual review and has no budget threshold or automatic authoring verdict.
 With the matching Raster CLI on `PATH` and the RISC Zero guest toolchain installed:
 
 ```sh
-cargo test --release --locked -p raster-inference-cli --test replay_profile \
+cargo test --release --locked -p iris-cli --test replay_profile \
   replay_profile_tokenizer_smoke -- --ignored --nocapture
 ```
 
