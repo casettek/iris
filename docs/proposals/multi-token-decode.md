@@ -38,7 +38,7 @@ attention.
 ### Correction to A's shape
 
 A cannot key off syntax. The first sketch had `call_recur!` return `Draft<S>` "when its `output` is
-an already-open draft rather than `new!(T)`" — but `prefill-finalize/src/main.rs:34-42` is exactly
+an already-open draft rather than `new!(T)`" — but `raster-stages/prefill-finalize/src/main.rs:34-42` is exactly
 that shape today and *relies* on finalization, selecting `.errors` off the result. Inferring intent
 from the output expression would silently break it.
 
@@ -99,13 +99,13 @@ programs are already correct for it:
 | `input-embedding` | embeds `List<u32>` from `prompt_prepare` | needs a `SelectedToken` entry — §4.4 |
 | `prefill-range` | one token, but over a **prior** K/V cache | §4.1–4.3 |
 
-The per-layer externals are reused verbatim. `prefill-range/layer{l}.rastered` and
-`prefill-prepare-aux/layer{l}.rastered` are properties of the model, not of the step, so every
+The per-layer externals are reused verbatim. `raster-stages/prefill-range/layer{l}.rastered` and
+`raster-stages/prefill-prepare-aux/layer{l}.rastered` are properties of the model, not of the step, so every
 decode step at layer `l` binds the same file with the same commitment. **No new artifacts are
 imported and `model-import` emits no new weights.**
 
 `prefill-range` also already publishes a full K/V cache from every layer: `finish_layer`
-(`prefill-range/src/lib.rs:1008`) pushes `own_key` into `output.kv()` unconditionally. The doc
+(`raster-stages/prefill-range/src/lib.rs:1008`) pushes `own_key` into `output.kv()` unconditionally. The doc
 comment on `ActivationSequence.kv` claiming the field is "empty on stages that donate to nobody" is
 stale — the cache decode needs is already on the wire.
 
@@ -119,7 +119,7 @@ for "the cache this layer built on the previous step". Pass 1 (`project_token`) 
 
 ### 3.2 Positions restart at zero
 
-`main` seeds the position counter with `call!(zero_u32)` (`prefill-range/src/main.rs:230`). At decode
+`main` seeds the position counter with `call!(zero_u32)` (`raster-stages/prefill-range/src/main.rs:230`). At decode
 step `t` the token's true position is `prompt_len + t`, and position feeds RoPE
 (`apply_rope`) and sliding-window visibility (`visible`, `:629`). Starting at zero silently produces
 the wrong rotation and makes every cached key invisible.
@@ -128,7 +128,7 @@ the wrong rotation and makes every cached key invisible.
 
 ```rust
 let position = select!(u32, query.clone().position);
-let ple_row  = select!(PleRow, ple_rows[position]);      // prefill-range/src/main.rs:163-164
+let ple_row  = select!(PleRow, ple_rows[position]);      // raster-stages/prefill-range/src/main.rs:163-164
 ```
 
 `ple` for a decode step holds exactly **one** row, while `position` is `prompt_len + t`. Per the
@@ -146,7 +146,7 @@ Keep `prefill-range` as the single transformer program. A decode stage is the sa
 non-empty prior cache and a one-row activation sequence; prefill is the degenerate case where the
 prior cache is empty. This is the property the repo already relies on for `donor_kv` — *"Every stage
 of this one program shares `main`'s signature, so every one needs a `donor_kv` binding"*
-(`model-import/src/main.rs:833`) — extended one step.
+(`crates/model/import/src/main.rs:833`) — extended one step.
 
 ### 4.1 `main` gains `prior_kv`
 
@@ -185,10 +185,6 @@ order. **This half is implemented and compiles.**
 `raster`'s `docs/proposals/recur-deferred-finalize.md` landed an opt-in `finalize = false` on
 `call_recur!` (branch `feature/recur-deferred-finalize`). See
 `docs/issues/two-recurs-one-draft.md` for what was wrong and why the fix turned out to be small.
-
-> **Updated 2026-10-02.** `finalize = false` and `new!` were removed upstream; the two writers are
-> now two derived sites (`output = base`, then `output = carried`) — see
-> `docs/issues/two-recurs-one-draft.md` §Resolution. The snippet below is the 2026-08-28 shape.
 
 The stage now builds its output with two writers sharing one draft:
 
@@ -282,7 +278,7 @@ count = 64                          # or { from = "plan_stage", max = 256 }
 
   [[chain.repeat.stage]]
   name    = "decode_embed_t{t}"
-  project = "decode-embed"
+  project = "raster-stages/decode-embed"
   inputs.selected  = { from = "decode_select_t{t-1}", first = "decode_select_token" }
   inputs.embedding = { input = "embedding" }
 
@@ -290,7 +286,7 @@ count = 64                          # or { from = "plan_stage", max = 256 }
   name    = "decode_aux_t{t}_l{l}"
   index   = "l"
   count   = 35
-  project = "prefill-prepare-aux"
+  project = "raster-stages/prefill-prepare-aux"
   inputs.embedded = { from = "decode_embed_t{t}" }
   inputs.layer    = { input = "aux_layer_{l}" }
 
@@ -298,7 +294,7 @@ count = 64                          # or { from = "plan_stage", max = 256 }
   name    = "decode_range_t{t}_l{l}"
   index   = "l"
   count   = 35
-  project = "prefill-range"
+  project = "raster-stages/prefill-range"
   inputs.activations = { from = "decode_range_t{t}_l{l-1}", first = "decode_embed_t{t}" }
   inputs.prior_kv    = { from = "decode_range_t{t-1}_l{l}", first = "prefill_range_l{l}" }
   inputs.donor_kv    = { ... }                            # §6 — not expressible
@@ -307,13 +303,13 @@ count = 64                          # or { from = "plan_stage", max = 256 }
 
   [[chain.repeat.stage]]
   name    = "decode_finalize_t{t}"
-  project = "prefill-finalize"
+  project = "raster-stages/prefill-finalize"
   inputs.activations = { from = "decode_range_t{t}_l34" }
   inputs.head        = { input = "head" }
 
   [[chain.repeat.stage]]
   name    = "decode_select_t{t}"
-  project = "decode-select-token"
+  project = "raster-stages/decode-select-token"
   inputs.logits = { from = "decode_finalize_t{t}" }
 
   [chain.repeat.exports.transcript]
@@ -364,12 +360,12 @@ preference order:
 2. **Carry both donor caches down the activation stream.** Split `ActivationSequence.kv` into
    `kv_sliding` / `kv_global`; layers 13 and 14 set theirs, every other layer passes both through
    unchanged, and `attend_token` sweeps three lists with the existing "exactly one contributes"
-   discriminator (`score_key`'s `donor_pass`, `prefill-range/src/lib.rs:411`). Bindings become
+   discriminator (`score_key`'s `donor_pass`, `raster-stages/prefill-range/src/lib.rs:411`). Bindings become
    uniform and option 1 is unnecessary. Costs ~3 MiB of pure transport per layer per step —
    105 MiB/step against §7's 5.26 GB, so ~2%, but it is 35 copies of data that 34 layers do not read.
 
 3. **Keep generating the manifest.** `model-import` already writes the 20 donor bindings
-   (`model-import/src/main.rs:836`), so this works today with no upstream change — at the cost of a
+   (`crates/model/import/src/main.rs:836`), so this works today with no upstream change — at the cost of a
    `73 × max_new_tokens`-stage `Raster.toml` (4,672 stages at 64 tokens) and the generator staying a
    second source of truth for the pipeline's shape, which is what `chain-repeat` set out to remove.
 
@@ -417,7 +413,7 @@ Against a step's full budget:
 Unchunked, the sweeps are **57% of every replay unit in a step** while moving 0.3% of the bytes.
 `chunk = N` is the sanctioned fix and costs nothing a verifier can see, since the bound is a literal
 pinned in the CFS — the same argument `decode-select-token` already makes for `chunk = 256` over the
-vocabulary (`decode-select-token/src/main.rs:8-12`). It cuts the whole step by 2.3x from one keyword
+vocabulary (`raster-stages/decode-select-token/src/main.rs:8-12`). It cuts the whole step by 2.3x from one keyword
 in three places. **Chunk all three before measuring anything else.**
 
 Cache transport itself stays small: with §4.2's window prune, 12 sliding + 3 full own-cache layers

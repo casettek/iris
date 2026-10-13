@@ -1,0 +1,38 @@
+{
+  "format": 1,
+  "program_commitment": "e7a62b26e93ca5de26e431d86d20567c43d57652782f21ec539c69766bb64bb9",
+  "tiles": {
+    "append_activation_row": {
+      "image_id": "366da90c5f61378ed388b7457f6269321850d2f5421bb9828e10fde36f9fe8df",
+      "source_hash": "b7dc94477bdc01cb000000000000108a"
+    },
+    "assert_all_tokens_embedded": {
+      "image_id": "3c45aee5c8afda0ebbcc5e2147fddbf7b5bca7919453a13a212f3ad21cc3e1a6",
+      "source_hash": "b7dc94477bdc01cb000000000000108a"
+    },
+    "begin_prompt_activations": {
+      "image_id": "c09565d8cfcc55708526c17bda942df6b35a39cd69efc9e7268dd170a7d03182",
+      "source_hash": "b7dc94477bdc01cb000000000000108a"
+    },
+    "begin_row_lookup": {
+      "image_id": "77783b881edadcb8cabc9a9e3ea3f50066c42481713a28bbefa9122154ed9788",
+      "source_hash": "b7dc94477bdc01cb000000000000108a"
+    },
+    "embedding_byte_offset": {
+      "image_id": "07fd84d859d3dbf56b79f589231ebf45c260e3f0d950371db921a2b9698490f4",
+      "source_hash": "b7dc94477bdc01cb000000000000108a"
+    },
+    "page_of": {
+      "image_id": "e2c29fa5047f49591c21d2cd0e969147485529349da8f7ab78df8d36e3d8a206",
+      "source_hash": "b7dc94477bdc01cb000000000000108a"
+    },
+    "summarise_errors": {
+      "image_id": "ba10b75e2fbf8f121cdda5b9fcac561706a196acc509b0f51fbf269dae1e0165",
+      "source_hash": "b7dc94477bdc01cb000000000000108a"
+    }
+  },
+  "toolchain": {
+    "risc0": "risc0-zkvm-1.2",
+    "build_mode": "local"
+  }
+}

@@ -1,0 +1,203 @@
+[chain]
+name = "raster-chain-inference"
+version = "0.1.0"
+
+[chain.input.aux_layer]
+index = "l"
+path = "/Users/caszete/Development/raster-inference/target/prefill-fixture/model-artifacts/parity-gemma/raster/prefill-prepare-aux/layer{l}.rastered"
+index_path = "/Users/caszete/Development/raster-inference/target/prefill-fixture/model-artifacts/parity-gemma/raster/prefill-prepare-aux/layer{l}.rindex"
+commitments = [
+  "4d508846cdf9f955a8558b6613e32c46c9f9ded107f3fc49aaf09ccb8083381f", # l0
+  "4799985554fb40e02b85176d7b93b63ffe0252749d4e2d215eb3f4dc03aa2dd7", # l1
+  "a7bceb723dde7c5c1086168dcb500260723c45f8fb7928129ffc7421aecd265b", # l2
+  "8288b887ea8011bcf4506bf10be11ed0e17b142f2a2f3be98d23d1147a1efe18", # l3
+]
+
+[chain.input.transformer_layer]
+index = "l"
+path = "/Users/caszete/Development/raster-inference/target/prefill-fixture/model-artifacts/parity-gemma/raster/prefill-range/layer{l}.rastered"
+index_path = "/Users/caszete/Development/raster-inference/target/prefill-fixture/model-artifacts/parity-gemma/raster/prefill-range/layer{l}.rindex"
+commitments = [
+  "bada2e4dc9470a7a044c5686cf93a742a6f7a9744b6a372a2b0375cfe9ce562f", # l0
+  "6bce0b250deccf3dbfbb6b3207d43641e379e97fbec082752626aa88e1eff984", # l1
+  "a23f0b65787c2c9f4b98dd6895f49b2d30545ba27350ed4047cb3d4c355533cc", # l2
+  "88eb7cb75834b64fc7a41f7504a16ff7a7b0b023f5f9ded2ef5b5c5a8d5fd67d", # l3
+]
+
+[[chain.stage]]
+name = "prompt_merge_seed"
+project = "/Users/caszete/Development/raster-inference/raster-stages/prompt-merge"
+inputs.tokenizer = { external = { path = "/Users/caszete/Development/raster-inference/target/prefill-fixture/model-artifacts/parity-gemma/raster/prompt-prepare/tokenizer.rastered", index_path = "/Users/caszete/Development/raster-inference/target/prefill-fixture/model-artifacts/parity-gemma/raster/prompt-prepare/tokenizer.rindex", commitment = "afe8e62a7cfb2567f7e72bdb695c457a3158450dac6d1151a9d597dfb603058d" } }
+inputs.initial_pieces = { external = { path = "/Users/caszete/Development/raster-inference/target/raster-inference/run-prompt-placeholder/initial_pieces.rastered", index_path = "/Users/caszete/Development/raster-inference/target/raster-inference/run-prompt-placeholder/initial_pieces.rindex", commitment = "0000000000000000000000000000000000000000000000000000000000000000" } }
+
+[[chain.repeat]]
+name = "tokenize"
+index = "b"
+count = 0
+
+[[chain.repeat.stage]]
+name = "prompt_merge_b{b}"
+project = "/Users/caszete/Development/raster-inference/raster-stages/prompt-merge"
+inputs.initial_pieces = { from = "prompt_merge_b{b-1}", first = "prompt_merge_seed" }
+inputs.tokenizer = { external = { path = "/Users/caszete/Development/raster-inference/target/prefill-fixture/model-artifacts/parity-gemma/raster/prompt-prepare/tokenizer.rastered", index_path = "/Users/caszete/Development/raster-inference/target/prefill-fixture/model-artifacts/parity-gemma/raster/prompt-prepare/tokenizer.rindex", commitment = "afe8e62a7cfb2567f7e72bdb695c457a3158450dac6d1151a9d597dfb603058d" } }
+
+[chain.repeat.exports.pieces]
+stage = "prompt_merge_b{b}"
+entry = "prompt_merge_seed"
+
+[[chain.stage]]
+name = "prompt_prepare"
+project = "/Users/caszete/Development/raster-inference/raster-stages/prompt-prepare"
+inputs.merged_pieces = { from = "tokenize.pieces" }
+inputs.tokenizer = { external = { path = "/Users/caszete/Development/raster-inference/target/prefill-fixture/model-artifacts/parity-gemma/raster/prompt-prepare/tokenizer.rastered", index_path = "/Users/caszete/Development/raster-inference/target/prefill-fixture/model-artifacts/parity-gemma/raster/prompt-prepare/tokenizer.rindex", commitment = "afe8e62a7cfb2567f7e72bdb695c457a3158450dac6d1151a9d597dfb603058d" } }
+
+[[chain.stage]]
+name = "input_embedding"
+project = "/Users/caszete/Development/raster-inference/raster-stages/input-embedding"
+inputs.prompt = { from = "prompt_prepare" }
+inputs.embedding = { external = { path = "/Users/caszete/Development/raster-inference/target/prefill-fixture/model-artifacts/parity-gemma/raster/input-embedding/embedding.rastered", index_path = "/Users/caszete/Development/raster-inference/target/prefill-fixture/model-artifacts/parity-gemma/raster/input-embedding/embedding.rindex", commitment = "496579236a94f99a26192fd715c3982bca70525a2d31d16a2b506d5bdfc01b45" } }
+
+[[chain.stage]]
+name = "prefill_prepare_aux_l0"
+project = "/Users/caszete/Development/raster-inference/raster-stages/prefill-prepare-aux"
+inputs.embedded = { from = "input_embedding" }
+inputs.layer = { external = { path = "/Users/caszete/Development/raster-inference/target/prefill-fixture/model-artifacts/parity-gemma/raster/prefill-prepare-aux/layer0.rastered", index_path = "/Users/caszete/Development/raster-inference/target/prefill-fixture/model-artifacts/parity-gemma/raster/prefill-prepare-aux/layer0.rindex", commitment = "4d508846cdf9f955a8558b6613e32c46c9f9ded107f3fc49aaf09ccb8083381f" } }
+
+[[chain.stage]]
+name = "prefill_prepare_aux_l1"
+project = "/Users/caszete/Development/raster-inference/raster-stages/prefill-prepare-aux"
+inputs.embedded = { from = "input_embedding" }
+inputs.layer = { external = { path = "/Users/caszete/Development/raster-inference/target/prefill-fixture/model-artifacts/parity-gemma/raster/prefill-prepare-aux/layer1.rastered", index_path = "/Users/caszete/Development/raster-inference/target/prefill-fixture/model-artifacts/parity-gemma/raster/prefill-prepare-aux/layer1.rindex", commitment = "4799985554fb40e02b85176d7b93b63ffe0252749d4e2d215eb3f4dc03aa2dd7" } }
+
+[[chain.stage]]
+name = "prefill_prepare_aux_l2"
+project = "/Users/caszete/Development/raster-inference/raster-stages/prefill-prepare-aux"
+inputs.embedded = { from = "input_embedding" }
+inputs.layer = { external = { path = "/Users/caszete/Development/raster-inference/target/prefill-fixture/model-artifacts/parity-gemma/raster/prefill-prepare-aux/layer2.rastered", index_path = "/Users/caszete/Development/raster-inference/target/prefill-fixture/model-artifacts/parity-gemma/raster/prefill-prepare-aux/layer2.rindex", commitment = "a7bceb723dde7c5c1086168dcb500260723c45f8fb7928129ffc7421aecd265b" } }
+
+[[chain.stage]]
+name = "prefill_prepare_aux_l3"
+project = "/Users/caszete/Development/raster-inference/raster-stages/prefill-prepare-aux"
+inputs.embedded = { from = "input_embedding" }
+inputs.layer = { external = { path = "/Users/caszete/Development/raster-inference/target/prefill-fixture/model-artifacts/parity-gemma/raster/prefill-prepare-aux/layer3.rastered", index_path = "/Users/caszete/Development/raster-inference/target/prefill-fixture/model-artifacts/parity-gemma/raster/prefill-prepare-aux/layer3.rindex", commitment = "8288b887ea8011bcf4506bf10be11ed0e17b142f2a2f3be98d23d1147a1efe18" } }
+
+[[chain.stage]]
+name = "prefill_range_l0"
+project = "/Users/caszete/Development/raster-inference/raster-stages/prefill-range"
+inputs.activations = { from = "input_embedding" }
+inputs.prior_kv = { from = "input_embedding" }
+inputs.donor_a_kv = { from = "input_embedding" }
+inputs.donor_b_kv = { from = "input_embedding" }
+inputs.ple = { from = "prefill_prepare_aux_l0" }
+inputs.layer = { external = { path = "/Users/caszete/Development/raster-inference/target/prefill-fixture/model-artifacts/parity-gemma/raster/prefill-range/layer0.rastered", index_path = "/Users/caszete/Development/raster-inference/target/prefill-fixture/model-artifacts/parity-gemma/raster/prefill-range/layer0.rindex", commitment = "bada2e4dc9470a7a044c5686cf93a742a6f7a9744b6a372a2b0375cfe9ce562f" } }
+
+[[chain.stage]]
+name = "prefill_range_l1"
+project = "/Users/caszete/Development/raster-inference/raster-stages/prefill-range"
+inputs.activations = { from = "prefill_range_l0" }
+inputs.prior_kv = { from = "input_embedding" }
+inputs.donor_a_kv = { from = "input_embedding" }
+inputs.donor_b_kv = { from = "input_embedding" }
+inputs.ple = { from = "prefill_prepare_aux_l1" }
+inputs.layer = { external = { path = "/Users/caszete/Development/raster-inference/target/prefill-fixture/model-artifacts/parity-gemma/raster/prefill-range/layer1.rastered", index_path = "/Users/caszete/Development/raster-inference/target/prefill-fixture/model-artifacts/parity-gemma/raster/prefill-range/layer1.rindex", commitment = "6bce0b250deccf3dbfbb6b3207d43641e379e97fbec082752626aa88e1eff984" } }
+
+[[chain.stage]]
+name = "prefill_range_l2"
+project = "/Users/caszete/Development/raster-inference/raster-stages/prefill-range"
+inputs.activations = { from = "prefill_range_l1" }
+inputs.prior_kv = { from = "input_embedding" }
+inputs.donor_a_kv = { from = "prefill_range_l0" }
+inputs.donor_b_kv = { from = "prefill_range_l1" }
+inputs.ple = { from = "prefill_prepare_aux_l2" }
+inputs.layer = { external = { path = "/Users/caszete/Development/raster-inference/target/prefill-fixture/model-artifacts/parity-gemma/raster/prefill-range/layer2.rastered", index_path = "/Users/caszete/Development/raster-inference/target/prefill-fixture/model-artifacts/parity-gemma/raster/prefill-range/layer2.rindex", commitment = "a23f0b65787c2c9f4b98dd6895f49b2d30545ba27350ed4047cb3d4c355533cc" } }
+
+[[chain.stage]]
+name = "prefill_range_l3"
+project = "/Users/caszete/Development/raster-inference/raster-stages/prefill-range"
+inputs.activations = { from = "prefill_range_l2" }
+inputs.prior_kv = { from = "input_embedding" }
+inputs.donor_a_kv = { from = "prefill_range_l0" }
+inputs.donor_b_kv = { from = "prefill_range_l1" }
+inputs.ple = { from = "prefill_prepare_aux_l3" }
+inputs.layer = { external = { path = "/Users/caszete/Development/raster-inference/target/prefill-fixture/model-artifacts/parity-gemma/raster/prefill-range/layer3.rastered", index_path = "/Users/caszete/Development/raster-inference/target/prefill-fixture/model-artifacts/parity-gemma/raster/prefill-range/layer3.rindex", commitment = "88eb7cb75834b64fc7a41f7504a16ff7a7b0b023f5f9ded2ef5b5c5a8d5fd67d" } }
+
+[[chain.stage]]
+name = "prefill_finalize"
+project = "/Users/caszete/Development/raster-inference/raster-stages/prefill-finalize"
+inputs.activations = { from = "prefill_range_l3" }
+inputs.head = { external = { path = "/Users/caszete/Development/raster-inference/target/prefill-fixture/model-artifacts/parity-gemma/raster/prefill-finalize/head.rastered", index_path = "/Users/caszete/Development/raster-inference/target/prefill-fixture/model-artifacts/parity-gemma/raster/prefill-finalize/head.rindex", commitment = "4071460e9cc81484fbd78b5e5ebe9ca53d5d96f60fbc78135d5757c837ed6232" } }
+
+[[chain.stage]]
+name = "decode_init"
+project = "/Users/caszete/Development/raster-inference/raster-stages/decode-init"
+
+[[chain.repeat]]
+name = "decode"
+index = "t"
+count = 0
+
+  [chain.repeat.exports.edge]
+stage = "decode_select_t{t}"
+entry = "decode_init"
+
+  [chain.repeat.exports.logits]
+stage = "decode_finalize_t{t}"
+entry = "prefill_finalize"
+
+  [[chain.repeat.stage]]
+name = "decode_select_t{t}"
+project = "/Users/caszete/Development/raster-inference/raster-stages/decode-select-token"
+inputs.logits = { from = "decode_finalize_t{t-1}", first = "prefill_finalize" }
+inputs.prior = { from = "decode_select_t{t-1}", first = "decode_init" }
+
+  [[chain.repeat.stage]]
+name = "decode_embed_t{t}"
+project = "/Users/caszete/Development/raster-inference/raster-stages/decode-embed"
+inputs.selected = { from = "decode_select_t{t}" }
+  inputs.embedding = { external = { path = "/Users/caszete/Development/raster-inference/target/prefill-fixture/model-artifacts/parity-gemma/raster/input-embedding/embedding.rastered", index_path = "/Users/caszete/Development/raster-inference/target/prefill-fixture/model-artifacts/parity-gemma/raster/input-embedding/embedding.rindex", commitment = "496579236a94f99a26192fd715c3982bca70525a2d31d16a2b506d5bdfc01b45" } }
+
+  [[chain.repeat.stage]]
+name = "decode_aux_t{t}_l{l}"
+index = "l"
+count = 4
+project = "/Users/caszete/Development/raster-inference/raster-stages/prefill-prepare-aux"
+inputs.embedded = { from = "decode_embed_t{t}" }
+inputs.layer = { input = "aux_layer_{l}" }
+
+  [[chain.repeat.stage]]
+name = "decode_range_t{t}_l{l}"
+index = "l"
+start = 0
+count = 2
+project = "/Users/caszete/Development/raster-inference/raster-stages/prefill-range"
+inputs.activations = { from = "decode_range_t{t}_l{l-1}", first = "decode_embed_t{t}" }
+inputs.prior_kv = { from = "decode_range_t{t-1}_l{l}", first = "prefill_range_l{l}" }
+inputs.donor_a_kv = { from = "input_embedding" }
+inputs.donor_b_kv = { from = "input_embedding" }
+inputs.ple = { from = "decode_aux_t{t}_l{l}" }
+inputs.layer = { input = "transformer_layer_{l}" }
+
+  [[chain.repeat.stage]]
+name = "decode_range_t{t}_l{l}"
+index = "l"
+start = 2
+count = 2
+project = "/Users/caszete/Development/raster-inference/raster-stages/prefill-range"
+inputs.activations = { from = "decode_range_t{t}_l{l-1}", first = "decode_range_t{t}_l1" }
+inputs.prior_kv = { from = "decode_range_t{t-1}_l{l}", first = "prefill_range_l{l}" }
+inputs.donor_a_kv = { from = "decode_range_t{t}_l0" }
+inputs.donor_b_kv = { from = "decode_range_t{t}_l1" }
+inputs.ple = { from = "decode_aux_t{t}_l{l}" }
+inputs.layer = { input = "transformer_layer_{l}" }
+
+  [[chain.repeat.stage]]
+name = "decode_finalize_t{t}"
+project = "/Users/caszete/Development/raster-inference/raster-stages/prefill-finalize"
+inputs.activations = { from = "decode_range_t{t}_l3" }
+inputs.head = { external = { path = "/Users/caszete/Development/raster-inference/target/prefill-fixture/model-artifacts/parity-gemma/raster/prefill-finalize/head.rastered", index_path = "/Users/caszete/Development/raster-inference/target/prefill-fixture/model-artifacts/parity-gemma/raster/prefill-finalize/head.rindex", commitment = "4071460e9cc81484fbd78b5e5ebe9ca53d5d96f60fbc78135d5757c837ed6232" } }
+
+[[chain.stage]]
+name = "output_finalize"
+project = "/Users/caszete/Development/raster-inference/raster-stages/output-finalize"
+inputs.edge = { from = "decode.edge" }
+inputs.decoder = { external = { path = "/Users/caszete/Development/raster-inference/target/prefill-fixture/model-artifacts/parity-gemma/raster/output-finalize/decoder.rastered", index_path = "/Users/caszete/Development/raster-inference/target/prefill-fixture/model-artifacts/parity-gemma/raster/output-finalize/decoder.rindex", commitment = "f7c9eb199ab52c3878257a2f21fad6f68ad57c1ed13e6b090b7ff393a92ba8b8" } }

@@ -1,0 +1,23 @@
+[package]
+name = "det-num"
+version = "0.1.0"
+edition = "2021"
+
+# The canonical deterministic fixed-point kernels, vendored **verbatim** from
+# `casettek/raster-inference`'s `src/shared/numerics/det_num/`.
+#
+# Vendored rather than reimplemented on purpose. These routines decide the exact
+# bit pattern of every activation the chain produces, and the whole point of the
+# chain is that a replay reproduces those bits. Hand-transcribing 800 lines of
+# rounding, saturation and quadrant reduction is precisely the kind of change
+# that stays silent until the token comes out wrong. Local tests pin the
+# self-contained conversion and kernel invariants this repo depends on.
+#
+# `ops.rs` is pure integer arithmetic — no floats, no `std` — so it drops into a
+# `no_std` tile unchanged apart from the `alloc` imports.
+
+[features]
+default = []
+
+[dependencies]
+fixed = { version = "=1.30.0", default-features = false }

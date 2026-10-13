@@ -1,0 +1,36 @@
+[package]
+name = "staged-infer"
+version = "0.1.0"
+edition = "2021"
+default-run = "staged-infer"
+
+[[bin]]
+name = "staged-infer"
+path = "src/main.rs"
+
+[dependencies]
+inference-kernels = { path = "../kernels" }
+anyhow = "1.0"
+clap = { version = "4.5", features = ["derive"] }
+decode-embed = { path = "../../../raster-stages/decode-embed" }
+decode-select-token = { path = "../../../raster-stages/decode-select-token" }
+det-num = { path = "../../det-num" }
+hex = "0.4"
+input-embedding = { path = "../../../raster-stages/input-embedding" }
+inference-artifacts = { path = "../artifacts" }
+output-finalize = { path = "../../../raster-stages/output-finalize" }
+prefill-range = { path = "../../../raster-stages/prefill-range" }
+prefill-finalize = { path = "../../../raster-stages/prefill-finalize" }
+prefill-prepare-aux = { path = "../../../raster-stages/prefill-prepare-aux" }
+prompt-prepare = { path = "../../../raster-stages/prompt-prepare" }
+raster = { path = "../../../../raster/crates/raster" }
+raster-core = { path = "../../../../raster/crates/raster-core" }
+raster-runtime = { path = "../../../../raster/crates/raster-runtime" }
+rayon = "1.10"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sha2 = "0.10"
+toml = "0.8"
+
+[dev-dependencies]
+run-prep = { path = "../../model/run-prep" }

@@ -1,0 +1,26 @@
+[package]
+name = "model-import"
+version = "0.1.0"
+edition = "2021"
+
+# Not a Raster program: a host-side tool that turns a model bundle into this
+# chain's committed externals. It has no tiles and no `#[sequence] main`.
+[[bin]]
+name = "model-import"
+path = "src/main.rs"
+
+[dependencies]
+det-num = { path = "../../det-num" }
+detwgt = { path = "../detwgt" }
+inference-artifacts = { path = "../../inference/artifacts" }
+raster = { path = "../../../../raster/crates/raster" }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sha2 = "0.10"
+# Only for the bucket hash. The stage types stay duplicated in `externals.rs`
+# (see its header), but the hash must NOT be: it is the one function the host
+# and the replay guest have to agree on byte-for-byte, and two copies of it is
+# exactly how they would silently drift into different buckets.
+prompt-prepare = { path = "../../../raster-stages/prompt-prepare" }
+
+run-prep = { path = "../run-prep" }

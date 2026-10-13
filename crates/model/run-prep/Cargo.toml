@@ -1,0 +1,12 @@
+[package]
+name = "run-prep"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "1.0"
+inference-artifacts = { path = "../../inference/artifacts" }
+output-finalize = { path = "../../../raster-stages/output-finalize" }
+prompt-prepare = { path = "../../../raster-stages/prompt-prepare" }
+raster = { path = "../../../../raster/crates/raster" }
+serde_json = "1.0"

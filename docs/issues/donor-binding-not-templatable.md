@@ -17,7 +17,7 @@ a fan-out, and deliberately stops there"*. That covers every binding in this rep
 stages except one.
 
 Gemma 3n's last 20 layers borrow their K/V from the last layer before the sharing boundary **with
-the same attention type** (`model-import/src/main.rs:260`, mirroring
+the same attention type** (`crates/model/import/src/main.rs:260`, mirroring
 `casettek/.../shared/model/gemma/io.rs:171`). For this model that resolves to:
 
 | layer `l` | `inputs.donor_kv` |
@@ -41,7 +41,7 @@ per step, 1,280 of them for a 64-token response.
 A wrong donor is not a crash. Layer 19 attending over layer 13's cache instead of layer 14's has
 the right shapes, the right widths, and a valid proof over the wrong activation — the reason
 `model-import` prints the sharing map at import time rather than trusting it
-(`model-import/src/main.rs:734`). Templating removes the transcription step for 15 of the 35
+(`crates/model/import/src/main.rs:734`). Templating removes the transcription step for 15 of the 35
 layers and leaves the 20 that matter.
 
 ## What is not the gap

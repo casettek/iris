@@ -1,0 +1,4 @@
+model_manifest = "runtime/model-artifacts/gemma-4-E2B-detwgt/manifest.json"
+prompt = "say ciao"
+raw_prompt = false
+tokens = 3

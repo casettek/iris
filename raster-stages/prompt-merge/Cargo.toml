@@ -1,0 +1,19 @@
+[package]
+name = "prompt-merge"
+version = "0.1.0"
+edition = "2021"
+default-run = "prompt-merge"
+
+[features]
+default = ["std"]
+std = ["raster/std"]
+profiling = ["raster/profiling"]
+
+[dependencies]
+raster = { path = "../../../raster/crates/raster", default-features = false }
+serde = { version = "1.0", default-features = false, features = ["derive", "alloc"] }
+
+[[bin]]
+name = "prompt-merge"
+path = "src/main.rs"
+required-features = ["std"]

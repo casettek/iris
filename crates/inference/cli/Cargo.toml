@@ -1,0 +1,30 @@
+[package]
+name = "raster-inference-cli"
+version = "0.1.0"
+edition = "2021"
+default-run = "raster-inference"
+
+[[bin]]
+name = "raster-inference"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1.0"
+clap = { version = "4.5", features = ["derive"] }
+direct-infer = { path = "../direct" }
+staged-infer = { path = "../staged" }
+hex = "0.4"
+inference-artifacts = { path = "../artifacts" }
+model-import = { path = "../../model/import" }
+raster-runtime = { path = "../../../../raster/crates/raster-runtime" }
+raster-analysis = { path = "../../../../raster/crates/raster-analysis" }
+run-prep = { path = "../../model/run-prep" }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sha2 = "0.10"
+
+toml = "0.8"
+
+[dev-dependencies]
+postcard = { version = "1", default-features = false, features = ["alloc"] }
+raster = { path = "../../../../raster/crates/raster" }

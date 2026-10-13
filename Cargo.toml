@@ -1,0 +1,35 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/det-num",
+    "crates/model/detwgt",
+    "crates/model/import",
+    "crates/model/run-prep",
+    "crates/inference/artifacts",
+    "crates/inference/kernels",
+    "crates/inference/direct",
+    "crates/inference/staged",
+    "crates/inference/cli",
+    "raster-stages/decode-embed",
+    "raster-stages/decode-init",
+    "raster-stages/decode-select-token",
+    "raster-stages/input-embedding",
+    "raster-stages/output-finalize",
+    "raster-stages/prefill-finalize",
+    "raster-stages/prefill-prepare-aux",
+    "raster-stages/prefill-range",
+    "raster-stages/prompt-prepare",
+    "raster-stages/prompt-merge",
+]
+
+default-members = [
+    "crates/det-num",
+    "crates/model/detwgt",
+    "crates/model/import",
+    "crates/model/run-prep",
+    "crates/inference/artifacts",
+    "crates/inference/kernels",
+    "crates/inference/direct",
+    "crates/inference/staged",
+    "crates/inference/cli",
+]

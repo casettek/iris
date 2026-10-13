@@ -1,0 +1,24 @@
+[chain]
+name = "tokenizer-fixture"
+[[chain.stage]]
+name = "prompt_merge_seed"
+project = "/Users/caszete/Development/raster-inference/raster-stages/prompt-merge"
+inputs.tokenizer = { external = { path = "/Users/caszete/Development/raster-inference/runtime/prompt-fixtures/ranked-bpe/tokenizer.rastered", index_path = "/Users/caszete/Development/raster-inference/runtime/prompt-fixtures/ranked-bpe/tokenizer.rindex", commitment = "9d3731b50af0d8ef81467748f07340c2f8a139feb5ff8c4066549c348e776318" } }
+inputs.initial_pieces = { external = { path = "/Users/caszete/Development/raster-inference/runtime/prompt-fixtures/ranked-bpe/initial.rastered", index_path = "/Users/caszete/Development/raster-inference/runtime/prompt-fixtures/ranked-bpe/initial.rindex", commitment = "3dac0048baa291f94887afe1b0bfdee5e57070b43a5a207fbb1364a37f200606" } }
+[[chain.repeat]]
+name = "tokenize"
+index = "b"
+count = 1
+[[chain.repeat.stage]]
+name = "prompt_merge_b{b}"
+project = "/Users/caszete/Development/raster-inference/raster-stages/prompt-merge"
+inputs.tokenizer = { external = { path = "/Users/caszete/Development/raster-inference/runtime/prompt-fixtures/ranked-bpe/tokenizer.rastered", index_path = "/Users/caszete/Development/raster-inference/runtime/prompt-fixtures/ranked-bpe/tokenizer.rindex", commitment = "9d3731b50af0d8ef81467748f07340c2f8a139feb5ff8c4066549c348e776318" } }
+inputs.initial_pieces = { from = "prompt_merge_b{b-1}", first = "prompt_merge_seed" }
+[chain.repeat.exports.pieces]
+stage = "prompt_merge_b{b}"
+entry = "prompt_merge_seed"
+[[chain.stage]]
+name = "prompt_prepare"
+project = "/Users/caszete/Development/raster-inference/raster-stages/prompt-prepare"
+inputs.tokenizer = { external = { path = "/Users/caszete/Development/raster-inference/runtime/prompt-fixtures/ranked-bpe/tokenizer.rastered", index_path = "/Users/caszete/Development/raster-inference/runtime/prompt-fixtures/ranked-bpe/tokenizer.rindex", commitment = "9d3731b50af0d8ef81467748f07340c2f8a139feb5ff8c4066549c348e776318" } }
+inputs.merged_pieces = { from = "tokenize.pieces" }

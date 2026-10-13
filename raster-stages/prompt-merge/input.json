@@ -1,0 +1,12 @@
+{
+  "initial_pieces": {
+    "index_path": "../../runtime/prompt-fixtures/ranked-bpe/initial.rindex",
+    "load_preference": "read",
+    "path": "../../runtime/prompt-fixtures/ranked-bpe/initial.rastered"
+  },
+  "tokenizer": {
+    "index_path": "../../runtime/prompt-fixtures/ranked-bpe/tokenizer.rindex",
+    "load_preference": "read",
+    "path": "../../runtime/prompt-fixtures/ranked-bpe/tokenizer.rastered"
+  }
+}

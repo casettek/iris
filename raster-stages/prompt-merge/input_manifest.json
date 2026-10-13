@@ -1,0 +1,12 @@
+{
+  "initial_pieces": {
+    "commitment": "3dac0048baa291f94887afe1b0bfdee5e57070b43a5a207fbb1364a37f200606",
+    "encoding": "raster",
+    "type": "sha256"
+  },
+  "tokenizer": {
+    "commitment": "9d3731b50af0d8ef81467748f07340c2f8a139feb5ff8c4066549c348e776318",
+    "encoding": "raster",
+    "type": "sha256"
+  }
+}

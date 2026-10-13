@@ -9,6 +9,10 @@ before the design. Every claim is cited to a file and line in this repo. Issues 
 
 ## Open
 
+Ranked-BPE validation also identified an [authenticated decode-initialization
+failure](./decode-init-authenticated-finalize.md). It blocks the full authenticated
+chain gate while tokenizer execution audits and host parity pass.
+
 | issue | opened | subject | upstream |
 | --- | --- | --- | --- |
 | [`append-shaped-accumulators`](./append-shaped-accumulators.md) | 2026-08-25 | `mac_weight_page` and `score_key` carry an accumulator in `RecurState` that they never read back — the writes are appends, so they belong in `RecurOutput` and pay only their increment. `score_key`'s carrier grows, making the amplification the iteration count rather than a constant. `accumulate_context` genuinely needs read-back and is stuck. | `raster` `docs/issues/recur-accumulator-slots.md` |

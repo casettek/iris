@@ -1,0 +1,14 @@
+{
+  "format": 1,
+  "program_commitment": "6321e51b0a4d81177753c2e8d160868425672e2fcaa470bdc7ee0b42eeb3d3fb",
+  "tiles": {
+    "initialize_decode_edge": {
+      "image_id": "2203d696d277a59082b2cfac03b8f4dfb69bb7a756ded98b19ba27f44bf31549",
+      "source_hash": "6233913d2a32acfd000000000000027b"
+    }
+  },
+  "toolchain": {
+    "risc0": "risc0-zkvm-1.2",
+    "build_mode": "local"
+  }
+}

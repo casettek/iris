@@ -1,0 +1,42 @@
+{
+  "format": 1,
+  "program_commitment": "037e8a3ce9898239faad74276967db17a5ab734e7cc1de9ac81aa054baf14c27",
+  "tiles": {
+    "assert_logits_complete": {
+      "image_id": "af07c32b5dc1ecf7c4ffd2e98a767b089d56046574dec7029952b0e8449899c1",
+      "source_hash": "a5e9e97b0df118320000000000001ae6"
+    },
+    "begin_logits": {
+      "image_id": "0636e613831f332aeba2d10f9278ffb0e3b753f3b48de60cc83baffc3477f081",
+      "source_hash": "a5e9e97b0df118320000000000001ae6"
+    },
+    "empty_final_position": {
+      "image_id": "bef84f7fc92674e62ad20475c672e4cee63854d2d039df0f3a4e4f040b8b7495",
+      "source_hash": "a5e9e97b0df118320000000000001ae6"
+    },
+    "normalize_final_position": {
+      "image_id": "44a6e65c05765c0ffb9be2443b56ab49e255e7de7545dcc4051b62fd387620c0",
+      "source_hash": "a5e9e97b0df118320000000000001ae6"
+    },
+    "project_logit_page": {
+      "image_id": "fec35445f51b59b5e2fdb1bb52bd92394d965c7c673cdf43f1bcfc318a17e749",
+      "source_hash": "a5e9e97b0df118320000000000001ae6"
+    },
+    "summarise_errors": {
+      "image_id": "a491d9767e2f4f8f491fd371dc0ddac033d94801ba2c2e821a6e4249db281859",
+      "source_hash": "a5e9e97b0df118320000000000001ae6"
+    },
+    "track_final_position": {
+      "image_id": "d7e15cbb62c05f006b2d8731e60ffd9c6cc900c3183edd30962c324dd190bb94",
+      "source_hash": "a5e9e97b0df118320000000000001ae6"
+    },
+    "validate_final_head": {
+      "image_id": "9b970123a33cb983ade287fe613d4a6fe50540bd54b25b4f60889bdbdb2d6a24",
+      "source_hash": "a5e9e97b0df118320000000000001ae6"
+    }
+  },
+  "toolchain": {
+    "risc0": "risc0-zkvm-1.2",
+    "build_mode": "local"
+  }
+}

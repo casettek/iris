@@ -1,0 +1,19 @@
+[package]
+name = "inference-kernels"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "1.0"
+decode-embed = { path = "../../../raster-stages/decode-embed" }
+decode-select-token = { path = "../../../raster-stages/decode-select-token" }
+det-num = { path = "../../det-num" }
+input-embedding = { path = "../../../raster-stages/input-embedding" }
+output-finalize = { path = "../../../raster-stages/output-finalize" }
+prefill-range = { path = "../../../raster-stages/prefill-range" }
+prefill-finalize = { path = "../../../raster-stages/prefill-finalize" }
+prefill-prepare-aux = { path = "../../../raster-stages/prefill-prepare-aux" }
+prompt-prepare = { path = "../../../raster-stages/prompt-prepare" }
+raster = { path = "../../../../raster/crates/raster" }
+rayon = "1.10"
+sha2 = "0.10"

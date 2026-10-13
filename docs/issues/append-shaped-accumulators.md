@@ -44,18 +44,18 @@ by a fixed step is an append with extra arithmetic.
 
 | tile | site | write depends on what's there? | verdict |
 | --- | --- | --- | --- |
-| `mac_weight_page` | `prefill-prepare-aux/src/lib.rs:93`, `prefill-range/src/lib.rs:150` | **no** — `out[out_idx] = dot(..)`, disjoint rows in ascending order | append-shaped — §3 |
-| `score_key` | `prefill-range/src/lib.rs:405` | **no** — `scores.push(dot(..))`, literally an append | append-shaped — §4, and the expensive one |
-| `accumulate_context` | `prefill-range/src/lib.rs:519` | **yes** — `*dst = mac_bits(*dst, weight, *value)` over every head × lane | genuinely stuck — §5 |
-| `attend_kv_chunk` | `prefill-range/src/lib.rs:642` | **yes** — a new head max rescales every value already accumulated | genuinely stuck, **and dead** — §6 |
-| `summarise_errors` | `prefill-range/src/lib.rs:1069` | **yes** — reads `state.count` to decide whether to set `first` | correct as written — `\|ErrorSummary\|` is a `u32` and one `String` |
+| `mac_weight_page` | `raster-stages/prefill-prepare-aux/src/lib.rs:93`, `raster-stages/prefill-range/src/lib.rs:150` | **no** — `out[out_idx] = dot(..)`, disjoint rows in ascending order | append-shaped — §3 |
+| `score_key` | `raster-stages/prefill-range/src/lib.rs:405` | **no** — `scores.push(dot(..))`, literally an append | append-shaped — §4, and the expensive one |
+| `accumulate_context` | `raster-stages/prefill-range/src/lib.rs:519` | **yes** — `*dst = mac_bits(*dst, weight, *value)` over every head × lane | genuinely stuck — §5 |
+| `attend_kv_chunk` | `raster-stages/prefill-range/src/lib.rs:642` | **yes** — a new head max rescales every value already accumulated | genuinely stuck, **and dead** — §6 |
+| `summarise_errors` | `raster-stages/prefill-range/src/lib.rs:1069` | **yes** — reads `state.count` to decide whether to set `first` | correct as written — `\|ErrorSummary\|` is a `u32` and one `String` |
 
 `summarise_errors` is the shape `state` is for: a read-back the loop genuinely needs, on a carrier
 small enough that `2 · N · |T|` is noise. The other four are the interesting cases.
 
 ## 3. `mac_weight_page` — the clear case
 
-`prefill-prepare-aux/src/lib.rs:93`, and seven more call sites in `prefill-range/src/main.rs`
+`raster-stages/prefill-prepare-aux/src/lib.rs:93`, and seven more call sites in `raster-stages/prefill-range/src/main.rs`
 (`:35`, `:42`, `:49`, `:116`, `:133`, `:140`, `:149`, `:167`, `:176`). The tile sweeps a row-major
 weight matrix a page at a time and writes each output row at `page.offset() / stride` (`:135`).
 
@@ -81,7 +81,7 @@ checkable than it is now — `start_row == input.index() * rows_per_page` is an 
 can make from `RecurInput::index` instead of trusting `page.offset()`.
 
 Numbers for the PLE projection (`hidden` 2048, `ple_width` 256, `PAGE_SIZE` 196_608 from
-`prefill-prepare-aux/src/input.rs:23`):
+`raster-stages/prefill-prepare-aux/src/input.rs:23`):
 
 ```text
 matrix   256 × 2048 × 4 = 2_097_152 B  →  10 full pages of 24 rows + 1 of 16 = 11 iterations
@@ -101,7 +101,7 @@ materializing a 192 KiB weight page to reach line 100 and turn around. Output-on
 
 ## 4. `score_key` — the same shape, quadratic
 
-`prefill-range/src/lib.rs:405`. `ScoreAccum.scores` starts empty (`zero_scores`, `:389`) and the
+`raster-stages/prefill-range/src/lib.rs:405`. `ScoreAccum.scores` starts empty (`zero_scores`, `:389`) and the
 tile appends:
 
 ```rust
@@ -142,7 +142,7 @@ total — the amplification disappears entirely rather than shrinking.
 
 ## 5. `accumulate_context` — genuinely stuck, and it belongs upstream
 
-`prefill-range/src/lib.rs:519`. This one answers **yes** to §1:
+`raster-stages/prefill-range/src/lib.rs:519`. This one answers **yes** to §1:
 
 ```rust
 let dst = &mut acc[head * head_dim + lane];
@@ -166,7 +166,7 @@ cost after both rewrites is this tile, and it is the larger of the two today.
 
 ## 6. `attend_kv_chunk` is dead
 
-`prefill-range/src/lib.rs:642` and its `softmax_context` finisher (`:755`) implement streaming
+`raster-stages/prefill-range/src/lib.rs:642` and its `softmax_context` finisher (`:755`) implement streaming
 softmax with a running max, and are **never called** — `attend_token` uses the two-pass
 `score_key` → `softmax_scores` → `accumulate_context` path instead (`main.rs:82`–`:110`), which
 the comment at `:77` explains as matching the reference. The `attend_kv_chunk` comment at `:648`
@@ -198,19 +198,19 @@ move into the upstream issue rather than vanish.
 
 ```bash
 # the test applied, tile by tile
-sed -n '128,148p' prefill-prepare-aux/src/lib.rs    # out[i] = dot(..)      — append-shaped
-sed -n '427,450p' prefill-range/src/lib.rs          # scores.push(..)       — append-shaped
-sed -n '570,582p' prefill-range/src/lib.rs          # *dst = mac_bits(*dst, — stuck
-sed -n '705,745p' prefill-range/src/lib.rs          # rescale on new max    — stuck, dead
-sed -n '1069,1081p' prefill-range/src/lib.rs        # reads state.count     — correct
+sed -n '128,148p' raster-stages/prefill-prepare-aux/src/lib.rs    # out[i] = dot(..)      — append-shaped
+sed -n '427,450p' raster-stages/prefill-range/src/lib.rs          # scores.push(..)       — append-shaped
+sed -n '570,582p' raster-stages/prefill-range/src/lib.rs          # *dst = mac_bits(*dst, — stuck
+sed -n '705,745p' raster-stages/prefill-range/src/lib.rs          # rescale on new max    — stuck, dead
+sed -n '1069,1081p' raster-stages/prefill-range/src/lib.rs        # reads state.count     — correct
 
 # the call sites
-grep -n 'call_recur!' prefill-range/src/main.rs
+grep -n 'call_recur!' raster-stages/prefill-range/src/main.rs
 grep -rn 'attend_kv_chunk' --include=*.rs . | grep -v /target/    # no call site
 
 # the shapes
-grep -n -A6 'struct ScoreAccum\|struct CtxAccum\|struct AttnState' prefill-range/src/input.rs
-grep -n 'PAGE_SIZE' prefill-prepare-aux/src/input.rs
+grep -n -A6 'struct ScoreAccum\|struct CtxAccum\|struct AttnState' raster-stages/prefill-range/src/input.rs
+grep -n 'PAGE_SIZE' raster-stages/prefill-prepare-aux/src/input.rs
 ```
 
 Measured figures, which this issue does not have. With `raster-runtime`'s `profiling` feature

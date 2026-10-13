@@ -39,7 +39,7 @@ The consequence is a shape rule that is nowhere written down:
 > Every list in a stage output that is built by a recur is built by the *same* recur, over the
 > *same* input list — so they all have that list's length.
 
-`prefill-range` satisfies it by accident. `finish_layer` (`prefill-range/src/lib.rs:1008`) pushes
+`prefill-range` satisfies it by accident. `finish_layer` (`raster-stages/prefill-range/src/lib.rs:1008`) pushes
 exactly one `ActivationRow` and one `KeyRow` per query, so `rows` and `kv` are both `queries.len()`.
 
 ## Why decode needs to break it
@@ -85,14 +85,6 @@ extra chain stages per generated token and needs order-independent attention sco
 because a draft can only append and the merged order would be fresh-then-prior.
 
 ## Resolution (2026-08-28)
-
-> **Superseded 2026-10-02.** `raster` removed `finalize = false`, `finalize()` and `new!` when
-> drafts became site- and tile-scoped (`raster` `docs/proposals/incremental-draft-materialization.md`
-> §The restriction). The two writers are now two push-only sites deriving in turn:
-> `begin_layer_output` (a plain tile returning a `Draft` it creates) → `carry_cached_key`
-> (`output = base`) → `attend_token` (`output = carried`). Each derivation is a new object
-> extending its base, so `rows: n` and `kv: prior + n` still coexist. The text below records the
-> original fix.
 
 Closed upstream by an opt-in `finalize = false` on `call_recur!`, which hands the draft back
 instead of closing it. `prefill-range` now builds its output with two writers — `carry_cached_key`

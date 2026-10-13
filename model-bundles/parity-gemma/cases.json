@@ -1,0 +1,79 @@
+[
+  {
+    "name": "short",
+    "prompt": "Hi, é!",
+    "raw_prompt": true,
+    "tokens": 1,
+    "input_token_ids": [
+      362,
+      21,
+      8,
+      9,
+      10
+    ]
+  },
+  {
+    "name": "near-window",
+    "prompt": "abcdefghijklmn?!",
+    "raw_prompt": true,
+    "tokens": 8,
+    "input_token_ids": [
+      74,
+      360,
+      77,
+      78,
+      79,
+      80,
+      81,
+      82,
+      83,
+      84,
+      85,
+      86,
+      87,
+      40,
+      10
+    ]
+  },
+  {
+    "name": "over-window",
+    "prompt": "Hi,  café! 🙂\nRaster?",
+    "raw_prompt": false,
+    "tokens": 8,
+    "input_token_ids": [
+      2,
+      3,
+      94,
+      92,
+      78,
+      91,
+      7,
+      362,
+      21,
+      8,
+      8,
+      76,
+      74,
+      79,
+      9,
+      10,
+      8,
+      344,
+      263,
+      257,
+      234,
+      7,
+      367,
+      40,
+      4,
+      7,
+      3,
+      86,
+      88,
+      77,
+      78,
+      85,
+      7
+    ]
+  }
+]
