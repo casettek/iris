@@ -495,9 +495,44 @@ cargo raster chain run --no-auth --show-output
 ```
 
 Authenticated chain execution is currently blocked by Raster's open
-`authenticated-chain-draft-output` issue: the recorder cannot replay a
-`ProgramEnd` value finalized from a `Draft` at `[u32::MAX, n]`. This affects
-Raster's own `chain-example`, as well as `decode-init`, `decode-select-token`,
-`decode-embed`, and `output-finalize` here. It fails closed; `--no-auth` output
-and no-auth `chain audit --execution` have been validated, but they are not a
-substitute for the missing authenticated gate.
+`authenticated-chain-draft-output` issue (re-verified 2026-09-11 against a CLI
+built from the `raster` checkout). A value returned from the free `finalize()`
+lives at the synthetic coordinate `[u32::MAX, n]`, and the recorder's storage
+replica has no object there, so any replay that resolves that coordinate panics.
+Two call sites reach it:
+
+| site | raised by |
+| --- | --- |
+| `recorder.rs:619` — program output selection | returning the finalized draft |
+| `recorder.rs:1289` — recur source metadata at site open | feeding a list *selected out of* a finalized draft into a `call_recur!` |
+
+Reproduces on Raster's own `chain-example` (stage 3, `phase3-report`). Here it
+blocks three programs, not four:
+
+| program | authenticated | why |
+| --- | --- | --- |
+| `decode-init` | ✗ `recorder.rs:619` | returns `finalize(draft)` |
+| `decode-select-token` | ✗ `recorder.rs:619` | returns `finalize(draft)` |
+| `decode-embed` | ✗ `recorder.rs:1289` | `finalize(embedded)`, then `select!`s `errors` off it into a recur |
+| `output-finalize` | ✓ rc=0 | never calls `finalize()` — its value is what `call_recur!`'s implicit finalize returns, which lands at an ordinary coordinate (`"5"`) |
+
+`output-finalize` is the useful data point: across these three programs the
+failure tracks the *free* `finalize()`, not "the output is a draft". Whether
+routing the other three through the macro's finalize is a legitimate workaround
+or only moves the coordinate is untested.
+
+It fails closed — the run aborts rather than record an output commitment the
+replica cannot substantiate. `--no-auth` output and no-auth `chain audit
+--execution` have been validated, but they are not a substitute for the missing
+authenticated gate.
+
+```sh
+# the canonical repro, from any scratch directory
+cargo-raster raster chain run path/to/raster/examples/chain-example/Raster.toml
+
+# one stage here, non-destructively, against a finished no-auth run
+cd decode-init && cargo raster run \
+  --input  ../target/raster/chains-no-auth/latest/decode_init/input.json \
+  --input-manifest ../target/raster/chains-no-auth/latest/decode_init/input_manifest.json \
+  --commit /tmp/decode_init.bin --fraud-proof-window-size 16
+```

@@ -19,6 +19,19 @@ pub mod input;
 
 use input::*;
 
+/// The argmax fold's opening state: no value seen yet.
+///
+/// A stored seed, so the fold's state chain starts at a committed value
+/// rather than a literal nothing pins.
+#[tile(kind = iter, description = "Open the argmax with no value seen")]
+pub fn begin_argmax() -> ArgmaxState {
+    ArgmaxState {
+        has_value: false,
+        token_id: 0,
+        value: 0,
+    }
+}
+
 /// Folds one `Block` of logits into the running argmax.
 ///
 /// The block is the recur `input` — the collection being iterated — and the
@@ -61,12 +74,12 @@ pub fn finish_selection(state: ArgmaxState, decode_position: u32) -> Result<Sele
 }
 
 /// Opens the next decode edge and publishes the selected-token scalars.
+///
+/// The transcript list stays empty here: the copy and append sites below
+/// derive from this object and only push.
 #[tile(kind = iter, description = "Open a decode edge for the selected token")]
-pub fn begin_decode_edge(
-    output: Draft<DecodeEdge>,
-    selected: SelectedToken,
-) -> Draft<DecodeEdge> {
-    let mut output = output;
+pub fn begin_decode_edge(selected: SelectedToken) -> Draft<DecodeEdge> {
+    let mut output = Draft::<DecodeEdge>::new();
     output.has_selected().set(true);
     output.decode_position().set(selected.decode_position);
     output.token_id().set(selected.token_id);
@@ -76,9 +89,8 @@ pub fn begin_decode_edge(
 
 /// Copies a bounded chunk of the prior transcript into the next edge.
 ///
-/// The draft stays open after the recur so [`append_selected_token`] can add
-/// this iteration's token. Transcript copying is linear in the number of
-/// already-generated tokens and does not materialize the whole list.
+/// Transcript copying is linear in the number of already-generated tokens and
+/// does not materialize the whole list.
 #[tile(kind = recur, description = "Copy prior generated token ids")]
 pub fn copy_generated_token_ids(
     input: RecurInput<Block<u32>>,
@@ -91,13 +103,21 @@ pub fn copy_generated_token_ids(
     output
 }
 
+/// Wraps the selected token id in the one-element list the append site sweeps.
+#[tile(kind = iter, description = "List the selected token for appending")]
+pub fn selected_token_ids(token_id: u32) -> Draft<SelectedTokenIds> {
+    let mut output = Draft::<SelectedTokenIds>::new();
+    output.token_ids().push(token_id);
+    output
+}
+
 /// Appends exactly the token selected by this stage.
-#[tile(kind = iter, description = "Append the selected generated token")]
+#[tile(kind = recur, description = "Append the selected generated token")]
 pub fn append_selected_token(
-    output: Draft<DecodeEdge>,
-    selected: SelectedToken,
-) -> Draft<DecodeEdge> {
+    input: RecurInput<u32>,
+    output: RecurOutput<DecodeEdge>,
+) -> RecurOutput<DecodeEdge> {
     let mut output = output;
-    output.generated_token_ids().push(selected.token_id);
+    output.generated_token_ids().push(input.into_value());
     output
 }

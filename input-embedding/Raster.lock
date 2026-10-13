@@ -1,30 +1,38 @@
 {
   "format": 1,
-  "program_commitment": "911e519290d7820d60816b8a48761918e9905c699bb504ce21de25d7deee32ab",
+  "program_commitment": "270b3bbb3ebe69fb3759c17d1d95d5b1b821535f2415725ab1903ac8af81c319",
   "tiles": {
     "append_activation_row": {
-      "image_id": "781ed67a43340db8d456c3e1606e5ce89be73c0a3ffa4febfa182a990c063df3",
-      "source_hash": "98f5bba2c8e06d980000000000000db6"
+      "image_id": "6bfda97afa9f7e26ad84cbd8b45bc6d235191493aa28dcd4add1c0f94eb5552e",
+      "source_hash": "8787e856613cb2250000000000001200"
     },
     "assert_all_tokens_embedded": {
-      "image_id": "cabe4184e4bbd38c80caca88d015a1394a91220bb2998bd40d895a7b4da43f8a",
-      "source_hash": "98f5bba2c8e06d980000000000000db6"
+      "image_id": "a762e863580ae75b4af211fafb577e98eda1a2cf76e3f983d764e349e7f7e71a",
+      "source_hash": "8787e856613cb2250000000000001200"
+    },
+    "begin_error_summary": {
+      "image_id": "63233c5c3d276e712961c168cf1af0e828d4a55974b956e9ee0306d9249fc313",
+      "source_hash": "8787e856613cb2250000000000001200"
+    },
+    "begin_prompt_activations": {
+      "image_id": "c3a31040f312f35bc10a58729dd90b52266672c1cf1c1337f255bdc2485d5010",
+      "source_hash": "8787e856613cb2250000000000001200"
     },
     "begin_row_lookup": {
-      "image_id": "9f6972b6cc0bcbda0495890130cd9969240263f1c63e13d42275c5aaacfeef9f",
-      "source_hash": "98f5bba2c8e06d980000000000000db6"
+      "image_id": "62f22939106b79ed9a2862f0e7417c7091547635d6c2ed6f7fc7b3fad041b67e",
+      "source_hash": "8787e856613cb2250000000000001200"
     },
     "embedding_byte_offset": {
-      "image_id": "90dae8bef9ca4a7aec6a0028d3fef78f89c30a3b1b19a6c6a10d2fac62b7cc4c",
-      "source_hash": "98f5bba2c8e06d980000000000000db6"
+      "image_id": "8a196b0010af72e0ff7044f758af3a422967c859203709f10e8dd73f8f7a5bff",
+      "source_hash": "8787e856613cb2250000000000001200"
     },
     "page_of": {
-      "image_id": "204cf565ab3f9e2dc3078f825508343af0109ddadce193f466df52a8ed4fad9f",
-      "source_hash": "98f5bba2c8e06d980000000000000db6"
+      "image_id": "ac446df1b685458522bcd3af26941c00d8628ed0d19459106ace2e88b1e1658e",
+      "source_hash": "8787e856613cb2250000000000001200"
     },
     "summarise_errors": {
-      "image_id": "9bdbd61172661c00bb78eb175588dc845753d5b2f783f5551bae6d3957b9f546",
-      "source_hash": "98f5bba2c8e06d980000000000000db6"
+      "image_id": "6e350141f0ba6f2ed844eeb6bcaae287d4d227fc298a5b7b240a06432294777e",
+      "source_hash": "8787e856613cb2250000000000001200"
     }
   },
   "toolchain": {

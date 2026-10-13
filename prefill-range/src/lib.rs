@@ -169,11 +169,8 @@ pub fn advance_cursor(cursor: TokenCursor) -> TokenCursor {
 /// rejects a second write to the same field, and no tile inside the loop knows
 /// whether it is the last one.
 #[tile(kind = iter, description = "Open this stage's activation output")]
-pub fn begin_layer_output(
-    output: Draft<ActivationSequence>,
-    start_position: u32,
-) -> Draft<ActivationSequence> {
-    let mut output = output;
+pub fn begin_layer_output(start_position: u32) -> Draft<ActivationSequence> {
+    let mut output = Draft::<ActivationSequence>::new();
     output.start_position().set(start_position);
     output
 }
@@ -183,11 +180,11 @@ pub fn begin_layer_output(
 /// dropping rows the sliding window has already retired.
 ///
 /// This is what makes a decode step's cache survive a chain boundary: stage
-/// `t`'s output `kv` is stage `t+1`'s `prior_kv`. It runs with
-/// `finalize = false` so `attend_token` can go on appending this stage's own
-/// keys to the same draft — `rows` ends up one entry per token while `kv` ends
-/// up `prior + 1`, which is the whole reason the deferral exists
-/// (`docs/issues/two-recurs-one-draft.md`).
+/// `t`'s output `kv` is stage `t+1`'s `prior_kv`. The site derives from the
+/// object [`begin_layer_output`] opened, and `attend_token` then derives from
+/// this site's result to append this stage's own keys — `rows` ends up one
+/// entry per token while `kv` ends up `prior + 1`, which no single sweep could
+/// build (`docs/issues/two-recurs-one-draft.md`).
 ///
 /// The write is an append that never reads what is already there, so it belongs
 /// in `output` and pays only its increment.
@@ -1225,6 +1222,18 @@ fn finish_mlp_inner(
 // ---------------------------------------------------------------------------
 // Failure accounting
 // ---------------------------------------------------------------------------
+
+/// The failure fold's opening state: nothing counted.
+///
+/// A stored seed, so the fold's state chain starts at a committed value
+/// rather than a literal nothing pins.
+#[tile(kind = iter, description = "Open the failure summary with nothing counted")]
+pub fn begin_error_summary() -> ErrorSummary {
+    ErrorSummary {
+        count: 0,
+        first: String::new(),
+    }
+}
 
 #[tile(kind = recur, description = "Summarise the rows this layer could not produce")]
 pub fn summarise_errors(

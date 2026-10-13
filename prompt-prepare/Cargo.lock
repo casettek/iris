@@ -2116,6 +2116,7 @@ version = "0.1.0"
 dependencies = [
  "bincode",
  "postcard",
+ "risc0-zkvm",
  "serde",
  "serde_json",
  "sha2",

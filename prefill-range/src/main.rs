@@ -284,16 +284,15 @@ fn main(
     // decode stage starts after the prompt and every token generated so far,
     // and RoPE and window visibility are both defined over that absolute value.
     let start_position = select!(u32, activations.clone().start_position);
-    let start_position_arg = select!(u32, activations.clone().start_position);
     let sliding_window = select!(u32, params.clone().sliding_window);
 
     let rows = select!(List<ActivationRow>, activations.rows);
-    let cursor0 = call!(begin_cursor, start_position.clone());
+    let cursor0 = call!(begin_cursor, clone!(start_position));
     let kv = call_recur_seq!(
         sequence = project_token,
         input = rows,
         state = cursor0,
-        output = new!(KvSequence),
+        output,
         args = (params.clone(), w_q, w_k, w_v)
     );
     let keys = select!(List<KeyRow>, kv.clone().keys);
@@ -313,24 +312,23 @@ fn main(
     let ple_input_gate = select!(List<BytesPage>, layer.clone().ple_input_gate.pages);
     let ple_layer_projection = select!(List<BytesPage>, layer.ple_layer_projection.pages);
 
-    // The stage's output is built by two writers: this sweep carries the
-    // inherited cache forward, then `attend_token` appends one row and one key
-    // per token. `finalize = false` is what lets them share a draft — `rows`
-    // ends up 1 entry on a decode stage while `kv` ends up `prior + 1`, and a
-    // draft that closed at the first recur could never hold both.
-    let draft = call!(begin_layer_output, new!(ActivationSequence), start_position);
-    let draft = call_recur!(
+    // The stage's output is built by two push-only sites deriving in turn from
+    // the opened object: this sweep carries the inherited cache forward, then
+    // `attend_token` appends one row and one key per token. Each derivation is
+    // a new object extending its base — `rows` ends up 1 entry on a decode
+    // stage while `kv` ends up `prior + 1`, which no single sweep could build.
+    let base = call!(begin_layer_output, clone!(start_position));
+    let carried = call_recur!(
         tile = carry_cached_key,
         input = prior_keys.clone(),
         chunk = 64,
-        output = draft,
-        finalize = false,
-        args = (start_position_arg, sliding_window)
+        output = base,
+        args = (start_position, sliding_window)
     );
     let prepared = call_recur_seq!(
         sequence = attend_token,
         input = queries,
-        output = draft,
+        output = carried,
         args = (
             prior_keys,
             keys,
@@ -349,23 +347,19 @@ fn main(
     raster::println!("prefill range pass → {:?}", prepared);
 
     let projection_errors = select!(List<String>, kv.errors);
+    let projection_summary_seed = call!(begin_error_summary);
     let projection_summary = call_recur!(
         tile = summarise_errors,
         input = projection_errors,
-        state = ErrorSummary {
-            count: 0,
-            first: String::new()
-        },
+        state = projection_summary_seed,
         args = ()
     );
     let attention_errors = select!(List<String>, prepared.clone().errors);
+    let attention_summary_seed = call!(begin_error_summary);
     let attention_summary = call_recur!(
         tile = summarise_errors,
         input = attention_errors,
-        state = ErrorSummary {
-            count: 0,
-            first: String::new()
-        },
+        state = attention_summary_seed,
         args = ()
     );
 

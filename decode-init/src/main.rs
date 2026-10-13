@@ -9,6 +9,5 @@ use decode_init::*;
 /// is zero.
 #[sequence]
 fn main() -> DecodeEdge {
-    let draft = call!(initialize_decode_edge, new!(DecodeEdge));
-    finalize(draft)
+    call!(initialize_decode_edge)
 }

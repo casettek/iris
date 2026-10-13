@@ -62,7 +62,8 @@ fn main(embedded: ActivationSequence, layer: PleLayer) -> Result<PleLayerInputs>
     call!(assert_matrix_bytes, proj_len, ple_width, hidden)?;
 
     let tokens = select!(List<ActivationRow>, embedded.rows);
-    let draft = call!(begin_ple_layer, new!(PleLayerInputs), params.clone());
+    let layer_idx = select!(u32, params.clone().layer_idx);
+    let draft = call!(begin_ple_layer, layer_idx);
 
     let prepared = call_recur_seq!(
         sequence = prepare_ple_row,
@@ -73,13 +74,11 @@ fn main(embedded: ActivationSequence, layer: PleLayer) -> Result<PleLayerInputs>
     raster::println!("prefill aux pass → {:?}", prepared);
 
     let errors = select!(List<String>, prepared.clone().errors);
+    let summary_seed = call!(begin_error_summary);
     let summary = call_recur!(
         tile = summarise_layer_errors,
         input = errors,
-        state = ErrorSummary {
-            count: 0,
-            first: String::new()
-        },
+        state = summary_seed,
         args = ()
     );
     let error_count = select!(u32, summary.clone().count);

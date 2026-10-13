@@ -28,6 +28,18 @@ use input::*;
 // Merge pass — greedy left-to-right piece merging
 // ---------------------------------------------------------------------------
 
+/// The merge pass's opening cursor: nothing pending.
+///
+/// A stored seed, so the pass's state chain starts at a committed value rather
+/// than a literal nothing pins.
+#[tile(kind = iter, description = "Open a merge pass with nothing pending")]
+pub fn begin_merge_cursor() -> MergeCursor {
+    MergeCursor {
+        pending: String::new(),
+        has_pending: false,
+    }
+}
+
 /// Pairs the loop-carried cursor with the incoming piece.
 ///
 /// This is also what materializes the recur-sequence's item exactly once: the
@@ -49,6 +61,19 @@ pub fn begin_merge_step(cursor: MergeCursor, piece: String) -> MergeStep {
 #[tile(kind = iter, description = "Bucket index for the current merge pair")]
 pub fn merge_bucket_index(step: MergeStep, bucket_count: u32) -> u32 {
     merge_bucket_of(&step.pending, &step.piece, bucket_count)
+}
+
+/// A merge-rule scan's opening state: no rule matched.
+///
+/// A stored seed, so the fold's state chain starts at a committed value
+/// rather than a literal nothing pins.
+#[tile(kind = iter, description = "Open a merge-rule scan with no match")]
+pub fn begin_merge_match() -> MergeMatch {
+    MergeMatch {
+        matched: false,
+        rank: 0,
+        merged: String::new(),
+    }
 }
 
 /// Scans one merge rule for `(pending, piece)`, keeping the lowest-ranked match.
@@ -153,6 +178,18 @@ pub fn vocab_bucket_index(query: VocabQuery, bucket_count: u32) -> u32 {
     vocab_bucket_of(&query.piece, bucket_count)
 }
 
+/// A vocabulary scan's opening state: not found, so the UNK id.
+///
+/// A stored seed, so the fold's state chain starts at a committed value
+/// rather than a literal nothing pins.
+#[tile(kind = iter, description = "Open a vocabulary scan at the UNK fallback")]
+pub fn begin_vocab_match() -> VocabMatch {
+    VocabMatch {
+        found: false,
+        token_id: UNK_TOKEN_ID,
+    }
+}
+
 /// Scans one vocabulary entry for the queried piece.
 ///
 /// Same shape as [`scan_merge_rules`]: the iterated collection is the bucket's
@@ -193,6 +230,16 @@ pub fn append_token_id(
 // ---------------------------------------------------------------------------
 // Fixed-point check — is another merge pass still needed?
 // ---------------------------------------------------------------------------
+
+/// The fixed-point check's opening state: no previous piece, nothing counted.
+#[tile(kind = iter, description = "Open the fixed-point check")]
+pub fn begin_merge_scan() -> MergeScan {
+    MergeScan {
+        previous: String::new(),
+        has_previous: false,
+        remaining: 0,
+    }
+}
 
 /// Pairs the previous piece with the incoming one, carrying the running count.
 ///

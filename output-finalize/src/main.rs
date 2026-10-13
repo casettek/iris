@@ -36,7 +36,7 @@ fn main(edge: DecodeEdge, decoder: DecoderTable) -> Result<GeneratedOutput> {
     let count = select!(u32, state.clone().count);
     call!(validate_decode_edge, has_selected, count)?;
 
-    let draft = call!(begin_generated_output, new!(GeneratedOutput), state);
+    let draft = call!(begin_generated_output, state);
     let output = call_recur!(
         tile = copy_output_token_ids,
         input = ids,

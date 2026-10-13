@@ -51,6 +51,17 @@ pub struct SelectedToken {
     pub value: i32,
 }
 
+/// The selected token as a one-element list — the source the transcript's
+/// append site iterates.
+///
+/// A draft lives only inside the tile or recur site that creates it, so the
+/// token cannot be pushed onto the edge after the copy site closes. A derived
+/// site can extend the copied edge instead, and a site needs a list to sweep.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
+pub struct SelectedTokenIds {
+    pub token_ids: List<u32>,
+}
+
 /// The edge carried between decode iterations.
 ///
 /// `decode-init` emits the empty value (`has_selected = false`). Every

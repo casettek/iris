@@ -20,12 +20,9 @@ use input::*;
 
 /// Seeds the output draft with the layer it belongs to.
 #[tile(kind = iter, description = "Open this layer's prefill-input draft")]
-pub fn begin_ple_layer(
-    output: Draft<PleLayerInputs>,
-    params: PleLayerParams,
-) -> Draft<PleLayerInputs> {
-    let mut output = output;
-    output.layer_idx().set(params.layer_idx);
+pub fn begin_ple_layer(layer_idx: u32) -> Draft<PleLayerInputs> {
+    let mut output = Draft::<PleLayerInputs>::new();
+    output.layer_idx().set(layer_idx);
     output
 }
 
@@ -235,6 +232,18 @@ fn combine_row(
     }
     scale_row(&mut embedded, params.input_scale);
     Ok(embedded)
+}
+
+/// The failure fold's opening state: nothing counted.
+///
+/// A stored seed, so the fold's state chain starts at a committed value
+/// rather than a literal nothing pins.
+#[tile(kind = iter, description = "Open the failure summary with nothing counted")]
+pub fn begin_error_summary() -> ErrorSummary {
+    ErrorSummary {
+        count: 0,
+        first: String::new(),
+    }
 }
 
 /// Folds the recorded failures into a count plus the first message.

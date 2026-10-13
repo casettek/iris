@@ -1,26 +1,34 @@
 {
   "format": 1,
-  "program_commitment": "82499e9e197ba2b6d97dc71b2ff2f59e54e90d3f84b48ab5f808075fd1ef0eb6",
+  "program_commitment": "383bac666cbaa6bb916a4f30fb1584e233ee929a0d4c30e77a727d7bda8a143d",
   "tiles": {
     "append_selected_token": {
-      "image_id": "0fbc21c9d7d5d5a0f8850c9d47e69039cd75577a82aff0017d0d132bc1b79dbc",
-      "source_hash": "0eaa5fdf9a4987f40000000000000ea3"
+      "image_id": "637c3085877d2d923ae030894f305d9ad9c6381fa786e0db9451cb188c964dbc",
+      "source_hash": "4d9d1eece7c201330000000000001178"
+    },
+    "begin_argmax": {
+      "image_id": "3a44202e75970c2b58ffb488f4ad6dab8cb0612d667d22401b4af22c0ce41a23",
+      "source_hash": "4d9d1eece7c201330000000000001178"
     },
     "begin_decode_edge": {
-      "image_id": "8403b68310a1c2222a6186640d08bf1a632d8350e92e842213b7e08cc647f1de",
-      "source_hash": "0eaa5fdf9a4987f40000000000000ea3"
+      "image_id": "cadc8a121ce3fa14fc62c17b91f2d6595f8dc438829af9ba6c77341db8f9a421",
+      "source_hash": "4d9d1eece7c201330000000000001178"
     },
     "copy_generated_token_ids": {
-      "image_id": "1e1a72d43e8d5d7b90e0c49e698b94013ed13631c104d2def82dab123b8e57bc",
-      "source_hash": "0eaa5fdf9a4987f40000000000000ea3"
+      "image_id": "aa0b05509ca16fed8ac81ddd37aea7b8dd949bb06fcd9c68f17b3a6156133d20",
+      "source_hash": "4d9d1eece7c201330000000000001178"
     },
     "finish_selection": {
-      "image_id": "ccb32a694524f0c8004ea2dabb81c8c0316d3bd3ec47d4c023febf6d07aebe99",
-      "source_hash": "0eaa5fdf9a4987f40000000000000ea3"
+      "image_id": "6a1264a5ca05826f876cd894e869ee8d8b254bb765383fad0366000c254ef792",
+      "source_hash": "4d9d1eece7c201330000000000001178"
     },
     "scan_logit_chunk": {
-      "image_id": "18df8aa9c2d2fe4dbd33849fc3a5e9df6635c8a09e5ce5e9d86e7bd28b1e1647",
-      "source_hash": "0eaa5fdf9a4987f40000000000000ea3"
+      "image_id": "25ad6691674440517e5e07c829f5912de3be72353ec9c8218dd33863e70657dc",
+      "source_hash": "4d9d1eece7c201330000000000001178"
+    },
+    "selected_token_ids": {
+      "image_id": "5bb7c5e7eb0337bbde297fe867c6f2df42e75f882f63891429e0b47d20995413",
+      "source_hash": "4d9d1eece7c201330000000000001178"
     }
   },
   "toolchain": {

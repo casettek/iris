@@ -43,14 +43,11 @@ fn merge_prompt_piece(
     let bucket = select!(MergeBucket, merge_buckets[bucket_idx]);
     let rules = select!(List<BpeMerge>, bucket.rules);
 
+    let hit_seed = call!(begin_merge_match);
     let hit = call_recur!(
         tile = scan_merge_rules,
         input = rules,
-        state = MergeMatch {
-            matched: false,
-            rank: 0,
-            merged: String::new()
-        },
+        state = hit_seed,
         args = (step.clone(),)
     );
 
@@ -78,14 +75,12 @@ fn merge_round(
     merge_bucket_count: u32,
     terminator: String,
 ) -> MergedPieces {
+    let cursor = call!(begin_merge_cursor);
     call_recur_seq!(
         sequence = merge_prompt_piece,
         input = pieces,
-        state = MergeCursor {
-            pending: String::new(),
-            has_pending: false
-        },
-        output = new!(MergedPieces),
+        state = cursor,
+        output,
         args = (merge_buckets, merge_bucket_count, terminator)
     )
 }
@@ -118,14 +113,11 @@ fn count_remaining_merges(
     let bucket_idx = call!(scan_bucket_index, step.clone(), merge_bucket_count);
     let bucket = select!(MergeBucket, merge_buckets[bucket_idx]);
     let rules = select!(List<BpeMerge>, bucket.rules);
+    let hit_seed = call!(begin_merge_match);
     let hit = call_recur!(
         tile = scan_merge_rules,
         input = rules,
-        state = MergeMatch {
-            matched: false,
-            rank: 0,
-            merged: String::new()
-        },
+        state = hit_seed,
         args = (step.clone(),)
     );
     call!(advance_scan, scan_step, hit)
@@ -145,13 +137,11 @@ fn resolve_piece_token(
     let bucket = select!(VocabBucket, vocab_buckets[bucket_idx]);
     let entries = select!(List<TokenEntry>, bucket.entries);
 
+    let hit_seed = call!(begin_vocab_match);
     let hit = call_recur!(
         tile = scan_vocab_chunk,
         input = entries,
-        state = VocabMatch {
-            found: false,
-            token_id: UNK_TOKEN_ID
-        },
+        state = hit_seed,
         args = (query,)
     );
 
@@ -246,14 +236,11 @@ fn main(tokenizer: PromptTokenizer, initial_pieces: BpePieces) -> Result<PromptT
     let pieces8 = select!(List<String>, round8.pieces);
 
     // Fixed-point check: nothing may still be mergeable.
+    let scan_seed = call!(begin_merge_scan);
     let scan = call_recur_seq!(
         sequence = count_remaining_merges,
         input = pieces8.clone(),
-        state = MergeScan {
-            previous: String::new(),
-            has_previous: false,
-            remaining: 0
-        },
+        state = scan_seed,
         args = (merge_buckets, merge_bucket_count)
     );
     let remaining = select!(u32, scan.remaining);
@@ -262,7 +249,7 @@ fn main(tokenizer: PromptTokenizer, initial_pieces: BpePieces) -> Result<PromptT
     let stripped = call_recur_seq!(
         sequence = strip_terminator,
         input = pieces8,
-        output = new!(MergedPieces),
+        output,
         args = ("</w>".to_string(),)
     );
     let merged_pieces = select!(List<String>, stripped.pieces);
@@ -270,7 +257,7 @@ fn main(tokenizer: PromptTokenizer, initial_pieces: BpePieces) -> Result<PromptT
     let tokenization = call_recur_seq!(
         sequence = resolve_piece_token,
         input = merged_pieces,
-        output = new!(PromptTokenization),
+        output,
         args = (vocab_buckets, vocab_bucket_count)
     );
     raster::println!("vocab pass → {:?}", tokenization);

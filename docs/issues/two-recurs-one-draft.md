@@ -86,6 +86,14 @@ because a draft can only append and the merged order would be fresh-then-prior.
 
 ## Resolution (2026-08-28)
 
+> **Superseded 2026-10-02.** `raster` removed `finalize = false`, `finalize()` and `new!` when
+> drafts became site- and tile-scoped (`raster` `docs/proposals/incremental-draft-materialization.md`
+> §The restriction). The two writers are now two push-only sites deriving in turn:
+> `begin_layer_output` (a plain tile returning a `Draft` it creates) → `carry_cached_key`
+> (`output = base`) → `attend_token` (`output = carried`). Each derivation is a new object
+> extending its base, so `rows: n` and `kv: prior + n` still coexist. The text below records the
+> original fix.
+
 Closed upstream by an opt-in `finalize = false` on `call_recur!`, which hands the draft back
 instead of closing it. `prefill-range` now builds its output with two writers — `carry_cached_key`
 carries the inherited cache forward, then `attend_token` appends one row and one key per token — so

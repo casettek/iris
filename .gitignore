@@ -5,3 +5,18 @@
 # Raster
 *.rastered
 *.rindex
+
+# Inference run artifacts. `chain run` / `cargo raster run` write their
+# outputs, traces, profiles and receipts under target/ (ignored above); these
+# cover what lands outside it.
+commit.bin
+fraud_demo.bin
+*.bak-*
+*.receipt
+output.bin
+output_manifest.json
+trace.bin
+profile.json
+tile_census.json
+cfs.json
+*.log

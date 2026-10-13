@@ -186,6 +186,10 @@ order. **This half is implemented and compiles.**
 `call_recur!` (branch `feature/recur-deferred-finalize`). See
 `docs/issues/two-recurs-one-draft.md` for what was wrong and why the fix turned out to be small.
 
+> **Updated 2026-10-02.** `finalize = false` and `new!` were removed upstream; the two writers are
+> now two derived sites (`output = base`, then `output = carried`) — see
+> `docs/issues/two-recurs-one-draft.md` §Resolution. The snippet below is the 2026-08-28 shape.
+
 The stage now builds its output with two writers sharing one draft:
 
 ```rust
