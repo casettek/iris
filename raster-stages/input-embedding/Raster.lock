@@ -1,38 +1,42 @@
 {
   "format": 1,
-  "program_commitment": "e7a62b26e93ca5de26e431d86d20567c43d57652782f21ec539c69766bb64bb9",
+  "program_commitment": "a524c2a642f96d9783bf09db4cfe1ff6d7ac6efa84a1de399b5d234f52f1b19a",
   "tiles": {
     "append_activation_row": {
-      "image_id": "366da90c5f61378ed388b7457f6269321850d2f5421bb9828e10fde36f9fe8df",
-      "source_hash": "b7dc94477bdc01cb000000000000108a"
+      "image_id": "e221f7e6d6cb83c45cd368f84878d9ed189a17aff00516cb4b73e39e815b2be0",
+      "source_hash": "8787e856613cb2250000000000001200"
     },
     "assert_all_tokens_embedded": {
-      "image_id": "3c45aee5c8afda0ebbcc5e2147fddbf7b5bca7919453a13a212f3ad21cc3e1a6",
-      "source_hash": "b7dc94477bdc01cb000000000000108a"
+      "image_id": "ee286275e86cd68df74b9939e69daecbf157e2cbbb5ed4306e56f548264c9a25",
+      "source_hash": "8787e856613cb2250000000000001200"
+    },
+    "begin_error_summary": {
+      "image_id": "daa10196c3c2fc5360cbaea580022791ceaa6fa2cc79b88421114875807ce32c",
+      "source_hash": "8787e856613cb2250000000000001200"
     },
     "begin_prompt_activations": {
-      "image_id": "c09565d8cfcc55708526c17bda942df6b35a39cd69efc9e7268dd170a7d03182",
-      "source_hash": "b7dc94477bdc01cb000000000000108a"
+      "image_id": "0687ad9791446dde1aafbf80082f9751846adb852576611f1b65a4c78b345792",
+      "source_hash": "8787e856613cb2250000000000001200"
     },
     "begin_row_lookup": {
-      "image_id": "77783b881edadcb8cabc9a9e3ea3f50066c42481713a28bbefa9122154ed9788",
-      "source_hash": "b7dc94477bdc01cb000000000000108a"
+      "image_id": "b2736758c441af0b0ddfdfaaf45aa86ee89dc3ec99cb099cd46464bb74c3d7cf",
+      "source_hash": "8787e856613cb2250000000000001200"
     },
     "embedding_byte_offset": {
-      "image_id": "07fd84d859d3dbf56b79f589231ebf45c260e3f0d950371db921a2b9698490f4",
-      "source_hash": "b7dc94477bdc01cb000000000000108a"
+      "image_id": "a4a62d211d745fa42df99a91400946646b6b0278ec6623c9f6e079cf58b03d9e",
+      "source_hash": "8787e856613cb2250000000000001200"
     },
     "page_of": {
-      "image_id": "e2c29fa5047f49591c21d2cd0e969147485529349da8f7ab78df8d36e3d8a206",
-      "source_hash": "b7dc94477bdc01cb000000000000108a"
+      "image_id": "0424ce0e6a9ae49dc7566846ad7ff3fd7292d2dc484f3992814a9af697f9c9a6",
+      "source_hash": "8787e856613cb2250000000000001200"
     },
     "summarise_errors": {
-      "image_id": "ba10b75e2fbf8f121cdda5b9fcac561706a196acc509b0f51fbf269dae1e0165",
-      "source_hash": "b7dc94477bdc01cb000000000000108a"
+      "image_id": "34220e0749498f639b776d87edc8ed6eaebd6c0effafa208875740f07d6c5a1e",
+      "source_hash": "8787e856613cb2250000000000001200"
     }
   },
   "toolchain": {
-    "risc0": "risc0-zkvm-1.2",
+    "risc0": "risc0-zkvm-3.0.6",
     "build_mode": "local"
   }
 }

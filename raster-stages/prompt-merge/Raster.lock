@@ -1,38 +1,38 @@
 {
   "format": 1,
-  "program_commitment": "2e084c68dc52d4080e412651d79f5e6825fb03091d66f464df979365c8274e06",
+  "program_commitment": "389082e5dc33f5c96498a7e5e321dbb6b65c64e000ccb0d77640256e6d6df836",
   "tiles": {
     "apply_ranked_merge": {
-      "image_id": "1fc111459ca454036f43b6702dcbad1dbd11fda9c953cb44864172f7181f87c7",
+      "image_id": "b5b58c96e2a879e5ef0fa47abec4a2b4d55a08556ec2c915a27c396b353be030",
       "source_hash": "b23834503004e1bc0000000000000be3"
     },
     "begin_ranked_step": {
-      "image_id": "36f535dd2a542045c7906cb67934985bd8b11eb3c099b0eb3a192d39d971c4fc",
+      "image_id": "4d5ba94c28e32494edf18f4962be3a6b261e09a6efe608a448a911bbe765ab6a",
       "source_hash": "b23834503004e1bc0000000000000be3"
     },
     "empty_merge_match": {
-      "image_id": "033345caf92af8bb7d3b7beee7b1fe376e63c24e80b0121fa8f99d435ae775e6",
+      "image_id": "97716f7471cb78af548322ea0b6706f0cd19ababa16681bf69c3b4c29913917c",
       "source_hash": "b23834503004e1bc0000000000000be3"
     },
     "empty_merge_scan": {
-      "image_id": "98ff898033aaa9101926865d259663766eafee1099fbddd94f108bdf282e827b",
+      "image_id": "7f0e68674786a7d55d7e7be92d1f2d62bfbdc5c5ede42ab01631e10d9e1888ca",
       "source_hash": "b23834503004e1bc0000000000000be3"
     },
     "finish_ranked_step": {
-      "image_id": "a0a14aea91083afb53733e7b29ce0aefe5f9f8fddf657e354d0afe57a6c0db1a",
+      "image_id": "79d97298ff19ae33346e765ea212e31a2f027e7c132b8d30712110052c86caeb",
       "source_hash": "b23834503004e1bc0000000000000be3"
     },
     "merge_bucket_index": {
-      "image_id": "be2742ecbc576882931388f1ab87a352b35f980547d961b6b7ffad42e7f06979",
+      "image_id": "2b4eeb9616a339d27cef425c8e317bb9705b201593a8cf34fc68fae88711fe07",
       "source_hash": "b23834503004e1bc0000000000000be3"
     },
     "scan_merge_rules": {
-      "image_id": "b84f3b1ca226d37ca1283ce183b21c2d3e885b66a3cda8cf611d810c0d9c2f0d",
+      "image_id": "8f90325d1cc5fdb0d9ace58870ec3216084242023231dbdd6b929753e7004143",
       "source_hash": "b23834503004e1bc0000000000000be3"
     }
   },
   "toolchain": {
-    "risc0": "risc0-zkvm-1.2",
+    "risc0": "risc0-zkvm-3.0.6",
     "build_mode": "local"
   }
 }

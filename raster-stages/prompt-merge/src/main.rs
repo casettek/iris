@@ -47,7 +47,7 @@ fn merge_once(pieces: List<BpePiece>, buckets: List<MergeBucket>, count: u32) ->
         tile = apply_ranked_merge,
         input = pieces,
         chunk = 256,
-        output = new!(BpePieces),
+        output,
         args = (best,)
     )
 }

@@ -47,7 +47,7 @@ fn main(prompt: PromptTokenization, embedding: EmbeddingTable) -> Result<Activat
     let embedding_scale = select!(i32, embedding.clone().embedding_scale);
     let values = select!(Bytes<196_608>, embedding.values);
 
-    let draft = call!(begin_prompt_activations, new!(ActivationSequence));
+    let draft = call!(begin_prompt_activations);
     let embedded = call_recur_seq!(
         sequence = embed_prompt_token,
         input = token_ids,
@@ -57,13 +57,11 @@ fn main(prompt: PromptTokenization, embedding: EmbeddingTable) -> Result<Activat
     raster::println!("embedding pass → {:?}", embedded);
 
     let errors = select!(List<String>, embedded.clone().errors);
+    let summary_seed = call!(begin_error_summary);
     let summary = call_recur!(
         tile = summarise_errors,
         input = errors,
-        state = ErrorSummary {
-            count: 0,
-            first: String::new()
-        },
+        state = summary_seed,
         args = ()
     );
     let error_count = select!(u32, summary.clone().count);

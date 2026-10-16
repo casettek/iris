@@ -49,37 +49,31 @@ pub fn page_of(byte_offset: u64, page_size: u64) -> u64 {
     }
 }
 
-/// Stamps this decode step's absolute position onto the activation sequence.
+/// Opens the decode step's activation sequence at its absolute position and
+/// appends the one gathered row, or records a miss when the page does not
+/// contain a full row of `hidden_size`.
 ///
-/// The mirror of `input-embedding`'s `begin_prompt_activations`, which sets
-/// zero. Here it is `selected.decode_position`, which `prefill-finalize`
-/// already computed as `start_position + token_count` — the position after
-/// everything scored so far, which is exactly where the token it selected
-/// belongs. Every layer downstream reads this to place its token for RoPE and
-/// for window visibility, so getting it wrong is a wrong answer rather than an
-/// error.
-#[tile(kind = iter, description = "Open the decode step's activation sequence at its position")]
-pub fn begin_decode_activations(
-    output: Draft<ActivationSequence>,
+/// The position is the mirror of `input-embedding`'s `begin_prompt_activations`,
+/// which sets zero. Here it is `selected.decode_position`, which
+/// `prefill-finalize` already computed as `start_position + token_count` — the
+/// position after everything scored so far, which is exactly where the token it
+/// selected belongs. Every layer downstream reads this to place its token for
+/// RoPE and for window visibility, so getting it wrong is a wrong answer rather
+/// than an error.
+///
+/// One tile, because a draft lives inside the tile that creates it: a decode
+/// step has a single row to append, so there is no recur site to hand it to.
+#[tile(kind = iter, description = "Embed the decode step's token at its position")]
+pub fn embed_decode_token(
     decode_position: u32,
-) -> Draft<ActivationSequence> {
-    let mut output = output;
-    output.start_position().set(decode_position);
-    output
-}
-
-/// Extracts the row at `byte_off` from its page and appends it, or records
-/// a miss when the page does not contain a full row of `hidden_size`.
-#[tile(kind = iter, description = "Append one gathered activation row")]
-pub fn append_activation_row(
-    output: Draft<ActivationSequence>,
     token_id: u32,
     page: BytesPage,
     byte_off: u64,
     hidden_size: u32,
     embedding_scale: i32,
 ) -> Draft<ActivationSequence> {
-    let mut output = output;
+    let mut output = Draft::<ActivationSequence>::new();
+    output.start_position().set(decode_position);
     match unpack_i32s_at(&page, byte_off, hidden_size) {
         // Gemma scales the embedding by sqrt(hidden) before layer 0. Applied
         // here, with the canonical multiply, because the row is only ever read
@@ -101,6 +95,18 @@ pub fn append_activation_row(
         )),
     }
     output
+}
+
+/// The failure fold's opening state: nothing counted.
+///
+/// A stored seed, so the fold's state chain starts at a committed value
+/// rather than a literal nothing pins.
+#[tile(kind = iter, description = "Open the failure summary with nothing counted")]
+pub fn begin_error_summary() -> ErrorSummary {
+    ErrorSummary {
+        count: 0,
+        first: String::new(),
+    }
 }
 
 /// Folds the recorded failures into a count plus the first message.

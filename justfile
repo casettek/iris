@@ -13,7 +13,7 @@ claim run="inference.toml":
     cargo run --release -p iris-cli -- claim build --run "{{run}}"
 
 replay-profile stage top_n="3" run="inference.toml":
-    cargo run --release -p iris-cli -- replay-profile --run "{{run}}" --stage "{{stage}}" --top-n "{{top_n}}"
+    cargo run --release -p iris-cli --features replay-profile -- replay-profile --run "{{run}}" --stage "{{stage}}" --top-n "{{top_n}}"
 
 corrupt checkpoints:
     cargo run --release -p iris-cli -- claim corrupt --checkpoints "{{checkpoints}}"

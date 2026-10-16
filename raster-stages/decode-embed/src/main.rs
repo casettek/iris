@@ -34,31 +34,23 @@ fn main(selected: DecodeEdge, embedding: EmbeddingTable) -> Result<ActivationSeq
     let page_idx = call!(page_of, byte_off.clone(), page_size);
     let page = select!(BytesPage, values[page_idx]);
 
-    let draft = call!(
-        begin_decode_activations,
-        new!(ActivationSequence),
-        decode_position
-    );
     let embedded = call!(
-        append_activation_row,
-        draft,
+        embed_decode_token,
+        decode_position,
         token_id,
         page,
         byte_off,
         hidden_size,
         embedding_scale
     );
-    let embedded = finalize(embedded);
     raster::println!("decode embed → {:?}", embedded);
 
     let errors = select!(List<String>, embedded.clone().errors);
+    let summary_seed = call!(begin_error_summary);
     let summary = call_recur!(
         tile = summarise_errors,
         input = errors,
-        state = ErrorSummary {
-            count: 0,
-            first: String::new()
-        },
+        state = summary_seed,
         args = ()
     );
     let error_count = select!(u32, summary.clone().count);

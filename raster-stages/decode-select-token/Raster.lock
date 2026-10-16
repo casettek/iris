@@ -1,30 +1,38 @@
 {
   "format": 1,
-  "program_commitment": "117d27d5d89a8e06c97e9b7fd2b1304a5f02e4e7758496177fdb78daa9ad4ca2",
+  "program_commitment": "c9e6e95238fe38c068df30207d9d631b29a66cd95288251767f4281f960a66e1",
   "tiles": {
     "append_selected_token": {
-      "image_id": "43f776ea71c19ae7618bca867dee7ad65fd7234b5f4b6ecff3bea294a2131e4d",
-      "source_hash": "0eaa5fdf9a4987f40000000000000ea3"
+      "image_id": "6535c6e0754ca958682d776ac39d39b1432f7367960da60c8e774362f5499111",
+      "source_hash": "4d9d1eece7c201330000000000001178"
+    },
+    "begin_argmax": {
+      "image_id": "1307908654cf25844b0222d55e8c5fe98a1f87a14bdd09edd2354f4bb5c92b01",
+      "source_hash": "4d9d1eece7c201330000000000001178"
     },
     "begin_decode_edge": {
-      "image_id": "3d295cd1949f60f0217e88096ed7f927172e1f430eb3e5f3d59b3e1a1eb4144e",
-      "source_hash": "0eaa5fdf9a4987f40000000000000ea3"
+      "image_id": "19cdbc83aa042dae264fec5775b38c9a24abb1a18fe7d52649f1fa03b490b39d",
+      "source_hash": "4d9d1eece7c201330000000000001178"
     },
     "copy_generated_token_ids": {
-      "image_id": "924cc542c02ca5b8e3e1a6b2e74a55de8a90806489352a4df13b4cffe05ef29e",
-      "source_hash": "0eaa5fdf9a4987f40000000000000ea3"
+      "image_id": "076c50ae44ca4b96c0dd003d76255c1917991d15b65ea2f4cf38df15485be9af",
+      "source_hash": "4d9d1eece7c201330000000000001178"
     },
     "finish_selection": {
-      "image_id": "897bab939bc93c5db7a08840dca7f347dfa39566614b99dfdc43c9d99debf165",
-      "source_hash": "0eaa5fdf9a4987f40000000000000ea3"
+      "image_id": "688045124f6e165424068201683e32f703e693726a67528f191f248a4b07f5b2",
+      "source_hash": "4d9d1eece7c201330000000000001178"
     },
     "scan_logit_chunk": {
-      "image_id": "2587531c3ca6c9092a9995872f415c0f5b06c62971e1c9a8bcd20057b82ca101",
-      "source_hash": "0eaa5fdf9a4987f40000000000000ea3"
+      "image_id": "8f671de891f41e22f0c4f35c01c170a6554c36213fbf19cf7d54b9d658644b41",
+      "source_hash": "4d9d1eece7c201330000000000001178"
+    },
+    "selected_token_ids": {
+      "image_id": "8526a2f01c6e1a45916d8431e01cb3920071640edd243b5f37ef7a363062d1fb",
+      "source_hash": "4d9d1eece7c201330000000000001178"
     }
   },
   "toolchain": {
-    "risc0": "risc0-zkvm-1.2",
+    "risc0": "risc0-zkvm-3.0.6",
     "build_mode": "local"
   }
 }

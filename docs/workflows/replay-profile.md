@@ -3,8 +3,14 @@
 Use `replay-profile` to investigate whether an inference stage's tile boundaries
 produce expensive replay units on a representative workload:
 
+> **Requires Raster's `risc0-estimator` branch.** The workflow reads
+> `raster_analysis::replay_profile` and drives replay-profile flags of
+> `cargo raster`, which are not on the Raster branch the stages currently
+> target. It is behind the `replay-profile` cargo feature of `iris-cli`, off by
+> default; `just replay-profile` enables it.
+
 ```sh
-cargo run --release -p iris-cli -- replay-profile \
+cargo run --release -p iris-cli --features replay-profile -- replay-profile \
   --run inference.toml --stage prefill_range_l13 --top-n 3
 # Equivalent shortcut:
 just replay-profile prefill_range_l13
@@ -147,7 +153,7 @@ for manual review and has no budget threshold or automatic authoring verdict.
 With the matching Raster CLI on `PATH` and the RISC Zero guest toolchain installed:
 
 ```sh
-cargo test --release --locked -p iris-cli --test replay_profile \
+cargo test --release --locked -p iris-cli --features replay-profile --test replay_profile \
   replay_profile_tokenizer_smoke -- --ignored --nocapture
 ```
 

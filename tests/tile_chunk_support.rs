@@ -1,4 +1,4 @@
-//! Fixture and trace capture shared by the three page-grouping regressions.
+//! Fixture and trace capture shared by the three page-iteration regressions.
 use raster::core::trace::TraceEvent;
 use raster::prelude::*;
 use std::sync::Mutex;
@@ -26,7 +26,7 @@ pub fn iteration_count() -> usize {
 }
 
 /// Sparse, signed Q16 rows with an independently known dot product against ones.
-/// Cases cover an empty input, a short page, a full pair and a short last chunk.
+/// Cases cover an empty input, a short page, two full pages and a short last page.
 pub fn cases() -> [usize; 4] {
     [0, 1, ROWS_PER_PAGE * 2, ROWS_PER_PAGE * 2 + 1]
 }

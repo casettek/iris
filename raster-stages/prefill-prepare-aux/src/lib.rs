@@ -20,12 +20,9 @@ use input::*;
 
 /// Seeds the output draft with the layer it belongs to.
 #[tile(kind = iter, description = "Open this layer's prefill-input draft")]
-pub fn begin_ple_layer(
-    output: Draft<PleLayerInputs>,
-    params: PleLayerParams,
-) -> Draft<PleLayerInputs> {
-    let mut output = output;
-    output.layer_idx().set(params.layer_idx);
+pub fn begin_ple_layer(layer_idx: u32) -> Draft<PleLayerInputs> {
+    let mut output = Draft::<PleLayerInputs>::new();
+    output.layer_idx().set(layer_idx);
     output
 }
 
@@ -83,15 +80,15 @@ pub fn assert_matrix_bytes(byte_len: u64, out_len: u32, in_width: u32) -> Result
     }
 }
 
-/// A bounded block of row-major weight pages: each output row is `in_width` i32s, dotted
+/// One page of a row-major matrix: each output row is `in_width` i32s, dotted
 /// with `row` and written at `page.offset() / stride`.
 #[tile(
     kind = recur,
-    description = "MAC a bounded block of weight pages into the output accumulator",
-    estimated_cycles = 1_600_000
+    description = "MAC one weight page into the output accumulator",
+    estimated_cycles = 800_000
 )]
 pub fn mac_weight_page(
-    input: RecurInput<Block<BytesPage>>,
+    input: RecurInput<BytesPage>,
     state: RecurState<ProjAccum>,
     row: BytesPage,
     in_width: u32,
@@ -100,11 +97,9 @@ pub fn mac_weight_page(
     if !state.error.is_empty() {
         return state;
     }
-    for page in input.into_value().iter() {
-        if let Err(error) = mac_page(&mut state, page, &row, in_width) {
-            state.error = error;
-            break;
-        }
+    let page = input.into_value();
+    if let Err(error) = mac_page(&mut state, &page, &row, in_width) {
+        state.error = error;
     }
     state
 }
@@ -237,6 +232,18 @@ fn combine_row(
     }
     scale_row(&mut embedded, params.input_scale);
     Ok(embedded)
+}
+
+/// The failure fold's opening state: nothing counted.
+///
+/// A stored seed, so the fold's state chain starts at a committed value
+/// rather than a literal nothing pins.
+#[tile(kind = iter, description = "Open the failure summary with nothing counted")]
+pub fn begin_error_summary() -> ErrorSummary {
+    ErrorSummary {
+        count: 0,
+        first: String::new(),
+    }
 }
 
 /// Folds the recorded failures into a count plus the first message.

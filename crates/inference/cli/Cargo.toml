@@ -8,6 +8,11 @@ default-run = "iris"
 name = "iris"
 path = "src/main.rs"
 
+[features]
+# Needs `raster_analysis::replay_profile` and `cargo raster` replay-profile
+# flags, which only exist on Raster's `risc0-estimator` branch.
+replay-profile = ["dep:raster-analysis"]
+
 [dependencies]
 anyhow = "1.0"
 clap = { version = "4.5", features = ["derive"] }
@@ -17,7 +22,7 @@ hex = "0.4"
 inference-artifacts = { path = "../artifacts" }
 model-import = { path = "../../model/import" }
 raster-runtime = { path = "../../../../raster/crates/raster-runtime" }
-raster-analysis = { path = "../../../../raster/crates/raster-analysis" }
+raster-analysis = { path = "../../../../raster/crates/raster-analysis", optional = true }
 run-prep = { path = "../../model/run-prep" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"

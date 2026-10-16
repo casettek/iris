@@ -6,8 +6,6 @@
 //!   errors     ──recur──▶ summarise ──▶ assert none
 //! ```
 
-// Matrix/logit replay resolution: two existing pages per tile. This literal
-// is pinned in the CFS; changing it requires rebuilding this program identity.
 use raster::prelude::*;
 
 use prefill_finalize::input::*;
@@ -34,26 +32,24 @@ fn main(activations: ActivationSequence, head: FinalHead) -> Result<PrefillLogit
 
     let normalized = call!(normalize_final_position, position.clone(), params.clone())?;
 
-    let draft = call!(begin_logits, new!(PrefillLogits), position, start_position);
+    let token_count = select!(u32, position.token_count);
+    let draft = call!(begin_logits, token_count, start_position);
 
     let pages = select!(List<BytesPage>, head.projection.pages);
     let logits = call_recur!(
         tile = project_logit_page,
         input = pages,
-        chunk = 2,
         output = draft,
         args = (normalized, params)
     );
     raster::println!("prefill finalize → {:?}", logits);
 
     let errors = select!(List<String>, logits.clone().errors);
+    let summary_seed = call!(begin_error_summary);
     let summary = call_recur!(
         tile = summarise_errors,
         input = errors,
-        state = ErrorSummary {
-            count: 0,
-            first: String::new()
-        },
+        state = summary_seed,
         args = ()
     );
     let error_count = select!(u32, summary.clone().count);

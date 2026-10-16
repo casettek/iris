@@ -134,11 +134,8 @@ pub fn validate_decode_edge(has_selected: bool, count: u32) -> Result<u32> {
 }
 
 #[tile(kind = iter, description = "Open final generated output")]
-pub fn begin_generated_output(
-    output: Draft<GeneratedOutput>,
-    state: FinalizeState,
-) -> Draft<GeneratedOutput> {
-    let mut output = output;
+pub fn begin_generated_output(state: FinalizeState) -> Draft<GeneratedOutput> {
+    let mut output = Draft::<GeneratedOutput>::new();
     let digest = Sha256::digest(state.json.as_bytes());
     output.generated_token_count().set(state.count);
     output

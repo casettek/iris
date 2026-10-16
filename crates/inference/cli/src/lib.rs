@@ -10,6 +10,7 @@ mod challenge;
 mod claim;
 mod infer;
 mod parity;
+#[cfg(feature = "replay-profile")]
 mod replay_profile;
 #[cfg(test)]
 mod test_support;
@@ -23,6 +24,7 @@ pub use claim::{
     CorruptCheckpointHashesOptions, CorruptCheckpointHashesResult, CorruptCheckpointSelection,
 };
 pub use infer::run_infer;
+#[cfg(feature = "replay-profile")]
 pub use replay_profile::{run_replay_profile, ReplayProfileOptions};
 pub use inference_artifacts::{
     build_checkpoint_trace, write_claim_artifacts, ChallengeBundle, ChallengeTrace, Checkpoint,
@@ -67,6 +69,7 @@ enum Commands {
     /// Fast unconstrained deterministic inference.
     Infer(InferArgs),
     /// Measure the heaviest tile replays in one exact stage instance.
+    #[cfg(feature = "replay-profile")]
     ReplayProfile(ReplayProfileArgs),
     /// Run the pinned three-path end-to-end parity suite.
     TestParity,
@@ -130,6 +133,7 @@ struct InferArgs {
     run: PathBuf,
 }
 
+#[cfg(feature = "replay-profile")]
 #[derive(Debug, Args)]
 struct ReplayProfileArgs {
     #[arg(long, default_value = inference_artifacts::INFERENCE_RUN_SPEC_TOML)]
@@ -248,6 +252,7 @@ fn execute(cli: Cli) -> Result<ExitCode> {
     }
 
     match cli.command {
+        #[cfg(feature = "replay-profile")]
         Some(Commands::ReplayProfile(args)) => {
             warn_if_debug_build("replay-profile");
             run_replay_profile(ReplayProfileOptions {

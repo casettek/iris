@@ -73,7 +73,7 @@ fn main(tokenizer: PromptTokenizer, merged_pieces: BpePieces) -> Result<PromptTo
     let tokens = call_recur_seq!(
         sequence = resolve_piece,
         input = pieces,
-        output = new!(PromptTokenization),
+        output,
         args = (vocab, vocab_count)
     );
     Ok(tokens)

@@ -32,7 +32,7 @@ pub struct ProfilePass {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NativeInvocation {
     pub invocation_index: u64,
-    pub coordinates: Vec<u32>,
+    pub coordinates: Vec<i32>,
     pub total_duration_ns: u64,
     pub user_duration_ns: u64,
     pub raster_overhead_ns: u64,
@@ -61,7 +61,7 @@ pub struct ReplayTileMeasurement {
     pub max_guest_cycles: Option<u64>,
     pub total_guest_cycles: u64,
     pub heaviest_exec_index: Option<u64>,
-    pub heaviest_coordinates: Option<Vec<u32>>,
+    pub heaviest_coordinates: Option<Vec<i32>>,
     #[serde(default)]
     pub transition_overhead: Option<ReplayTransitionOverhead>,
 }
@@ -70,7 +70,7 @@ pub struct ReplayTileMeasurement {
 pub struct ReplayTransitionOverhead {
     pub guest_cycles: u64,
     pub sampled_exec_index: u64,
-    pub sampled_coordinates: Vec<u32>,
+    pub sampled_coordinates: Vec<i32>,
     pub transition_image_id: String,
     pub context: String,
     pub context_version: u32,

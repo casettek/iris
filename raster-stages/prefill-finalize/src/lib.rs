@@ -6,7 +6,7 @@
 //!   logit[t] = softcap(normed · projection[t])
 //! ```
 //!
-//! The projection is a paged byte region; each replay unit scores up to two pages of
+//! The projection is a paged byte region; each replay unit scores one page of
 //! vocabulary rows. `token_id` is `page.offset() / (hidden * 4) + local_row`.
 //!
 //! `#![no_std]` so the same tiles compile into RISC0 replay guests.
@@ -103,29 +103,25 @@ pub fn normalize_final_position(
 
 /// Seeds the output draft with the position decoding resumes from.
 #[tile(kind = iter, description = "Open the logits draft at the decode position")]
-pub fn begin_logits(
-    output: Draft<PrefillLogits>,
-    position: FinalPosition,
-    start_position: u32,
-) -> Draft<PrefillLogits> {
-    let mut output = output;
+pub fn begin_logits(token_count: u32, start_position: u32) -> Draft<PrefillLogits> {
+    let mut output = Draft::<PrefillLogits>::new();
     // Absolute, not a count. `token_count` alone is the position of the next
     // token only when the stage started at zero; a decode stage sees one row
     // and would otherwise report position 1 no matter how far in it is.
     output
         .decode_position()
-        .set(start_position + position.token_count);
+        .set(start_position + token_count);
     output
 }
 
-/// Scores a bounded block of vocabulary pages in order, appending each logit.
+/// Scores one page of the vocabulary: a dot product per row, then softcap.
 #[tile(
     kind = recur,
-    description = "Score a bounded block of vocabulary pages",
-    estimated_cycles = 1_600_000
+    description = "Score one page of the vocabulary",
+    estimated_cycles = 800_000
 )]
 pub fn project_logit_page(
-    input: RecurInput<Block<BytesPage>>,
+    input: RecurInput<BytesPage>,
     output: RecurOutput<PrefillLogits>,
     normalized: NormalizedPosition,
     params: FinalHeadParams,
@@ -147,43 +143,54 @@ pub fn project_logit_page(
         return output;
     }
 
-    for page in input.into_value().iter() {
-        let weights = match unpack_i32s(page) {
-            Ok(values) => values,
-            Err(error) => {
-                output.errors().push(error);
-                continue;
-            }
-        };
-        if hidden == 0 || weights.len() % hidden != 0 {
-            output.errors().push(alloc::format!(
-                "projection page at offset {} is not a whole number of hidden-width rows",
-                page.offset()
-            ));
-            continue;
+    let page = input.into_value();
+    let weights = match unpack_i32s(&page) {
+        Ok(values) => values,
+        Err(error) => {
+            output.errors().push(error);
+            return output;
         }
-        let stride = hidden as u64 * 4;
-        if page.offset() % stride != 0 {
-            output.errors().push(String::from(
-                "projection page offset is not row-aligned",
-            ));
-            continue;
-        }
-        let first_id = (page.offset() / stride) as u32;
-        for (local, row) in weights.chunks_exact(hidden).enumerate() {
-            let token_id = first_id + local as u32;
-            match dot(&position, row) {
-                Ok(value) => output.logits().push(LogitEntry {
-                    token_id,
-                    value: softcap(value, params.softcap),
-                }),
-                Err(error) => output
-                    .errors()
-                    .push(alloc::format!("token {token_id}: {error}")),
-            }
+    };
+    if hidden == 0 || weights.len() % hidden != 0 {
+        output.errors().push(alloc::format!(
+            "projection page at offset {} is not a whole number of hidden-width rows",
+            page.offset()
+        ));
+        return output;
+    }
+    let stride = hidden as u64 * 4;
+    if page.offset() % stride != 0 {
+        output.errors().push(String::from(
+            "projection page offset is not row-aligned",
+        ));
+        return output;
+    }
+    let first_id = (page.offset() / stride) as u32;
+    for (local, row) in weights.chunks_exact(hidden).enumerate() {
+        let token_id = first_id + local as u32;
+        match dot(&position, row) {
+            Ok(value) => output.logits().push(LogitEntry {
+                token_id,
+                value: softcap(value, params.softcap),
+            }),
+            Err(error) => output
+                .errors()
+                .push(alloc::format!("token {token_id}: {error}")),
         }
     }
     output
+}
+
+/// The failure fold's opening state: nothing counted.
+///
+/// A stored seed, so the fold's state chain starts at a committed value
+/// rather than a literal nothing pins.
+#[tile(kind = iter, description = "Open the failure summary with nothing counted")]
+pub fn begin_error_summary() -> ErrorSummary {
+    ErrorSummary {
+        count: 0,
+        first: String::new(),
+    }
 }
 
 /// Folds the recorded failures into a count plus the first message.

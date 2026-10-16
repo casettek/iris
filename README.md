@@ -22,8 +22,9 @@ cargo run --release -p iris-cli -- infer --run inference.toml
 # Proposer claim with every staged checkpoint.
 cargo run --release -p iris-cli -- claim build --run inference.toml
 
-# Manual replay-cost measurements for one stage.
-cargo run --release -p iris-cli -- replay-profile \
+# Manual replay-cost measurements for one stage (needs Raster's
+# risc0-estimator branch; see docs/workflows/replay-profile.md).
+cargo run --release -p iris-cli --features replay-profile -- replay-profile \
   --run inference.toml --stage prefill_range_l13 --top-n 3
 
 # Verifier challenge from a prior claim bundle.

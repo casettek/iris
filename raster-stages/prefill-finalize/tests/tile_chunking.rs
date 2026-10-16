@@ -1,4 +1,4 @@
-//! Verify append order and offsets across a full pair and a short final chunk.
+//! Verify append order and offsets across full pages and a short final page.
 use prefill_finalize::input::*;
 use prefill_finalize::*;
 use raster::prelude::*;
@@ -11,21 +11,20 @@ fn test_logits(
     weights: Bytes<196_608>,
     normalized: NormalizedPosition,
     params: FinalHeadParams,
-    position: FinalPosition,
+    token_count: u32,
 ) -> PrefillLogits {
     let pages = select!(List<BytesPage>, weights.pages);
-    let draft = call!(begin_logits, new!(PrefillLogits), position, 0u32);
+    let draft = call!(begin_logits, token_count, 0u32);
     call_recur!(
         tile = project_logit_page,
         input = pages,
-        chunk = 2,
         output = draft,
         args = (normalized, params)
     )
 }
 
 #[test]
-fn two_page_tiles_preserve_every_logit_and_its_token_id() {
+fn one_page_tiles_preserve_every_logit_and_its_token_id() {
     raster::init_with(support::Counter);
     let _scope = raster::__private::SequenceScopeGuard::enter("chunk_fixture");
     for rows in support::cases() {
@@ -43,12 +42,7 @@ fn two_page_tiles_preserve_every_logit_and_its_token_id() {
                 softcap: 0,
                 norm_weights: values.clone(),
             }),
-            raster::into_auth_ref(FinalPosition {
-                found: true,
-                token_id: 0,
-                token_count: 1,
-                values,
-            }),
+            raster::into_auth_ref(1u32),
         ));
         assert!(logits.errors.is_empty());
         assert_eq!(logits.decode_position, 1);
@@ -58,6 +52,6 @@ fn two_page_tiles_preserve_every_logit_and_its_token_id() {
             assert_eq!(logit.value, value);
         }
         let pages = rows.div_ceil(support::ROWS_PER_PAGE);
-        assert_eq!(support::iteration_count(), pages.div_ceil(2));
+        assert_eq!(support::iteration_count(), pages);
     }
 }

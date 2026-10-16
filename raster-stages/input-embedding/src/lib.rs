@@ -49,8 +49,8 @@ pub fn page_of(byte_offset: u64, page_size: u64) -> u64 {
 /// decode step's embed stage sets a different value from the same field.
 /// Set-once, so it happens here rather than inside the per-token append.
 #[tile(kind = iter, description = "Open the prompt's activation sequence at position zero")]
-pub fn begin_prompt_activations(output: Draft<ActivationSequence>) -> Draft<ActivationSequence> {
-    let mut output = output;
+pub fn begin_prompt_activations() -> Draft<ActivationSequence> {
+    let mut output = Draft::<ActivationSequence>::new();
     output.start_position().set(0);
     output
 }
@@ -88,6 +88,18 @@ pub fn append_activation_row(
         )),
     }
     output
+}
+
+/// The failure fold's opening state: nothing counted.
+///
+/// A stored seed, so the fold's state chain starts at a committed value
+/// rather than a literal nothing pins.
+#[tile(kind = iter, description = "Open the failure summary with nothing counted")]
+pub fn begin_error_summary() -> ErrorSummary {
+    ErrorSummary {
+        count: 0,
+        first: String::new(),
+    }
 }
 
 /// Folds the recorded failures into a count plus the first message.

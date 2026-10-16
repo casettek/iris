@@ -1,4 +1,4 @@
-//! Verify that a two-page replay consumes all rows and only the required iterations.
+//! Verify that one-page replays consume all rows with one iteration per page.
 use prefill_prepare_aux::input::*;
 use prefill_prepare_aux::*;
 use raster::prelude::*;
@@ -13,14 +13,13 @@ fn test_projection(weights: Bytes<196_608>, row: BytesPage, width: u32, rows: u3
     call_recur!(
         tile = mac_weight_page,
         input = pages,
-        chunk = 2,
         state = acc,
         args = (row, width)
     )
 }
 
 #[test]
-fn two_page_tiles_cover_empty_short_full_and_odd_page_counts() {
+fn one_page_tiles_cover_empty_short_full_and_odd_page_counts() {
     raster::init_with(support::Counter);
     let _scope = raster::__private::SequenceScopeGuard::enter("chunk_fixture");
     for rows in support::cases() {
@@ -35,6 +34,6 @@ fn two_page_tiles_cover_empty_short_full_and_odd_page_counts() {
         assert!(projected.error.is_empty(), "{}", projected.error);
         assert_eq!(unpack_i32s(&projected.values).unwrap(), expected);
         let pages = rows.div_ceil(support::ROWS_PER_PAGE);
-        assert_eq!(support::iteration_count(), pages.div_ceil(2));
+        assert_eq!(support::iteration_count(), pages);
     }
 }

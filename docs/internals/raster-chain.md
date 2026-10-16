@@ -37,18 +37,14 @@ High-level stage order:
 
 The layer loop lives in the chain manifest rather than in one Raster program. A generated model expands one program over many stage instances, preserving bounded replay units and per-stage auditability.
 
-Weight-matrix and logit sweeps use one fixed replay resolution: `chunk = 2`
-over the existing `List<BytesPage>`. The auxiliary projection, all transformer
-matrix projections, and the output-head projection consume at most two pages
-per tile, including a one-page final chunk when the page count is odd. The
-same programs serve prefill and decode. Attention and cache-copy sweeps keep
-their existing chunk size of 64.
+Weight-matrix and logit sweeps use one page per tile: each `call_recur!`
+walks the existing `List<BytesPage>` without a `chunk`. The auxiliary
+projection, all transformer matrix projections, and the output-head projection
+replay one page per iteration. The same programs serve prefill and decode.
+Attention and cache-copy sweeps keep their existing chunk size of 64.
 
-This changes tile resolution only: weight page sizes, imported artifacts,
-stage boundaries, and the stage inventory are unchanged. Native-staged and
-native-direct retain their whole-matrix kernels and must produce exactly the
-same stage outputs as Raster. There is no runtime sizing setting or variant
-selection. To change the fixed size, update the corresponding `call_recur!`
-literals and rebuild and verify the three affected program identities as
-described in [development](development.md). Two pages is an initial choice,
-not a measured optimum for zkVM replay cost.
+Native-staged and native-direct retain their whole-matrix kernels and must
+produce exactly the same stage outputs as Raster. To group pages, add
+`chunk = N` to the corresponding `call_recur!` sites, take
+`RecurInput<Block<BytesPage>>` in the step tile, and rebuild and verify the
+three affected program identities as described in [development](development.md).
