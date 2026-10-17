@@ -48,6 +48,7 @@ just challenge \
 
 ## Workflows
 
+- [Native Windows inference](docs/workflows/windows.md): PowerShell build, compatibility patches, and Windows model paths.
 - [Three-path parity](docs/workflows/test-parity.md): run `just test-parity` to compare Raster-staged, native-staged, and native-direct inference on a pinned model and corpus.
 - [Model import](docs/workflows/model-import.md): bundle inputs, generated externals, model-specific templates, and model manifests.
 - [Infer](docs/workflows/infer.md): fast deterministic inference through `direct-infer`.

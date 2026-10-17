@@ -33,3 +33,8 @@ default-members = [
     "crates/inference/staged",
     "crates/inference/cli",
 ]
+
+[patch.crates-io]
+risc0-zkvm-platform = { path = "../raster/vendor/risc0-zkvm-platform" }
+risc0-circuit-keccak = { path = "../raster/vendor/risc0-circuit-keccak" }
+risc0-zkvm = { path = "../raster/vendor/risc0-zkvm" }
