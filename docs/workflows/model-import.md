@@ -2,6 +2,15 @@
 
 `model import` is the shared setup step for every workflow. It reads a Gemma bundle and writes the committed artifacts the repo uses afterward.
 
+Weight imports memory-map `model.detwgt` and pack the current external directly
+into Raster pages. They do not load the entire file or retain decoded tensors
+for the whole model. Per-layer embeddings are selected from the mapped table
+one layer at a time. Signed 16-bit weights are widened to the same canonical
+32-bit values, preserving artifact bytes and commitments. Raster serialization
+still needs memory for the current external and its encoding buffers; this is
+not a constant-memory streaming serializer. Keep the bundle unchanged during
+import, as with direct inference's memory-mapped reader.
+
 ```bash
 cargo run --release -p iris-cli -- model import \
   --model ../iris/assets/tiny-gemma-dev

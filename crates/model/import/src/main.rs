@@ -16,6 +16,7 @@
 
 mod direct_manifest;
 mod externals;
+mod mapped_weights;
 
 use externals::*;
 use std::collections::BTreeMap;
@@ -269,7 +270,9 @@ pub fn import_model(args: ImportConfig) -> Result<ImportResult, Box<dyn Error>> 
         });
     }
 
-    let weights = detwgt::load(&args.model_dir.join("model.detwgt"))?;
+    // Keep the bundle file-backed instead of owning the entire file plus all
+    // decoded tensors. Writers pack only the current external into pages.
+    let weights = detwgt::MmapDetwgt::open(&args.model_dir.join("model.detwgt"))?;
     let config: serde_json::Value =
         serde_json::from_slice(&fs::read(args.model_dir.join("config.json"))?)?;
     let text = config
@@ -336,7 +339,7 @@ pub fn import_model(args: ImportConfig) -> Result<ImportResult, Box<dyn Error>> 
         shape.hidden, shape.layers, shape.heads, shape.kv_heads, shape.head_dim, shape.ffn,
         shape.vocab, shape.ple_width
     );
-    println!("tensors: {}", weights.names().count());
+    println!("weights: memory-mapped DETWGT");
     println!();
 
     let mut stages = Vec::new();
@@ -940,17 +943,11 @@ inputs.merged_pieces = {{ from = "tokenize.pieces" }}
 // ---------------------------------------------------------------------------
 
 fn write_embedding(
-    weights: &detwgt::Artifact,
+    weights: &detwgt::MmapDetwgt,
     shape: &Shape,
     layout: &ArtifactLayout,
     stages: &mut Vec<String>,
 ) -> Result<(), Box<dyn Error>> {
-    let embed = weights.get("model.language_model.embed_tokens.weight")?;
-    let mut values = Vec::with_capacity(shape.vocab * shape.hidden);
-    for token_id in 0..shape.vocab {
-        values.extend_from_slice(embed.row(token_id)?);
-    }
-
     let commitment = write_external(
         &EmbeddingTable {
             hidden_size: shape.hidden as u32,
@@ -958,7 +955,12 @@ fn write_embedding(
             // by local `f32_to_act` so the committed bits match the
             // deterministic path exactly rather than approximately.
             embedding_scale: det_num::f32_to_act((shape.hidden as f32).sqrt()).to_bits(),
-            values: paged_i32s(&values).map_err(|error| error.to_string())?,
+            values: mapped_weights::rows(
+                weights,
+                "model.language_model.embed_tokens.weight",
+                0,
+                shape.vocab,
+            )?,
         },
         layout,
         "raster-stages/input-embedding",
@@ -989,21 +991,25 @@ fn write_embedding(
 // ---------------------------------------------------------------------------
 
 fn write_ple_layers(
-    weights: &detwgt::Artifact,
+    weights: &detwgt::MmapDetwgt,
     shape: &Shape,
     layout: &ArtifactLayout,
     stages: &mut Vec<String>,
 ) -> Result<(), Box<dyn Error>> {
-    let per_layer = weights.get("model.language_model.embed_tokens_per_layer.weight")?;
-    let projection = weights.get("model.language_model.per_layer_model_projection.weight")?;
-    let projection_norm = weights.get("model.language_model.per_layer_projection_norm.weight")?;
+    let projection_norm =
+        weights.values("model.language_model.per_layer_projection_norm.weight")?;
 
     for layer_idx in 0..shape.layers {
         let start = layer_idx * shape.ple_width;
         let end = start + shape.ple_width;
 
         // The packed [vocab, layers · width] table gives this layer its slice.
-        let slice = per_layer.column_slice(start, end)?;
+        let embeddings = mapped_weights::columns(
+            weights,
+            "model.language_model.embed_tokens_per_layer.weight",
+            start,
+            end,
+        )?;
 
         let layer = PleLayer {
             params: PleLayerParams {
@@ -1019,11 +1025,15 @@ fn write_ple_layers(
                 projection_scalar: det_act_bits((shape.hidden as f32).powf(-0.5)),
                 input_scale: det_act_bits(2f32.powf(-0.5)),
                 norm_eps: shape.norm_eps,
-                norm_weights: page_of_i32s(&projection_norm.values),
+                norm_weights: page_of_i32s(&projection_norm),
             },
-            embeddings: paged_i32s(&slice).map_err(|error| error.to_string())?,
-            projection: paged_i32s(&projection.rows(start, end)?)
-                .map_err(|error| error.to_string())?,
+            embeddings,
+            projection: mapped_weights::rows(
+                weights,
+                "model.language_model.per_layer_model_projection.weight",
+                start,
+                end,
+            )?,
         };
 
         let name = format!("layer{layer_idx}");
@@ -1055,7 +1065,7 @@ fn write_ple_layers(
 // ---------------------------------------------------------------------------
 
 fn write_transformer_layers(
-    weights: &detwgt::Artifact,
+    weights: &detwgt::MmapDetwgt,
     shape: &Shape,
     layout: &ArtifactLayout,
     stages: &mut Vec<String>,
@@ -1116,7 +1126,7 @@ fn write_transformer_layers(
 
     for layer_idx in 0..shape.layers {
         let at = |suffix: &str| format!("model.language_model.layers.{layer_idx}.{suffix}");
-        let gate = weights.get(&at("mlp.gate_proj.weight"))?;
+        let gate = weights.tensor(&at("mlp.gate_proj.weight"))?;
         let ffn = gate.dims[0] as usize;
 
         // Alternating sliding/full attention, as `layer_types` declares.
@@ -1130,14 +1140,15 @@ fn write_transformer_layers(
         let kv_donor_layer = shape.kv_donor_layer(layer_idx);
         // `attention_k_eq_v` layers store no separate V projection: V *is* K.
         // tiny-gemma-dev emits v_proj only for its sliding layers.
-        let w_v = match weights.get(&at("self_attn.v_proj.weight")) {
-            Ok(tensor) => &tensor.values,
-            Err(_) => &weights.get(&at("self_attn.k_proj.weight"))?.values,
+        let v_name = if weights.tensor(&at("self_attn.v_proj.weight")).is_ok() {
+            at("self_attn.v_proj.weight")
+        } else {
+            at("self_attn.k_proj.weight")
         };
         let layer_scalar = weights
-            .get(&at("layer_scalar"))
+            .slice(&at("layer_scalar"))
             .ok()
-            .and_then(|tensor| tensor.values.first().copied())
+            .and_then(|slice| slice.value_at(0).ok())
             .unwrap_or(0);
 
         let layer = TransformerLayer {
@@ -1158,45 +1169,37 @@ fn write_transformer_layers(
                 kv_donor_layer,
                 donor_a_layer,
                 donor_b_layer,
-                norm_input: page_of_i32s(&weights.get(&at("input_layernorm.weight"))?.values),
+                norm_input: page_of_i32s(&weights.values(&at("input_layernorm.weight"))?),
                 norm_post_attn: page_of_i32s(
-                    &weights.get(&at("post_attention_layernorm.weight"))?.values,
+                    &weights.values(&at("post_attention_layernorm.weight"))?,
                 ),
                 norm_pre_ffw: page_of_i32s(
-                    &weights.get(&at("pre_feedforward_layernorm.weight"))?.values,
+                    &weights.values(&at("pre_feedforward_layernorm.weight"))?,
                 ),
                 norm_post_ffw: page_of_i32s(
-                    &weights
-                        .get(&at("post_feedforward_layernorm.weight"))?
-                        .values,
+                    &weights.values(&at("post_feedforward_layernorm.weight"))?,
                 ),
-                q_norm: page_of_i32s(&weights.get(&at("self_attn.q_norm.weight"))?.values),
-                k_norm: page_of_i32s(&weights.get(&at("self_attn.k_norm.weight"))?.values),
+                q_norm: page_of_i32s(&weights.values(&at("self_attn.q_norm.weight"))?),
+                k_norm: page_of_i32s(&weights.values(&at("self_attn.k_norm.weight"))?),
                 ple_width: shape.ple_width as u32,
                 // Hidden-width, despite the name: it normalises *after*
                 // `per_layer_projection` maps back up from `ple_width`.
                 ple_post_norm: page_of_i32s(
-                    &weights.get(&at("post_per_layer_input_norm.weight"))?.values,
+                    &weights.values(&at("post_per_layer_input_norm.weight"))?,
                 ),
             },
-            w_q: paged_i32s(&weights.get(&at("self_attn.q_proj.weight"))?.values)
-                .map_err(|error| error.to_string())?,
-            w_k: paged_i32s(&weights.get(&at("self_attn.k_proj.weight"))?.values)
-                .map_err(|error| error.to_string())?,
-            w_v: paged_i32s(w_v).map_err(|error| error.to_string())?,
-            w_o: paged_i32s(&weights.get(&at("self_attn.o_proj.weight"))?.values)
-                .map_err(|error| error.to_string())?,
-            w_gate: paged_i32s(&gate.values).map_err(|error| error.to_string())?,
-            w_up: paged_i32s(&weights.get(&at("mlp.up_proj.weight"))?.values)
-                .map_err(|error| error.to_string())?,
-            ple_input_gate: paged_i32s(&weights.get(&at("per_layer_input_gate.weight"))?.values)
-                .map_err(|error| error.to_string())?,
-            ple_layer_projection: paged_i32s(
-                &weights.get(&at("per_layer_projection.weight"))?.values,
-            )
-            .map_err(|error| error.to_string())?,
-            w_down: paged_i32s(&weights.get(&at("mlp.down_proj.weight"))?.values)
-                .map_err(|error| error.to_string())?,
+            w_q: mapped_weights::tensor(weights, &at("self_attn.q_proj.weight"))?,
+            w_k: mapped_weights::tensor(weights, &at("self_attn.k_proj.weight"))?,
+            w_v: mapped_weights::tensor(weights, &v_name)?,
+            w_o: mapped_weights::tensor(weights, &at("self_attn.o_proj.weight"))?,
+            w_gate: mapped_weights::tensor(weights, &at("mlp.gate_proj.weight"))?,
+            w_up: mapped_weights::tensor(weights, &at("mlp.up_proj.weight"))?,
+            ple_input_gate: mapped_weights::tensor(weights, &at("per_layer_input_gate.weight"))?,
+            ple_layer_projection: mapped_weights::tensor(
+                weights,
+                &at("per_layer_projection.weight"),
+            )?,
+            w_down: mapped_weights::tensor(weights, &at("mlp.down_proj.weight"))?,
         };
 
         let name = format!("layer{layer_idx}");
@@ -1271,7 +1274,7 @@ fn inv_sqrt_q16(n: usize) -> i32 {
 // ---------------------------------------------------------------------------
 
 fn write_head(
-    weights: &detwgt::Artifact,
+    weights: &detwgt::MmapDetwgt,
     shape: &Shape,
     text: &serde_json::Value,
     layout: &ArtifactLayout,
@@ -1282,9 +1285,9 @@ fn write_head(
         .and_then(serde_json::Value::as_bool)
         .unwrap_or(false);
     let projection = if tied {
-        weights.get("model.language_model.embed_tokens.weight")?
+        "model.language_model.embed_tokens.weight"
     } else {
-        weights.get("model.language_model.lm_head.weight")?
+        "model.language_model.lm_head.weight"
     };
     let softcap = text
         .get("final_logit_softcapping")
@@ -1292,22 +1295,15 @@ fn write_head(
         .map(f32_to_q16)
         .unwrap_or(0);
 
-    let mut rows = Vec::with_capacity(shape.vocab * shape.hidden);
-    for token_id in 0..shape.vocab {
-        rows.extend_from_slice(projection.row(token_id)?);
-    }
-
     let commitment = write_external(
         &FinalHead {
             params: FinalHeadParams {
                 hidden_size: shape.hidden as u32,
                 norm_eps: shape.norm_eps,
                 softcap,
-                norm_weights: page_of_i32s(
-                    &weights.get("model.language_model.norm.weight")?.values,
-                ),
+                norm_weights: page_of_i32s(&weights.values("model.language_model.norm.weight")?),
             },
-            projection: paged_i32s(&rows).map_err(|error| error.to_string())?,
+            projection: mapped_weights::rows(weights, projection, 0, shape.vocab)?,
         },
         layout,
         "raster-stages/prefill-finalize",
@@ -1686,9 +1682,9 @@ mod tests {
             "abc",
         );
 
-        assert!(line.contains(
-            r#"path = "target/iris/run-prompt-placeholder/initial_pieces.rastered""#
-        ));
+        assert!(
+            line.contains(r#"path = "target/iris/run-prompt-placeholder/initial_pieces.rastered""#)
+        );
         assert!(!line.contains("runtime/model-artifacts"));
     }
 
