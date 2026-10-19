@@ -458,11 +458,90 @@ fn direct_executor_runs_from_direct_manifest_without_raster_toml() {
 }
 
 #[test]
+fn direct_executor_stops_at_eos_and_reports_only_selected_tokens() {
+    for eos_id in [2, 0] {
+        let dir = temp_dir("eos");
+        fs::create_dir_all(&dir).unwrap();
+        write_direct_fixture(&dir);
+        let manifest_path = dir.join(MODEL_ARTIFACTS_DIR).join(MODEL_MANIFEST_JSON);
+        let mut manifest: ModelManifest = inference_artifacts::read_json(&manifest_path).unwrap();
+        manifest.eos_token_ids = vec![eos_id];
+        write_json(&manifest_path, &manifest).unwrap();
+        let run_spec_path = write_run_spec(&dir, &manifest_path, "h", 8);
+        let report = DirectInferenceExecutor
+            .run_with_diagnostics(DirectInferenceConfig {
+                base_dir: dir.clone(),
+                run_spec_path,
+            })
+            .unwrap();
+        // The tiny model selects 2 first, then 0 after embedding token 2.
+        let expected = if eos_id == 2 { vec![2] } else { vec![2, 0] };
+        assert_eq!(report.report.input_token_count, Some(1));
+        assert_eq!(report.report.result.generated_token_ids, expected);
+        assert_eq!(
+            report.report.result.generated_token_count as usize,
+            expected.len()
+        );
+        assert_eq!(report.report.result.stop_reason, "eos");
+        assert_eq!(
+            report.report.result.generated_token_ids_sha256,
+            format!(
+                "{:x}",
+                Sha256::digest(serde_json::to_vec(&expected).unwrap())
+            )
+        );
+        let last = expected.len() - 1;
+        assert!(report
+            .boundaries
+            .iter()
+            .any(|b| b.stage == format!("decode_select_t{last}")));
+        assert!(!report
+            .boundaries
+            .iter()
+            .any(|b| b.stage == format!("decode_embed_t{last}")));
+        assert!(!report
+            .boundaries
+            .iter()
+            .any(|b| b.stage == format!("decode_select_t{}", last + 1)));
+        if eos_id == 2 {
+            write_staged_fixture(&dir, &[eos_id]);
+            let staged = UncheckpointedInferenceExecutor
+                .run(UncheckpointedInferenceConfig {
+                    base_dir: dir.clone(),
+                    manifest_path: dir.join("Raster.toml"),
+                })
+                .unwrap();
+            assert_eq!(report.report.result, staged);
+        }
+        fs::remove_dir_all(dir).unwrap();
+    }
+}
+
+#[test]
+fn direct_executor_keeps_a_maximum_budget_when_no_eos_is_selected() {
+    let dir = temp_dir("token-limit");
+    fs::create_dir_all(&dir).unwrap();
+    write_direct_fixture(&dir);
+    let manifest_path = dir.join(MODEL_ARTIFACTS_DIR).join(MODEL_MANIFEST_JSON);
+    let run_spec_path = write_run_spec(&dir, &manifest_path, "hhhh", 3);
+    let report = DirectInferenceExecutor
+        .run_with_report(DirectInferenceConfig {
+            base_dir: dir.clone(),
+            run_spec_path,
+        })
+        .unwrap();
+    assert_eq!(report.input_token_count, Some(4));
+    assert_eq!(report.result.generated_token_count, 3);
+    assert_eq!(report.result.stop_reason, "max_new_tokens");
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
 fn direct_executor_matches_uncheckpointed_staged_result() {
     let dir = temp_dir("parity");
     fs::create_dir_all(&dir).unwrap();
     let run_spec_path = write_direct_fixture(&dir);
-    write_staged_fixture(&dir);
+    write_staged_fixture(&dir, &[]);
 
     let direct = DirectInferenceExecutor
         .run(DirectInferenceConfig {
@@ -660,7 +739,7 @@ fn write_run_spec(dir: &Path, manifest_path: &Path, prompt: &str, tokens: u32) -
     path
 }
 
-fn write_staged_fixture(dir: &Path) {
+fn write_staged_fixture(dir: &Path, eos_ids: &[u32]) {
     let tokenizer = tiny_prompt_tokenizer();
     let pieces = BpePieces {
         pieces: List::from(vec![prompt_prepare::input::BpePiece {
@@ -687,17 +766,17 @@ fn write_staged_fixture(dir: &Path) {
             DecoderToken {
                 token: String::from("<pad>"),
                 special: false,
-                terminal: false,
+                terminal: eos_ids.contains(&0),
             },
             DecoderToken {
                 token: String::from("hello"),
                 special: false,
-                terminal: false,
+                terminal: eos_ids.contains(&1),
             },
             DecoderToken {
                 token: String::from("Hi"),
                 special: false,
-                terminal: false,
+                terminal: eos_ids.contains(&2),
             },
         ]),
     };

@@ -7,6 +7,10 @@ use clap::{Parser, Subcommand};
 #[derive(Debug, Parser)]
 #[command(name = "staged-infer")]
 struct Cli {
+    /// Persistent auxiliary worker; value is its retained-weight byte budget.
+    #[arg(long, hide = true)]
+    aux_worker: Option<usize>,
+
     #[command(subcommand)]
     command: Option<Commands>,
 
@@ -64,6 +68,10 @@ fn try_main() -> Result<ExitCode> {
 }
 
 fn execute(cli: Cli) -> Result<ExitCode> {
+    if let Some(bytes) = cli.aux_worker {
+        staged_infer::worker::run_worker(bytes)?;
+        return Ok(ExitCode::SUCCESS);
+    }
     if let Some(stage_dir) = cli.run_stage.as_ref() {
         require_input_args(&cli)?;
         staged_infer::parity::run_hidden_stage_direct(stage_dir)?;
@@ -210,6 +218,7 @@ mod tests {
     #[test]
     fn bare_invocation_is_rejected() {
         let error = execute(Cli {
+            aux_worker: None,
             command: None,
             compare_stage: None,
             run_stage: None,
@@ -224,6 +233,7 @@ mod tests {
     #[test]
     fn hidden_direct_stage_requires_input_files() {
         let error = execute(Cli {
+            aux_worker: None,
             command: None,
             compare_stage: None,
             run_stage: Some(PathBuf::from("prefill_range_l3")),

@@ -122,6 +122,14 @@ impl DirectTrace {
         Ok(())
     }
 
+    pub fn stop_at_eos(&mut self, layers: u32, generated_tokens: u32) {
+        if self.enabled() {
+            self.required = boundary_names(layers, generated_tokens)
+                .into_iter()
+                .collect();
+        }
+    }
+
     pub fn record<T: Serialize>(&mut self, stage: &str, value: &T) -> Result<()> {
         if !self.enabled() {
             return Ok(());

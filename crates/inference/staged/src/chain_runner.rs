@@ -19,6 +19,8 @@ use sha2::{Digest, Sha256};
 use crate::cache::{CachedInputs, CachedStageValue, StageOutputCache};
 use crate::parity::{parity_dir, EXECUTION_TIMES_JSON};
 use crate::routines::{self, StageKind};
+use crate::weights::{RunWeights, WeightAllocation};
+use crate::worker::{WorkerJob, WorkerPool};
 
 #[derive(Debug)]
 pub struct HybridRun {
@@ -210,11 +212,26 @@ struct StageOutput {
 }
 
 struct DirectStageRun {
+    timings: Option<routines::DirectTimings>,
     duration: Duration,
     output: Option<CachedStageValue>,
 }
 
+#[derive(Debug, Serialize)]
+struct StagePerformance {
+    name: String,
+    worker: Option<usize>,
+    timings: routines::DirectTimings,
+    cache: inference_kernels::weight_budget::WeightCacheStats,
+}
+
 struct ChainRunState {
+    auxiliary_process_starts: usize,
+    memory: crate::weights::MemorySampler,
+    weights: RunWeights,
+    allocation: WeightAllocation,
+    workers: Option<WorkerPool>,
+    performance: Vec<StagePerformance>,
     output_commitments: Vec<Option<Vec<u8>>>,
     execution_times: Vec<Option<Duration>>,
     aux_waves: Vec<AuxWaveExecutionTime>,
@@ -234,6 +251,7 @@ struct AuxStageJob {
 }
 
 struct AuxStageResult {
+    performance: Option<StagePerformance>,
     idx: usize,
     name: String,
     stage_dir: PathBuf,
@@ -474,6 +492,7 @@ fn run_inner(
     checkpoint_verifier: Option<CheckpointHashVerifier>,
     through_stage: Option<&str>,
 ) -> Result<ChainRunOutput> {
+    let ple_loading = crate::ple::Loading::from_env()?;
     let base_dir = std::env::current_dir().context("failed to read current directory")?;
     let mut manifest = read_manifest(manifest_path)?;
     validate_supported_stages(&manifest.chain.stage)?;
@@ -504,7 +523,30 @@ fn run_inner(
 
     let chain_started = Instant::now();
     let stage_index = build_stage_index(&manifest.chain.stage)?;
+    let largest_wave = (0..manifest.chain.stage.len())
+        .filter_map(|i| aux_wave_range(&manifest.chain.stage, i).map(|r| r.len()))
+        .max()
+        .unwrap_or(0);
+    let allocation = if staged_backend == StagedExecutionBackend::InProcess {
+        WeightAllocation::resolve(persistent_aux_parallelism(largest_wave))?
+    } else {
+        WeightAllocation::split(0, 0, "diagnostic subprocess backend")
+    };
+    eprintln!(
+        "retained weight budget: {} bytes ({}); main={}, workers={} x {} bytes",
+        allocation.total_bytes,
+        allocation.source,
+        allocation.main_bytes,
+        allocation.worker_count,
+        allocation.worker_bytes
+    );
     let mut state = ChainRunState {
+        auxiliary_process_starts: 0,
+        memory: crate::weights::MemorySampler::start(),
+        weights: RunWeights::new(allocation.main_bytes),
+        allocation,
+        workers: None,
+        performance: Vec::new(),
         output_commitments: vec![None; manifest.chain.stage.len()],
         execution_times: vec![None; manifest.chain.stage.len()],
         aux_waves: Vec::new(),
@@ -555,6 +597,24 @@ fn run_inner(
         idx += 1;
     }
 
+    if let Some(pool) = state.workers.as_mut() {
+        pool.shutdown()?;
+    }
+    fs::write(
+        chain_dir.join("staged-performance.json"),
+        serde_json::to_vec_pretty(&serde_json::json!({
+            "version": 1,
+            "ple_loading": ple_loading.as_str(),
+            "embedding_loading": "selective",
+            "head_loading": "paged",
+            "allocation": state.allocation,
+            "auxiliary_process_starts": state.auxiliary_process_starts,
+            "wall_duration_ns": chain_started.elapsed().as_nanos(),
+            "main_cache": state.weights.stats(),
+            "sampled_peak_rss_bytes": state.memory.peak(),
+            "stages": state.performance,
+        }))?,
+    )?;
     let chain_wall_duration = chain_started.elapsed();
     if let Some(verifier) = state.checkpoint_verifier.as_mut() {
         verifier.finish(&recomputed_trace_path);
@@ -988,6 +1048,7 @@ fn run_prepared_stage(
                 input_manifest_path,
                 stage_dir,
                 &cached_inputs,
+                &state.weights,
             )
         }
         StageDispatch::RasterReference => {
@@ -1004,6 +1065,7 @@ fn run_prepared_stage(
             run_compare_stage(current_exe, stage_dir)?;
             state.selected_stage_dir = Some(stage_dir.to_path_buf());
             Ok(DirectStageRun {
+                timings: None,
                 duration,
                 output: None,
             })
@@ -1019,6 +1081,14 @@ fn finish_stage(
     recomputed_trace_path: &Path,
     state: &mut ChainRunState,
 ) -> Result<()> {
+    if let Some(timings) = stage_run.timings {
+        state.performance.push(StagePerformance {
+            name: stage.name.clone(),
+            worker: None,
+            timings,
+            cache: state.weights.stats(),
+        });
+    }
     state.execution_times[idx] = Some(stage_run.duration);
     let output = collect_output(&stage_dir)?;
     if let Some(value) = stage_run.output {
@@ -1139,7 +1209,23 @@ fn run_aux_wave(
         }
     }
 
-    let batch = run_aux_stage_jobs(current_exe, jobs)?;
+    let batch = if staged_backend == StagedExecutionBackend::InProcess {
+        if state.workers.is_none() && !jobs.is_empty() {
+            state.workers = Some(WorkerPool::new(
+                current_exe,
+                state.allocation.worker_count,
+                state.allocation.worker_bytes,
+            )?);
+            state
+                .memory
+                .add_workers(state.workers.as_ref().unwrap().process_ids());
+            state.auxiliary_process_starts += state.workers.as_ref().unwrap().len();
+        }
+        run_persistent_aux_jobs(state.workers.as_mut(), jobs)?
+    } else {
+        state.auxiliary_process_starts += jobs.len();
+        run_aux_stage_jobs(current_exe, jobs)?
+    };
     let stage_duration_sum = batch
         .results
         .iter()
@@ -1157,6 +1243,9 @@ fn run_aux_wave(
         });
     }
     for result in batch.results {
+        if let Some(performance) = result.performance {
+            state.performance.push(performance);
+        }
         state.execution_times[result.idx] = Some(result.duration);
         print_stage_output(&result.output);
         state.output_commitments[result.idx] = Some(result.output.structural_commitment);
@@ -1220,6 +1309,70 @@ fn prepare_aux_stage_job(
     })
 }
 
+fn run_persistent_aux_jobs(
+    pool: Option<&mut WorkerPool>,
+    jobs: Vec<AuxStageJob>,
+) -> Result<AuxStageBatch> {
+    let started = Instant::now();
+    let Some(pool) = pool else {
+        return Ok(AuxStageBatch {
+            results: Vec::new(),
+            parallelism: 0,
+            wall_duration: started.elapsed(),
+        });
+    };
+    let worker_count = pool.len();
+    let mut metadata = BTreeMap::new();
+    let requests = jobs
+        .into_iter()
+        .map(|job| {
+            let layer = match job.kind {
+                StageKind::PrefillPrepareAux { layer } => layer,
+                _ => unreachable!(),
+            };
+            metadata.insert(job.idx, (job.stage_dir.clone(), layer % worker_count));
+            WorkerJob {
+                id: job.idx,
+                name: job.name,
+                kind: job.kind,
+                input: job.input_json_path,
+                input_manifest: job.input_manifest_path,
+                output_dir: job.stage_dir,
+            }
+        })
+        .collect();
+    let responses = pool.run(requests)?;
+    let mut results = Vec::new();
+    for response in responses {
+        let (stage_dir, worker) = metadata
+            .remove(&response.id)
+            .context("unexpected worker job ID")?;
+        let timings = response.timings.context("worker omitted timings")?;
+        let output = collect_output(&stage_dir)?;
+        results.push(AuxStageResult {
+            idx: response.id,
+            name: response.name.clone(),
+            stage_dir,
+            duration: timings.direct_stage_duration,
+            output,
+            performance: Some(StagePerformance {
+                name: response.name,
+                worker: Some(worker),
+                timings,
+                cache: response.cache,
+            }),
+        });
+    }
+    if !metadata.is_empty() {
+        bail!("auxiliary worker omitted job results");
+    }
+    Ok(AuxStageBatch {
+        results,
+        parallelism: worker_count,
+        wall_duration: started.elapsed(),
+    })
+}
+
 fn run_aux_stage_jobs(current_exe: &Path, jobs: Vec<AuxStageJob>) -> Result<AuxStageBatch> {
     if jobs.is_empty() {
         return Ok(AuxStageBatch {
@@ -1260,6 +1413,12 @@ fn run_aux_stage_job(current_exe: &Path, job: AuxStageJob) -> Result<AuxStageRes
     let output = collect_output(&job.stage_dir)
         .with_context(|| format!("failed to collect parallel aux stage `{}`", job.name))?;
     Ok(AuxStageResult {
+        performance: stage_run.timings.map(|timings| StagePerformance {
+            name: job.name.clone(),
+            worker: None,
+            timings,
+            cache: Default::default(),
+        }),
         idx: job.idx,
         name: job.name,
         stage_dir: job.stage_dir,
@@ -1302,6 +1461,13 @@ fn aux_parallelism(job_count: usize) -> usize {
         .map(usize::from)
         .unwrap_or(4);
     aux_parallelism_from(job_count, requested, available)
+}
+
+fn persistent_aux_parallelism(job_count: usize) -> usize {
+    let available = std::thread::available_parallelism()
+        .map(usize::from)
+        .unwrap_or(4);
+    aux_parallelism(job_count).min(available)
 }
 
 fn aux_parallelism_from(
@@ -1476,6 +1642,7 @@ fn run_staged_infer_stage(
     input_manifest_path: &Path,
     stage_dir: &Path,
     cached_inputs: &CachedInputs,
+    weights: &RunWeights,
 ) -> Result<DirectStageRun> {
     match backend {
         StagedExecutionBackend::InProcess => run_staged_infer_stage_in_process(
@@ -1485,6 +1652,7 @@ fn run_staged_infer_stage(
             input_manifest_path,
             stage_dir,
             cached_inputs,
+            weights,
         ),
         StagedExecutionBackend::Subprocess => run_staged_infer_stage_subprocess(
             current_exe,
@@ -1515,8 +1683,16 @@ fn run_staged_infer_stage_subprocess(
         .stderr(Stdio::inherit());
     apply_stage_env(&mut command, stage_dir);
 
+    let duration = run_timed_command(command, &format!("staged-infer {} stage", kind.routine()))?;
+    let timing_path = stage_dir.join("staged-timings.json");
+    let timings = if timing_path.is_file() {
+        Some(serde_json::from_slice(&fs::read(timing_path)?)?)
+    } else {
+        None
+    };
     Ok(DirectStageRun {
-        duration: run_timed_command(command, &format!("staged-infer {} stage", kind.routine()))?,
+        timings,
+        duration,
         output: None,
     })
 }
@@ -1528,14 +1704,17 @@ fn run_staged_infer_stage_in_process(
     input_manifest_path: &Path,
     stage_dir: &Path,
     cached_inputs: &CachedInputs,
+    weights: &RunWeights,
 ) -> Result<DirectStageRun> {
     let _env = StageEnvGuard::apply(stage_dir);
     let started = Instant::now();
-    let direct = routines::run_and_publish_from_paths(
+    let caches = weights.caches();
+    let direct = routines::run_and_publish_from_paths_with_caches(
         kind,
         input_json_path,
         input_manifest_path,
         cached_inputs,
+        caches,
     )?;
     let duration = started.elapsed();
     println!(
@@ -1545,6 +1724,7 @@ fn run_staged_infer_stage_in_process(
         format_duration(duration),
     );
     Ok(DirectStageRun {
+        timings: Some(direct.timings),
         duration,
         output: Some(direct.output),
     })
@@ -1767,12 +1947,12 @@ fn apply_stage_env(command: &mut Command, stage_dir: &Path) {
         .env_remove(raster_runtime::PROFILE_RUN_ID_ENV);
 }
 
-struct StageEnvGuard {
+pub(crate) struct StageEnvGuard {
     saved: Vec<(&'static str, Option<OsString>)>,
 }
 
 impl StageEnvGuard {
-    fn apply(stage_dir: &Path) -> Self {
+    pub(crate) fn apply(stage_dir: &Path) -> Self {
         let guard = Self::capture(&[
             raster_runtime::auth::AUTH_ENV,
             raster_runtime::OUTPUT_DIR_ENV,
@@ -2309,6 +2489,8 @@ mod tests {
         assert_eq!(aux_parallelism_from(2, None, 16), 2);
         assert_eq!(aux_parallelism_from(35, Some(6), 16), 6);
         assert_eq!(aux_parallelism_from(35, Some(0), 16), 4);
+        // The diagnostic subprocess backend retains its explicit override behavior.
+        assert_eq!(aux_parallelism_from(35, Some(16), 2), 16);
     }
 
     fn write_checkpoint_stage(

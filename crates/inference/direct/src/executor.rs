@@ -111,6 +111,11 @@ impl DirectInferenceExecutor {
                 },
             )?;
             trace.record(&format!("decode_select_t{token_idx}"), &edge)?;
+            if prepared_prompt.eos_token_ids.contains(&edge.token_id) {
+                // Keep EOS in the result, but never run another decode pass.
+                trace.stop_at_eos(model.shape().num_hidden_layers, token_idx + 1);
+                break;
+            }
             if token_idx + 1 == run_spec.tokens {
                 break;
             }
@@ -157,6 +162,7 @@ impl DirectInferenceExecutor {
 
         trace.finish()?;
         Ok(InferenceRunReport {
+            input_token_count: Some(prompt.token_ids.len()),
             result,
             timings: InferenceTimings {
                 total_duration: infer_started.elapsed(),

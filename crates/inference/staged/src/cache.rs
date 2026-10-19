@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use anyhow::{bail, Context, Result};
+use inference_kernels::weight_budget::{RetainedWeightBytes, WeightBudget};
 pub use inference_kernels::MaterializationCacheKey;
 use raster::List;
 use serde::Deserialize;
@@ -54,11 +55,14 @@ struct InputDocumentEntry {
 #[derive(Debug, Deserialize)]
 struct InputManifestEntry {
     commitment: String,
+    #[serde(default)]
+    encoding: Option<String>,
 }
 
 pub struct MaterializationCache {
     state: Mutex<MaterializationCacheState>,
     capacity: usize,
+    budget: Option<Arc<WeightBudget>>,
 }
 
 #[derive(Default)]
@@ -77,28 +81,51 @@ impl Default for MaterializationCache {
         Self {
             state: Mutex::new(MaterializationCacheState::default()),
             capacity,
+            budget: None,
         }
     }
 }
 
 impl MaterializationCache {
+    pub fn with_budget(budget: Arc<WeightBudget>) -> Self {
+        Self {
+            state: Mutex::new(MaterializationCacheState::default()),
+            capacity: usize::MAX,
+            budget: Some(budget),
+        }
+    }
     pub fn get_or_insert_with<T>(
         &self,
         key: Option<MaterializationCacheKey>,
         load: impl FnOnce() -> T,
     ) -> Result<Arc<T>>
     where
-        T: Send + Sync + 'static,
+        T: RetainedWeightBytes + Send + Sync + 'static,
+    {
+        self.get_or_try_insert_with(key, || Ok(load()))
+    }
+
+    /// Only successfully loaded and verified weights may enter the run cache.
+    pub fn get_or_try_insert_with<T>(
+        &self,
+        key: Option<MaterializationCacheKey>,
+        load: impl FnOnce() -> Result<T>,
+    ) -> Result<Arc<T>>
+    where
+        T: RetainedWeightBytes + Send + Sync + 'static,
     {
         let Some(key) = key else {
-            return Ok(Arc::new(load()));
+            return Ok(Arc::new(load()?));
         };
 
         if self.capacity == 0 {
-            return Ok(Arc::new(load()));
+            return Ok(Arc::new(load()?));
         }
 
         if let Some(existing) = self.state.lock().unwrap().entries.get(&key).cloned() {
+            if let Some(budget) = &self.budget {
+                budget.hit();
+            }
             return existing.downcast::<T>().map_err(|_| {
                 anyhow::anyhow!(
                     "cached materialization `{}` for `{}` had the wrong type",
@@ -108,7 +135,10 @@ impl MaterializationCache {
             });
         }
 
-        let value: Arc<T> = Arc::new(load());
+        if let Some(budget) = &self.budget {
+            budget.miss();
+        }
+        let value: Arc<T> = Arc::new(load()?);
         let mut state = self.state.lock().unwrap();
         if let Some(existing) = state.entries.get(&key).cloned() {
             return existing.downcast::<T>().map_err(|_| {
@@ -119,12 +149,23 @@ impl MaterializationCache {
                 )
             });
         }
+        if let Some(budget) = &self.budget {
+            let bytes = value
+                .retained_weight_bytes()
+                .saturating_add(key.retained_bytes())
+                .saturating_add(4096);
+            if !budget.reserve(bytes) {
+                return Ok(value);
+            }
+        }
         if state.entries.len() >= self.capacity {
             if let Some(evicted) = state.order.pop_front() {
                 state.entries.remove(&evicted);
             }
         }
-        state.order.push_back(key.clone());
+        if self.budget.is_none() {
+            state.order.push_back(key.clone());
+        }
         state.entries.insert(key, value.clone());
         Ok(value)
     }
@@ -136,7 +177,7 @@ pub fn materialize_with_cache<T>(
     load: impl FnOnce() -> T,
 ) -> Result<Arc<T>>
 where
-    T: Send + Sync + 'static,
+    T: RetainedWeightBytes + Send + Sync + 'static,
 {
     match cache {
         Some(cache) => cache.get_or_insert_with(key, load),
@@ -160,16 +201,33 @@ where
     let Some(manifest) = manifest_entries.get(param) else {
         return Ok(None);
     };
+    // A different wire encoding must not hit a cached Raster materialization.
+    // Postcard inputs continue through the ordinary loader and its validation.
+    if manifest.encoding.as_deref() != Some("raster") {
+        return Ok(None);
+    }
+    let index_path = input
+        .index_path
+        .as_ref()
+        .with_context(|| format!("Raster weight input `{param}` is missing index_path"))?;
     Ok(Some(MaterializationCacheKey {
         param: param.to_string(),
-        path: input.path.clone(),
-        index_path: input
-            .index_path
-            .clone()
-            .unwrap_or_else(|| input.path.with_extension("rindex")),
+        path: canonical_input_path(input_path, &input.path)?,
+        index_path: canonical_input_path(input_path, index_path)?,
         commitment: manifest.commitment.clone(),
         type_name: std::any::type_name::<T>(),
     }))
+}
+
+fn canonical_input_path(document: &Path, path: &Path) -> Result<PathBuf> {
+    let resolved = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        document.parent().unwrap_or(Path::new(".")).join(path)
+    };
+    resolved
+        .canonicalize()
+        .with_context(|| format!("failed to resolve weight artifact {}", resolved.display()))
 }
 
 fn read_input_entries(path: &Path) -> Result<BTreeMap<String, InputDocumentEntry>> {
@@ -546,14 +604,61 @@ mod tests {
     }
 
     #[test]
+    fn bounded_cache_reuses_admitted_values_without_scan_eviction() {
+        let value = String::from("weights");
+        let key = MaterializationCacheKey {
+            param: "layer".into(),
+            path: "a".into(),
+            index_path: "a.rindex".into(),
+            commitment: "first".into(),
+            type_name: std::any::type_name::<String>(),
+        };
+        let budget = Arc::new(WeightBudget::new(
+            value.retained_weight_bytes() + key.retained_bytes() + 4096,
+        ));
+        let cache = MaterializationCache::with_budget(Arc::clone(&budget));
+        let first = cache
+            .get_or_insert_with(Some(key.clone()), || value)
+            .unwrap();
+        for i in 0..40 {
+            let other = MaterializationCacheKey {
+                commitment: format!("other-{i}"),
+                ..key.clone()
+            };
+            cache
+                .get_or_insert_with(Some(other), || "other weights".to_owned())
+                .unwrap();
+        }
+        let reused = cache
+            .get_or_insert_with(Some(key.clone()), || panic!("cache miss"))
+            .unwrap();
+        assert!(Arc::ptr_eq(&first, &reused));
+        assert_eq!(budget.stats().bypasses, 40);
+        assert_eq!(budget.stats().hits, 1);
+        assert!(budget.stats().retained_bytes <= budget.stats().budget_bytes);
+
+        for bytes in [0, 1] {
+            let budget = Arc::new(WeightBudget::new(bytes));
+            let cache = MaterializationCache::with_budget(Arc::clone(&budget));
+            cache
+                .get_or_insert_with(Some(key.clone()), || "oversized".to_owned())
+                .unwrap();
+            assert_eq!(budget.stats().retained_bytes, 0);
+            assert_eq!(budget.stats().bypasses, 1);
+        }
+    }
+
+    #[test]
     fn materialization_key_uses_stage_files_and_type_name() {
         let base = temp_dir("materialization-key");
         fs::create_dir_all(&base).unwrap();
         let input = base.join("input.json");
         let manifest = base.join("input_manifest.json");
+        fs::write(base.join("embedding.rastered"), b"fixture").unwrap();
+        fs::write(base.join("embedding.rindex"), b"fixture").unwrap();
         fs::write(
             &input,
-            r#"{"embedding":{"path":"/tmp/embedding.rastered","index_path":"/tmp/embedding.rindex","load_preference":"mmap"}}"#,
+            r#"{"embedding":{"path":"embedding.rastered","index_path":"embedding.rindex","load_preference":"mmap"}}"#,
         )
         .unwrap();
         fs::write(
@@ -567,10 +672,33 @@ mod tests {
             .unwrap();
 
         assert_eq!(key.param, "embedding");
-        assert_eq!(key.path, PathBuf::from("/tmp/embedding.rastered"));
-        assert_eq!(key.index_path, PathBuf::from("/tmp/embedding.rindex"));
+        assert_eq!(
+            key.path,
+            base.join("embedding.rastered").canonicalize().unwrap()
+        );
+        assert_eq!(
+            key.index_path,
+            base.join("embedding.rindex").canonicalize().unwrap()
+        );
         assert_eq!(key.commitment, "abc");
         assert_eq!(key.type_name, std::any::type_name::<String>());
+
+        // A hit must not hide a missing Raster index declaration.
+        fs::write(&input, r#"{"embedding":{"path":"embedding.rastered"}}"#).unwrap();
+        assert!(
+            materialization_key_from_stage_files::<String>(&input, &manifest, "embedding").is_err()
+        );
+        // A changed wire encoding bypasses this cache and uses the ordinary loader.
+        fs::write(
+            &manifest,
+            r#"{"embedding":{"type":"sha256","encoding":"postcard","commitment":"abc"}}"#,
+        )
+        .unwrap();
+        assert!(
+            materialization_key_from_stage_files::<String>(&input, &manifest, "embedding")
+                .unwrap()
+                .is_none()
+        );
 
         fs::remove_dir_all(base).unwrap();
     }

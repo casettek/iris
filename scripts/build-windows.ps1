@@ -38,7 +38,7 @@ try {
         if ($LASTEXITCODE -ne 0) { throw 'Windows prover selection regression failed.' }
         & cargo "+$toolchain" test --release --locked -p direct-infer --test executor --target-dir $targetDir -j $Jobs
         if ($LASTEXITCODE -ne 0) { throw 'Direct inference tests failed.' }
-        & cargo "+$toolchain" test --release --locked -p staged-infer --test infer_parity --target-dir $targetDir -j $Jobs
+        & cargo "+$toolchain" test --release --locked -p staged-infer --test infer_parity --test worker_parity --target-dir $targetDir -j $Jobs
         if ($LASTEXITCODE -ne 0) { throw 'Staged inference parity test failed.' }
     }
     Write-Host "Windows executable: $(Join-Path $targetDir 'release/iris.exe')"

@@ -36,6 +36,10 @@ pub use inference_artifacts::{
 #[derive(Debug, Parser)]
 #[command(name = "iris")]
 struct Cli {
+    /// Persistent auxiliary worker; value is its retained-weight byte budget.
+    #[arg(long, hide = true)]
+    aux_worker: Option<usize>,
+
     #[command(subcommand)]
     command: Option<Commands>,
 
@@ -232,6 +236,10 @@ where
 }
 
 fn execute(cli: Cli) -> Result<ExitCode> {
+    if let Some(bytes) = cli.aux_worker {
+        staged_infer::worker::run_worker(bytes)?;
+        return Ok(ExitCode::SUCCESS);
+    }
     if let Some(stage_dir) = cli.run_stage.as_ref() {
         require_input_args(&cli)?;
         staged_infer::parity::run_hidden_stage_direct(stage_dir)?;
@@ -312,6 +320,9 @@ fn execute(cli: Cli) -> Result<ExitCode> {
             warn_if_debug_build("infer");
             let run_spec_path = args.run.clone();
             let report = run_infer(args.run)?;
+            if let Some(count) = report.input_token_count {
+                println!("input token count: {count}");
+            }
             print_infer_result(&report.result, Some(&run_spec_path));
             print_infer_timing_summary(&report.timings);
             Ok(ExitCode::SUCCESS)

@@ -13,6 +13,8 @@ pub struct InferenceResult {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InferenceRunReport {
+    /// Actual model input length after chat templating and tokenization.
+    pub input_token_count: Option<usize>,
     pub result: InferenceResult,
     pub timings: InferenceTimings,
 }

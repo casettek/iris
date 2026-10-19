@@ -1,5 +1,7 @@
+use crate::weight_budget::WeightBudget;
 use std::collections::{BTreeMap, VecDeque};
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 use anyhow::{bail, Result};
 use det_num::ops::{attention_softmax, rope_rotate_pairs_in_place};
@@ -30,6 +32,7 @@ pub struct PrefillRangeDirectInputs<'a> {
 pub struct PrefillRangeWeightCache {
     state: Mutex<PrefillRangeWeightCacheState>,
     capacity: usize,
+    budget: Option<Arc<WeightBudget>>,
 }
 
 #[derive(Default)]
@@ -48,6 +51,7 @@ impl Default for PrefillRangeWeightCache {
         Self {
             state: Mutex::new(PrefillRangeWeightCacheState::default()),
             capacity,
+            budget: None,
         }
     }
 }
@@ -128,11 +132,19 @@ pub fn run_prefill_range_direct_with_weight_cache(
 }
 
 impl PrefillRangeWeightCache {
+    pub fn with_budget(budget: Arc<WeightBudget>) -> Self {
+        Self {
+            state: Mutex::new(PrefillRangeWeightCacheState::default()),
+            capacity: usize::MAX,
+            budget: Some(budget),
+        }
+    }
     #[cfg(test)]
     fn with_capacity(capacity: usize) -> Self {
         Self {
             state: Mutex::new(PrefillRangeWeightCacheState::default()),
             capacity,
+            budget: None,
         }
     }
 
@@ -151,19 +163,40 @@ impl PrefillRangeWeightCache {
             params: LayerWeightCacheKey::from(params),
         };
         if let Some(weights) = self.state.lock().unwrap().weights.get(&key).cloned() {
+            if let Some(budget) = &self.budget {
+                budget.hit();
+            }
             return Ok(weights);
         }
+        if let Some(budget) = &self.budget {
+            budget.miss();
+        }
+        let started = Instant::now();
         let weights = Arc::new(LayerWeights::from_layer(layer, params)?);
+        if let Some(budget) = &self.budget {
+            budget.prepared(started.elapsed().as_nanos());
+        }
         let mut state = self.state.lock().unwrap();
         if let Some(existing) = state.weights.get(&key).cloned() {
             return Ok(existing);
+        }
+        if let Some(budget) = &self.budget {
+            let bytes = weights
+                .retained_bytes()
+                .saturating_add(key.materialization.retained_bytes())
+                .saturating_add(std::mem::size_of::<LayerWeightCacheKey>() + 4096);
+            if !budget.reserve(bytes) {
+                return Ok(weights);
+            }
         }
         if state.weights.len() >= self.capacity {
             if let Some(evicted) = state.order.pop_front() {
                 state.weights.remove(&evicted);
             }
         }
-        state.order.push_back(key.clone());
+        if self.budget.is_none() {
+            state.order.push_back(key.clone());
+        }
         state.weights.insert(key, weights.clone());
         Ok(weights)
     }
@@ -215,6 +248,23 @@ struct LayerWeights {
 }
 
 impl LayerWeights {
+    fn retained_bytes(&self) -> usize {
+        std::mem::size_of::<Self>()
+            + [
+                &self.w_q,
+                &self.w_k,
+                &self.w_v,
+                &self.w_o,
+                &self.w_gate,
+                &self.w_up,
+                &self.w_down,
+                &self.ple_input_gate,
+                &self.ple_layer_projection,
+            ]
+            .iter()
+            .map(|m| m.allocated_bytes())
+            .sum::<usize>()
+    }
     fn from_layer(layer: &TransformerLayer, params: &LayerParams) -> Result<Self> {
         let hidden = params.hidden_size as usize;
         let ffn = params.ffn_size as usize;
@@ -913,5 +963,40 @@ mod tests {
 
         assert!(Arc::ptr_eq(&first, &second));
         assert_eq!(cache.state.lock().unwrap().weights.len(), 1);
+    }
+
+    #[test]
+    fn byte_budget_separates_preparation_parameters_and_commitments() {
+        let budget = Arc::new(WeightBudget::new(1 << 20));
+        let cache = PrefillRangeWeightCache::with_budget(Arc::clone(&budget));
+        let layer = tiny_layer();
+        let mut params = validate_layer_params(&layer.params).unwrap();
+        let mut key = MaterializationCacheKey {
+            param: "layer".into(),
+            path: "layer.rastered".into(),
+            index_path: "layer.rindex".into(),
+            commitment: "first".into(),
+            type_name: std::any::type_name::<TransformerLayer>(),
+        };
+        let first = cache.get_or_prepare(&layer, &params, &key).unwrap();
+        assert!(Arc::ptr_eq(
+            &first,
+            &cache.get_or_prepare(&layer, &params, &key).unwrap()
+        ));
+        params.layer_idx += 1;
+        assert!(!Arc::ptr_eq(
+            &first,
+            &cache.get_or_prepare(&layer, &params, &key).unwrap()
+        ));
+        key.commitment = "different".into();
+        cache.get_or_prepare(&layer, &params, &key).unwrap();
+        assert_eq!(budget.stats().hits, 1);
+        assert_eq!(budget.stats().misses, 3);
+        assert!(budget.stats().retained_bytes <= budget.stats().budget_bytes);
+        let zero = Arc::new(WeightBudget::new(0));
+        let uncached = PrefillRangeWeightCache::with_budget(Arc::clone(&zero));
+        uncached.get_or_prepare(&layer, &params, &key).unwrap();
+        assert_eq!(zero.stats().retained_bytes, 0);
+        assert_eq!(zero.stats().bypasses, 1);
     }
 }

@@ -134,6 +134,7 @@ impl UncheckpointedInferenceExecutor {
             None => bail!("infer cannot run an empty chain"),
         };
         Ok(InferenceRunReport {
+            input_token_count: None,
             result,
             timings: InferenceTimings {
                 total_duration: infer_started.elapsed(),

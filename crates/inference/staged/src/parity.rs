@@ -137,6 +137,10 @@ pub fn run_hidden_stage_direct(stage_dir: &Path) -> Result<()> {
     validate_stage_input_artifacts(stage_dir)?;
 
     let direct = routines::run_and_publish(&kind)?;
+    fs::write(
+        stage_dir.join("staged-timings.json"),
+        serde_json::to_vec(&direct.timings)?,
+    )?;
     println!(
         "staged-infer {stage_name}: output {} structural={} stage={}",
         direct.artifact.data_path.display(),

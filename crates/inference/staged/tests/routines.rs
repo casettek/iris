@@ -115,15 +115,15 @@ fn cached_runner_executes_without_writing_output_artifact() {
 
 #[test]
 fn decode_embed_uses_selected_decode_position() {
-    let inputs = routines::decode_embed::Inputs {
-        selected: decode_embed::input::DecodeEdge {
-            has_selected: true,
-            decode_position: 9,
-            token_id: 1,
-            value: 10,
-            generated_token_ids: List::from(vec![1]),
-        },
-        embedding: decode_embed::input::EmbeddingTable {
+    let selected = decode_embed::input::DecodeEdge {
+        has_selected: true,
+        decode_position: 9,
+        token_id: 1,
+        value: 10,
+        generated_token_ids: List::from(vec![1]),
+    };
+    let embedding: std::sync::Arc<decode_embed::input::EmbeddingTable> =
+        decode_embed::input::EmbeddingTable {
             hidden_size: 2,
             embedding_scale: ONE,
             values: decode_embed::input::EmbeddingTable {
@@ -133,13 +133,13 @@ fn decode_embed_uses_selected_decode_position() {
             }
             .values,
         }
-        .into(),
-    };
+        .into();
+    let inputs = routines::decode_embed::Inputs::eager(selected, embedding.clone());
     let output = routines::decode_embed::run_direct(&inputs).unwrap();
     let kernel_output = kernels::decode_embed::run_decode_embed_direct(
         kernels::decode_embed::DecodeEmbedDirectInputs {
             selected: &inputs.selected,
-            embedding: &inputs.embedding,
+            embedding: &embedding,
         },
     )
     .unwrap();
@@ -239,22 +239,21 @@ fn prompt_prepare_resolves_vocab_bucket() {
 
 #[test]
 fn input_embedding_gathers_and_scales_rows() {
-    let inputs = routines::input_embedding::Inputs {
-        prompt: PromptTokenization {
-            token_ids: List::from(vec![1]),
-        },
-        embedding: EmbeddingTable {
-            hidden_size: 2,
-            embedding_scale: ONE,
-            values: paged(&[0, 0, ONE, 2 * ONE]),
-        }
-        .into(),
+    let prompt = PromptTokenization {
+        token_ids: List::from(vec![1]),
     };
+    let embedding: std::sync::Arc<input_embedding::input::EmbeddingTable> = EmbeddingTable {
+        hidden_size: 2,
+        embedding_scale: ONE,
+        values: paged(&[0, 0, ONE, 2 * ONE]),
+    }
+    .into();
+    let inputs = routines::input_embedding::Inputs::eager(prompt, embedding.clone());
     let output = routines::input_embedding::run_direct(&inputs).unwrap();
     let kernel_output = kernels::input_embedding::run_input_embedding_direct(
         kernels::input_embedding::InputEmbeddingDirectInputs {
             prompt: &inputs.prompt,
-            embedding: &inputs.embedding,
+            embedding: &embedding,
         },
     )
     .unwrap();
@@ -279,29 +278,26 @@ fn prefill_prepare_aux_publishes_one_row() {
         start_position: 0,
     };
 
-    let inputs = routines::prefill_prepare_aux::Inputs {
-        embedded: activation,
-        layer: PleLayer {
-            params: PleLayerParams {
-                layer_idx: 7,
-                hidden_size: 2,
-                ple_width: 2,
-                embedding_scale: ONE,
-                projection_scalar: ONE,
-                input_scale: ONE,
-                norm_eps: 0,
-                norm_weights: norm.clone(),
-            },
-            embeddings: paged(&[ONE, 0]),
-            projection: paged(&[ONE, 0, 0, ONE]),
-        }
-        .into(),
-    };
+    let layer = std::sync::Arc::new(PleLayer {
+        params: PleLayerParams {
+            layer_idx: 7,
+            hidden_size: 2,
+            ple_width: 2,
+            embedding_scale: ONE,
+            projection_scalar: ONE,
+            input_scale: ONE,
+            norm_eps: 0,
+            norm_weights: norm.clone(),
+        },
+        embeddings: paged(&[ONE, 0]),
+        projection: paged(&[ONE, 0, 0, ONE]),
+    });
+    let inputs = routines::prefill_prepare_aux::Inputs::eager(activation, layer.clone());
     let output = routines::prefill_prepare_aux::run_direct(&inputs).unwrap();
     let kernel_output = kernels::prefill_prepare_aux::run_prefill_prepare_aux_direct(
         kernels::prefill_prepare_aux::PrefillPrepareAuxDirectInputs {
             embedded: &inputs.embedded,
-            layer: &inputs.layer,
+            layer: &layer,
         },
     )
     .unwrap();
@@ -334,15 +330,15 @@ fn prefill_prepare_aux_preserves_prompt_row_order() {
         projection: paged(&[ONE, 0, 0, ONE]),
     };
     let run = |rows| {
-        routines::prefill_prepare_aux::run_direct(&routines::prefill_prepare_aux::Inputs {
-            embedded: prefill_prepare_aux::input::ActivationSequence {
+        routines::prefill_prepare_aux::run_direct(&routines::prefill_prepare_aux::Inputs::eager(
+            prefill_prepare_aux::input::ActivationSequence {
                 rows: List::from(rows),
                 errors: List::new(),
                 kv: List::new(),
                 start_position: 0,
             },
-            layer: layer().into(),
-        })
+            layer().into(),
+        ))
         .unwrap()
     };
 
@@ -377,24 +373,22 @@ fn prefill_finalize_scores_projection_rows() {
         start_position: 4,
     };
 
-    let inputs = routines::prefill_finalize::Inputs {
-        activations,
-        head: FinalHead {
-            params: FinalHeadParams {
-                hidden_size: 2,
-                norm_eps: 0,
-                softcap: 0,
-                norm_weights: norm,
-            },
-            projection: paged(&[ONE, 0, 0, ONE]),
-        }
-        .into(),
-    };
+    let head: std::sync::Arc<FinalHead> = FinalHead {
+        params: FinalHeadParams {
+            hidden_size: 2,
+            norm_eps: 0,
+            softcap: 0,
+            norm_weights: norm,
+        },
+        projection: paged(&[ONE, 0, 0, ONE]),
+    }
+    .into();
+    let inputs = routines::prefill_finalize::Inputs::eager(activations, head.clone());
     let output = routines::prefill_finalize::run_direct(&inputs).unwrap();
     let kernel_output = kernels::prefill_finalize::run_prefill_finalize_direct(
         kernels::prefill_finalize::PrefillFinalizeDirectInputs {
             activations: &inputs.activations,
-            head: &inputs.head,
+            head: &head,
         },
     )
     .unwrap();

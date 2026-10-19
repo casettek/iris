@@ -19,7 +19,7 @@ pub mod prefill_range;
 pub mod prompt_merge;
 pub mod prompt_prepare;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum StageKind {
     PromptPrepare,
     PromptMerge,
@@ -59,7 +59,7 @@ pub struct RoutineRunCaches<'a> {
         Option<&'a inference_kernels::prefill_range::PrefillRangeWeightCache>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct DirectTimings {
     pub input_load_duration: Duration,
     pub kernel_duration: Duration,
@@ -309,6 +309,22 @@ pub fn run_and_publish_from_paths(
     input_manifest_path: &Path,
     cached_inputs: &CachedInputs,
 ) -> Result<DirectPublishOutput> {
+    run_and_publish_from_paths_with_caches(
+        kind,
+        input_path,
+        input_manifest_path,
+        cached_inputs,
+        RoutineRunCaches::default(),
+    )
+}
+
+pub fn run_and_publish_from_paths_with_caches(
+    kind: &StageKind,
+    input_path: &Path,
+    input_manifest_path: &Path,
+    cached_inputs: &CachedInputs,
+    caches: RoutineRunCaches<'_>,
+) -> Result<DirectPublishOutput> {
     match kind {
         StageKind::PromptPrepare => publish(
             || {
@@ -330,10 +346,11 @@ pub fn run_and_publish_from_paths(
         ),
         StageKind::InputEmbedding => publish(
             || {
-                input_embedding::load_inputs_from_paths(
+                input_embedding::load_inputs_from_paths_with_cache(
                     input_path,
                     input_manifest_path,
                     cached_inputs,
+                    caches.materializations,
                 )
             },
             input_embedding::run_direct,
@@ -342,10 +359,11 @@ pub fn run_and_publish_from_paths(
         ),
         StageKind::PrefillPrepareAux { .. } => publish(
             || {
-                prefill_prepare_aux::load_inputs_from_paths(
+                prefill_prepare_aux::load_inputs_from_paths_with_cache(
                     input_path,
                     input_manifest_path,
                     cached_inputs,
+                    caches.materializations,
                 )
             },
             prefill_prepare_aux::run_direct,
@@ -354,22 +372,26 @@ pub fn run_and_publish_from_paths(
         ),
         StageKind::PrefillRange { .. } => publish(
             || {
-                prefill_range::load_inputs_from_paths(
+                prefill_range::load_inputs_from_paths_with_cache(
                     input_path,
                     input_manifest_path,
                     cached_inputs,
+                    caches.materializations,
                 )
             },
-            prefill_range::run_direct,
+            |inputs| {
+                prefill_range::run_direct_with_weight_cache(inputs, caches.prefill_range_weights)
+            },
             "prefill_range",
             CachedStageValue::RangeActivations,
         ),
         StageKind::PrefillFinalize => publish(
             || {
-                prefill_finalize::load_inputs_from_paths(
+                prefill_finalize::load_inputs_from_paths_with_cache(
                     input_path,
                     input_manifest_path,
                     cached_inputs,
+                    caches.materializations,
                 )
             },
             prefill_finalize::run_direct,
@@ -395,7 +417,14 @@ pub fn run_and_publish_from_paths(
             CachedStageValue::DecodeEdge,
         ),
         StageKind::DecodeEmbed => publish(
-            || decode_embed::load_inputs_from_paths(input_path, input_manifest_path, cached_inputs),
+            || {
+                decode_embed::load_inputs_from_paths_with_cache(
+                    input_path,
+                    input_manifest_path,
+                    cached_inputs,
+                    caches.materializations,
+                )
+            },
             decode_embed::run_direct,
             "decode_embed",
             CachedStageValue::DecodeActivations,

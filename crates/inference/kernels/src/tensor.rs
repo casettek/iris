@@ -167,6 +167,9 @@ pub struct Matrix {
 }
 
 impl Matrix {
+    pub(crate) fn allocated_bytes(&self) -> usize {
+        self.values.capacity() * std::mem::size_of::<i32>()
+    }
     pub fn from_region<const P: u64>(
         name: &str,
         region: &Bytes<P>,

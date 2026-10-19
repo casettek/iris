@@ -1,4 +1,70 @@
-## Current State
+## Implementation update
+
+The checkpointed path now uses run-owned, byte-bounded weight caches and persistent
+auxiliary worker processes. Checkpoint encoding and post-write verification are
+unchanged. See [claim-build execution and validation](../workflows/claim-build.md#weight-reuse-and-auxiliary-workers)
+for memory configuration, instrumentation, and parity tests. The automatic cache
+budget is 25% of available RAM. Main embeddings now retain only small verified
+metadata; prompt and decode stages select the pages their tokens require.
+
+PLE preparation now has a staged-only selective loader. Both prefill and decode
+auxiliary stages read just the token-addressed embedding pages and cache the
+small verified parameters/projection. The eager path remains available through
+`STAGED_INFER_PLE_LOADING=eager`. All output persistence and verification remains
+in place. See [selective PLE validation](../workflows/test-parity.md#selective-ple-loading-in-staged-inference)
+for the authenticated small-model gate and performance comparison procedure.
+
+Main embedding selection and output-head paging are now the standard Raster-input
+implementation, with no new execution switches. Finalization verifies the page
+count and scores all vocabulary rows in batches of at most 32 pages, preserving
+Raster row boundaries and MAC order. Only metadata enters the weight cache.
+Postcard compatibility uses the existing eager kernels. See
+[paged weight validation](../workflows/test-parity.md#selective-main-embeddings-and-paged-output-head)
+for preserved-build comparisons and the manual Gemma procedure.
+
+### Validation measurements (2026-10-17)
+
+The new staged suite passes 90 tests. The three `parity-gemma` cases cover
+25, 103, and 106 checkpoints: every output/index/manifest byte, commitment, and
+checkpoint hash matches preserved baseline, embedding-only, updated, and
+unchanged authenticated Raster execution. Zero/constrained cache budgets and
+serial execution also match. Multi-page native tests cover saturation and
+rejection of invalid selections before publication. All 259 protected source
+and lock files are unchanged from the implementation's starting snapshot.
+
+Seven-iteration release microbenchmarks, with four Rayon threads and no retained
+weight cache, gave these results on approximately 25 MB fixtures:
+
+| Operation | Eager mean | Updated mean |
+|---|---:|---:|
+| Main embedding loading and computation | 39.319 ms | 6.779 ms |
+| Head loading and computation | 46.504 ms | 46.975 ms |
+
+Embedding loading improved about 5.8x. Head timing was essentially flat on this
+fixture; page verification dominated its time. Its confirmed improvement is
+removal of the complete matrix allocation, with each raw page batch capped at
+6 MiB. That bound excludes decoded page buffers, proof scratch space, mappings,
+and the required logits output. Real-Gemma runtime improvement remains to be
+measured under the actual memory pressure.
+
+The small-model runs below are single runs in baseline/embedding/updated order,
+so OS cache and startup effects make them informational rather than speedup
+claims. Sampled memory includes the process tree and is not an allocator bound.
+
+| Case | Baseline time | Updated time | Baseline/updated sampled RSS |
+|---|---:|---:|---:|
+| short | 0.440 s | 0.252 s | 58.3 / 57.9 MiB |
+| near-window | 0.988 s | 0.908 s | 60.0 / 59.8 MiB |
+| over-window | 1.046 s | 0.931 s | 60.9 / 60.6 MiB |
+
+Reports and preserved binaries are under `target/staged-pages-validation/`.
+`summary.json` records the measurements, and `parity/report.json` records hashes,
+per-run timings, memory samples, and the unchanged reference binaries.
+
+The measurements and recommendations below describe the earlier 221-stage
+baseline. They are not measured speedups for the new implementation.
+
+## Historical baseline
 
 The staged-infer path is already in decent shape: `staged-infer chain run` expands `Raster.toml` to 221 stages, runs supported stages directly, writes normal Raster-compatible `output.bin`/`output.rindex`/`output_manifest.json` checkpoints, and can leave one Raster stage in the run for parity comparison.
 
