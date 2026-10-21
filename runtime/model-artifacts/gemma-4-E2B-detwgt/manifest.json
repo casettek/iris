@@ -1,11 +1,11 @@
 {
   "version": 2,
   "bundle": {
-    "model_detwgt_path": "/mnt/c/Users/amcas/Development/models/gemma-4-E2B-detwgt/model.detwgt",
+    "model_detwgt_path": "/Users/caszete/models/gemma-4-E2B-detwgt/model.detwgt",
     "model_detwgt_sha256": "5db440151c6bbd58c75ec4147c65261b438c5eff625f1cbefc1d0c463bc146c0",
-    "config_path": "/mnt/c/Users/amcas/Development/models/gemma-4-E2B-detwgt/config.json",
+    "config_path": "/Users/caszete/models/gemma-4-E2B-detwgt/config.json",
     "config_sha256": "1b28f3d2c3100f6c594754b81107428bd7b822a7f48272ca681dae9d2ec38330",
-    "tokenizer_path": "/mnt/c/Users/amcas/Development/models/gemma-4-E2B-detwgt/tokenizer.json",
+    "tokenizer_path": "/Users/caszete/models/gemma-4-E2B-detwgt/tokenizer.json",
     "tokenizer_sha256": "cc8d3a0ce36466ccc1278bf987df5f71db1719b9ca6b4118264f45cb627bfe0f"
   },
   "shape": {
@@ -72,6 +72,6 @@
   ],
   "provenance": {
     "raster_manifest_path": "Raster.toml",
-    "raster_manifest_sha256": "f6b0ab86f654f1de81db6d133d64a39cfcd9ad25aff1473d93706629faf1878c"
+    "raster_manifest_sha256": "340704bfcea574124b000a8f39d06ff92fbb64d8710b305588ed253dc461792d"
   }
 }

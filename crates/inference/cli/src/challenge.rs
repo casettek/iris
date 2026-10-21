@@ -488,7 +488,7 @@ fn run_raster_replay(
         .current_dir(base_dir)
         .args(["raster", "chain", "run"])
         .arg(manifest_path)
-        .args(["--quiet-timings", "--run"])
+        .arg("--run")
         .arg(replay_run_dir)
         .arg("--stage")
         .arg(stage)

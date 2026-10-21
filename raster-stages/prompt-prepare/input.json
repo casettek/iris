@@ -1,12 +1,3 @@
 {
-  "merged_pieces": {
-    "index_path": "../../runtime/prompt-fixtures/ranked-bpe/merged.rindex",
-    "load_preference": "read",
-    "path": "../../runtime/prompt-fixtures/ranked-bpe/merged.rastered"
-  },
-  "tokenizer": {
-    "index_path": "../../runtime/prompt-fixtures/ranked-bpe/tokenizer.rindex",
-    "load_preference": "read",
-    "path": "../../runtime/prompt-fixtures/ranked-bpe/tokenizer.rastered"
-  }
+  "tokenizer": { "path": "../../runtime/model-artifacts/gemma-4-E2B-detwgt/raster/prompt-prepare/tokenizer.rastered", "index_path": "../../runtime/model-artifacts/gemma-4-E2B-detwgt/raster/prompt-prepare/tokenizer.rindex", "load_preference": "read" }
 }
