@@ -1,6 +1,8 @@
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{bail, Context, Result};
 use staged_infer::chain_runner::StagedExecutionBackend;
@@ -59,6 +61,8 @@ pub enum ChallengeBuildOutcome {
 }
 
 pub fn build_challenge(options: ChallengeBuildOptions) -> Result<ChallengeBuildResult> {
+    let checkpoint_trace_started = Instant::now();
+    challenge_progress("checkpoint-trace", None, None)?;
     let claimed_input = load_claimed_input(&options.input)?;
     let manifest_path = challenge_manifest_path(&options, &claimed_input)?;
     let executor = CheckpointedInferenceExecutor;
@@ -97,6 +101,7 @@ pub fn build_challenge(options: ChallengeBuildOptions) -> Result<ChallengeBuildR
     };
     let recomputed_trace_path =
         write_checkpoint_trace_artifact(&recomputed_chain_dir, &recomputed_trace)?;
+    let checkpoint_trace_duration = checkpoint_trace_started.elapsed();
 
     let Some(divergence) = divergence else {
         return Ok(ChallengeBuildResult {
@@ -126,17 +131,26 @@ pub fn build_challenge(options: ChallengeBuildOptions) -> Result<ChallengeBuildR
         .join("challenge")
         .join(sanitize_stage_name(&divergence.stage));
     let replay_run_dir = challenge_dir.join("raster-replay");
+    challenge_progress("replay-preparing", Some(checkpoint_trace_duration), None)?;
     seed_replay_directory(
         &recomputed_chain_dir,
         &recomputed_trace,
         divergence.checkpoint_index,
         &replay_run_dir,
     )?;
+    let raster_replay_started = Instant::now();
+    challenge_progress("raster-replay", Some(checkpoint_trace_duration), None)?;
     let replay_package = run_raster_replay(
         &options.base_dir,
         &manifest_path,
         &replay_run_dir,
         &divergence.stage,
+    )?;
+    let raster_replay_duration = raster_replay_started.elapsed();
+    challenge_progress(
+        "validating",
+        Some(checkpoint_trace_duration),
+        Some(raster_replay_duration),
     )?;
     let (divergence_path, replay_package_path, challenge_trace_path, challenge_bundle_path) =
         write_challenge_artifacts(
@@ -146,6 +160,16 @@ pub fn build_challenge(options: ChallengeBuildOptions) -> Result<ChallengeBuildR
             &divergence,
             &replay_package,
         )?;
+    inference_artifacts::write_json(
+        &challenge_dir.join("challenge_timings.json"),
+        &serde_json::json!({
+            "version": 1,
+            "stage": divergence.stage,
+            "checkpoint_index": divergence.checkpoint_index,
+            "checkpoint_trace_duration_ms": checkpoint_trace_duration.as_secs_f64() * 1000.0,
+            "raster_replay_duration_ms": raster_replay_duration.as_secs_f64() * 1000.0,
+        }),
+    )?;
     let challenge_bundle = read_challenge_bundle(&challenge_bundle_path)?;
 
     Ok(ChallengeBuildResult {
@@ -159,6 +183,24 @@ pub fn build_challenge(options: ChallengeBuildOptions) -> Result<ChallengeBuildR
             challenge_bundle,
         },
     })
+}
+
+fn challenge_progress(
+    phase: &str,
+    checkpoint_trace_duration: Option<Duration>,
+    raster_replay_duration: Option<Duration>,
+) -> Result<()> {
+    let progress = serde_json::json!({
+        "version": 1,
+        "phase": phase,
+        "started_at_ms": SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis(),
+        "checkpoint_trace_duration_ms": checkpoint_trace_duration.map(|d| d.as_secs_f64() * 1000.0),
+        "raster_replay_duration_ms": raster_replay_duration.map(|d| d.as_secs_f64() * 1000.0),
+    });
+    let mut stdout = std::io::stdout().lock();
+    writeln!(stdout, "IRIS_CHALLENGE_PROGRESS {progress}")?;
+    stdout.flush()?;
+    Ok(())
 }
 
 fn challenge_manifest_path(

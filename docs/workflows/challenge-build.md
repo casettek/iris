@@ -37,6 +37,23 @@ Challenge outputs live under the recomputed run's `challenge/<stage>/` directory
 - `replay_package.json`
 - `challenge_trace.json`
 - `challenge_bundle.json`
+- `challenge_timings.json`
+
+`challenge_timings.json` records version 1, the selected stage and checkpoint index,
+and two measured wall-clock durations in milliseconds. `checkpoint_trace_duration_ms`
+covers input/context validation, checkpoint recomputation through divergence, and
+trace publication. `raster_replay_duration_ms` covers the selected stage's
+`cargo raster chain run` command, including any compilation. Replay-directory
+seeding and final parity/artifact checks are outside these phase timers and remain
+part of the caller's overall challenge duration.
+
+During execution, stdout also includes `IRIS_CHALLENGE_PROGRESS` followed by a
+version-1 JSON record at each phase transition: `checkpoint-trace`,
+`replay-preparing`, `raster-replay`, and `validating`. Each record includes the
+phase's `started_at_ms` Unix timestamp and the completed phase durations (or
+null while not yet complete). Consumers can persist these records as they arrive
+to display live elapsed times and freeze each phase independently. Ordinary
+console output and the final timing artifact are retained alongside these updates.
 
 For manual fraud tests, corrupt a copy of the claimed hash list and challenge that copy:
 
