@@ -64,4 +64,4 @@ just challenge \
   target/staged-infer/runs/.../checkpoints.corrupt.txt
 ```
 
-`--claim` and `--trace` remain lower-level debug inputs that compare full checkpoint records. `--trace` prepares a run from `--run` because a trace alone has no frozen run metadata. It uses that run spec’s model, prompt, and token count. `challenge locate` and `fault prove` are reserved commands; `challenge build` is the implemented verifier workflow today.
+`--claim` and `--trace` remain lower-level debug inputs that compare full checkpoint records. `--trace` prepares a run from `--run` because a trace alone has no frozen run metadata. It uses that run spec’s model, prompt, and token count. `challenge locate` remains reserved. See [Fault proving](fault-prove.md) for `challenge corrupt` and `fault prove`.

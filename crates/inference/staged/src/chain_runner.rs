@@ -2519,3 +2519,15 @@ mod tests {
         String::from_utf8(bytes).unwrap()
     }
 }
+
+/// Resolve an expanded stage without executing inference.
+pub fn stage_project(manifest_path: &Path, stage: &str) -> Result<PathBuf> {
+    let manifest = read_manifest(manifest_path)?;
+    let selected = manifest
+        .chain
+        .stage
+        .iter()
+        .find(|s| s.name == stage)
+        .context("stage is absent from frozen manifest")?;
+    Ok(absolute(&std::env::current_dir()?, &selected.project))
+}

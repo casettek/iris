@@ -14,6 +14,13 @@ path = "src/main.rs"
 replay-profile = ["dep:raster-analysis"]
 
 [dependencies]
+raster-core = { path = "../../../../raster/crates/raster-core" }
+raster-prover = { path = "../../../../raster/crates/raster-prover" }
+raster-compiler = { path = "../../../../raster/crates/raster-compiler" }
+raster-backend = { path = "../../../../raster/crates/raster-backend" }
+raster-backend-risc0 = { path = "../../../../raster/crates/raster-backend-risc0" }
+risc0-zkvm = { version = "3.0", default-features = false, features = ["prove", "std"] }
+postcard = { version = "1", features = ["alloc"] }
 anyhow = "1.0"
 clap = { version = "4.5", features = ["derive"] }
 direct-infer = { path = "../direct" }

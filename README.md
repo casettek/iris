@@ -54,6 +54,7 @@ just challenge \
 - [Infer](docs/workflows/infer.md): fast deterministic inference through `direct-infer`.
 - [Claim build](docs/workflows/claim-build.md): checkpointed staged inference and claim artifacts.
 - [Challenge build](docs/workflows/challenge-build.md): trace comparison, divergence packaging, and Raster replay.
+- [Fault proving](docs/workflows/fault-prove.md): corrupt a challenge copy and measure stage replay and proof computation separately.
 - [Replay profiling](docs/workflows/replay-profile.md): select heavy native tiles and measure their replay costs.
 
 ## Internals

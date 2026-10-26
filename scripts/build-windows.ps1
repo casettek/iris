@@ -1,10 +1,14 @@
 param(
     [ValidateRange(1, 64)]
     [int]$Jobs = 4,
+    [switch]$Proving,
     [switch]$Test
 )
 
 $ErrorActionPreference = 'Stop'
+if ($Proving) {
+    throw 'RISC0 3.0 guest builds do not support native Windows. Build and run the proving workflow in WSL/Linux; see docs/workflows/fault-prove.md. Native-only builds must omit -Proving.'
+}
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $targetDir = Join-Path $repoRoot 'target/windows'
 $toolchain = '1.91.1' # Matches the sibling Raster checkout.
@@ -23,7 +27,7 @@ $previousSkip = $env:RISC0_SKIP_BUILD
 $previousCxxFlags = $env:CXXFLAGS_x86_64_pc_windows_msvc
 Push-Location $repoRoot
 try {
-    # Iris native inference needs the host libraries, but does not generate proofs.
+    # Native Windows supports host inference, not RISC0 guest builds.
     $env:RISC0_SKIP_BUILD = '1'
     # Windows headers must not replace std::min/std::max. The pinned generated
     # kernels also use designated initializers, which MSVC requires C++20 for.

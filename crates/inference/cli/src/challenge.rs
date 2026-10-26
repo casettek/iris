@@ -576,7 +576,7 @@ fn replay_package(stage: &str, replay_run_dir: &Path) -> Result<ReplayPackage> {
     Ok(package)
 }
 
-fn seed_replay_directory(
+pub(crate) fn seed_replay_directory(
     source_chain_dir: &Path,
     trace: &CheckpointTrace,
     checkpoint_index: usize,

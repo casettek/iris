@@ -7,6 +7,7 @@ use anyhow::{bail, Context, Result};
 use clap::{Args, Parser, Subcommand};
 
 mod challenge;
+mod fault;
 mod claim;
 mod infer;
 mod parity;
@@ -206,12 +207,16 @@ enum ChallengeCommand {
     Locate,
     /// Build a challenge bundle for a divergent claim.
     Build(ChallengeBuildArgs),
+    /// Flip an interior fingerprint bit in a challenge copy.
+    Corrupt(fault::CorruptArgs),
 }
 
 #[derive(Debug, Subcommand)]
 enum FaultCommand {
+    /// Check that this binary embeds real proving guests.
+    Check,
     /// Prove a bad Raster challenge.
-    Prove,
+    Prove(fault::ProveArgs),
 }
 
 pub fn run_from_env() -> Result<ExitCode> {
@@ -328,6 +333,10 @@ fn execute(cli: Cli) -> Result<ExitCode> {
             Ok(ExitCode::SUCCESS)
         }
         Some(Commands::Challenge { command }) => match command {
+            ChallengeCommand::Corrupt(args) => {
+                fault::corrupt(args)?;
+                Ok(ExitCode::SUCCESS)
+            }
             ChallengeCommand::Locate => {
                 bail!("iris challenge locate is not implemented yet")
             }
@@ -339,7 +348,15 @@ fn execute(cli: Cli) -> Result<ExitCode> {
             }
         },
         Some(Commands::Fault { command }) => match command {
-            FaultCommand::Prove => bail!("iris fault prove is not implemented yet"),
+            FaultCommand::Check => {
+                fault::check_runtime()?;
+                println!("Fault proving runtime available");
+                Ok(ExitCode::SUCCESS)
+            }
+            FaultCommand::Prove(args) => {
+                fault::prove(args)?;
+                Ok(ExitCode::SUCCESS)
+            }
         },
         None => bail!(
             "iris requires a workflow command; try `model import`, `claim build`, or `infer`"
