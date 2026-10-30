@@ -1,26 +1,18 @@
 //! Fault workflow orchestration. Raster remains the execution/proof implementation.
-mod program;
-mod proof;
 
 use anyhow::{ensure, Context, Result};
 use inference_artifacts::{
     file_sha256, read_json, write_json, ChallengeBundle, CheckpointTrace, ClaimBundle, PreparedRun,
     ReplayPackage,
 };
-use raster_core::{
-    merkle::EMPTY_LEAF,
-    trace::{Trace, TraceEvent},
-    transition::{TransitionJournal, TransitionState},
-};
-use raster_prover::trace::{
-    TraceCommitment, TraceCommitmentExt, TraceVerifier, VerificationResult,
-};
+use raster_core::transition::{TransitionJournal, TransitionState};
+use raster_prover::commitment_file::CommitmentFile;
 use serde_json::json;
 use std::{
     fs,
-    io::{Read, Write},
+    io::{BufRead, BufReader, Write},
     path::{Path, PathBuf},
-    process::Command,
+    process::{Command, Stdio},
     time::{Instant, SystemTime, UNIX_EPOCH},
 };
 
@@ -52,13 +44,13 @@ fn reference(bundle: &Path, path: &Path) -> PathBuf {
     }
 }
 
-fn commitment(path: &Path) -> Result<TraceCommitment> {
-    let value: TraceCommitment = postcard::from_bytes(&fs::read(path)?)?;
+fn commitment(path: &Path) -> Result<CommitmentFile> {
+    let value = CommitmentFile::read_memory(path)?;
     value.validate()?;
     Ok(value)
 }
 
-fn flip_middle(value: &mut TraceCommitment) -> Result<(usize, usize, u64, u64)> {
+fn flip_middle(value: &mut CommitmentFile) -> Result<(usize, usize, u64, u64)> {
     value.validate()?;
     let window = value.window_size();
     ensure!(
@@ -68,10 +60,13 @@ fn flip_middle(value: &mut TraceCommitment) -> Result<(usize, usize, u64, u64)> 
     let entry = window + (value.len() - 2 * window) / 2;
     let bit = entry * value.fingerprint.bits_per_item();
     let word = bit / 64;
-    let before = value.fingerprint.bits[word];
-    value.fingerprint.bits[word] ^= 1u64 << (bit % 64);
+    let before = value.fingerprint.bits.get(word);
+    value
+        .fingerprint
+        .bits
+        .set(word, before ^ (1u64 << (bit % 64)));
     value.validate()?;
-    Ok((entry, bit, before, value.fingerprint.bits[word]))
+    Ok((entry, bit, before, value.fingerprint.bits.get(word)))
 }
 
 pub fn corrupt(args: CorruptArgs) -> Result<()> {
@@ -85,7 +80,7 @@ pub fn corrupt(args: CorruptArgs) -> Result<()> {
     let output = fs::canonicalize(args.output)?;
     let target = output.join("corrupted_commit.bin");
     ensure!(!target.exists(), "corrupted commitment already exists");
-    fs::write(&target, postcard::to_allocvec(&value)?)?;
+    value.write(&target)?;
     write_json(
         &output.join("corruption.json"),
         &json!({
@@ -184,80 +179,83 @@ pub fn prove(args: ProveArgs) -> Result<()> {
         !output.join("fault_bundle.json").exists() && !output.join("stage-replay").exists(),
         "fault output already used"
     );
-    let replay_dir = output.join("stage-replay");
-    super::challenge::seed_replay_directory(
-        claim_path.parent().unwrap(),
-        &claim_trace,
-        index,
-        &replay_dir,
-    )?;
+    // Guest dependencies can change without changing the stage's tile source.
+    // Check the locked identity before the expensive replay, without rewriting it.
+    let project = staged_infer::chain_runner::stage_project(manifest, &bundle.stage)?;
+    let status = Command::new("cargo")
+        .args(["raster", "program", "--verify"])
+        .current_dir(&project)
+        .status()
+        .context("check Raster program identity before fault replay")?;
+    ensure!(status.success(), "Raster program identity preflight failed ({status}); rebuild the stage with cargo raster build --backend risc0");
     let preparation_ms = total.elapsed().as_secs_f64() * 1000.0;
     progress("stage-replay", None, None)?;
-    let replay_started = Instant::now();
-    let status = Command::new("cargo")
-        .args(["raster", "chain", "run"])
-        .arg(manifest)
-        .arg("--run")
-        .arg(&replay_dir)
-        .arg("--stage")
-        .arg(&bundle.stage)
-        .status()?;
-    ensure!(status.success(), "Raster stage replay failed ({status})");
-    let stage_dir = replay_dir.join(&bundle.stage);
-    ensure!(
-        inference_artifacts::read_checkpoint_from_stage_dir(&bundle.stage, &stage_dir)? == baseline,
-        "fault prover replay differs from original claimer checkpoint"
-    );
-    let project = raster_compiler::Project::new(staged_infer::chain_runner::stage_project(
-        manifest,
-        &bundle.stage,
-    )?)?;
-    let cfs = raster_compiler::CfsBuilder::new(&project).build()?;
-    let input = stage_dir.join("input.json");
-    let input_manifest = stage_dir.join("input_manifest.json");
-    let (trace, recorder) =
-        load_trace(&stage_dir.join("trace.bin"), &cfs, &input, &input_manifest)?;
-    ensure!(
-        trace.len() == disputed.len(),
-        "replay trace length differs from challenge"
-    );
-    let mut verifier = TraceVerifier::new(disputed.clone(), &EMPTY_LEAF, &cfs)?;
-    let evidence = verifier.verify(&trace);
-    let replay_ms = replay_started.elapsed().as_secs_f64() * 1000.0;
-    let VerificationResult::Fraud(evidence) = evidence else {
+    // Reuse the selected stage's frozen inputs directly. The fault prover
+    // stops at divergence, so it never needs a completed stage checkpoint.
+    let input = fs::canonicalize(&package.input_path).context("fault audit input missing")?;
+    let input_manifest =
+        fs::canonicalize(&package.input_manifest_path).context("fault audit manifest missing")?;
+    let mut replay_ms = 0.0;
+    let proof_path = output.join("fault.receipt");
+    let report_path = output.join("raster_audit.json");
+    let mut child = Command::new("cargo")
+        .current_dir(&project)
+        .args(["raster", "run"])
+        .arg("--input")
+        .arg(&input)
+        .arg("--input-manifest")
+        .arg(&input_manifest)
+        .arg("--audit")
+        .arg(&disputed_path)
+        .arg("--proof-output")
+        .arg(&proof_path)
+        .arg("--report")
+        .arg(&report_path)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit())
+        .spawn()
+        .context("start Raster live audit; install the updated cargo-raster CLI")?;
+    for line in BufReader::new(child.stdout.take().context("Raster stdout unavailable")?).lines() {
+        let line = line?;
+        if let Some(event) = line.strip_prefix("RASTER_AUDIT_PROGRESS ") {
+            let event: serde_json::Value = serde_json::from_str(event)?;
+            if event["phase"] == "proving" {
+                replay_ms = event["audit_duration_ms"]
+                    .as_f64()
+                    .context("Raster audit duration missing")?;
+                progress("proving", Some(replay_ms), None)?;
+            }
+        }
+        println!("{line}");
+    }
+    let status = child.wait()?;
+    ensure!(status.success(), "Raster live audit failed ({status})");
+    let report: serde_json::Value = read_json(&report_path)?;
+    ensure!(report["version"] == 1, "unsupported Raster audit report");
+    if report["outcome"] == "no-fault" {
         write_json(
             &output.join("fault_bundle.json"),
             &json!({"version":1,"outcome":"no-fault","stage":bundle.stage}),
         )?;
         anyhow::bail!("no fault found in the supplied challenge");
-    };
-    progress("proving", Some(replay_ms), None)?;
-    let proving_started = Instant::now();
-    let backend = raster_backend_risc0::Risc0Backend::new(project.output_dir.clone())
-        .with_user_crate(project.root_dir.clone());
-    let replayer = raster_prover::replay::Replayer::new(&backend, &project);
-    let receipt = proof::prove(
-        evidence,
-        &trace,
-        &cfs,
-        &recorder,
-        &replayer,
-        Some(input_manifest.to_str().context("non-UTF8 manifest path")?),
-        &disputed,
+    }
+    ensure!(
+        report["outcome"] == "proved" && report["verified"] == true,
+        "Raster did not produce a verified fault proof"
     );
+    let validating_started = Instant::now();
+    let receipt: risc0_zkvm::Receipt = postcard::from_bytes(&fs::read(&proof_path)?)?;
     receipt.verify(raster_prover::TRANSITION_GUEST_ID)?;
     let journal: TransitionJournal = receipt.journal.decode()?;
     ensure!(
         matches!(journal.current_state, TransitionState::Finished),
         "proof has not reached a fraud verdict"
     );
-    ensure!(
-        hex::encode(&journal.refuted_trace_commitment) == file_sha256(&disputed_path)?,
-        "proof refutes a different challenge"
-    );
-    let proof_path = output.join("fault.receipt");
-    fs::write(&proof_path, postcard::to_allocvec(&receipt)?)?;
-    let proof_ms = proving_started.elapsed().as_secs_f64() * 1000.0;
+    verify_refuted_commitment(&journal.refuted_trace_commitment, &disputed)?;
+    let proof_ms = report["proof_duration_ms"]
+        .as_f64()
+        .context("Raster proof duration missing")?
+        + validating_started.elapsed().as_secs_f64() * 1000.0;
     progress("validating", Some(replay_ms), Some(proof_ms))?;
     let timings = json!({"version":1,"preparation_duration_ms":preparation_ms,
         "stage_replay_duration_ms":replay_ms,"proof_duration_ms":proof_ms,"duration_ms":total.elapsed().as_secs_f64()*1000.0});
@@ -266,9 +264,74 @@ pub fn prove(args: ProveArgs) -> Result<()> {
         &output.join("fault_bundle.json"),
         &json!({"version":1,"outcome":"proved","verified":true,
         "stage":bundle.stage,"commitment_sha256":file_sha256(&disputed_path)?,
-        "proof_path":proof_path,"proof_sha256":file_sha256(&proof_path)?,"proof_bytes":fs::metadata(&proof_path)?.len()}),
+        "proof_path":proof_path,"proof_sha256":file_sha256(&proof_path)?,"proof_bytes":fs::metadata(&proof_path)?.len(),"proof_seal_bytes":receipt.seal_size()}),
     )?;
     Ok(())
+}
+
+// The transition guest binds to Raster's canonical header digest, not the
+// transport file's SHA-256. Keep file hashes for artifact integrity only.
+fn verify_refuted_commitment(refuted: &[u8], disputed: &CommitmentFile) -> Result<()> {
+    ensure!(
+        refuted == disputed.header().digest().as_slice(),
+        "proof refutes a different challenge"
+    );
+    Ok(())
+}
+
+/// Read-only preflight for both automatic challenge policies.
+pub fn check_challenge_programs(manifest: &Path) -> Result<()> {
+    let manifest = fs::canonicalize(manifest).context("locate Raster manifest")?;
+    let value: toml::Value = toml::from_str(&fs::read_to_string(&manifest)?)?;
+    let projects = challenge_projects(&value, manifest.parent().unwrap())?;
+    for project in projects {
+        let status = Command::new("cargo")
+            .args(["raster", "program", "--verify"])
+            .current_dir(&project)
+            .status()
+            .with_context(|| format!("verify program in {}", project.display()))?;
+        ensure!(
+            status.success(),
+            "Raster identity preflight failed for {}. Run cargo raster build --backend risc0 in that directory, then retry. No inference was started.",
+            project.display()
+        );
+    }
+    println!("Challenge program identities verified");
+    Ok(())
+}
+
+fn challenge_projects(
+    value: &toml::Value,
+    base: &Path,
+) -> Result<std::collections::BTreeSet<PathBuf>> {
+    let stages = value
+        .get("chain")
+        .and_then(|v| v.get("stage"))
+        .and_then(toml::Value::as_array)
+        .context("Raster manifest has no chain stages")?;
+    let mut projects = std::collections::BTreeSet::new();
+    let mut finalize = false;
+    let mut range = false;
+    for stage in stages {
+        let name = stage
+            .get("name")
+            .and_then(toml::Value::as_str)
+            .unwrap_or("");
+        if name == "prefill_finalize" || name.starts_with("prefill_range_") {
+            finalize |= name == "prefill_finalize";
+            range |= name.starts_with("prefill_range_");
+            let project = stage
+                .get("project")
+                .and_then(toml::Value::as_str)
+                .context("challenge stage has no project")?;
+            projects.insert(base.join(project));
+        }
+    }
+    ensure!(
+        finalize && range,
+        "Raster manifest must contain prefill_finalize and prefill_range stages"
+    );
+    Ok(projects)
 }
 
 pub fn check_runtime() -> Result<()> {
@@ -281,38 +344,66 @@ pub fn check_runtime() -> Result<()> {
         !raster_prover::TRANSITION_GUEST_ELF.is_empty(),
         "Iris was built without proving guests; rebuild without RISC0_SKIP_BUILD"
     );
+    let help = Command::new("cargo")
+        .args(["raster", "run", "--help"])
+        .output()
+        .context("find Raster CLI")?;
+    let help_text = String::from_utf8_lossy(&help.stdout);
+    ensure!(
+        help.status.success()
+            && ["--audit", "--proof-output", "--report"]
+                .iter()
+                .all(|flag| help_text.contains(flag)),
+        "install the updated Raster CLI with live audit-and-prove support"
+    );
     Ok(())
-}
-
-fn load_trace(
-    path: &Path,
-    cfs: &raster_core::cfs::ControlFlowSchema,
-    input: &Path,
-    manifest: &Path,
-) -> Result<(Trace, raster_runtime::TraceRecorder)> {
-    let mut file = fs::File::open(path)?;
-    let mut trace = Trace::new();
-    let mut recorder = raster_runtime::TraceRecorder::new(cfs.clone());
-    recorder.set_external_input(input.to_str(), manifest.to_str())?;
-    loop {
-        let mut len = [0u8; 4];
-        if file.read(&mut len[..1])? == 0 {
-            break;
-        }
-        file.read_exact(&mut len[1..])?;
-        let mut frame = vec![0; u32::from_le_bytes(len) as usize];
-        file.read_exact(&mut frame)?;
-        let event: TraceEvent = postcard::from_bytes(&frame)?;
-        trace.push(recorder.record(event));
-    }
-    Ok((trace, recorder))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use raster_core::trace::{ExecStep, ExecTarget, StepKind, StepRecord, StorageRoots};
-    fn fixture(len: usize) -> TraceCommitment {
+    use raster_core::{merkle::EMPTY_LEAF, trace::Trace};
+    #[test]
+    fn challenge_preflight_resolves_and_deduplicates_both_policies() {
+        let manifest: toml::Value = toml::from_str(
+            r#"
+[[chain.stage]]
+name = "prefill_range_l0"
+project = "range"
+[[chain.stage]]
+name = "prefill_range_l1"
+project = "range"
+[[chain.stage]]
+name = "prefill_finalize"
+project = "/opt/finalize"
+[[chain.stage]]
+name = "output_finalize"
+project = "unused"
+"#,
+        )
+        .unwrap();
+        let projects = challenge_projects(&manifest, Path::new("/model")).unwrap();
+        assert_eq!(
+            projects,
+            [
+                PathBuf::from("/model/range"),
+                PathBuf::from("/opt/finalize")
+            ]
+            .into()
+        );
+        let missing: toml::Value = toml::from_str(
+            r#"
+[[chain.stage]]
+name = "prefill_finalize"
+project = "finalize"
+"#,
+        )
+        .unwrap();
+        assert!(challenge_projects(&missing, Path::new("/model")).is_err());
+    }
+
+    fn fixture(len: usize) -> CommitmentFile {
         let trace = Trace(
             (0..len)
                 .map(|i| StepRecord {
@@ -337,13 +428,28 @@ mod tests {
                 })
                 .collect(),
         );
-        TraceCommitment::try_build(
+        CommitmentFile::build(
             &trace,
             &EMPTY_LEAF,
             raster_prover::trace::FraudProofConfig::from_window_size(2).unwrap(),
         )
         .unwrap()
     }
+    #[test]
+    fn proof_binding_uses_header_digest_and_rejects_a_different_commitment() {
+        use sha2::{Digest, Sha256};
+
+        let original = fixture(20);
+        let mut disputed = original.clone();
+        flip_middle(&mut disputed).unwrap();
+        let header_digest = disputed.header().digest();
+        let file_digest = Sha256::digest(postcard::to_allocvec(&disputed).unwrap());
+
+        verify_refuted_commitment(&header_digest, &disputed).unwrap();
+        assert!(verify_refuted_commitment(&original.header().digest(), &disputed).is_err());
+        assert!(verify_refuted_commitment(file_digest.as_slice(), &disputed).is_err());
+    }
+
     #[test]
     fn corruption_changes_exactly_one_interior_bit_and_is_reversible() {
         let original = fixture(20);

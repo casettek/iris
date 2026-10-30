@@ -9,6 +9,8 @@ name = "iris"
 path = "src/main.rs"
 
 [features]
+# NVIDIA acceleration for local RISC0 proof generation.
+cuda = ["risc0-zkvm/cuda", "raster-backend-risc0/cuda"]
 # Needs `raster_analysis::replay_profile` and `cargo raster` replay-profile
 # flags, which only exist on Raster's `risc0-estimator` branch.
 replay-profile = ["dep:raster-analysis"]

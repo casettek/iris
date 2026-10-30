@@ -1,41 +1,41 @@
 {
   "format": 1,
-  "program_commitment": "ff4db892e5cf37424387cca6c79e50a59ffae93570c840892a6153a1d367a9e2",
+  "program_commitment": "5c47b0722c7338082bc4c3c3cd1afbfd647c98a0c164304f079a81c58394d937",
   "tiles": {
     "assert_logits_complete": {
-      "image_id": "1f30b5bf1b58656b494e71ead0d2c6cfab9c43666dae85a0a880487c29840b7d",
+      "image_id": "c891828c8d9b49d936f126040d3410c26ece4899343a2b3dad0e5afcd67e41b3",
       "source_hash": "8ac5d0ceca3938b20000000000001b98"
     },
     "begin_error_summary": {
-      "image_id": "8a89a4ea9d803f1d19ea95831350b941fde1709b91af5bfbedbcfafa0bd36909",
+      "image_id": "b7670ee43d0f1513945214b01ab03214fea5a409782cf791e8a114c049f6ae13",
       "source_hash": "8ac5d0ceca3938b20000000000001b98"
     },
     "begin_logits": {
-      "image_id": "9dd6dec3353eefe696bc12fd2377524821c72e31d21961558f546f4a69749278",
+      "image_id": "20ccb4696d1e04d93e26f118c2b3f5229ded3f6a36175c6d730330cdc52c4ea6",
       "source_hash": "8ac5d0ceca3938b20000000000001b98"
     },
     "empty_final_position": {
-      "image_id": "f7434e313fbfae78b1ab2a29f3ad81f5dd8542bfa97e8385dacd7a07960cee90",
+      "image_id": "2cdb2e42351b6b02fb3d5b32cfeb24a1a5f2bcfeaab5e57c7f180848e5ace539",
       "source_hash": "8ac5d0ceca3938b20000000000001b98"
     },
     "normalize_final_position": {
-      "image_id": "a37a380684622c1eb7f579aaa6465e8a1336fe527e81be5ce51b2c55128a9a1b",
+      "image_id": "ce0f764a3ebc9c7b6a17144de0de324cf2779117607ae1e7f08908b6e8db8ead",
       "source_hash": "8ac5d0ceca3938b20000000000001b98"
     },
     "project_logit_page": {
-      "image_id": "fe772157b93a8642a5f811ae796de74de8f8e049b7f3cb54c1619aa3a40aa30c",
+      "image_id": "83ed846cc530a97f7f971dca78c6341144640a5468aa172aaaa8471d1ce87729",
       "source_hash": "8ac5d0ceca3938b20000000000001b98"
     },
     "summarise_errors": {
-      "image_id": "549e04480f4e0b7d361eb2a66be4d0a861e2df1d0076fd674d2972ad1ad7bd2f",
+      "image_id": "a3ff32eca938e9910fb9713e173530a322f6ad6b8118082f69ac0e3ad87518bd",
       "source_hash": "8ac5d0ceca3938b20000000000001b98"
     },
     "track_final_position": {
-      "image_id": "52bcd68dac8bf28ab89f3354b957f1a937c80db8cc8bb96d17650bc584d210b0",
+      "image_id": "bb1f4095c0b265c8d0ce1f1bb854eb6df792207ea80f8d4dc2b9a586364a5df2",
       "source_hash": "8ac5d0ceca3938b20000000000001b98"
     },
     "validate_final_head": {
-      "image_id": "913aa98515bac74ec9e47a207a6a306ad3e85766376beb1155ef311f63d39c20",
+      "image_id": "66b2142ff5c1983c85e6394723e7d25c6b85f69052154ed5e87f5fe1b50ca9a3",
       "source_hash": "8ac5d0ceca3938b20000000000001b98"
     }
   },

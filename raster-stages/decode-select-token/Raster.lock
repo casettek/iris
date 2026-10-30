@@ -1,33 +1,33 @@
 {
   "format": 1,
-  "program_commitment": "c9e6e95238fe38c068df30207d9d631b29a66cd95288251767f4281f960a66e1",
+  "program_commitment": "974dd05e9fa263821ee8ed4d52e5c3930a4224596cc89e1f02827ab0a1ddac0d",
   "tiles": {
     "append_selected_token": {
-      "image_id": "6535c6e0754ca958682d776ac39d39b1432f7367960da60c8e774362f5499111",
+      "image_id": "60d2dc06622546fc92ad0c4ad97d0b65a7b8fd568d8e62d09cf5a615f20a9d1e",
       "source_hash": "4d9d1eece7c201330000000000001178"
     },
     "begin_argmax": {
-      "image_id": "1307908654cf25844b0222d55e8c5fe98a1f87a14bdd09edd2354f4bb5c92b01",
+      "image_id": "be79cb3a4ab0df4965c6aa8553563ba318d3365064815f23ffe8ed855bd867b4",
       "source_hash": "4d9d1eece7c201330000000000001178"
     },
     "begin_decode_edge": {
-      "image_id": "19cdbc83aa042dae264fec5775b38c9a24abb1a18fe7d52649f1fa03b490b39d",
+      "image_id": "0e62e1c2eff3c4d03dfac9fb132836cc60d6426cb2598724a007dacc0697a2fb",
       "source_hash": "4d9d1eece7c201330000000000001178"
     },
     "copy_generated_token_ids": {
-      "image_id": "076c50ae44ca4b96c0dd003d76255c1917991d15b65ea2f4cf38df15485be9af",
+      "image_id": "a21c95ba67c66f9e89a864cf9e97ac3085543ff213865e59e5b73697f313dcd2",
       "source_hash": "4d9d1eece7c201330000000000001178"
     },
     "finish_selection": {
-      "image_id": "688045124f6e165424068201683e32f703e693726a67528f191f248a4b07f5b2",
+      "image_id": "44590655cfd40207a5d40bec84ebaa2a33417cc8938ce6b167fc9a94b92be747",
       "source_hash": "4d9d1eece7c201330000000000001178"
     },
     "scan_logit_chunk": {
-      "image_id": "8f671de891f41e22f0c4f35c01c170a6554c36213fbf19cf7d54b9d658644b41",
+      "image_id": "fc8aa59cc6ca9bb5f642c74adb429fb59f2d155148e959c8633426de9696f496",
       "source_hash": "4d9d1eece7c201330000000000001178"
     },
     "selected_token_ids": {
-      "image_id": "8526a2f01c6e1a45916d8431e01cb3920071640edd243b5f37ef7a363062d1fb",
+      "image_id": "1ef43d158ef7f53fa0cce7a8a236c1b3466742693f514381d3de0c689a502425",
       "source_hash": "4d9d1eece7c201330000000000001178"
     }
   },

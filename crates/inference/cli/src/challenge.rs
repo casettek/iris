@@ -171,6 +171,8 @@ pub fn build_challenge(options: ChallengeBuildOptions) -> Result<ChallengeBuildR
         }),
     )?;
     let challenge_bundle = read_challenge_bundle(&challenge_bundle_path)?;
+    // The bundle retains the commitment and replay inputs/outputs. Fault proving
+    // records its own execution; this successful challenge's raw trace is unused.
 
     Ok(ChallengeBuildResult {
         outcome: ChallengeBuildOutcome::DivergenceBuilt {
@@ -528,7 +530,7 @@ fn run_raster_replay(
         .with_context(|| format!("failed to create {}", replay_run_dir.display()))?;
     let status = Command::new("cargo")
         .current_dir(base_dir)
-        .args(["raster", "chain", "run"])
+        .args(["raster", "chain", "run", "--fraud-proof-window-size", "128"])
         .arg(manifest_path)
         .arg("--run")
         .arg(replay_run_dir)
@@ -660,6 +662,23 @@ mod tests {
     use super::*;
     use sha2::Digest;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn commitment_only_challenge_has_complete_replay_artifacts() {
+        let base = temp_dir("challenge-trace-cleanup");
+        let stage = base.join("stage_a");
+        fs::create_dir_all(&stage).unwrap();
+        for name in ["input.json", "input_manifest.json", "output.bin", "output.rindex",
+            "output_manifest.json", "commit.bin"] {
+            fs::write(stage.join(name), name.as_bytes()).unwrap();
+        }
+        let package = replay_package("stage_a", &base).unwrap();
+        assert!(!stage.join("trace.bin").exists());
+        // The same inputs/outputs and commitment remain sufficient for a replay package.
+        replay_package("stage_a", &base).unwrap();
+        assert_eq!(fs::read(&package.commit_path).unwrap(), b"commit.bin");
+        fs::remove_dir_all(base).unwrap();
+    }
 
     #[test]
     fn challenge_checks_selected_and_frozen_model_before_execution() {

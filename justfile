@@ -45,3 +45,7 @@ stage-check stage:
 # Full local host parity gate; all logs and outputs are kept under target/parity.
 test-parity:
     cargo run --release --locked -p iris-cli -- test-parity
+
+# Refresh proof guest identities after Raster, guest, dependency or toolchain changes.
+build-raster-stages:
+    bash scripts/build-raster-stages.sh

@@ -7,8 +7,8 @@ use anyhow::{bail, Context, Result};
 use clap::{Args, Parser, Subcommand};
 
 mod challenge;
-mod fault;
 mod claim;
+mod fault;
 mod infer;
 mod parity;
 #[cfg(feature = "replay-profile")]
@@ -25,14 +25,14 @@ pub use claim::{
     CorruptCheckpointHashesOptions, CorruptCheckpointHashesResult, CorruptCheckpointSelection,
 };
 pub use infer::run_infer;
-#[cfg(feature = "replay-profile")]
-pub use replay_profile::{run_replay_profile, ReplayProfileOptions};
 pub use inference_artifacts::{
     build_checkpoint_trace, write_claim_artifacts, ChallengeBundle, ChallengeTrace, Checkpoint,
     CheckpointTrace, ClaimBundle, ClaimEndpoint, Divergence, DivergenceReason, ReplayPackage,
     CHALLENGE_BUNDLE_JSON, CHALLENGE_TRACE_JSON, CHECKPOINT_HASHES_TXT, CHECKPOINT_TRACE_JSON,
     CLAIM_BUNDLE_JSON, DIVERGENCE_JSON, REPLAY_PACKAGE_JSON,
 };
+#[cfg(feature = "replay-profile")]
+pub use replay_profile::{run_replay_profile, ReplayProfileOptions};
 
 #[derive(Debug, Parser)]
 #[command(name = "iris")]
@@ -214,7 +214,11 @@ enum ChallengeCommand {
 #[derive(Debug, Subcommand)]
 enum FaultCommand {
     /// Check that this binary embeds real proving guests.
-    Check,
+    Check {
+        /// Verify program identities used by automatic backend challenges.
+        #[arg(long)]
+        raster_manifest: Option<PathBuf>,
+    },
     /// Prove a bad Raster challenge.
     Prove(fault::ProveArgs),
 }
@@ -281,7 +285,11 @@ fn execute(cli: Cli) -> Result<ExitCode> {
             parity::run()?;
             Ok(ExitCode::SUCCESS)
         }
-        Some(Commands::ParityWorker { run, output, direct }) => {
+        Some(Commands::ParityWorker {
+            run,
+            output,
+            direct,
+        }) => {
             parity::worker(&run, &output, direct)?;
             Ok(ExitCode::SUCCESS)
         }
@@ -301,7 +309,10 @@ fn execute(cli: Cli) -> Result<ExitCode> {
             if let Some(final_result) = result.final_result.as_ref() {
                 print_infer_result(final_result, Some(&run_spec_path));
             }
-            println!("checkpoint trace: {}", result.checkpoint_trace_path.display());
+            println!(
+                "checkpoint trace: {}",
+                result.checkpoint_trace_path.display()
+            );
             println!("checkpoints: {}", result.checkpoint_hashes_path.display());
             println!("claim bundle: {}", result.claim_bundle_path.display());
             Ok(ExitCode::SUCCESS)
@@ -310,8 +321,14 @@ fn execute(cli: Cli) -> Result<ExitCode> {
             command: ClaimCommand::Corrupt(args),
         }) => {
             let result = corrupt_checkpoint_hashes(args.into_options()?)?;
-            println!("corrupted checkpoints: {}", result.corrupted_hashes_path.display());
-            println!("corruption manifest: {}", result.corruption_manifest_path.display());
+            println!(
+                "corrupted checkpoints: {}",
+                result.corrupted_hashes_path.display()
+            );
+            println!(
+                "corruption manifest: {}",
+                result.corruption_manifest_path.display()
+            );
             println!("corrupted checkpoint index: {}", result.checkpoint_index);
             println!("corrupted checkpoint number: {}", result.checkpoint_number);
             if let Some(stage) = result.stage.as_ref() {
@@ -348,9 +365,20 @@ fn execute(cli: Cli) -> Result<ExitCode> {
             }
         },
         Some(Commands::Fault { command }) => match command {
-            FaultCommand::Check => {
+            FaultCommand::Check { raster_manifest } => {
                 fault::check_runtime()?;
+                if let Some(manifest) = raster_manifest {
+                    fault::check_challenge_programs(&manifest)?;
+                }
                 println!("Fault proving runtime available");
+                println!(
+                    "Proving build: {}",
+                    if cfg!(feature = "cuda") {
+                        "CUDA"
+                    } else {
+                        "CPU"
+                    }
+                );
                 Ok(ExitCode::SUCCESS)
             }
             FaultCommand::Prove(args) => {
@@ -358,9 +386,9 @@ fn execute(cli: Cli) -> Result<ExitCode> {
                 Ok(ExitCode::SUCCESS)
             }
         },
-        None => bail!(
-            "iris requires a workflow command; try `model import`, `claim build`, or `infer`"
-        ),
+        None => {
+            bail!("iris requires a workflow command; try `model import`, `claim build`, or `infer`")
+        }
     }
 }
 
@@ -861,6 +889,9 @@ fn comparison_command(
         .arg(input_manifest)
         .env(raster_runtime::auth::AUTH_ENV, "0")
         .env_remove(raster_runtime::TRACE_PATH_ENV)
+        .env_remove(raster_runtime::tracing::COMMIT_PATH_ENV)
+        .env_remove(raster_runtime::tracing::COMMIT_PROJECT_ENV)
+        .env_remove(raster_runtime::tracing::COMMIT_WINDOW_ENV)
         .env_remove(raster_runtime::TRACE_FORMAT_ENV)
         .env_remove(raster_runtime::OUTPUT_DIR_ENV)
         .env_remove(raster_runtime::PROFILE_PATH_ENV)
@@ -974,22 +1005,8 @@ mod tests {
 
     #[test]
     fn parses_phase_one_workflows() {
-        parse_for_test([
-            "iris",
-            "model",
-            "import",
-            "--model",
-            "model-bundles/model",
-        ])
-        .unwrap();
-        parse_for_test([
-            "iris",
-            "claim",
-            "build",
-            "--run",
-            "inference.toml",
-        ])
-        .unwrap();
+        parse_for_test(["iris", "model", "import", "--model", "model-bundles/model"]).unwrap();
+        parse_for_test(["iris", "claim", "build", "--run", "inference.toml"]).unwrap();
         parse_for_test([
             "iris",
             "claim",
@@ -1033,13 +1050,7 @@ mod tests {
     #[test]
     fn challenge_run_spec_defaults_and_overrides_reach_options() {
         for run in [None, Some("specs/model-b.toml")] {
-            let mut argv = vec![
-                "iris",
-                "challenge",
-                "build",
-                "--claim",
-                "claim_bundle.json",
-            ];
+            let mut argv = vec!["iris", "challenge", "build", "--claim", "claim_bundle.json"];
             if let Some(path) = run {
                 argv.extend(["--run", path]);
             }

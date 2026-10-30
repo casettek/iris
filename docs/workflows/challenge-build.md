@@ -65,3 +65,10 @@ just challenge \
 ```
 
 `--claim` and `--trace` remain lower-level debug inputs that compare full checkpoint records. `--trace` prepares a run from `--run` because a trace alone has no frozen run metadata. It uses that run spec’s model, prompt, and token count. `challenge locate` remains reserved. See [Fault proving](fault-prove.md) for `challenge corrupt` and `fault prove`.
+
+The authenticated challenge-stage replay explicitly uses `--fraud-proof-window-size 128`.
+It builds `commit.bin` during execution with RAM working storage and no raw trace.
+Checkpoint output validation and challenge artifacts are unchanged. Fault proving
+runs the known stage's program directly with `run --audit`, using the disputed
+commitment's window size. It stops at divergence and saves neither a raw trace
+nor another commitment.

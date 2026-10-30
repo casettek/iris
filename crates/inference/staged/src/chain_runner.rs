@@ -1749,6 +1749,9 @@ fn run_compare_stage(current_exe: &Path, stage_dir: &Path) -> Result<()> {
         .arg(stage_dir.join("input_manifest.json"))
         .env(raster_runtime::auth::AUTH_ENV, "0")
         .env_remove(raster_runtime::TRACE_PATH_ENV)
+        .env_remove(raster_runtime::tracing::COMMIT_PATH_ENV)
+        .env_remove(raster_runtime::tracing::COMMIT_PROJECT_ENV)
+        .env_remove(raster_runtime::tracing::COMMIT_WINDOW_ENV)
         .env_remove(raster_runtime::TRACE_FORMAT_ENV)
         .env_remove(raster_runtime::OUTPUT_DIR_ENV)
         .env_remove(raster_runtime::PROFILE_PATH_ENV)
@@ -1941,6 +1944,9 @@ fn apply_stage_env(command: &mut Command, stage_dir: &Path) {
         .env(raster_runtime::auth::AUTH_ENV, "0")
         .env(raster_runtime::OUTPUT_DIR_ENV, stage_dir)
         .env_remove(raster_runtime::TRACE_PATH_ENV)
+        .env_remove(raster_runtime::tracing::COMMIT_PATH_ENV)
+        .env_remove(raster_runtime::tracing::COMMIT_PROJECT_ENV)
+        .env_remove(raster_runtime::tracing::COMMIT_WINDOW_ENV)
         .env_remove(raster_runtime::TRACE_FORMAT_ENV)
         .env_remove(raster_runtime::PROFILE_PATH_ENV)
         .env_remove(raster_runtime::PROFILE_STREAM_PATH_ENV)
@@ -1957,6 +1963,9 @@ impl StageEnvGuard {
             raster_runtime::auth::AUTH_ENV,
             raster_runtime::OUTPUT_DIR_ENV,
             raster_runtime::TRACE_PATH_ENV,
+            raster_runtime::tracing::COMMIT_PATH_ENV,
+            raster_runtime::tracing::COMMIT_PROJECT_ENV,
+            raster_runtime::tracing::COMMIT_WINDOW_ENV,
             raster_runtime::TRACE_FORMAT_ENV,
             raster_runtime::PROFILE_PATH_ENV,
             raster_runtime::PROFILE_STREAM_PATH_ENV,
@@ -1966,6 +1975,9 @@ impl StageEnvGuard {
         std::env::set_var(raster_runtime::OUTPUT_DIR_ENV, stage_dir);
         for name in [
             raster_runtime::TRACE_PATH_ENV,
+            raster_runtime::tracing::COMMIT_PATH_ENV,
+            raster_runtime::tracing::COMMIT_PROJECT_ENV,
+            raster_runtime::tracing::COMMIT_WINDOW_ENV,
             raster_runtime::TRACE_FORMAT_ENV,
             raster_runtime::PROFILE_PATH_ENV,
             raster_runtime::PROFILE_STREAM_PATH_ENV,
