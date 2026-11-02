@@ -7,6 +7,7 @@ use anyhow::{bail, Context, Result};
 use clap::{Args, Parser, Subcommand};
 
 mod challenge;
+mod challenge_profile;
 mod claim;
 mod fault;
 mod infer;
@@ -209,6 +210,8 @@ enum ChallengeCommand {
     Build(ChallengeBuildArgs),
     /// Flip an interior fingerprint bit in a challenge copy.
     Corrupt(fault::CorruptArgs),
+    /// Measure guest cycles and select a heavy fault window from a completed challenge.
+    Profile(challenge_profile::ProfileArgs),
 }
 
 #[derive(Debug, Subcommand)]
@@ -350,6 +353,10 @@ fn execute(cli: Cli) -> Result<ExitCode> {
             Ok(ExitCode::SUCCESS)
         }
         Some(Commands::Challenge { command }) => match command {
+            ChallengeCommand::Profile(args) => {
+                challenge_profile::run(args)?;
+                Ok(ExitCode::SUCCESS)
+            }
             ChallengeCommand::Corrupt(args) => {
                 fault::corrupt(args)?;
                 Ok(ExitCode::SUCCESS)

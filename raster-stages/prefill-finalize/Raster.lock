@@ -1,41 +1,41 @@
 {
   "format": 1,
-  "program_commitment": "5c47b0722c7338082bc4c3c3cd1afbfd647c98a0c164304f079a81c58394d937",
+  "program_commitment": "ca59370f73fff510108c21ed05589ce13200e70d35dbaa18d030703c6e2cb341",
   "tiles": {
     "assert_logits_complete": {
-      "image_id": "c891828c8d9b49d936f126040d3410c26ece4899343a2b3dad0e5afcd67e41b3",
+      "image_id": "16928998f2d290cd0f2822bf6c991d922b4baa5ebb7d43ee11ca6b55685d0868",
       "source_hash": "8ac5d0ceca3938b20000000000001b98"
     },
     "begin_error_summary": {
-      "image_id": "b7670ee43d0f1513945214b01ab03214fea5a409782cf791e8a114c049f6ae13",
+      "image_id": "fe6f3fb00b1f28f01e264c232fd202541fd12078da545eeecd3fe4a8e240724c",
       "source_hash": "8ac5d0ceca3938b20000000000001b98"
     },
     "begin_logits": {
-      "image_id": "20ccb4696d1e04d93e26f118c2b3f5229ded3f6a36175c6d730330cdc52c4ea6",
+      "image_id": "1617c0df4001d9423838391c57807e8154d4a4644872b678f17314f8e1733741",
       "source_hash": "8ac5d0ceca3938b20000000000001b98"
     },
     "empty_final_position": {
-      "image_id": "2cdb2e42351b6b02fb3d5b32cfeb24a1a5f2bcfeaab5e57c7f180848e5ace539",
+      "image_id": "5f1340623fdebcc6a69abaa0df787747d9a399cfc3019966d764b92c81969bfd",
       "source_hash": "8ac5d0ceca3938b20000000000001b98"
     },
     "normalize_final_position": {
-      "image_id": "ce0f764a3ebc9c7b6a17144de0de324cf2779117607ae1e7f08908b6e8db8ead",
+      "image_id": "2260f1e94105994f628ae4ecfee1963f67d42d6736bae5252e89435f0d0efb8c",
       "source_hash": "8ac5d0ceca3938b20000000000001b98"
     },
     "project_logit_page": {
-      "image_id": "83ed846cc530a97f7f971dca78c6341144640a5468aa172aaaa8471d1ce87729",
+      "image_id": "6f4f5d264a5eca2acec73d9de49b8136cb203ec165ad804b24ed022cecb3f00e",
       "source_hash": "8ac5d0ceca3938b20000000000001b98"
     },
     "summarise_errors": {
-      "image_id": "a3ff32eca938e9910fb9713e173530a322f6ad6b8118082f69ac0e3ad87518bd",
+      "image_id": "fcc6a82d0077de6a288bc4d7813f1b94119f3c9906c90dc6c94bcb1709b046fa",
       "source_hash": "8ac5d0ceca3938b20000000000001b98"
     },
     "track_final_position": {
-      "image_id": "bb1f4095c0b265c8d0ce1f1bb854eb6df792207ea80f8d4dc2b9a586364a5df2",
+      "image_id": "15a15e898be5a28b87893319a91740904db3f25461905fe37d3acb6edb10347c",
       "source_hash": "8ac5d0ceca3938b20000000000001b98"
     },
     "validate_final_head": {
-      "image_id": "66b2142ff5c1983c85e6394723e7d25c6b85f69052154ed5e87f5fe1b50ca9a3",
+      "image_id": "b3c7513e0e736ad40be6cda6a7e4dfd6fff886ae7f975a3cfd91dc954ccfdd95",
       "source_hash": "8ac5d0ceca3938b20000000000001b98"
     }
   },

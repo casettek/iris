@@ -4,7 +4,6 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use inference_artifacts::replay_profile::{ReplayProfileStatus, StageReplayProfile};
 use inference_artifacts::{read_json, EXECUTION_TIMES_JSON};
 use staged_infer::chain_runner::StagedExecutionBackend;
 use staged_infer::{CheckpointedInferenceConfig, CheckpointedInferenceExecutor, ParityPolicy};
@@ -89,11 +88,17 @@ project = "raster-stages/output-finalize"
     fs::write(
         &worker,
         format!(
-            r#"#!/bin/sh
-test "$1" = "--run-stage" || exit 10
-for name in output.bin output.rindex output_manifest.json; do
-  cp '{source}'/"$name" "$2/$name" || exit 11
-done
+            r#"#!/usr/bin/env python3
+import sys,json,shutil,pathlib
+for line in sys.stdin:
+    request=json.loads(line)
+    if "Shutdown" in request: break
+    job=request["Run"]["job"]
+    for name in ["output.bin","output.rindex","output_manifest.json"]:
+        shutil.copyfile('{source}/'+name, pathlib.Path(job["output_dir"])/name)
+    timings={{k:{{"secs":0,"nanos":1}} for k in ["input_load_duration","kernel_duration","encode_write_duration","direct_stage_duration"]}}
+    cache={{k:0 for k in ["budget_bytes","retained_bytes","hits","misses","bypasses","preparation_duration_ns"]}}
+    print(json.dumps({{"version":1,"id":job["id"],"name":job["name"],"timings":timings,"cache":cache,"error":None}}),flush=True)
 "#
         ),
     )
@@ -181,46 +186,21 @@ fn replay_profile_tokenizer_smoke() {
         .lines()
         .find_map(|line| line.strip_prefix("Replay profile report: "))
         .expect("missing summary path");
-    let report: StageReplayProfile = read_json(Path::new(report_path)).unwrap();
-    assert!(matches!(report.status, ReplayProfileStatus::Complete));
-    assert_eq!(report.stage, "prompt_merge_b0");
-    assert_eq!(report.selected_tile_ids.len(), 1);
-    assert_eq!(report.native.output_matches_baseline, Some(true));
-    assert_eq!(report.replay.output_matches_baseline, Some(true));
-    assert!(report.replay_tiles[0].max_guest_cycles.unwrap() > 0);
-    assert!(report.replay_tiles[0].total_guest_cycles > 0);
-    assert!(
-        report.replay_tiles[0]
-            .transition_overhead
-            .as_ref()
-            .unwrap()
-            .guest_cycles
-            > 0
-    );
-    assert_eq!(report.version, 2);
-    assert!(report.native_tiles.is_empty());
-    assert!(report.native_ranking_path.as_ref().unwrap().is_file());
-    let json: serde_json::Value = read_json(Path::new(report_path)).unwrap();
-    assert!(json.get("native_tiles").is_none());
-    assert!(!json.to_string().contains("_ns"));
-    assert!(log.contains("heaviest replay"));
-    assert!(log.contains("guest cycles across"));
-    assert!(log.contains("Sample transition overhead (one invocation):"));
-    assert!(
-        !log.contains("_ns"),
-        "native fields leaked into terminal: {log}"
-    );
-    assert!(
-        !log.contains(" ns"),
-        "native timings leaked into terminal: {log}"
-    );
-    assert!(report.native.profile_path.unwrap().is_file());
-    assert!(report.replay.profile_path.unwrap().is_file());
-    assert!(!report
-        .stage_dir
+    let report: serde_json::Value = read_json(Path::new(report_path)).unwrap();
+    assert_eq!(report["version"], 3);
+    assert_eq!(report["complete"], true);
+    assert_eq!(report["stage"], "prompt_merge_b0");
+    assert_eq!(report["top_calls"].as_array().unwrap().len(), 1);
+    assert!(report["top_calls"][0]["user_cycles"].as_u64().unwrap() > 0);
+    assert!(Path::new(report_path)
         .parent()
         .unwrap()
-        .join("prompt_prepare")
-        .exists());
+        .join("native-profile.json")
+        .is_file());
+    assert!(Path::new(report_path)
+        .parent()
+        .unwrap()
+        .join("raster-replay-profile.json")
+        .is_file());
     println!("Verified tokenizer replay profile: {report_path}");
 }

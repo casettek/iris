@@ -18,6 +18,9 @@ use std::{
 
 #[derive(Debug, clap::Args)]
 pub struct CorruptArgs {
+    /// Frozen challenge profile selecting an interior window endpoint.
+    #[arg(long)]
+    pub profile: Option<PathBuf>,
     #[arg(long)]
     pub challenge: PathBuf,
     #[arg(long)]
@@ -26,6 +29,9 @@ pub struct CorruptArgs {
 
 #[derive(Debug, clap::Args)]
 pub struct ProveArgs {
+    /// Execute the fault window and measure guest cycles without creating a proof.
+    #[arg(long)]
+    pub estimate: bool,
     #[arg(long)]
     pub challenge: PathBuf,
     #[arg(long)]
@@ -58,7 +64,18 @@ fn flip_middle(value: &mut CommitmentFile) -> Result<(usize, usize, u64, u64)> {
         "challenge has no interior fingerprint entry to corrupt"
     );
     let entry = window + (value.len() - 2 * window) / 2;
-    let bit = entry * value.fingerprint.bits_per_item();
+    flip_entry(value, entry)
+}
+
+fn flip_entry(value: &mut CommitmentFile, entry: usize) -> Result<(usize, usize, u64, u64)> {
+    value.validate()?;
+    ensure!(
+        entry >= value.window_size() && entry < value.len().saturating_sub(value.window_size()),
+        "target is not an interior fingerprint entry"
+    );
+    let bit = entry
+        .checked_mul(value.fingerprint.bits_per_item())
+        .context("fingerprint bit overflow")?;
     let word = bit / 64;
     let before = value.fingerprint.bits.get(word);
     value
@@ -75,7 +92,47 @@ pub fn corrupt(args: CorruptArgs) -> Result<()> {
     ensure!(bundle.version == 1, "unsupported challenge version");
     let source = reference(&challenge_path, &bundle.raster_commit_path);
     let mut value = commitment(&source)?;
-    let (entry, bit, before, after) = flip_middle(&mut value)?;
+
+    let profile: Option<serde_json::Value> = args
+        .profile
+        .as_ref()
+        .map(|path| read_json(path))
+        .transpose()?;
+    let (entry, bit, before, after) = if let Some(profile) = &profile {
+        ensure!(
+            matches!(profile["version"].as_u64(), Some(1 | 2))
+                && profile["kind"] == "challenge-profile"
+                && profile["complete"] == true
+                && profile["stage"] == bundle.stage
+                && profile["original_commitment_sha256"] == file_sha256(&source)?
+                && profile["commitment_matches"] == true
+                && (if profile["version"] == 2 {
+                    profile["mapping_verified"] == true
+                } else {
+                    profile["trace_matches"] == true
+                })
+                && profile["commitment_length"] == value.len()
+                && profile["window_size"] == value.window_size(),
+            "profile is not bound to this challenge commitment"
+        );
+        let target = &profile["target"];
+        let start = target["window_start"]
+            .as_u64()
+            .context("profile has no eligible window")?;
+        let end = target["window_end"]
+            .as_u64()
+            .context("missing window endpoint")?;
+        ensure!(
+            target["exec_index"].as_u64().and_then(|n| n.checked_sub(1)) == Some(start)
+                && start.checked_add(value.window_size() as u64 - 1) == Some(end)
+                && target["window_size"] == value.window_size(),
+            "invalid profile window"
+        );
+        flip_entry(&mut value, usize::try_from(end)?)?
+    } else {
+        flip_middle(&mut value)?
+    };
+
     fs::create_dir_all(&args.output)?;
     let output = fs::canonicalize(args.output)?;
     let target = output.join("corrupted_commit.bin");
@@ -84,7 +141,9 @@ pub fn corrupt(args: CorruptArgs) -> Result<()> {
     write_json(
         &output.join("corruption.json"),
         &json!({
-            "version": 1, "stage": bundle.stage, "entry_index": entry, "fingerprint_bit": bit,
+            "version": 1, "stage": bundle.stage, "entry_index": entry,
+            "target": profile.as_ref().map(|p| &p["target"]),
+            "selection_reason": profile.as_ref().map(|p| &p["target_reason"]), "fingerprint_bit": bit,
             "before_word": format!("{before:016x}"), "after_word": format!("{after:016x}"),
             "original_sha256": file_sha256(&source)?, "corrupted_sha256": file_sha256(&target)?,
             "commitment_path": target
@@ -94,13 +153,22 @@ pub fn corrupt(args: CorruptArgs) -> Result<()> {
 }
 
 fn progress(phase: &str, replay: Option<f64>, proving: Option<f64>) -> Result<()> {
+    emit_progress(phase, replay, proving, None)
+}
+
+fn emit_progress(
+    phase: &str,
+    replay: Option<f64>,
+    proving: Option<f64>,
+    estimation: Option<f64>,
+) -> Result<()> {
     let mut stdout = std::io::stdout().lock();
     writeln!(
         stdout,
         "IRIS_FAULT_PROGRESS {}",
         json!({"version": 1, "phase": phase,
         "started_at_ms": SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis(),
-        "stage_replay_duration_ms": replay, "proof_duration_ms": proving})
+        "stage_replay_duration_ms": replay, "proof_duration_ms": proving, "estimation_duration_ms": estimation})
     )?;
     stdout.flush()?;
     Ok(())
@@ -108,7 +176,7 @@ fn progress(phase: &str, replay: Option<f64>, proving: Option<f64>) -> Result<()
 
 pub fn prove(args: ProveArgs) -> Result<()> {
     let total = Instant::now();
-    check_runtime()?;
+    check_runtime_for(args.estimate)?;
     progress("preparing", None, None)?;
     let challenge_path = fs::canonicalize(args.challenge)?;
     let claim_path = fs::canonicalize(args.claim_context)?;
@@ -176,7 +244,10 @@ pub fn prove(args: ProveArgs) -> Result<()> {
     fs::create_dir_all(&args.output)?;
     let output = fs::canonicalize(args.output)?;
     ensure!(
-        !output.join("fault_bundle.json").exists() && !output.join("stage-replay").exists(),
+        !output.join("fault_bundle.json").exists()
+            && !output.join("fault_estimate_bundle.json").exists()
+            && !output.join("fault_estimate.json").exists()
+            && !output.join("stage-replay").exists(),
         "fault output already used"
     );
     // Guest dependencies can change without changing the stage's tile source.
@@ -197,8 +268,14 @@ pub fn prove(args: ProveArgs) -> Result<()> {
         fs::canonicalize(&package.input_manifest_path).context("fault audit manifest missing")?;
     let mut replay_ms = 0.0;
     let proof_path = output.join("fault.receipt");
-    let report_path = output.join("raster_audit.json");
-    let mut child = Command::new("cargo")
+    let report_path = output.join(if args.estimate {
+        "fault_estimate.json"
+    } else {
+        "raster_audit.json"
+    });
+    let execution_started = Instant::now();
+    let mut command = Command::new("cargo");
+    command
         .current_dir(&project)
         .args(["raster", "run"])
         .arg("--input")
@@ -206,9 +283,13 @@ pub fn prove(args: ProveArgs) -> Result<()> {
         .arg("--input-manifest")
         .arg(&input_manifest)
         .arg("--audit")
-        .arg(&disputed_path)
-        .arg("--proof-output")
-        .arg(&proof_path)
+        .arg(&disputed_path);
+    if args.estimate {
+        command.arg("--estimate");
+    } else {
+        command.arg("--proof-output").arg(&proof_path);
+    }
+    let mut child = command
         .arg("--report")
         .arg(&report_path)
         .stdout(Stdio::piped())
@@ -219,11 +300,15 @@ pub fn prove(args: ProveArgs) -> Result<()> {
         let line = line?;
         if let Some(event) = line.strip_prefix("RASTER_AUDIT_PROGRESS ") {
             let event: serde_json::Value = serde_json::from_str(event)?;
-            if event["phase"] == "proving" {
+            if event["phase"] == "proving" || event["phase"] == "estimating" {
                 replay_ms = event["audit_duration_ms"]
                     .as_f64()
                     .context("Raster audit duration missing")?;
-                progress("proving", Some(replay_ms), None)?;
+                if args.estimate {
+                    emit_progress("estimating", Some(replay_ms), None, None)?;
+                } else {
+                    progress("proving", Some(replay_ms), None)?;
+                }
             }
         }
         println!("{line}");
@@ -234,10 +319,67 @@ pub fn prove(args: ProveArgs) -> Result<()> {
     ensure!(report["version"] == 1, "unsupported Raster audit report");
     if report["outcome"] == "no-fault" {
         write_json(
-            &output.join("fault_bundle.json"),
+            &output.join(if args.estimate {
+                "fault_estimate_bundle.json"
+            } else {
+                "fault_bundle.json"
+            }),
             &json!({"version":1,"outcome":"no-fault","stage":bundle.stage}),
         )?;
         anyhow::bail!("no fault found in the supplied challenge");
+    }
+
+    let corruption_path = disputed_path.parent().unwrap().join("corruption.json");
+    let mut selected_window = serde_json::Value::Null;
+    if corruption_path.is_file() {
+        let corruption: serde_json::Value = read_json(&corruption_path)?;
+        if !corruption["target"].is_null() {
+            ensure!(
+                corruption["corrupted_sha256"] == file_sha256(&disputed_path)?,
+                "corruption manifest hash mismatch"
+            );
+            let target = &corruption["target"];
+            let end = target["window_end"]
+                .as_u64()
+                .context("missing selected endpoint")?;
+            ensure!(
+                report["window_start"] == target["window_start"]
+                    && (if args.estimate {
+                        report["window_start"]
+                            .as_u64()
+                            .zip(report["actual_step_count"].as_u64())
+                            .and_then(|(s, n)| s.checked_add(n))
+                    } else {
+                        report["window_end"].as_u64()
+                    }) == end.checked_add(1)
+                    && (args.estimate || report["detected_step"] == target["window_end"]),
+                "proved window differs from profile target"
+            );
+            selected_window = target.clone();
+        }
+    }
+    if args.estimate {
+        validate_estimate_report(&report, &disputed)?;
+        let estimation_ms = (execution_started.elapsed().as_secs_f64() * 1000.0
+            - report["audit_duration_ms"].as_f64().unwrap_or(0.0))
+        .max(0.0);
+        replay_ms = report["audit_duration_ms"]
+            .as_f64()
+            .context("missing estimate audit duration")?;
+        emit_progress("validating", Some(replay_ms), None, Some(estimation_ms))?;
+        write_json(
+            &output.join("fault_timings.json"),
+            &json!({"version":1,"selected_window":selected_window,
+            "preparation_duration_ms":preparation_ms,"stage_replay_duration_ms":replay_ms,
+            "estimation_duration_ms":estimation_ms,"duration_ms":total.elapsed().as_secs_f64()*1000.0}),
+        )?;
+        write_json(
+            &output.join("fault_estimate_bundle.json"),
+            &json!({"version":1,"outcome":"estimated","verified":false,
+            "stage":bundle.stage,"commitment_sha256":file_sha256(&disputed_path)?,
+            "report_sha256":file_sha256(&report_path)?}),
+        )?;
+        return Ok(());
     }
     ensure!(
         report["outcome"] == "proved" && report["verified"] == true,
@@ -252,13 +394,22 @@ pub fn prove(args: ProveArgs) -> Result<()> {
         "proof has not reached a fraud verdict"
     );
     verify_refuted_commitment(&journal.refuted_trace_commitment, &disputed)?;
+    if !selected_window.is_null() {
+        ensure!(
+            Some(journal.init_state.init_frontier.position)
+                == selected_window["window_start"].as_u64()
+                && Some(journal.init_state.fingerprint.len() as u64)
+                    == selected_window["window_size"].as_u64(),
+            "receipt journal window differs from selected window"
+        );
+    }
     let proof_ms = report["proof_duration_ms"]
         .as_f64()
         .context("Raster proof duration missing")?
         + validating_started.elapsed().as_secs_f64() * 1000.0;
     progress("validating", Some(replay_ms), Some(proof_ms))?;
     let timings = json!({"version":1,"preparation_duration_ms":preparation_ms,
-        "stage_replay_duration_ms":replay_ms,"proof_duration_ms":proof_ms,"duration_ms":total.elapsed().as_secs_f64()*1000.0});
+        "selected_window":selected_window,"stage_replay_duration_ms":replay_ms,"proof_duration_ms":proof_ms,"duration_ms":total.elapsed().as_secs_f64()*1000.0});
     write_json(&output.join("fault_timings.json"), &timings)?;
     write_json(
         &output.join("fault_bundle.json"),
@@ -266,6 +417,45 @@ pub fn prove(args: ProveArgs) -> Result<()> {
         "stage":bundle.stage,"commitment_sha256":file_sha256(&disputed_path)?,
         "proof_path":proof_path,"proof_sha256":file_sha256(&proof_path)?,"proof_bytes":fs::metadata(&proof_path)?.len(),"proof_seal_bytes":receipt.seal_size()}),
     )?;
+    Ok(())
+}
+
+fn validate_estimate_report(report: &serde_json::Value, disputed: &CommitmentFile) -> Result<()> {
+    ensure!(
+        report["version"] == 1
+            && report["kind"] == "fault-window-estimate"
+            && report["outcome"] == "estimated"
+            && report["complete"] == true
+            && report["error"].is_null(),
+        "Raster did not produce a complete fault estimate"
+    );
+    let count = report["actual_step_count"]
+        .as_u64()
+        .context("missing estimate count")?;
+    ensure!(
+        count > 0
+            && report["measured_step_count"].as_u64() == Some(count)
+            && report["configured_window_size"].as_u64() == Some(disputed.window_size() as u64),
+        "incomplete estimate coverage"
+    );
+    let journal: TransitionJournal = serde_json::from_value(report["final_journal"].clone())?;
+    ensure!(
+        matches!(journal.current_state, TransitionState::Finished),
+        "estimate did not reach fault verdict"
+    );
+    verify_refuted_commitment(&journal.refuted_trace_commitment, disputed)?;
+    let digest: String = disputed
+        .header()
+        .digest()
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    ensure!(
+        report["commitment_digest"] == digest
+            && report["window_start"].as_u64() == Some(journal.init_state.init_frontier.position)
+            && count == journal.init_state.fingerprint.len() as u64,
+        "estimate window binding mismatch"
+    );
     Ok(())
 }
 
@@ -310,31 +500,25 @@ fn challenge_projects(
         .and_then(toml::Value::as_array)
         .context("Raster manifest has no chain stages")?;
     let mut projects = std::collections::BTreeSet::new();
-    let mut finalize = false;
-    let mut range = false;
     for stage in stages {
-        let name = stage
-            .get("name")
+        let project = stage
+            .get("project")
             .and_then(toml::Value::as_str)
-            .unwrap_or("");
-        if name == "prefill_finalize" || name.starts_with("prefill_range_") {
-            finalize |= name == "prefill_finalize";
-            range |= name.starts_with("prefill_range_");
-            let project = stage
-                .get("project")
-                .and_then(toml::Value::as_str)
-                .context("challenge stage has no project")?;
-            projects.insert(base.join(project));
-        }
+            .context("challenge stage has no project")?;
+        projects.insert(base.join(project));
     }
     ensure!(
-        finalize && range,
-        "Raster manifest must contain prefill_finalize and prefill_range stages"
+        !projects.is_empty(),
+        "Raster manifest has no challenge projects"
     );
     Ok(projects)
 }
 
 pub fn check_runtime() -> Result<()> {
+    check_runtime_for(false)
+}
+
+fn check_runtime_for(estimate: bool) -> Result<()> {
     // A dev receipt is never a successful application proof.
     ensure!(
         !risc0_zkvm::is_dev_mode(),
@@ -351,6 +535,7 @@ pub fn check_runtime() -> Result<()> {
     let help_text = String::from_utf8_lossy(&help.stdout);
     ensure!(
         help.status.success()
+            && (!estimate || help_text.contains("--estimate"))
             && ["--audit", "--proof-output", "--report"]
                 .iter()
                 .all(|flag| help_text.contains(flag)),
@@ -388,7 +573,8 @@ project = "unused"
             projects,
             [
                 PathBuf::from("/model/range"),
-                PathBuf::from("/opt/finalize")
+                PathBuf::from("/opt/finalize"),
+                PathBuf::from("/model/unused")
             ]
             .into()
         );
@@ -400,7 +586,12 @@ project = "finalize"
 "#,
         )
         .unwrap();
-        assert!(challenge_projects(&missing, Path::new("/model")).is_err());
+        assert_eq!(
+            challenge_projects(&missing, Path::new("/model"))
+                .unwrap()
+                .len(),
+            1
+        );
     }
 
     fn fixture(len: usize) -> CommitmentFile {
@@ -451,6 +642,33 @@ project = "finalize"
     }
 
     #[test]
+    fn estimates_require_complete_coverage_and_a_bound_fault_journal() {
+        let disputed = fixture(20);
+        let frontier = json!({"position":0,"leaf":[],"ommers":[]});
+        let digest = disputed.header().digest();
+        let digest_hex: String = digest.iter().map(|b| format!("{b:02x}")).collect();
+        let mut report = json!({"version":1,"kind":"fault-window-estimate",
+        "outcome":"estimated","complete":true,"error":null,
+        "actual_step_count":2,"measured_step_count":2,"configured_window_size":2,
+        "window_start":0,"commitment_digest":digest_hex,
+        "final_journal":{
+            "init_state":{"init_frontier":frontier,"init_storage_frontier":frontier,
+                "init_storage_root":[],"init_storage_index_root":[],"fingerprint":disputed.fingerprint},
+            "current_state":"Finished","transition_image_id":[],"authorization_image_id":[],
+            "input_manifest_commitment":[],"program_commitment":[],"refuted_trace_commitment":digest,
+            "entrypoint_authorization":"NotRequired","output_authorization":"NotRequired",
+            "window_is_terminal":false,"final_committed_root":null
+        }});
+        report["final_journal"]["init_state"]["fingerprint"]["len"] = json!(2);
+        validate_estimate_report(&report, &disputed).unwrap();
+        report["measured_step_count"] = json!(1);
+        assert!(validate_estimate_report(&report, &disputed).is_err());
+        report["measured_step_count"] = json!(2);
+        report["final_journal"]["refuted_trace_commitment"] = json!([0]);
+        assert!(validate_estimate_report(&report, &disputed).is_err());
+    }
+
+    #[test]
     fn corruption_changes_exactly_one_interior_bit_and_is_reversible() {
         let original = fixture(20);
         let mut corrupted = original.clone();
@@ -472,6 +690,21 @@ project = "finalize"
             postcard::to_allocvec(&original).unwrap(),
             postcard::to_allocvec(&corrupted).unwrap()
         );
+    }
+    #[test]
+    fn targeted_corruption_uses_exact_endpoint_and_preserves_original() {
+        let original = fixture(20);
+        let bytes = postcard::to_allocvec(&original).unwrap();
+        let mut copy = original.clone();
+        let h = 5;
+        let j = h + original.window_size() - 1;
+        assert_eq!(flip_entry(&mut copy, j).unwrap().0, j);
+        assert_ne!(copy.header().digest(), original.header().digest());
+        assert_eq!(postcard::to_allocvec(&original).unwrap(), bytes);
+        flip_entry(&mut copy, j).unwrap();
+        assert_eq!(postcard::to_allocvec(&copy).unwrap(), bytes);
+        assert!(flip_entry(&mut copy, 0).is_err());
+        assert!(flip_entry(&mut copy, 19).is_err());
     }
     #[test]
     fn short_commitment_cannot_corrupt_revealed_windows() {
