@@ -25,7 +25,7 @@ pub use claim::{
 };
 pub use direct::{
     file_sha256, verify_file_sha256, DirectInferBundle, DirectInferProvenance, DirectInferShape,
-    ModelManifest, MODEL_ARTIFACTS_DIR, MODEL_MANIFEST_JSON,
+    ModelManifest, MODEL_ARTIFACTS_DIR, MODEL_MANIFEST_JSON, TEACHER_FORCED_TEMPLATE_TOML,
 };
 pub use inference::{
     InferAuxWaveTiming, InferStageTiming, InferenceResult, InferenceRunReport, InferenceTimings,
@@ -33,7 +33,7 @@ pub use inference::{
 pub use io::{read_json, write_json};
 pub use manifest::resolve_raster_manifest_paths;
 pub use run::{
-    read_run_spec, InferenceRunSpec, PreparedPiece, PreparedPrompt, PreparedRun,
+    read_run_spec, ChainKind, InferenceRunSpec, PreparedPiece, PreparedPrompt, PreparedRun,
     INFERENCE_RUN_SPEC_TOML, PREPARED_RUN_JSON, PREPARED_RUN_VERSION,
 };
 
@@ -285,6 +285,8 @@ mod tests {
             provenance: Some(DirectInferProvenance {
                 raster_manifest_path: PathBuf::from("../Raster.toml"),
                 raster_manifest_sha256: String::from("raster-sha"),
+                teacher_forced_manifest_path: Some(PathBuf::from("../Raster.teacher-forced.toml")),
+                teacher_forced_manifest_sha256: Some(String::from("teacher-forced-sha")),
             }),
         };
 
@@ -303,6 +305,7 @@ mod tests {
             prompt_file: Some(PathBuf::from("prompt.txt")),
             raw_prompt: false,
             tokens: 1,
+            chain: Default::default(),
         };
         assert!(both
             .validate()
@@ -316,6 +319,7 @@ mod tests {
             prompt_file: None,
             raw_prompt: false,
             tokens: 1,
+            chain: Default::default(),
         };
         assert!(neither
             .validate()
@@ -343,6 +347,8 @@ mod tests {
             tokens: 2,
             run_manifest_path: Some(PathBuf::from("target/runs/run/Raster.toml")),
             run_manifest_sha256: Some(String::from("run-sha")),
+            chain: Default::default(),
+            claimed_token_ids: None,
         };
 
         assert_eq!(

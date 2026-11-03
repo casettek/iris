@@ -30,6 +30,10 @@ const ONE: i32 = 1 << 16;
 const INITIAL_PIECES_PLACEHOLDER_COMMITMENT: &str =
     "0000000000000000000000000000000000000000000000000000000000000000";
 
+/// Run preparation replaces every external under this directory with the
+/// run's own prompt pieces and, for teacher-forced runs, claimed output.
+const RUN_PLACEHOLDER_DIR: &str = "target/iris/run-prompt-placeholder";
+
 fn main() {
     if let Err(error) = run_from_env() {
         eprintln!("model-import: {error}");
@@ -234,7 +238,7 @@ pub fn import_model(args: ImportConfig) -> Result<ImportResult, Box<dyn Error>> 
         let shape = Shape::from_config(text)?;
         // A direct-only refresh cannot attest that existing Raster externals
         // were generated from this bundle. Only a full import binds a template.
-        direct_manifest::write_model_manifest(&args, &eos_ids, &shape, text, None)?;
+        direct_manifest::write_model_manifest(&args, &eos_ids, &shape, text, None, None)?;
         return Ok(ImportResult {
             manifest_path: None,
             manifest_text: None,
@@ -364,12 +368,17 @@ pub fn import_model(args: ImportConfig) -> Result<ImportResult, Box<dyn Error>> 
     )?);
     let stage_count = stages.len();
     let (template_path, template) = save_model_template(&args, &manifest)?;
+    let (teacher_forced_path, teacher_forced) = save_teacher_forced_template(
+        &args,
+        &teacher_forced_manifest(&shape, &layout, &decoder_commitment, &stages)?,
+    )?;
     direct_manifest::write_model_manifest(
         &args,
         &eos_ids,
         &shape,
         text,
         Some((&template_path, &template)),
+        Some((&teacher_forced_path, &teacher_forced)),
     )?;
     Ok(ImportResult {
         manifest_path: Some(template_path),
@@ -402,6 +411,121 @@ fn save_model_template(
         println!("wrote {}", copy.display());
     }
     Ok((path, template))
+}
+
+/// The teacher-forced template is saved beside the autoregressive one and is
+/// never copied to `--manifest`: manual Raster commands keep the root template.
+fn save_teacher_forced_template(
+    args: &ImportConfig,
+    manifest: &str,
+) -> Result<(PathBuf, String), Box<dyn Error>> {
+    let template =
+        inference_artifacts::resolve_raster_manifest_paths(manifest, &std::env::current_dir()?)
+            .map_err(|error| -> Box<dyn Error> { error.to_string().into() })?;
+    let path = args
+        .artifact_dir()
+        .join(inference_artifacts::TEACHER_FORCED_TEMPLATE_TOML);
+    fs::create_dir_all(args.artifact_dir())?;
+    fs::write(&path, &template)?;
+    println!("wrote {}", path.display());
+    Ok((path, template))
+}
+
+/// The teacher-forced chain: the claimed output is embedded with the prompt,
+/// every layer runs once over `prompt ‖ claimed`, and `sequence_check`
+/// re-derives the greedy selection at every generated position.
+///
+/// The prefill stages are reused verbatim except that `input_embedding`
+/// binds the run's claimed ids instead of the empty claim. There is no
+/// separate join stage: one that small would have a trace too short to
+/// commit at the challenge window. `prefill_finalize` and the decode repeat are dropped;
+/// `output_finalize` reads the checked edge, which is byte-identical to the
+/// autoregressive chain's final `decode.edge` for an honest claim.
+fn teacher_forced_manifest(
+    shape: &Shape,
+    layout: &ArtifactLayout,
+    decoder_commitment: &str,
+    prefill_stages: &[String],
+) -> Result<String, Box<dyn Error>> {
+    let head = stage_external_commitment(prefill_stages, "prefill_finalize", "head")?;
+    let claimed_line = external_line(
+        "claimed",
+        layout,
+        RUN_PLACEHOLDER_DIR,
+        "claimed_output",
+        INITIAL_PIECES_PLACEHOLDER_COMMITMENT,
+    );
+    let mut out = String::from("[chain]\nname = \"iris\"\nversion = \"0.1.0\"\n");
+    let mut joined = false;
+    for stage in prefill_stages {
+        let name = stage
+            .lines()
+            .find_map(|line| line.strip_prefix("name = "))
+            .map(|name| name.trim_matches('"'));
+        match name {
+            Some("prefill_finalize") => continue,
+            Some("input_embedding") => {
+                // Same program, embedding the claim after the prompt instead of
+                // the empty one.
+                let mut replaced = 0;
+                let stage = stage
+                    .lines()
+                    .map(|line| {
+                        if line.starts_with("inputs.claimed =") {
+                            replaced += 1;
+                            claimed_line.trim_end().to_string()
+                        } else {
+                            line.to_string()
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                if replaced != 1 {
+                    return Err("input_embedding has no claimed binding to replace".into());
+                }
+                out.push('\n');
+                out.push_str(&stage);
+                out.push('\n');
+                joined = true;
+            }
+            _ => {
+                out.push('\n');
+                out.push_str(stage);
+            }
+        }
+    }
+    if !joined {
+        return Err("generated prefill manifest has no input_embedding stage".into());
+    }
+    out.push_str(&format!(
+        "\n[[chain.stage]]\n\
+         name = \"sequence_check\"\n\
+         project = \"raster-stages/sequence-check\"\n\
+         inputs.activations = {{ from = \"prefill_range_l{}\" }}\n\
+         inputs.prompt = {{ from = \"prompt_prepare\" }}\n\
+         {claimed_line}{}\
+         \n[[chain.stage]]\n\
+         name = \"output_finalize\"\n\
+         project = \"raster-stages/output-finalize\"\n\
+         inputs.edge = {{ from = \"sequence_check\" }}\n\
+         {}",
+        shape.layers - 1,
+        external_line(
+            "head",
+            layout,
+            "raster-stages/prefill-finalize",
+            "head",
+            &head
+        ),
+        external_line(
+            "decoder",
+            layout,
+            "raster-stages/output-finalize",
+            "decoder",
+            decoder_commitment
+        )
+    ));
+    Ok(out)
 }
 
 fn stage_external_commitment(
@@ -906,7 +1030,7 @@ fn write_tokenizer(
     let pieces_line = external_line(
         "initial_pieces",
         layout,
-        "target/iris/run-prompt-placeholder",
+        RUN_PLACEHOLDER_DIR,
         "initial_pieces",
         INITIAL_PIECES_PLACEHOLDER_COMMITMENT,
     );
@@ -966,6 +1090,14 @@ fn write_embedding(
         "raster-stages/input-embedding",
         "embedding",
     )?;
+    // The autoregressive chain embeds only the prompt. The teacher-forced
+    // template replaces this binding with the run's claimed ids.
+    let no_claim = write_external(
+        &ClaimedOutput::default(),
+        layout,
+        "raster-stages/input-embedding",
+        "no_claim",
+    )?;
 
     stages.push(format!(
         concat!(
@@ -973,7 +1105,14 @@ fn write_embedding(
             "name = \"input_embedding\"\n",
             "project = \"raster-stages/input-embedding\"\n",
             "inputs.prompt = {{ from = \"prompt_prepare\" }}\n",
-            "{}"
+            "{}{}"
+        ),
+        external_line(
+            "claimed",
+            layout,
+            "raster-stages/input-embedding",
+            "no_claim",
+            &no_claim
         ),
         external_line(
             "embedding",
@@ -1490,6 +1629,7 @@ mod tests {
                 &shape,
                 &text,
                 Some((&path, &template)),
+                None,
             )
             .unwrap();
             let model = inference_artifacts::ModelManifest::load_verified(&model_path).unwrap();

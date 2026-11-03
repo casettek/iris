@@ -17,6 +17,30 @@ Flow:
 5. Each stage synthesizes `input.json` and `input_manifest.json`, runs the host implementation, and writes Raster-compatible output artifacts.
 6. `inference-artifacts` scans the completed chain directory and writes the claim files.
 
+## Teacher-forced claims
+
+Add `chain = "teacher-forced"` to the run spec to build the claim over the
+[teacher-forced chain](../internals/raster-chain.md#teacher-forced-chain):
+
+```toml
+model_manifest = "runtime/model-artifacts/gemma-4-E2B-detwgt/manifest.json"
+prompt = "say ciao"
+tokens = 3
+chain = "teacher-forced"
+```
+
+Preparation first runs direct inference to discover the output ids. They must
+fill `tokens` unless the last one is EOS. They are written as the run's
+`claimed_output.rastered` external and frozen into `prepared_run.json`
+(`chain`, `claimed_token_ids`). The staged pass then runs the model-specific
+`Raster.teacher-forced.toml`. If `sequence_check`'s greedy selections differ from
+the direct ids, claim build fails: direct and teacher-forced inference are not in
+parity, and the claim would refute itself.
+
+The hidden debug flag `--claimed-ids 1,2,3` posts the given ids instead of
+discovering them. A disagreement is then a warning, and the claim is written anyway.
+This builds deliberately false claims for challenge tests.
+
 Per-stage checkpoint files live under `target/staged-infer/runs/<run>/<stage>/`:
 
 - `input.json`

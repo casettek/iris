@@ -361,6 +361,123 @@ fn prefill_prepare_aux_preserves_prompt_row_order() {
 }
 
 #[test]
+fn sequence_check_matches_finalize_then_select_at_every_position() {
+    use sequence_check::input as check;
+    let hidden = 4;
+    let vocab = 16;
+    // Fractional, signed, and with repeated projection rows so ties occur.
+    let value = |seed: usize| ((seed * 7919 % 131) as i32 - 65) * (ONE / 37);
+    let projection = (0..vocab * hidden)
+        .map(|i| value(i % (hidden * 11)))
+        .collect::<Vec<_>>();
+    let norm = (0..hidden).map(|i| ONE + value(i) / 3).collect::<Vec<_>>();
+    let row_values = |row: usize| {
+        (0..hidden)
+            .map(|i| value(row * 13 + i * 5 + 1))
+            .collect::<Vec<_>>()
+    };
+    let prompt = [3_u32, 9, 4];
+    let rows = 6;
+
+    // The autoregressive path: finalize the single predicting row, select.
+    let finalize_head: std::sync::Arc<FinalHead> = FinalHead {
+        params: FinalHeadParams {
+            hidden_size: hidden as u32,
+            norm_eps: 1 << 10,
+            softcap: 30 * ONE,
+            norm_weights: prefill_finalize::input::pack_i32s(&norm),
+        },
+        projection: paged(&projection),
+    }
+    .into();
+    let mut prior = DecodeEdge::default();
+    for row in prompt.len() - 1..rows - 1 {
+        let logits =
+            routines::prefill_finalize::run_direct(&routines::prefill_finalize::Inputs::eager(
+                prefill_finalize::input::ActivationSequence {
+                    rows: List::from(vec![prefill_finalize::input::ActivationRow {
+                        token_id: 0,
+                        values: prefill_finalize::input::pack_i32s(&row_values(row)),
+                    }]),
+                    errors: List::new(),
+                    kv: List::new(),
+                    start_position: row as u32,
+                },
+                finalize_head.clone(),
+            ))
+            .unwrap();
+        prior = routines::decode_select_token::run_direct(&routines::decode_select_token::Inputs {
+            logits: decode_select_token::input::PrefillLogits {
+                decode_position: logits.decode_position,
+                logits: List::from(
+                    logits
+                        .logits
+                        .iter()
+                        .map(|entry| LogitEntry {
+                            token_id: entry.token_id,
+                            value: entry.value,
+                        })
+                        .collect::<Vec<_>>(),
+                ),
+                errors: List::new(),
+            },
+            prior,
+        })
+        .unwrap();
+    }
+
+    // Claim the greedy ids except one, which the check must not echo.
+    let mut claimed = prior
+        .generated_token_ids
+        .iter()
+        .copied()
+        .collect::<Vec<_>>();
+    claimed[1] = (claimed[1] + 1) % vocab as u32;
+    let check_head: std::sync::Arc<check::FinalHead> = check::FinalHead {
+        params: check::FinalHeadParams {
+            hidden_size: hidden as u32,
+            norm_eps: 1 << 10,
+            softcap: 30 * ONE,
+            norm_weights: check::pack_i32s(&norm),
+        },
+        projection: paged(&projection),
+    }
+    .into();
+    let edge = routines::sequence_check::run_direct(&routines::sequence_check::Inputs::eager(
+        check::ActivationSequence {
+            rows: List::from(
+                (0..rows)
+                    .map(|row| check::ActivationRow {
+                        token_id: 0,
+                        values: check::pack_i32s(&row_values(row)),
+                    })
+                    .collect::<Vec<_>>(),
+            ),
+            errors: List::new(),
+            kv: List::new(),
+            start_position: 0,
+        },
+        check::PromptTokenization {
+            token_ids: List::from(prompt.to_vec()),
+        },
+        check::ClaimedOutput {
+            token_ids: List::from(claimed),
+        },
+        check_head,
+    ))
+    .unwrap();
+
+    assert_eq!(edge.has_selected, prior.has_selected);
+    assert_eq!(edge.decode_position, prior.decode_position);
+    assert_eq!(edge.token_id, prior.token_id);
+    assert_eq!(edge.value, prior.value);
+    assert_eq!(
+        edge.generated_token_ids.iter().collect::<Vec<_>>(),
+        prior.generated_token_ids.iter().collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn prefill_finalize_scores_projection_rows() {
     let norm = prefill_finalize::input::pack_i32s(&[ONE, ONE]);
     let activations = prefill_finalize::input::ActivationSequence {

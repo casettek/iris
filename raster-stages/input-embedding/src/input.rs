@@ -22,6 +22,15 @@ pub struct PromptTokenization {
     pub token_ids: List<u32>,
 }
 
+/// A teacher-forced claim's output ids, embedded after the prompt so one pass
+/// covers `prompt ‖ claimed`. The autoregressive chain binds an empty one.
+///
+/// MUST match `ClaimedOutput` in `sequence-check`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
+pub struct ClaimedOutput {
+    pub token_ids: List<u32>,
+}
+
 /// The committed embedding table: vocab × hidden, row-major, dense so
 /// `token_id` is the row index.
 ///

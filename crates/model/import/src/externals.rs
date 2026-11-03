@@ -94,6 +94,12 @@ pub struct EmbeddingTable {
     pub values: Bytes<196_608>,
 }
 
+/// The autoregressive chain's `claimed` input: no ids after the prompt.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
+pub struct ClaimedOutput {
+    pub token_ids: List<u32>,
+}
+
 // --- prefill-prepare-aux ----------------------------------------------------
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]

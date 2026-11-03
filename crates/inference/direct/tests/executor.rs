@@ -725,6 +725,7 @@ fn write_run_spec(dir: &Path, manifest_path: &Path, prompt: &str, tokens: u32) -
         prompt_file: None,
         raw_prompt: true,
         tokens,
+        chain: Default::default(),
     };
     fs::write(
         &path,

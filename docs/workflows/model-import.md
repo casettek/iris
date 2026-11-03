@@ -25,6 +25,7 @@ Inputs:
 Outputs:
 
 - `runtime/model-artifacts/<model-id>/Raster.toml`, a prompt-free chain template saved on every full import. Its path and SHA-256 are recorded in the model manifest.
+- `runtime/model-artifacts/<model-id>/Raster.teacher-forced.toml`, the [teacher-forced](../internals/raster-chain.md#teacher-forced-chain) template over the same externals, recorded beside it. `--manifest` never copies it. Manifests from older imports have no teacher-forced provenance; reimport before building teacher-forced claims.
 - Reusable Raster externals under `runtime/model-artifacts/<model-id>/raster/*`, written as `.rastered` and `.rindex` pairs with manifest commitments.
 - `runtime/model-artifacts/<model-id>/manifest.json`, the prompt-free model manifest consumed by run specs.
 

@@ -44,6 +44,8 @@ pub struct CheckpointHashChallengeResult {
     pub chain_dir: PathBuf,
     pub recomputed_trace: CheckpointTrace,
     pub divergence: Option<Divergence>,
+    /// Present when recomputation reached `output_finalize` without diverging.
+    pub final_result: Option<InferenceResult>,
 }
 
 #[derive(Debug, Default)]
@@ -82,12 +84,7 @@ impl CheckpointedInferenceExecutor {
             &config.current_exe,
             config.staged_backend,
         )?;
-        let final_result = match run.final_output {
-            Some(CachedStageValue::GeneratedOutput(output)) => {
-                Some(inference_result_from_generated(output))
-            }
-            _ => None,
-        };
+        let final_result = final_result(run.final_output);
         Ok(CheckpointedInferenceResult {
             chain_dir: run.chain_dir,
             selected_stage_dir: run.selected_stage_dir,
@@ -111,10 +108,20 @@ impl CheckpointedInferenceExecutor {
             },
         )?;
         Ok(CheckpointHashChallengeResult {
+            final_result: final_result(verified.run.final_output),
             chain_dir: verified.run.chain_dir,
             recomputed_trace: verified.recomputed_trace,
             divergence: verified.divergence,
         })
+    }
+}
+
+fn final_result(output: Option<CachedStageValue>) -> Option<InferenceResult> {
+    match output {
+        Some(CachedStageValue::GeneratedOutput(output)) => {
+            Some(inference_result_from_generated(output))
+        }
+        _ => None,
     }
 }
 

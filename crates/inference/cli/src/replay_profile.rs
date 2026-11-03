@@ -24,6 +24,7 @@ pub fn run_replay_profile(options: ReplayProfileOptions) -> Result<PathBuf> {
         run_spec_path: options.run_spec_path,
         current_exe: options.current_exe.clone(),
         staged_backend: StagedExecutionBackend::InProcess,
+        claimed_token_ids: None,
     })?;
     let prefix = CheckpointedInferenceExecutor.run_through_stage(
         CheckpointedInferenceConfig {

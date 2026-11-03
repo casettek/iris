@@ -191,6 +191,7 @@ fn prompt_fixture(pages: usize, width: u32) -> (Fixture, EmbeddingTable, PromptT
     };
     f.write("embedding", &table);
     f.write("prompt", &prompt);
+    f.write("claimed", &input_embedding::input::ClaimedOutput::default());
     (f, table, prompt)
 }
 fn eager_prompt(

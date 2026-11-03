@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
+use direct_infer::{DirectInferenceConfig, DirectInferenceExecutor};
 use staged_infer::chain_runner::StagedExecutionBackend;
 use staged_infer::{
     CheckpointedInferenceConfig, CheckpointedInferenceExecutor, CheckpointedInferenceResult,
@@ -12,7 +13,8 @@ use staged_infer::{
 use inference_artifacts::{
     file_sha256 as sha256_file, read_checkpoint_hashes, read_checkpoint_trace, read_json,
     read_run_spec, write_checkpoint_hashes, write_claim_artifacts_with_prepared_run, write_json,
-    InferenceResult, ModelManifest, PreparedRun, CHECKPOINT_TRACE_JSON, PREPARED_RUN_JSON,
+    ChainKind, InferenceResult, ModelManifest, PreparedRun, CHECKPOINT_TRACE_JSON,
+    PREPARED_RUN_JSON,
 };
 use serde::Serialize;
 use sha2::{Digest, Sha256};
@@ -23,6 +25,10 @@ pub struct ClaimBuildOptions {
     pub run_spec_path: PathBuf,
     pub current_exe: PathBuf,
     pub staged_backend: StagedExecutionBackend,
+    /// Debug-only: post these output ids in a teacher-forced claim instead of
+    /// discovering them with direct inference. Used to build claims whose
+    /// tokens are not the greedy continuation.
+    pub claimed_token_ids: Option<Vec<u32>>,
 }
 
 pub(crate) struct PreparedClaimRun {
@@ -89,6 +95,28 @@ pub fn build_claim(options: ClaimBuildOptions) -> Result<ClaimBuildResult> {
         staged_backend: options.staged_backend,
         parity_policy: ParityPolicy::Skip,
     })?;
+    if let Some(claimed) = &prepared.prepared_run.claimed_token_ids {
+        let checked = checkpointed
+            .final_result
+            .as_ref()
+            .map(|result| result.generated_token_ids.as_slice())
+            .context("teacher-forced chain produced no final output")?;
+        if let Some(position) = first_disagreement(claimed, checked) {
+            let message = format!(
+                "teacher-forced selection disagrees with the claimed output at generated token {position}: claimed {:?}, greedy {:?}",
+                claimed.get(position),
+                checked.get(position)
+            );
+            if options.claimed_token_ids.is_none() {
+                // The ids came from direct decode, so the two paths are not
+                // bit-identical: an honest claimer would convict itself.
+                anyhow::bail!("{message}; direct and teacher-forced inference are not in parity");
+            }
+            eprintln!(
+                "warning: {message}; writing the claim anyway because --claimed-ids was given"
+            );
+        }
+    }
     write_claim_result(
         checkpointed,
         &prepared.manifest_path,
@@ -152,6 +180,16 @@ pub fn corrupt_checkpoint_hashes(
     })
 }
 
+/// The first generated position where a teacher-forced claim's posted ids
+/// and the chain's greedy selections differ, including a length difference.
+pub(crate) fn first_disagreement(claimed: &[u32], checked: &[u32]) -> Option<usize> {
+    claimed
+        .iter()
+        .zip(checked)
+        .position(|(claimed, checked)| claimed != checked)
+        .or_else(|| (claimed.len() != checked.len()).then(|| claimed.len().min(checked.len())))
+}
+
 fn write_claim_result(
     checkpointed: CheckpointedInferenceResult,
     manifest_path: &PathBuf,
@@ -189,6 +227,7 @@ impl ClaimBuildOptions {
             base_dir,
             current_exe,
             staged_backend,
+            claimed_token_ids: None,
         })
     }
 }
@@ -202,7 +241,7 @@ pub(crate) fn prepare_claim_run(options: &ClaimBuildOptions) -> Result<PreparedC
     let model_manifest_path = absolute(run_spec_dir, &run_spec.model_manifest);
     let model_manifest = ModelManifest::load_verified(&model_manifest_path)?;
     let (template_path, template) =
-        model_manifest.verified_raster_template(&model_manifest_path)?;
+        model_manifest.verified_chain_template(&model_manifest_path, run_spec.chain)?;
     let model_manifest_dir = model_manifest_path
         .parent()
         .ok_or_else(|| anyhow::anyhow!("model manifest has no parent directory"))?;
@@ -219,10 +258,38 @@ pub(crate) fn prepare_claim_run(options: &ClaimBuildOptions) -> Result<PreparedC
             &run_spec_path,
             &prompt.rendered_prompt,
             run_spec.tokens,
+            run_spec.chain,
         ));
     let prompt_dir = run_dir.join("prompt");
     let (pieces_path, pieces_index_path, pieces_commitment) =
         run_prep::write_initial_pieces(&prompt, &prompt_dir)?;
+    let claimed = match run_spec.chain {
+        ChainKind::Autoregressive => {
+            if options.claimed_token_ids.is_some() {
+                anyhow::bail!("--claimed-ids requires a run spec with chain = \"teacher-forced\"");
+            }
+            None
+        }
+        ChainKind::TeacherForced => {
+            let ids = match &options.claimed_token_ids {
+                Some(ids) => ids.clone(),
+                // Discovery is the only autoregression left: the claim posts
+                // what direct decode produced and the chain checks it.
+                None => {
+                    DirectInferenceExecutor
+                        .run(DirectInferenceConfig {
+                            base_dir: options.base_dir.clone(),
+                            run_spec_path: run_spec_path.clone(),
+                        })
+                        .context("direct inference to discover the claimed output failed")?
+                        .generated_token_ids
+                }
+            };
+            run_prep::validate_claimed_length(&ids, run_spec.tokens, &prompt.eos_token_ids)?;
+            let external = run_prep::write_claimed_output(&ids, &prompt_dir)?;
+            Some((ids, external))
+        }
+    };
 
     let template_dir = template_path
         .parent()
@@ -230,10 +297,13 @@ pub(crate) fn prepare_claim_run(options: &ClaimBuildOptions) -> Result<PreparedC
     let run_manifest = render_run_manifest(
         &template,
         template_dir,
-        &pieces_path,
-        &pieces_index_path,
-        &pieces_commitment,
-        run_spec.tokens,
+        &RunExternal::new(&pieces_path, &pieces_index_path, &pieces_commitment),
+        match &claimed {
+            Some((_, (path, index_path, commitment))) => {
+                RunTokens::TeacherForced(RunExternal::new(path, index_path, commitment))
+            }
+            None => RunTokens::Autoregressive(run_spec.tokens),
+        },
         run_prep::tokenizer_repeat_count(prompt.initial_pieces.len())?,
     )?;
     let manifest_path = run_dir.join("Raster.toml");
@@ -251,6 +321,8 @@ pub(crate) fn prepare_claim_run(options: &ClaimBuildOptions) -> Result<PreparedC
         tokens: run_spec.tokens,
         run_manifest_path: Some(manifest_path.clone()),
         run_manifest_sha256: Some(run_manifest_sha256),
+        chain: run_spec.chain,
+        claimed_token_ids: claimed.map(|(ids, _)| ids),
     };
     write_json(&run_dir.join(PREPARED_RUN_JSON), &prepared_run)?;
 
@@ -260,23 +332,54 @@ pub(crate) fn prepare_claim_run(options: &ClaimBuildOptions) -> Result<PreparedC
     })
 }
 
-fn render_run_manifest(
+/// Where model templates point run-specific externals until a run fills them.
+const RUN_PLACEHOLDER_DIR: &str = "target/iris/run-prompt-placeholder/";
+
+/// One run-specific external: the files and commitment a template
+/// placeholder is replaced with.
+pub(crate) struct RunExternal<'a> {
+    path: &'a Path,
+    index_path: &'a Path,
+    commitment: &'a str,
+}
+
+impl<'a> RunExternal<'a> {
+    pub(crate) fn new(path: &'a Path, index_path: &'a Path, commitment: &'a str) -> Self {
+        Self {
+            path,
+            index_path,
+            commitment,
+        }
+    }
+
+    fn binding(&self, param: &str) -> String {
+        format!(
+            "inputs.{param} = {{ external = {{ path = {:?}, index_path = {:?}, commitment = {:?} }} }}",
+            self.path, self.index_path, self.commitment,
+        )
+    }
+}
+
+/// How a run fixes its generated tokens: a decode repeat count, or the
+/// claimed ids a teacher-forced pass checks.
+pub(crate) enum RunTokens<'a> {
+    Autoregressive(u32),
+    TeacherForced(RunExternal<'a>),
+}
+
+pub(crate) fn render_run_manifest(
     template: &str,
     template_dir: &Path,
-    pieces_path: &Path,
-    pieces_index_path: &Path,
-    pieces_commitment: &str,
-    tokens: u32,
+    pieces: &RunExternal<'_>,
+    tokens: RunTokens<'_>,
     tokenizer_repeats: u32,
 ) -> Result<String> {
-    let pieces_line = format!(
-        "inputs.initial_pieces = {{ external = {{ path = {:?}, index_path = {:?}, commitment = {:?} }} }}",
-        pieces_path, pieces_index_path, pieces_commitment,
-    );
+    let pieces_line = pieces.binding("initial_pieces");
     let template = inference_artifacts::resolve_raster_manifest_paths(template, template_dir)?;
     let mut table = "";
     let mut name = String::new();
-    let mut replaced = [0_usize; 3];
+    // Seed binding, decode count, tokenize count, claimed bindings.
+    let mut replaced = [0_usize; 4];
     let mut out = Vec::new();
     for line in template.lines() {
         let trimmed = line.trim();
@@ -301,23 +404,40 @@ fn render_run_manifest(
         {
             replaced[0] += 1;
             out.push(pieces_line.clone());
-        } else if table == "repeat"
-            && trimmed.starts_with("count =")
-            && (name == "decode" || name == "tokenize")
-        {
-            let (slot, count) = if name == "decode" {
-                (1, tokens)
-            } else {
-                (2, tokenizer_repeats)
+        } else if table == "repeat" && trimmed.starts_with("count =") && name == "tokenize" {
+            replaced[2] += 1;
+            out.push(format!("count = {tokenizer_repeats}"));
+        } else if table == "repeat" && trimmed.starts_with("count =") && name == "decode" {
+            let RunTokens::Autoregressive(count) = &tokens else {
+                anyhow::bail!(
+                    "teacher-forced run manifest cannot fill an autoregressive decode repeat"
+                );
             };
-            replaced[slot] += 1;
+            replaced[1] += 1;
             out.push(format!("count = {count}"));
+        } else if table == "stage"
+            && trimmed.starts_with("inputs.claimed =")
+            && trimmed.contains(RUN_PLACEHOLDER_DIR)
+        {
+            // The autoregressive chain's empty claim is a model external and
+            // stays; only the teacher-forced run placeholder is filled.
+            let RunTokens::TeacherForced(claimed) = &tokens else {
+                anyhow::bail!("autoregressive run manifest has a claimed-output binding");
+            };
+            replaced[3] += 1;
+            out.push(claimed.binding("claimed"));
         } else {
             out.push(line.to_string());
         }
     }
-    if replaced != [1, 1, 1] {
-        anyhow::bail!("incompatible manifest template: expected one seed prompt binding and named decode/tokenize counts; found {replaced:?}");
+    // The teacher-forced template binds the claim into both the embedding and
+    // the check stage, and has no decode repeat.
+    let expected = match tokens {
+        RunTokens::Autoregressive(_) => [1, 1, 1, 0],
+        RunTokens::TeacherForced(_) => [1, 0, 1, 2],
+    };
+    if replaced != expected {
+        anyhow::bail!("incompatible manifest template: expected [seed binding, decode count, tokenize count, claimed bindings] = {expected:?}; found {replaced:?}");
     }
     out.push(String::new());
     Ok(out.join("\n"))
@@ -408,16 +528,17 @@ fn default_corrupted_hashes_path(source: &Path) -> PathBuf {
     source.with_file_name("checkpoints.corrupt.txt")
 }
 
-fn run_id(run_spec_path: &Path, rendered_prompt: &str, tokens: u32) -> String {
+fn run_id(run_spec_path: &Path, rendered_prompt: &str, tokens: u32, chain: ChainKind) -> String {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_nanos();
     let digest = Sha256::digest(format!(
-        "{}\0{}\0{}\0{}",
+        "{}\0{}\0{}\0{:?}\0{}",
         run_spec_path.display(),
         rendered_prompt,
         tokens,
+        chain,
         nanos
     ));
     hex::encode(digest)[..16].to_string()
@@ -466,6 +587,7 @@ mod tests {
             run_spec_path: run_spec(&base, "model-b"),
             current_exe: PathBuf::from("unused"),
             staged_backend: StagedExecutionBackend::InProcess,
+            claimed_token_ids: None,
         };
         let prepared = prepare_claim_run(&options).unwrap();
         let rendered = fs::read_to_string(&prepared.manifest_path).unwrap();
@@ -543,6 +665,8 @@ mod tests {
                 tokens: 1,
                 run_manifest_path: Some(manifest_path.clone()),
                 run_manifest_sha256: Some(String::from("run-sha")),
+                chain: Default::default(),
+                claimed_token_ids: None,
             },
         )
         .unwrap();
@@ -674,13 +798,16 @@ name = "decode_select_t{t}"
 project = "raster-stages/decode-select-token"
 "#;
 
-        let manifest = render_run_manifest(
-            template,
-            Path::new("/repo"),
+        let pieces = RunExternal::new(
             Path::new("/tmp/run/prompt/initial_pieces.rastered"),
             Path::new("/tmp/run/prompt/initial_pieces.rindex"),
             "abc",
-            7,
+        );
+        let manifest = render_run_manifest(
+            template,
+            Path::new("/repo"),
+            &pieces,
+            RunTokens::Autoregressive(7),
             0,
         )
         .unwrap();
@@ -698,6 +825,92 @@ project = "raster-stages/decode-select-token"
         assert!(manifest.contains("index_path = \"/repo/runtime/weights/layer{l}.rindex\""));
         assert!(!manifest.contains("old.rastered"));
         assert_eq!(manifest.matches("inputs.initial_pieces =").count(), 2);
+
+        let claimed = RunExternal::new(
+            Path::new("/tmp/run/prompt/claimed_output.rastered"),
+            Path::new("/tmp/run/prompt/claimed_output.rindex"),
+            "def",
+        );
+        assert!(render_run_manifest(
+            template,
+            Path::new("/repo"),
+            &pieces,
+            RunTokens::TeacherForced(claimed),
+            0,
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("cannot fill an autoregressive decode repeat"));
+    }
+
+    #[test]
+    fn teacher_forced_manifest_binds_claim_into_join_and_check() {
+        let template = r#"[chain]
+name = "iris"
+
+[[chain.stage]]
+name = "prompt_merge_seed"
+project = "raster-stages/prompt-merge"
+inputs.initial_pieces = { external = { path = "target/iris/run-prompt-placeholder/initial_pieces.rastered", index_path = "target/iris/run-prompt-placeholder/initial_pieces.rindex", commitment = "0000" } }
+
+[[chain.repeat]]
+name = "tokenize"
+index = "b"
+count = 0
+
+[[chain.stage]]
+name = "input_embedding"
+project = "raster-stages/input-embedding"
+inputs.prompt = { from = "prompt_prepare" }
+inputs.claimed = { external = { path = "target/iris/run-prompt-placeholder/claimed_output.rastered", index_path = "target/iris/run-prompt-placeholder/claimed_output.rindex", commitment = "0000" } }
+
+[[chain.stage]]
+name = "sequence_check"
+project = "raster-stages/sequence-check"
+inputs.claimed = { external = { path = "target/iris/run-prompt-placeholder/claimed_output.rastered", index_path = "target/iris/run-prompt-placeholder/claimed_output.rindex", commitment = "0000" } }
+"#;
+        let pieces = RunExternal::new(
+            Path::new("/tmp/run/prompt/initial_pieces.rastered"),
+            Path::new("/tmp/run/prompt/initial_pieces.rindex"),
+            "abc",
+        );
+        let claimed = RunExternal::new(
+            Path::new("/tmp/run/prompt/claimed_output.rastered"),
+            Path::new("/tmp/run/prompt/claimed_output.rindex"),
+            "def",
+        );
+        let manifest = render_run_manifest(
+            template,
+            Path::new("/repo"),
+            &pieces,
+            RunTokens::TeacherForced(claimed),
+            3,
+        )
+        .unwrap();
+        assert_eq!(
+            manifest
+                .matches("path = \"/tmp/run/prompt/claimed_output.rastered\"")
+                .count(),
+            2
+        );
+        assert_eq!(manifest.matches("commitment = \"def\"").count(), 2);
+        assert!(manifest.contains("count = 3"));
+        assert!(!manifest.contains("run-prompt-placeholder"));
+        assert!(render_run_manifest(
+            template,
+            Path::new("/repo"),
+            &pieces,
+            RunTokens::Autoregressive(1),
+            3,
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn first_disagreement_reports_value_and_length_differences() {
+        assert_eq!(first_disagreement(&[1, 2, 3], &[1, 2, 3]), None);
+        assert_eq!(first_disagreement(&[1, 9, 3], &[1, 2, 3]), Some(1));
+        assert_eq!(first_disagreement(&[1, 2], &[1, 2, 3]), Some(2));
     }
 
     fn write_stage(base: &PathBuf, stage: &str, commitment: &str, output: &[u8]) {

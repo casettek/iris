@@ -105,6 +105,7 @@ impl Fixture {
                 token_ids: List::from(vec![0, 1]),
             },
         );
+        let claimed = self.external("claimed", &input_embedding::input::ClaimedOutput::default());
         let embedding = self.external(
             "embedding",
             &input_embedding::input::EmbeddingTable {
@@ -188,7 +189,11 @@ impl Fixture {
         add(
             "input_embedding".into(),
             "input-embedding",
-            vec![("prompt", prompt), ("embedding", embedding.clone())],
+            vec![
+                ("prompt", prompt),
+                ("claimed", claimed),
+                ("embedding", embedding.clone()),
+            ],
         );
         for l in 0..2 {
             add(

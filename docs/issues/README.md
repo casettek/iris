@@ -15,6 +15,7 @@ chain gate while tokenizer execution audits and host parity pass.
 
 | issue | opened | subject | upstream |
 | --- | --- | --- | --- |
+| [`short-stage-fraud-window`](./short-stage-fraud-window.md) | 2026-11-03 | An authenticated stage replay with `--fraud-proof-window-size 128` cannot commit a trace of 128 items or fewer, so such a stage cannot be disputed. Affects only toy-sized claims (a few tokens); not a target at production sizes. | none |
 | [`append-shaped-accumulators`](./append-shaped-accumulators.md) | 2026-08-25 | `mac_weight_page` and `score_key` carry an accumulator in `RecurState` that they never read back — the writes are appends, so they belong in `RecurOutput` and pay only their increment. `score_key`'s carrier grows, making the amplification the iteration count rather than a constant. `accumulate_context` genuinely needs read-back and is stuck. | `raster` `docs/issues/recur-accumulator-slots.md` |
 
 ## Closed

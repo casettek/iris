@@ -1,7 +1,8 @@
 //! Phase 2 — `input-embedding`: sequences.
 //!
 //! ```text
-//!   token_ids ──recur seq──▶ [ offset · page_of · select page · extract ] ──▶ ActivationSequence
+//!   prompt ids  ──recur seq──▶ [ offset · page_of · select page · extract ] ──▶ rows
+//!   claimed ids ──recur seq──▶ [ same, appending after the prompt's        ] ──▶ ActivationSequence
 //!   misses    ──recur─────▶ count ──▶ assert none
 //! ```
 
@@ -38,20 +39,40 @@ fn embed_prompt_token(
 /// Phase 2 entrypoint.
 ///
 /// `prompt` is bound by the chain to `prompt_prepare`'s authorized output;
-/// `embedding` is a committed external.
+/// `claimed` is a teacher-forced claim's output ids (empty in the
+/// autoregressive chain); `embedding` is a committed external.
+///
+/// The claimed ids are embedded after the prompt's by a second push-only
+/// site deriving from the first, so the rows are `prompt ‖ claimed` in order.
 #[sequence]
-fn main(prompt: PromptTokenization, embedding: EmbeddingTable) -> Result<ActivationSequence> {
+fn main(
+    prompt: PromptTokenization,
+    claimed: ClaimedOutput,
+    embedding: EmbeddingTable,
+) -> Result<ActivationSequence> {
     let token_ids = select!(List<u32>, prompt.token_ids);
+    let claimed_ids = select!(List<u32>, claimed.token_ids);
     let hidden_size = select!(u32, embedding.clone().hidden_size);
     let page_size = select!(u64, embedding.clone().values.page_size);
     let embedding_scale = select!(i32, embedding.clone().embedding_scale);
     let values = select!(Bytes<196_608>, embedding.values);
 
     let draft = call!(begin_prompt_activations);
-    let embedded = call_recur_seq!(
+    let prompt_rows = call_recur_seq!(
         sequence = embed_prompt_token,
         input = token_ids,
         output = draft,
+        args = (
+            values.clone(),
+            hidden_size.clone(),
+            page_size.clone(),
+            embedding_scale.clone()
+        )
+    );
+    let embedded = call_recur_seq!(
+        sequence = embed_prompt_token,
+        input = claimed_ids,
+        output = prompt_rows,
         args = (values, hidden_size, page_size, embedding_scale)
     );
     raster::println!("embedding pass → {:?}", embedded);

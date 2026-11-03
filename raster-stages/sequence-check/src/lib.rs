@@ -1,0 +1,379 @@
+//! `sequence-check`: tiles.
+//!
+//! ```text
+//!   for each claimed token k:
+//!     row      = rows[prompt_len - 1 + k]          (teacher-forced: row i sees ids[..=i])
+//!     normed   = rms_norm(row, w_final)
+//!     selected = argmax_t softcap(normed · projection[t])   (first maximum wins)
+//!   DecodeEdge { last selection, generated_token_ids = every selection }
+//! ```
+//!
+//! The scores and the tie-break are `prefill-finalize` followed by
+//! `decode-select-token`, fused so the vocabulary-wide logit list is never
+//! built: each head page folds straight into a running argmax, in page order,
+//! so a strictly greater score replaces the incumbent exactly as it would
+//! scanning the materialized list.
+//!
+//! The stage re-derives the greedy continuation rather than asserting the
+//! claimed one. An honest claim's output is byte-identical to the
+//! autoregressive chain's final decode edge; a claim whose tokens are not the
+//! greedy continuation publishes different ids from the ones it posted.
+//!
+//! `#![no_std]` so the same tiles compile into RISC0 replay guests.
+
+#![no_std]
+
+extern crate alloc;
+
+use alloc::string::String;
+use raster::prelude::*;
+
+pub mod input;
+
+use input::*;
+
+/// Guards the head external before any of it is used.
+#[tile(kind = iter, description = "Validate the output head's declared shapes")]
+pub fn validate_final_head(params: FinalHeadParams) -> Result<FinalHeadParams> {
+    if params.hidden_size == 0 {
+        return Err(String::from("output head requires a non-zero hidden_size"));
+    }
+    if params.norm_eps < 0 {
+        return Err(String::from("rms-norm epsilon must be non-negative"));
+    }
+    if params.softcap < 0 {
+        return Err(String::from(
+            "final logit softcap must be non-negative (0 disables it)",
+        ));
+    }
+    let expected = params.hidden_size as usize * 4;
+    if params.norm_weights.len() != expected {
+        return Err(alloc::format!(
+            "final norm weights have {} bytes, expected {expected}",
+            params.norm_weights.len()
+        ));
+    }
+    Ok(params)
+}
+
+/// The prompt-length fold's opening state: nothing counted.
+#[tile(kind = iter, description = "Open the prompt token count")]
+pub fn begin_token_count() -> TokenCount {
+    TokenCount { count: 0 }
+}
+
+/// Counts one chunk of prompt token ids.
+#[tile(kind = recur, description = "Count a chunk of prompt token ids")]
+pub fn count_token_chunk(
+    input: RecurInput<Block<u32>>,
+    state: RecurState<TokenCount>,
+) -> RecurState<TokenCount> {
+    let mut state = state;
+    state.count += input.into_value().len() as u32;
+    state
+}
+
+/// Points the cursor at the prompt's last row, which predicts the first
+/// generated token.
+#[tile(kind = iter, description = "Open the check cursor at the last prompt row")]
+pub fn begin_check_cursor(prompt_len: u32, start_position: u32) -> Result<CheckCursor> {
+    if prompt_len == 0 {
+        return Err(String::from(
+            "teacher-forced check requires a non-empty prompt to predict the first token",
+        ));
+    }
+    Ok(CheckCursor {
+        row_index: prompt_len - 1,
+        start_position,
+    })
+}
+
+/// Pairs the cursor's row with the claimed token it is meant to predict.
+#[tile(kind = iter, description = "Begin checking one generated position")]
+pub fn begin_check_step(cursor: CheckCursor, claimed_token_id: u32) -> CheckStep {
+    CheckStep {
+        row_index: cursor.row_index,
+        decode_position: cursor.start_position + cursor.row_index + 1,
+        claimed_token_id,
+        start_position: cursor.start_position,
+    }
+}
+
+/// Moves the cursor to the row that predicts the next generated token.
+#[tile(kind = iter, description = "Advance the check cursor")]
+pub fn advance_check_cursor(step: CheckStep) -> CheckCursor {
+    CheckCursor {
+        row_index: step.row_index + 1,
+        start_position: step.start_position,
+    }
+}
+
+/// Applies the final RMS norm to the predicting row.
+///
+/// A failure is recorded rather than raised: a recur sequence cannot
+/// propagate an error, so it travels to the post-sweep assertion.
+#[tile(kind = iter, description = "Normalise one predicting row")]
+pub fn normalize_position(row: ActivationRow, params: FinalHeadParams) -> NormalizedPosition {
+    let failed = |error: String| NormalizedPosition {
+        values: pack_i32s(&[]),
+        error,
+    };
+    let mut values = match unpack_i32s(&row.values) {
+        Ok(values) => values,
+        Err(error) => return failed(error),
+    };
+    if values.len() != params.hidden_size as usize {
+        return failed(alloc::format!(
+            "predicting row has {} values, expected hidden_size {}",
+            values.len(),
+            params.hidden_size
+        ));
+    }
+    let weights = match unpack_i32s(&params.norm_weights) {
+        Ok(weights) => weights,
+        Err(error) => return failed(error),
+    };
+    if let Err(error) = rms_norm(&mut values, &weights, params.norm_eps) {
+        return failed(error);
+    }
+    NormalizedPosition {
+        values: pack_i32s(&values),
+        error: String::new(),
+    }
+}
+
+/// The argmax fold's opening state: no value seen yet.
+#[tile(kind = iter, description = "Open the argmax with no value seen")]
+pub fn begin_argmax() -> ArgmaxState {
+    ArgmaxState {
+        has_value: false,
+        token_id: 0,
+        value: 0,
+        error_count: 0,
+        first_error: String::new(),
+    }
+}
+
+fn record_argmax_error(state: &mut ArgmaxState, error: String) {
+    if state.error_count == 0 {
+        state.first_error = error;
+    }
+    state.error_count += 1;
+}
+
+/// Scores one page of the vocabulary and folds it into the running argmax.
+///
+/// Rows are visited in token-id order and only a strictly greater score
+/// replaces the incumbent, so the first maximum keeps the slot — the
+/// `decode-select-token` tie-break over the same scores.
+#[tile(
+    kind = recur,
+    description = "Score one page of the vocabulary into the argmax",
+    estimated_cycles = 800_000
+)]
+pub fn score_head_page(
+    input: RecurInput<BytesPage>,
+    state: RecurState<ArgmaxState>,
+    normalized: NormalizedPosition,
+    params: FinalHeadParams,
+) -> RecurState<ArgmaxState> {
+    let mut state = state;
+    if !normalized.error.is_empty() {
+        record_argmax_error(&mut state, normalized.error);
+        return state;
+    }
+    let position = match unpack_i32s(&normalized.values) {
+        Ok(values) => values,
+        Err(error) => {
+            record_argmax_error(&mut state, error);
+            return state;
+        }
+    };
+    let hidden = params.hidden_size as usize;
+    let page = input.into_value();
+    let weights = match unpack_i32s(&page) {
+        Ok(values) => values,
+        Err(error) => {
+            record_argmax_error(&mut state, error);
+            return state;
+        }
+    };
+    if hidden == 0 || weights.len() % hidden != 0 {
+        record_argmax_error(
+            &mut state,
+            alloc::format!(
+                "projection page at offset {} is not a whole number of hidden-width rows",
+                page.offset()
+            ),
+        );
+        return state;
+    }
+    let stride = hidden as u64 * 4;
+    if page.offset() % stride != 0 {
+        record_argmax_error(
+            &mut state,
+            String::from("projection page offset is not row-aligned"),
+        );
+        return state;
+    }
+    let first_id = (page.offset() / stride) as u32;
+    for (local, row) in weights.chunks_exact(hidden).enumerate() {
+        let token_id = first_id + local as u32;
+        match dot(&position, row) {
+            Ok(score) => {
+                let value = softcap(score, params.softcap);
+                if !state.has_value || value > state.value {
+                    state.has_value = true;
+                    state.token_id = token_id;
+                    state.value = value;
+                }
+            }
+            Err(error) => {
+                record_argmax_error(&mut state, alloc::format!("token {token_id}: {error}"))
+            }
+        }
+    }
+    state
+}
+
+/// Records the selection at one generated position, or why there is none.
+#[tile(kind = iter, description = "Record one position's greedy selection")]
+pub fn record_selection(
+    output: Draft<CheckedPositions>,
+    step: CheckStep,
+    best: ArgmaxState,
+) -> Draft<CheckedPositions> {
+    let mut output = output;
+    if best.error_count > 0 {
+        output.errors().push(alloc::format!(
+            "position {}: {} vocabulary row(s) failed to score; first: {}",
+            step.decode_position,
+            best.error_count,
+            best.first_error
+        ));
+    } else if !best.has_value {
+        output.errors().push(alloc::format!(
+            "position {}: the head scored no token",
+            step.decode_position
+        ));
+    } else {
+        output.selections().push(PositionSelection {
+            decode_position: step.decode_position,
+            token_id: best.token_id,
+            value: best.value,
+            claimed_token_id: step.claimed_token_id,
+        });
+    }
+    output
+}
+
+/// The selection summary's opening state: nothing selected.
+#[tile(kind = iter, description = "Open the selection summary")]
+pub fn begin_selection_summary() -> SelectionSummary {
+    SelectionSummary::default()
+}
+
+/// Folds a chunk of selections: keeps the last, counts claim disagreements.
+#[tile(kind = recur, description = "Summarise a chunk of selections")]
+pub fn summarise_selections(
+    input: RecurInput<Block<PositionSelection>>,
+    state: RecurState<SelectionSummary>,
+) -> RecurState<SelectionSummary> {
+    let mut state = state;
+    for selection in input.into_value() {
+        if selection.token_id != selection.claimed_token_id {
+            if state.mismatches == 0 {
+                state.first_mismatch_position = selection.decode_position;
+            }
+            state.mismatches += 1;
+        }
+        state.count += 1;
+        state.has_selected = true;
+        state.decode_position = selection.decode_position;
+        state.token_id = selection.token_id;
+        state.value = selection.value;
+    }
+    state
+}
+
+/// The failure fold's opening state: nothing counted.
+#[tile(kind = iter, description = "Open the failure summary with nothing counted")]
+pub fn begin_error_summary() -> ErrorSummary {
+    ErrorSummary {
+        count: 0,
+        first: String::new(),
+    }
+}
+
+/// Folds the recorded failures into a count plus the first message.
+#[tile(kind = recur, description = "Summarise the positions this check could not score")]
+pub fn summarise_errors(
+    input: RecurInput<String>,
+    state: RecurState<ErrorSummary>,
+) -> RecurState<ErrorSummary> {
+    let mut state = state;
+    let message = input.into_value();
+    if state.count == 0 {
+        state.first = message;
+    }
+    state.count += 1;
+    state
+}
+
+/// Fails the program when a position went unscored or nothing was claimed.
+///
+/// A disagreement with the claim is not a failure: it is published in the
+/// output's ids, which is what makes it disputable.
+#[tile(kind = iter, description = "Reject an incomplete teacher-forced check")]
+pub fn finish_check(
+    summary: SelectionSummary,
+    error_count: u32,
+    first_error: String,
+) -> Result<SelectionSummary> {
+    if error_count != 0 {
+        return Err(alloc::format!(
+            "{error_count} generated position(s) failed to score; first: {first_error}"
+        ));
+    }
+    if !summary.has_selected {
+        return Err(String::from(
+            "teacher-forced check requires at least one claimed output token",
+        ));
+    }
+    if summary.mismatches != 0 {
+        raster::println!(
+            "sequence check: {} of {} claimed token(s) are not the greedy selection; first at position {}",
+            summary.mismatches,
+            summary.count,
+            summary.first_mismatch_position
+        );
+    }
+    Ok(summary)
+}
+
+/// Opens the output edge with the last selection's scalars.
+///
+/// The transcript list stays empty here: the copy site below derives from
+/// this object and only pushes.
+#[tile(kind = iter, description = "Open the checked decode edge")]
+pub fn begin_decode_edge(summary: SelectionSummary) -> Draft<DecodeEdge> {
+    let mut output = Draft::<DecodeEdge>::new();
+    output.has_selected().set(summary.has_selected);
+    output.decode_position().set(summary.decode_position);
+    output.token_id().set(summary.token_id);
+    output.value().set(summary.value);
+    output
+}
+
+/// Copies a bounded chunk of selected token ids into the edge's transcript.
+#[tile(kind = recur, description = "Copy selected token ids into the edge")]
+pub fn copy_selected_token_ids(
+    input: RecurInput<Block<PositionSelection>>,
+    output: RecurOutput<DecodeEdge>,
+) -> RecurOutput<DecodeEdge> {
+    let mut output = output;
+    for selection in input.into_value() {
+        output.generated_token_ids().push(selection.token_id);
+    }
+    output
+}

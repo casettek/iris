@@ -18,6 +18,7 @@ pub mod prefill_prepare_aux;
 pub mod prefill_range;
 pub mod prompt_merge;
 pub mod prompt_prepare;
+pub mod sequence_check;
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum StageKind {
@@ -31,6 +32,7 @@ pub enum StageKind {
     DecodeSelectToken,
     DecodeEmbed,
     OutputFinalize,
+    SequenceCheck,
 }
 
 #[derive(Debug)]
@@ -96,6 +98,7 @@ impl StageKind {
                 Ok(Self::DecodeEmbed)
             }
             "output-finalize" if name == "output_finalize" => Ok(Self::OutputFinalize),
+            "sequence-check" if name == "sequence_check" => Ok(Self::SequenceCheck),
             _ => bail!("stage `{name}` with project `{project}` is not supported by staged-infer"),
         }
     }
@@ -119,6 +122,7 @@ impl StageKind {
             "decode_select_token" => Ok(Self::DecodeSelectToken),
             "decode_embed" => Ok(Self::DecodeEmbed),
             "output_finalize" => Ok(Self::OutputFinalize),
+            "sequence_check" => Ok(Self::SequenceCheck),
             _ if name.starts_with("decode_select_t") => Ok(Self::DecodeSelectToken),
             _ if name.starts_with("decode_embed_t") => Ok(Self::DecodeEmbed),
             _ if name.starts_with("decode_finalize_t") => Ok(Self::PrefillFinalize),
@@ -150,6 +154,7 @@ impl StageKind {
             Self::DecodeSelectToken => "decode-select-token",
             Self::DecodeEmbed => "decode-embed",
             Self::OutputFinalize => "output-finalize",
+            Self::SequenceCheck => "sequence-check",
         }
     }
 
@@ -165,6 +170,7 @@ impl StageKind {
             Self::DecodeSelectToken => "decode_select_token",
             Self::DecodeEmbed => "decode_embed",
             Self::OutputFinalize => "output_finalize",
+            Self::SequenceCheck => "sequence_check",
         }
     }
 
@@ -178,7 +184,8 @@ impl StageKind {
             | Self::DecodeInit
             | Self::DecodeSelectToken
             | Self::DecodeEmbed
-            | Self::OutputFinalize => None,
+            | Self::OutputFinalize
+            | Self::SequenceCheck => None,
         }
     }
 }
@@ -234,6 +241,11 @@ pub fn run_for_compare(kind: &StageKind) -> Result<DirectCompareOutput> {
             output_finalize::load_inputs_from_args,
             output_finalize::run_direct,
             "output_finalize",
+        ),
+        StageKind::SequenceCheck => compare(
+            sequence_check::load_inputs_from_args,
+            sequence_check::run_direct,
+            "sequence_check",
         ),
     }
 }
@@ -299,6 +311,12 @@ pub fn run_and_publish(kind: &StageKind) -> Result<DirectPublishOutput> {
             output_finalize::run_direct,
             "output_finalize",
             CachedStageValue::GeneratedOutput,
+        ),
+        StageKind::SequenceCheck => publish(
+            sequence_check::load_inputs_from_args,
+            sequence_check::run_direct,
+            "sequence_check",
+            CachedStageValue::from_checked_edge,
         ),
     }
 }
@@ -441,6 +459,19 @@ pub fn run_and_publish_from_paths_with_caches(
             "output_finalize",
             CachedStageValue::GeneratedOutput,
         ),
+        StageKind::SequenceCheck => publish(
+            || {
+                sequence_check::load_inputs_from_paths_with_cache(
+                    input_path,
+                    input_manifest_path,
+                    cached_inputs,
+                    caches.materializations,
+                )
+            },
+            sequence_check::run_direct,
+            "sequence_check",
+            CachedStageValue::from_checked_edge,
+        ),
     }
 }
 
@@ -581,6 +612,19 @@ pub fn run_cached_from_paths_with_caches(
             output_finalize::run_direct,
             "output_finalize",
             CachedStageValue::GeneratedOutput,
+        ),
+        StageKind::SequenceCheck => cache(
+            || {
+                sequence_check::load_inputs_from_paths_with_cache(
+                    input_path,
+                    input_manifest_path,
+                    cached_inputs,
+                    caches.materializations,
+                )
+            },
+            sequence_check::run_direct,
+            "sequence_check",
+            CachedStageValue::from_checked_edge,
         ),
     }
 }

@@ -17,9 +17,19 @@ pub fn write_model_manifest(
     shape: &Shape,
     text_config: &serde_json::Value,
     raster_manifest: Option<(&Path, &str)>,
+    teacher_forced_manifest: Option<(&Path, &str)>,
 ) -> Result<PathBuf, Box<dyn Error>> {
     let artifact_dir = args.artifact_dir();
     fs::create_dir_all(&artifact_dir)?;
+    let template_provenance = |(path, text): (&Path, &str)| -> Result<_, Box<dyn Error>> {
+        Ok((
+            manifest_relative_path(&artifact_dir, path)?,
+            format!("{:x}", Sha256::digest(text.as_bytes())),
+        ))
+    };
+    let teacher_forced = teacher_forced_manifest
+        .map(template_provenance)
+        .transpose()?;
     let manifest_path = artifact_dir.join(MODEL_MANIFEST_JSON);
     let model_detwgt = args.model_dir.join("model.detwgt");
     let config = args.model_dir.join("config.json");
@@ -62,14 +72,18 @@ pub fn write_model_manifest(
                 .unwrap_or(0),
         },
         eos_token_ids: eos_ids.iter().copied().collect(),
-        provenance: raster_manifest
-            .map(|(path, text)| -> Result<_, Box<dyn Error>> {
-                Ok(DirectInferProvenance {
-                    raster_manifest_path: manifest_relative_path(&artifact_dir, path)?,
-                    raster_manifest_sha256: format!("{:x}", Sha256::digest(text.as_bytes())),
-                })
-            })
-            .transpose()?,
+        provenance: raster_manifest.map(template_provenance).transpose()?.map(
+            |(raster_manifest_path, raster_manifest_sha256)| {
+                let (teacher_forced_manifest_path, teacher_forced_manifest_sha256) =
+                    teacher_forced.clone().unzip();
+                DirectInferProvenance {
+                    raster_manifest_path,
+                    raster_manifest_sha256,
+                    teacher_forced_manifest_path,
+                    teacher_forced_manifest_sha256,
+                }
+            },
+        ),
     };
 
     write_json(&manifest_path, &direct)

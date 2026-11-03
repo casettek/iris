@@ -72,6 +72,8 @@
   ],
   "provenance": {
     "raster_manifest_path": "Raster.toml",
-    "raster_manifest_sha256": "ab462ae0d3c803254c0d76696b7ea6085fddb17fe9ec9b53a7f0c8c2de66a754"
+    "raster_manifest_sha256": "ba1c374dc31ce1515599d7d4994375d4d66d3543bb7592874fd663087732a3f1",
+    "teacher_forced_manifest_path": "Raster.teacher-forced.toml",
+    "teacher_forced_manifest_sha256": "41d82e9b6aa6d9a72591f5d52024fc9b3f478c14b2fa0fb042178dd46709a293"
   }
 }

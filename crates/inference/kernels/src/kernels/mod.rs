@@ -7,3 +7,4 @@ pub mod prefill_finalize;
 pub mod prefill_prepare_aux;
 pub mod prefill_range;
 pub mod prompt_prepare;
+pub mod sequence_check;

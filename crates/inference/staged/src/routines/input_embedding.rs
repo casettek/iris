@@ -12,13 +12,16 @@ use inference_kernels::kernels::input_embedding::{
     run_input_embedding_direct, InputEmbeddingDirectInputs,
 };
 use input_embedding::input::{
-    pack_i32s, ActivationRow, ActivationSequence, EmbeddingTable, PromptTokenization,
+    pack_i32s, ActivationRow, ActivationSequence, ClaimedOutput, EmbeddingTable,
+    PromptTokenization,
 };
 use raster::List;
 use std::{path::Path, sync::Arc};
 
 pub struct Inputs {
     pub prompt: PromptTokenization,
+    /// Embedded after the prompt; empty in the autoregressive chain.
+    pub claimed: ClaimedOutput,
     embedding: Weights,
 }
 enum Weights {
@@ -30,8 +33,18 @@ impl Inputs {
     pub fn eager(prompt: PromptTokenization, embedding: Arc<EmbeddingTable>) -> Self {
         Self {
             prompt,
+            claimed: ClaimedOutput::default(),
             embedding: Weights::Eager(embedding),
         }
+    }
+
+    /// `prompt ‖ claimed`: the ids this stage embeds, in row order.
+    pub fn token_ids(&self) -> impl Iterator<Item = u32> + '_ {
+        self.prompt
+            .token_ids
+            .iter()
+            .chain(self.claimed.token_ids.iter())
+            .copied()
     }
 }
 
@@ -78,15 +91,15 @@ pub fn load_inputs_from_paths_with_cache(
 pub fn run_direct(inputs: &Inputs) -> Result<ActivationSequence> {
     match &inputs.embedding {
         Weights::Eager(embedding) => run_input_embedding_direct(InputEmbeddingDirectInputs {
-            prompt: &inputs.prompt,
+            prompt: &PromptTokenization {
+                token_ids: List::from(inputs.token_ids().collect::<Vec<_>>()),
+            },
             embedding,
         }),
         Weights::Selective(embedding) => {
             let rows = inputs
-                .prompt
-                .token_ids
-                .iter()
-                .map(|&token_id| {
+                .token_ids()
+                .map(|token_id| {
                     Ok(ActivationRow {
                         token_id,
                         values: pack_i32s(&embedding.row(token_id)?),
@@ -111,6 +124,7 @@ fn load_inputs_from_initialized_runtime(
 ) -> Result<Inputs> {
     let binding = raster::start_program(&[
         raster::entry_argument_spec::<PromptTokenization>("prompt"),
+        raster::entry_argument_spec::<ClaimedOutput>("claimed"),
         raster::entry_argument_spec::<EmbeddingTable>("embedding"),
     ])?;
     let prompt = match cached_inputs.get("prompt") {
@@ -119,13 +133,21 @@ fn load_inputs_from_initialized_runtime(
             PromptTokenization,
         >(binding.reference.clone(), "prompt")),
     };
+    let claimed = raster::materialize_auth_return(raster::entry_argument_auth_ref::<ClaimedOutput>(
+        binding.reference.clone(),
+        "claimed",
+    ));
 
     let embedding = if raster_inputs(&binding) {
         Weights::Selective(embedding::load(
             binding,
             input,
             manifest,
-            prompt.token_ids.iter().copied(),
+            prompt
+                .token_ids
+                .iter()
+                .chain(claimed.token_ids.iter())
+                .copied(),
             materialization_cache,
             key,
         )?)
@@ -142,5 +164,9 @@ fn load_inputs_from_initialized_runtime(
             ))
         })?)
     };
-    Ok(Inputs { prompt, embedding })
+    Ok(Inputs {
+        prompt,
+        claimed,
+        embedding,
+    })
 }

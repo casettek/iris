@@ -19,6 +19,26 @@ pub struct InferenceRunSpec {
     pub raw_prompt: bool,
     #[serde(default = "default_tokens")]
     pub tokens: u32,
+    #[serde(default, skip_serializing_if = "ChainKind::is_autoregressive")]
+    pub chain: ChainKind,
+}
+
+/// Which chain template a claim is built and challenged over.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum ChainKind {
+    /// Prefill, then one decode iteration of stages per generated token.
+    #[default]
+    Autoregressive,
+    /// One pass over `prompt ‖ claimed output`, then a greedy check of every
+    /// generated position. The claimed ids are frozen into the prepared run.
+    TeacherForced,
+}
+
+impl ChainKind {
+    pub fn is_autoregressive(&self) -> bool {
+        *self == Self::Autoregressive
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -33,6 +53,11 @@ pub struct PreparedRun {
     pub run_manifest_path: Option<PathBuf>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub run_manifest_sha256: Option<String>,
+    #[serde(default, skip_serializing_if = "ChainKind::is_autoregressive")]
+    pub chain: ChainKind,
+    /// The claim's output ids, present exactly for teacher-forced runs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub claimed_token_ids: Option<Vec<u32>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

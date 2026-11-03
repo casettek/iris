@@ -30,6 +30,17 @@ pub(super) fn staged_names(layers: u32, tokens: u32, tokenizer_repeats: u32) -> 
     names
 }
 
+/// The teacher-forced chain: one pass per layer over `prompt ‖ claimed`.
+pub(super) fn teacher_forced_names(layers: u32, tokenizer_repeats: u32) -> Vec<String> {
+    let mut names = vec!["prompt_merge_seed".into()];
+    names.extend((0..tokenizer_repeats).map(|b| format!("prompt_merge_b{b}")));
+    names.extend(["prompt_prepare".into(), "input_embedding".into()]);
+    names.extend((0..layers).map(|l| format!("prefill_prepare_aux_l{l}")));
+    names.extend((0..layers).map(|l| format!("prefill_range_l{l}")));
+    names.extend(["sequence_check".into(), "output_finalize".into()]);
+    names
+}
+
 pub(super) fn check_inventory(expected: &[String], actual: &[String]) -> Result<()> {
     let mut seen = BTreeSet::new();
     for name in actual {
@@ -198,6 +209,7 @@ pub(super) fn validate_errors(stage: &str, value: &Value) -> Result<()> {
         && !stage.starts_with("prompt_merge_")
         && stage != "decode_init"
         && stage != "output_finalize"
+        && stage != "sequence_check"
         && !stage.starts_with("decode_select_")
     {
         let errors = value["errors"]
@@ -356,6 +368,16 @@ mod tests {
         );
         assert!(!direct.contains(&"decode_finalize_t7".into()));
         assert!(check_inventory(&direct, &direct[..direct.len() - 1]).is_err());
+    }
+
+    #[test]
+    fn teacher_forced_inventory_has_one_stage_per_layer() {
+        let names = teacher_forced_names(4, 1);
+        assert_eq!(names.len(), 14);
+        assert_eq!(names[3], "input_embedding");
+        assert_eq!(names[12], "sequence_check");
+        assert!(!names.iter().any(|name| name.starts_with("decode_")));
+        assert_eq!(teacher_forced_names(35, 0).len(), 75);
     }
 
     #[test]

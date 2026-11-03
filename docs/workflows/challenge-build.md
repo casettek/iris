@@ -24,6 +24,14 @@ Flow:
 7. Compare the Raster replay checkpoint with the native recomputed checkpoint. The stage name, input commitment, output structural commitment, and output SHA-256 must all match, yielding the same checkpoint hash.
 8. Write the challenge artifacts only after that parity check passes. A mismatch fails challenge construction with a native/Raster parity error identifying the stage, differing field, and both values. The replay files remain available for debugging.
 
+For a teacher-forced claim, step 2 also checks two things: the frozen claimed ids
+obey the token-budget rule, and both `inputs.claimed` bindings in the frozen run
+manifest commit to them. If every checkpoint then matches but `output_finalize`'s
+ids differ from the posted ids, there is no stage to dispute. The claim is refuted
+by its own final record: the challenge reports `claimed output rejected` with the
+first differing token, and does not replay. A claim whose `sequence_check` or layer
+checkpoint is doctored diverges there and replays that stage as usual.
+
 Challenge hash verification happens during recomputation. Sequential stages stop immediately at the first mismatch. Parallel aux waves still execute with the existing parallelism; if a mismatch is found in the middle of a completed aux batch, later batch outputs may exist on disk but are ignored for the challenge trace and replay seed.
 
 Divergence reasons are checked in this order:

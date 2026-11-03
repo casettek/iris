@@ -166,6 +166,11 @@ struct ClaimBuildArgs {
     #[arg(long, default_value = inference_artifacts::INFERENCE_RUN_SPEC_TOML)]
     run: PathBuf,
 
+    /// Debug: post these comma-separated output ids in a teacher-forced claim
+    /// instead of discovering them, to build claims that should be refuted.
+    #[arg(long = "claimed-ids", value_delimiter = ',', hide = true)]
+    claimed_ids: Option<Vec<u32>>,
+
     /// Use the previous per-stage child-process staged-infer runner.
     #[arg(long = "staged-subprocess", alias = "direct-subprocess", hide = true)]
     staged_subprocess: bool,
@@ -453,6 +458,18 @@ fn print_challenge_result(result: &ChallengeBuildResult) {
             recomputed_chain_dir,
         } => {
             println!("no divergence found");
+            println!("claimed reference: {}", claimed_reference_path.display());
+            println!("recomputed trace: {}", recomputed_trace_path.display());
+            println!("recomputed chain: {}", recomputed_chain_dir.display());
+        }
+        ChallengeBuildOutcome::ClaimedOutputRejected {
+            reason,
+            claimed_reference_path,
+            recomputed_trace_path,
+            recomputed_chain_dir,
+        } => {
+            println!("no divergence found; claimed output rejected");
+            println!("reason: {reason}");
             println!("claimed reference: {}", claimed_reference_path.display());
             println!("recomputed trace: {}", recomputed_trace_path.display());
             println!("recomputed chain: {}", recomputed_chain_dir.display());
@@ -939,7 +956,10 @@ impl ClaimBuildArgs {
         } else {
             staged_infer::chain_runner::StagedExecutionBackend::InProcess
         };
-        ClaimBuildOptions::from_current_dir(current_exe, staged_backend, self.run)
+        let mut options =
+            ClaimBuildOptions::from_current_dir(current_exe, staged_backend, self.run)?;
+        options.claimed_token_ids = self.claimed_ids;
+        Ok(options)
     }
 }
 

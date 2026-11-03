@@ -117,6 +117,7 @@ inputs.tokenizer = { external = { path = "/home/amcas/Development/iris/runtime/m
 name = "input_embedding"
 project = "/home/amcas/Development/iris/raster-stages/input-embedding"
 inputs.prompt = { from = "prompt_prepare" }
+inputs.claimed = { external = { path = "/home/amcas/Development/iris/runtime/model-artifacts/gemma-4-E2B-detwgt/raster/input-embedding/no_claim.rastered", index_path = "/home/amcas/Development/iris/runtime/model-artifacts/gemma-4-E2B-detwgt/raster/input-embedding/no_claim.rindex", commitment = "94f6d7424f2abc4846e1e7b1cf592ea061ee6d9841b31ac1e040e6dd917f87b0" } }
 inputs.embedding = { external = { path = "/home/amcas/Development/iris/runtime/model-artifacts/gemma-4-E2B-detwgt/raster/input-embedding/embedding.rastered", index_path = "/home/amcas/Development/iris/runtime/model-artifacts/gemma-4-E2B-detwgt/raster/input-embedding/embedding.rindex", commitment = "ff2f470ca568b4849bc4e145d9df0e6d933e53f22a3e674178d67bb037ecc41f" } }
 
 [[chain.stage]]

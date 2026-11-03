@@ -9,4 +9,5 @@ inference-artifacts = { path = "../../inference/artifacts" }
 output-finalize = { path = "../../../raster-stages/output-finalize" }
 prompt-prepare = { path = "../../../raster-stages/prompt-prepare" }
 raster = { path = "../../../../raster/crates/raster" }
+input-embedding = { path = "../../../raster-stages/input-embedding" }
 serde_json = "1.0"

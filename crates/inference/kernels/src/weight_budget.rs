@@ -90,6 +90,14 @@ impl RetainedWeightBytes for prefill_finalize::input::FinalHead {
     }
 }
 
+impl RetainedWeightBytes for sequence_check::input::FinalHead {
+    fn retained_weight_bytes(&self) -> usize {
+        std::mem::size_of::<Self>()
+            + region(&self.projection)
+            + self.params.norm_weights.allocated_bytes()
+    }
+}
+
 impl RetainedWeightBytes for prefill_range::input::TransformerLayer {
     fn retained_weight_bytes(&self) -> usize {
         let p = &self.params;

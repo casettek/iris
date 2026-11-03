@@ -4,6 +4,7 @@ use crate::{
     verified_weights::{fields, PageRegion, VerifiedSelections},
 };
 use anyhow::{ensure, Context, Result};
+use inference_kernels::kernels::sequence_check::{score_row, Argmax, Selection};
 use inference_kernels::weight_budget::RetainedWeightBytes;
 use prefill_finalize::input::{
     dot, rms_norm, softcap, unpack_i32s, ActivationSequence, FinalHeadParams, LogitEntry,
@@ -81,6 +82,83 @@ pub(crate) struct RunStats {
     pub peak_batch_payload_bytes: usize,
     pub load_verify: Duration,
     pub arithmetic: Duration,
+}
+
+impl PagedHead {
+    pub(crate) fn params(&self) -> &FinalHeadParams {
+        &self.metadata.params
+    }
+}
+
+/// Greedy selection for every normalised position in one sweep of the head.
+///
+/// Each page is read and verified once and scored against all positions.
+/// Every position folds its pages in page order and its rows in token-id
+/// order, keeping only strictly greater scores, so each selection is the one
+/// `prefill-finalize` followed by `decode-select-token` makes for that row.
+pub(crate) fn select_positions(positions: &[&[i32]], head: &PagedHead) -> Result<Vec<Selection>> {
+    let params = &head.metadata.params;
+    let hidden = params.hidden_size as usize;
+    let stride = u64::from(params.hidden_size) * 4;
+    for position in positions {
+        ensure!(
+            position.len() == hidden,
+            "normalised position width mismatch"
+        );
+    }
+    let parallel = std::env::var("RASTER_PARALLELISM")
+        .map(|v| !v.eq_ignore_ascii_case("off"))
+        .unwrap_or(true);
+    let region = &head.metadata.region;
+    let mut argmax = vec![Argmax::default(); positions.len()];
+    let mut next = 0;
+    while next < region.page_count {
+        let end = next
+            .saturating_add(BATCH_PAGES as u64)
+            .min(region.page_count);
+        let pages = (next..end)
+            .map(|index| {
+                let page = region.page(&head.source, &["head", "projection"], index)?;
+                let weights = unpack_i32s(&page).map_err(anyhow::Error::msg)?;
+                ensure!(
+                    weights.len() % hidden == 0,
+                    "projection page is not a whole number of hidden-width rows"
+                );
+                ensure!(
+                    page.offset() % stride == 0,
+                    "projection page offset is not row-aligned"
+                );
+                Ok(((page.offset() / stride) as u32, weights))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let fold = |(position, best): (&&[i32], &mut Argmax)| -> Result<()> {
+            for (first_id, weights) in &pages {
+                for (local, row) in weights.chunks_exact(hidden).enumerate() {
+                    best.observe(
+                        first_id + local as u32,
+                        score_row(position, row, params.softcap)?,
+                    );
+                }
+            }
+            Ok(())
+        };
+        if parallel && rayon::current_num_threads() > 1 {
+            positions
+                .par_iter()
+                .zip(argmax.par_iter_mut())
+                .try_for_each(fold)?;
+        } else {
+            positions.iter().zip(argmax.iter_mut()).try_for_each(fold)?;
+        }
+        next = end;
+    }
+    argmax
+        .into_iter()
+        .map(|best| {
+            best.finish()
+                .ok_or_else(|| anyhow::anyhow!("the head scored no token"))
+        })
+        .collect()
 }
 
 pub(crate) fn run(activations: &ActivationSequence, head: &PagedHead) -> Result<PrefillLogits> {

@@ -8,6 +8,7 @@ use output_finalize::input::{DecoderTable, DecoderToken};
 use prompt_prepare::input::{merge_bucket_of, vocab_bucket_of, BpeMerge, MergeBucket};
 use prompt_prepare::input::{BpePiece, BpePieces, PromptTokenizer, TokenEntry, VocabBucket};
 use raster::List;
+use input_embedding::input::ClaimedOutput;
 
 const BOS_TOKEN: &str = "<bos>";
 const TURN_OPEN: &str = "<|turn>";
@@ -130,6 +131,59 @@ pub fn write_initial_pieces(
     let commitment = raster::write_raster_files(&pieces, &data_path, &index_path)
         .map_err(|error| anyhow::anyhow!("{error}"))?;
     Ok((data_path, index_path, commitment))
+}
+
+/// Writes a teacher-forced claim's output ids as the run's `claimed` external.
+pub fn write_claimed_output(
+    token_ids: &[u32],
+    dir: &Path,
+) -> Result<(std::path::PathBuf, std::path::PathBuf, String)> {
+    ensure!(
+        !token_ids.is_empty(),
+        "a teacher-forced claim needs at least one output token"
+    );
+    fs::create_dir_all(dir).with_context(|| format!("failed to create {}", dir.display()))?;
+    let claimed = ClaimedOutput {
+        token_ids: List::from(token_ids.to_vec()),
+    };
+    let data_path = dir.join("claimed_output.rastered");
+    let index_path = dir.join("claimed_output.rindex");
+    let commitment = raster::write_raster_files(&claimed, &data_path, &index_path)
+        .map_err(|error| anyhow::anyhow!("{error}"))?;
+    Ok((data_path, index_path, commitment))
+}
+
+/// The commitment `write_claimed_output` would bind for these ids.
+pub fn claimed_output_commitment(token_ids: &[u32]) -> Result<String> {
+    let claimed = ClaimedOutput {
+        token_ids: List::from(token_ids.to_vec()),
+    };
+    let (_, _, commitment) =
+        raster::encode_raster_value(&claimed).map_err(|error| anyhow::anyhow!("{error}"))?;
+    Ok(commitment)
+}
+
+/// A claim's output must fill its token budget unless it ends at EOS: the
+/// chain never stops early, so a shorter claim would be a truncated answer.
+pub fn validate_claimed_length(token_ids: &[u32], tokens: u32, eos_ids: &[u32]) -> Result<()> {
+    let ends_at_eos = token_ids.last().is_some_and(|id| eos_ids.contains(id));
+    ensure!(
+        !token_ids.is_empty() && token_ids.len() <= tokens as usize,
+        "claimed output has {} tokens; the run allows 1 to {tokens}",
+        token_ids.len()
+    );
+    ensure!(
+        token_ids.len() == tokens as usize || ends_at_eos,
+        "claimed output has {} of {tokens} tokens and does not end at EOS",
+        token_ids.len()
+    );
+    ensure!(
+        token_ids[..token_ids.len() - 1]
+            .iter()
+            .all(|id| !eos_ids.contains(id)),
+        "claimed output continues past EOS"
+    );
+    Ok(())
 }
 
 pub fn render_gemma_turns(prompt: &str) -> String {
@@ -533,6 +587,7 @@ mod tests {
             prompt_file: None,
             raw_prompt,
             tokens: 1,
+            chain: Default::default(),
         }
     }
 

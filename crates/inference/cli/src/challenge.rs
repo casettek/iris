@@ -14,7 +14,7 @@ use staged_infer::{
 use inference_artifacts::{
     build_checkpoint_trace, checkpoint_hashes, read_challenge_bundle, read_checkpoint_hashes,
     read_checkpoint_trace, read_claim_bundle, verify_file_sha256, write_challenge_artifacts,
-    write_checkpoint_trace_artifact, ChallengeBundle, ChallengeSourcePath, Checkpoint,
+    write_checkpoint_trace_artifact, ChainKind, ChallengeBundle, ChallengeSourcePath, Checkpoint,
     CheckpointTrace, Divergence, DivergenceReason, PreparedRun, ReplayPackage,
 };
 
@@ -49,6 +49,14 @@ pub enum ChallengeBuildOutcome {
         recomputed_trace_path: PathBuf,
         recomputed_chain_dir: PathBuf,
     },
+    /// Teacher-forced only: every checkpoint matched, but the checked greedy
+    /// selections are not the ids the claim posted.
+    ClaimedOutputRejected {
+        reason: String,
+        claimed_reference_path: PathBuf,
+        recomputed_trace_path: PathBuf,
+        recomputed_chain_dir: PathBuf,
+    },
     DivergenceBuilt {
         divergence: Divergence,
         divergence_path: PathBuf,
@@ -66,7 +74,9 @@ pub fn build_challenge(options: ChallengeBuildOptions) -> Result<ChallengeBuildR
     let claimed_input = load_claimed_input(&options.input)?;
     let manifest_path = challenge_manifest_path(&options, &claimed_input)?;
     let executor = CheckpointedInferenceExecutor;
-    let (recomputed_chain_dir, recomputed_trace, divergence) = match &claimed_input.checkpoints {
+    let (recomputed_chain_dir, recomputed_trace, divergence, final_result) = match &claimed_input
+        .checkpoints
+    {
         ClaimedCheckpoints::Hashes { path, hashes } => {
             let recomputed = executor.run_until_hash_divergence(CheckpointHashChallengeConfig {
                 base_dir: options.base_dir.clone(),
@@ -80,6 +90,7 @@ pub fn build_challenge(options: ChallengeBuildOptions) -> Result<ChallengeBuildR
                 recomputed.chain_dir,
                 recomputed.recomputed_trace,
                 recomputed.divergence,
+                recomputed.final_result,
             )
         }
         ClaimedCheckpoints::Trace { .. } => {
@@ -96,7 +107,12 @@ pub fn build_challenge(options: ChallengeBuildOptions) -> Result<ChallengeBuildR
                 .join(inference_artifacts::CHECKPOINT_TRACE_JSON);
             let divergence =
                 claimed_input.locate_divergence(&recomputed_trace_path, &recomputed_trace)?;
-            (recomputed.chain_dir, recomputed_trace, divergence)
+            (
+                recomputed.chain_dir,
+                recomputed_trace,
+                divergence,
+                recomputed.final_result,
+            )
         }
     };
     let recomputed_trace_path =
@@ -104,6 +120,21 @@ pub fn build_challenge(options: ChallengeBuildOptions) -> Result<ChallengeBuildR
     let checkpoint_trace_duration = checkpoint_trace_started.elapsed();
 
     let Some(divergence) = divergence else {
+        // Every checkpoint agrees, so there is no stage to dispute. A
+        // teacher-forced claim can still be refuted by its own final record:
+        // honest hashes over a non-greedy output publish the greedy ids.
+        if let Some(reason) =
+            claimed_output_disagreement(claimed_input.prepared_run.as_ref(), final_result.as_ref())?
+        {
+            return Ok(ChallengeBuildResult {
+                outcome: ChallengeBuildOutcome::ClaimedOutputRejected {
+                    reason,
+                    claimed_reference_path: claimed_input.reference_path().to_path_buf(),
+                    recomputed_trace_path,
+                    recomputed_chain_dir,
+                },
+            });
+        }
         return Ok(ChallengeBuildResult {
             outcome: ChallengeBuildOutcome::NoDivergence {
                 claimed_reference_path: claimed_input.reference_path().to_path_buf(),
@@ -225,7 +256,7 @@ fn challenge_manifest_path(
         )?;
         let model =
             inference_artifacts::ModelManifest::load_verified(&prepared.model_manifest_path)?;
-        model.verified_raster_template(&prepared.model_manifest_path)?;
+        model.verified_chain_template(&prepared.model_manifest_path, prepared.chain)?;
         // load_claimed_input already checked the frozen run manifest's hash.
         return prepared
             .run_manifest_path
@@ -240,6 +271,7 @@ fn challenge_manifest_path(
         run_spec_path,
         current_exe: options.current_exe.clone(),
         staged_backend: options.staged_backend,
+        claimed_token_ids: None,
     })?;
     Ok(prepared.manifest_path)
 }
@@ -509,7 +541,66 @@ fn verify_prepared_run(prepared: &PreparedRun) -> Result<()> {
         .run_manifest_sha256
         .as_ref()
         .ok_or_else(|| anyhow::anyhow!("prepared run has no run_manifest_sha256"))?;
-    verify_file_sha256(manifest_path, manifest_sha256, "frozen run manifest")
+    verify_file_sha256(manifest_path, manifest_sha256, "frozen run manifest")?;
+    verify_claimed_output(prepared, manifest_path)
+}
+
+/// A teacher-forced claim's posted ids must be the ones its frozen run
+/// manifest commits to, and must obey the token-budget rule.
+fn verify_claimed_output(prepared: &PreparedRun, manifest_path: &Path) -> Result<()> {
+    match (prepared.chain, &prepared.claimed_token_ids) {
+        (ChainKind::Autoregressive, None) => Ok(()),
+        (ChainKind::Autoregressive, Some(_)) => {
+            bail!("autoregressive prepared run unexpectedly carries claimed output ids")
+        }
+        (ChainKind::TeacherForced, None) => {
+            bail!("teacher-forced prepared run has no claimed output ids")
+        }
+        (ChainKind::TeacherForced, Some(ids)) => {
+            run_prep::validate_claimed_length(
+                ids,
+                prepared.tokens,
+                &prepared.prompt.eos_token_ids,
+            )?;
+            let commitment = run_prep::claimed_output_commitment(ids)?;
+            let manifest = fs::read_to_string(manifest_path)
+                .with_context(|| format!("failed to read {}", manifest_path.display()))?;
+            let bound = manifest
+                .lines()
+                .filter(|line| line.trim_start().starts_with("inputs.claimed ="))
+                .collect::<Vec<_>>();
+            let expected = format!("commitment = \"{commitment}\"");
+            if bound.len() != 2 || !bound.iter().all(|line| line.contains(&expected)) {
+                bail!(
+                    "frozen run manifest does not bind the claimed output ids (commitment {commitment}) into input_embedding and sequence_check"
+                );
+            }
+            Ok(())
+        }
+    }
+}
+
+/// After a trace with no divergence, a teacher-forced claim still stands only
+/// if the checked selections are the ids it posted.
+pub(crate) fn claimed_output_disagreement(
+    prepared: Option<&PreparedRun>,
+    final_result: Option<&inference_artifacts::InferenceResult>,
+) -> Result<Option<String>> {
+    let Some(claimed) = prepared.and_then(|prepared| prepared.claimed_token_ids.as_ref()) else {
+        return Ok(None);
+    };
+    let checked = final_result
+        .map(|result| result.generated_token_ids.as_slice())
+        .context(
+            "teacher-forced recomputation produced no final output to check the claim against",
+        )?;
+    Ok(crate::claim::first_disagreement(claimed, checked).map(|position| {
+        format!(
+            "claimed output is not the greedy continuation at generated token {position}: claimed {:?}, greedy {:?}",
+            claimed.get(position),
+            checked.get(position)
+        )
+    }))
 }
 
 fn resolve_bundle_path(base: &Path, path: &Path) -> PathBuf {
@@ -693,6 +784,7 @@ mod tests {
             run_spec_path: run_spec_path.clone(),
             current_exe: PathBuf::from("unused"),
             staged_backend: StagedExecutionBackend::InProcess,
+            claimed_token_ids: None,
         })
         .unwrap();
         let context_path = prepared
@@ -977,6 +1069,8 @@ mod tests {
             tokens: 1,
             run_manifest_path: Some(run_manifest),
             run_manifest_sha256: Some(String::from("wrong")),
+            chain: Default::default(),
+            claimed_token_ids: None,
         };
 
         let error = verify_prepared_run(&prepared).unwrap_err();

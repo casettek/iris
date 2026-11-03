@@ -55,6 +55,26 @@ pass must exist and match between Raster and native-staged. Direct intentionally
 stops before it. Its required boundary inventory is explicit and independent of
 the order in which PLE work is scheduled.
 
+## Teacher-forced leg
+
+Each case also runs the [teacher-forced chain](../internals/raster-chain.md#teacher-forced-chain)
+over `prompt ‖ direct output`, through Raster (`--no-auth`) and native-staged, under
+`<case>/teacher-forced/`. It must agree:
+
+- Raster/native-staged: every teacher-forced checkpoint, byte for byte.
+- With the autoregressive native-staged chain: tokenizer stages and
+  `output_finalize` identical; `sequence_check` identical to the last
+  `decode_select_t*`; the `input_embedding` row token ids equal to the pinned
+  input ids followed by the direct output.
+- Position by position: every `input_embedding`, `prefill_prepare_aux_l*` and
+  `prefill_range_l*` row at position `i` equals the autoregressive prefill row
+  (`i < prompt_len`) or decode step `i - prompt_len`'s single row. Every
+  teacher-forced KV entry equals the autoregressive KV entry at the same position.
+
+This is the parity gate the teacher-forced design depends on. Batched prefill over
+`N` rows and single-row decode must be bit-identical, or an honest claimer would
+convict itself.
+
 ## Results and failures
 
 Each invocation creates `target/parity/<run-id>/report.json` and prints its path.

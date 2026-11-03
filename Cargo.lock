@@ -2089,6 +2089,7 @@ dependencies = [
  "prompt-prepare",
  "raster",
  "rayon",
+ "sequence-check",
  "serde",
  "sha2",
 ]
@@ -3915,6 +3916,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "inference-artifacts",
+ "input-embedding",
  "output-finalize",
  "prompt-prepare",
  "raster",
@@ -4113,6 +4115,15 @@ checksum = "8a7852d02fc848982e0c167ef163aaff9cd91dc640ba85e263cb1ce46fae51cd"
 dependencies = [
  "serde",
  "serde_core",
+]
+
+[[package]]
+name = "sequence-check"
+version = "0.1.0"
+dependencies = [
+ "det-num",
+ "raster",
+ "serde",
 ]
 
 [[package]]
@@ -4351,6 +4362,7 @@ dependencies = [
  "raster-runtime",
  "rayon",
  "run-prep",
+ "sequence-check",
  "serde",
  "serde_json",
  "sha2",

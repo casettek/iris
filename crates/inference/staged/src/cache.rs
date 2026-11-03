@@ -18,6 +18,7 @@ use prefill_finalize::input as finalize_input;
 use prefill_prepare_aux::input as aux_input;
 use prefill_range::input as range_input;
 use prompt_prepare::input as prompt_input;
+use sequence_check::input as check_input;
 
 #[derive(Clone, Debug)]
 pub enum CachedStageValue {
@@ -350,6 +351,50 @@ impl CachedStageValue {
             Self::DecodeEdge(value) => Ok(output_edge_from_decode(value)),
             _ => bail!("cached value is not a decode edge"),
         }
+    }
+
+    pub fn as_check_prompt(&self) -> Result<check_input::PromptTokenization> {
+        match self {
+            Self::PromptTokenization(value) => Ok(check_input::PromptTokenization {
+                token_ids: value.token_ids.clone(),
+            }),
+            _ => bail!("cached value is not a prompt tokenization"),
+        }
+    }
+
+    pub fn as_check_activation_sequence(&self) -> Result<check_input::ActivationSequence> {
+        match self {
+            Self::RangeActivations(value) => Ok(check_activation_from_range(value)),
+            _ => bail!("cached value is not a transformer layer's activation sequence"),
+        }
+    }
+
+    pub fn from_checked_edge(value: check_input::DecodeEdge) -> Self {
+        Self::DecodeEdge(decode_input::DecodeEdge {
+            has_selected: value.has_selected,
+            decode_position: value.decode_position,
+            token_id: value.token_id,
+            value: value.value,
+            generated_token_ids: value.generated_token_ids,
+        })
+    }
+}
+
+fn check_activation_from_range(
+    source: &range_input::ActivationSequence,
+) -> check_input::ActivationSequence {
+    check_input::ActivationSequence {
+        rows: map_list(&source.rows, |row| check_input::ActivationRow {
+            token_id: row.token_id,
+            values: row.values.clone(),
+        }),
+        errors: source.errors.clone(),
+        kv: map_list(&source.kv, |row| check_input::KeyRow {
+            position: row.position,
+            k: row.k.clone(),
+            v: row.v.clone(),
+        }),
+        start_position: source.start_position,
     }
 }
 

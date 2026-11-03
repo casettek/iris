@@ -7,6 +7,8 @@
 - `challenge build`: verifier rerun from a claim trace, divergence detection, and Raster replay of the first divergent stage.
 - `replay-profile`: manual native and zkVM replay measurements for one exact stage instance.
 
+Claims and challenges run over the autoregressive chain by default. A run spec with `chain = "teacher-forced"` instead verifies a known output with one pass per layer over `prompt ‖ output` (see [Raster chain](docs/internals/raster-chain.md#teacher-forced-chain)).
+
 `model import` is the shared setup step. It turns a model bundle into committed Raster externals and a prompt-free model manifest. Each workflow selects the model through `--run inference.toml` and verifies it once before execution. Challenges retain the claim’s frozen prompt and token count.
 
 ## Quick Start

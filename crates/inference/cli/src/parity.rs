@@ -1,4 +1,6 @@
-//! The local three-path regression gate. Every worker owns its runtime state.
+//! The local three-path regression gate, plus the teacher-forced leg that
+//! checks the one-pass chain against the autoregressive one position by
+//! position. Every worker owns its runtime state.
 mod compare;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -16,7 +18,7 @@ use sha2::{Digest, Sha256};
 use staged_infer::chain_runner::StagedExecutionBackend;
 
 use crate::claim::{build_claim, prepare_claim_run, ClaimBuildOptions};
-use compare::{compare, read_boundaries, staged_names, Boundary};
+use compare::{compare, read_boundaries, staged_names, teacher_forced_names, Boundary};
 
 #[derive(Debug, Deserialize)]
 struct Case {
@@ -54,7 +56,7 @@ pub fn run() -> Result<()> {
     result
         .with_context(|| format!("parity failed; artifacts and report: {}", run_dir.display()))?;
     println!(
-        "PASS: 3 cases, 3 independent paths, exact parity ({:.2}s total).",
+        "PASS: 3 cases, 3 independent paths plus teacher-forced, exact parity ({:.2}s total).",
         started.elapsed().as_secs_f64()
     );
     Ok(())
@@ -242,6 +244,7 @@ fn run_case(
         run_spec_path: spec.clone(),
         current_exe: exe.to_path_buf(),
         staged_backend: StagedExecutionBackend::InProcess,
+        claimed_token_ids: None,
     })?;
     let raster_dir = dir.join("raster");
     fs::create_dir(&raster_dir)?;
@@ -327,15 +330,226 @@ fn run_case(
     report["native_direct_boundaries"] = json!(direct_names.len());
     report["logit_vectors_compared"] = json!(case.tokens);
     report["result"] = final_value.clone();
+    let teacher_forced =
+        run_teacher_forced_leg(root, dir, case, model_path, model, exe, raster, &native)
+            .context("teacher-forced leg")?;
+    report["teacher_forced"] = teacher_forced;
     report["elapsed_seconds"] = json!(started.elapsed().as_secs_f64());
     println!(
-        "  PASS: {} staged checkpoints, {} direct boundaries, {} complete logit vectors ({:.2}s)",
+        "  PASS: {} staged checkpoints, {} direct boundaries, {} complete logit vectors, {} teacher-forced checkpoints ({:.2}s)",
         names.len(),
         direct_names.len(),
         case.tokens,
+        report["teacher_forced"]["checkpoints"],
         started.elapsed().as_secs_f64()
     );
     Ok(())
+}
+
+/// The fourth leg: a teacher-forced pass over `prompt ‖ direct output`,
+/// through Raster and native-staged, checked against the autoregressive
+/// chain position by position.
+///
+/// Causal attention means row `i` of a teacher-forced layer has seen exactly
+/// what the autoregressive path saw at position `i`, so every activation, PLE
+/// row and KV entry must be bit-identical: prefill rows for the prompt, decode
+/// step `t`'s single row for position `prompt_len + t`. The check stage must
+/// then reproduce the final decode edge, and `output_finalize` the same
+/// output. Any difference would make an honest claimer convict itself.
+#[allow(clippy::too_many_arguments)]
+fn run_teacher_forced_leg(
+    root: &Path,
+    dir: &Path,
+    case: &Case,
+    model_path: &Path,
+    model: &ModelManifest,
+    exe: &Path,
+    raster: &Path,
+    autoregressive: &BTreeMap<String, Boundary>,
+) -> Result<Value> {
+    let tf_dir = dir.join("teacher-forced");
+    fs::create_dir(&tf_dir)?;
+    let spec = tf_dir.join("inference.toml");
+    fs::write(
+        &spec,
+        format!(
+            "model_manifest = {}\nprompt = {}\nraw_prompt = {}\ntokens = {}\nchain = \"teacher-forced\"\n",
+            serde_json::to_string(model_path)?,
+            serde_json::to_string(&case.prompt)?,
+            case.raw_prompt,
+            case.tokens
+        ),
+    )?;
+    // Preparation discovers the claimed ids with direct decode.
+    let prepared = prepare_claim_run(&ClaimBuildOptions {
+        base_dir: tf_dir.clone(),
+        run_spec_path: spec.clone(),
+        current_exe: exe.to_path_buf(),
+        staged_backend: StagedExecutionBackend::InProcess,
+        claimed_token_ids: None,
+    })?;
+    let claimed = prepared
+        .prepared_run
+        .claimed_token_ids
+        .clone()
+        .context("teacher-forced preparation recorded no claimed ids")?;
+    let raster_dir = tf_dir.join("raster");
+    fs::create_dir(&raster_dir)?;
+    let mut run = command(raster, root);
+    run.args(["raster", "chain", "run"])
+        .arg(&prepared.manifest_path)
+        .args(["--no-auth", "--run"])
+        .arg(&raster_dir);
+    logged(run, &tf_dir.join("raster.log")).context("teacher-forced Raster-staged execution")?;
+    let mut run = command(exe, root);
+    run.args(["parity-worker", "--run"])
+        .arg(&spec)
+        .arg("--output")
+        .arg(tf_dir.join("native-staged"));
+    logged(run, &tf_dir.join("native-staged.log"))
+        .context("teacher-forced native-staged execution")?;
+    let native_info: Value = read_json(&tf_dir.join("native-staged/result.json"))?;
+    let native_dir = PathBuf::from(
+        native_info["chain_dir"]
+            .as_str()
+            .context("missing teacher-forced native chain directory")?,
+    );
+
+    let names = teacher_forced_names(
+        model.shape.num_hidden_layers,
+        run_prep::tokenizer_repeat_count(prepared.prepared_run.prompt.initial_pieces.len())?,
+    );
+    let raster_outputs = read_boundaries(&raster_dir, &names, false)
+        .context("teacher-forced Raster-staged artifacts")?;
+    let native = read_boundaries(&native_dir, &names, false)
+        .context("teacher-forced native-staged artifacts")?;
+    for name in &names {
+        compare(name, &raster_outputs[name], &native[name])
+            .context("teacher-forced Raster-staged ↔ native-staged")?;
+    }
+
+    let prompt_len = case.input_token_ids.len();
+    let tokens = case.tokens as usize;
+    ensure!(
+        claimed.len() == tokens,
+        "direct decode produced {} of {tokens} tokens; the pinned corpus fills its budget",
+        claimed.len()
+    );
+    for name in names
+        .iter()
+        .filter(|name| name.starts_with("prompt_") || *name == "output_finalize")
+    {
+        compare(name, &native[name], &autoregressive[name])
+            .context("teacher-forced ↔ autoregressive")?;
+    }
+    let last_select = format!("decode_select_t{}", tokens - 1);
+    compare(
+        "sequence_check",
+        &native["sequence_check"],
+        &autoregressive[&last_select],
+    )
+    .with_context(|| format!("teacher-forced check ↔ autoregressive {last_select}"))?;
+    let mut joined = case.input_token_ids.clone();
+    joined.extend(&claimed);
+    let embedded_ids = native["input_embedding"].value["rows"]
+        .as_array()
+        .context("input_embedding: missing rows")?
+        .iter()
+        .map(|row| row["token_id"].clone())
+        .collect::<Vec<_>>();
+    ensure!(
+        json!(embedded_ids) == json!(joined),
+        "input_embedding rows are not prompt ‖ claimed output"
+    );
+
+    // Position `prompt_len + t` comes from decode step `t` in the
+    // autoregressive chain, which embeds the token selected at step `t`.
+    let source = |prefill: &str, decode: String, position: usize| -> (String, usize) {
+        if position < prompt_len {
+            (prefill.to_string(), position)
+        } else {
+            (
+                decode.replace("{t}", &(position - prompt_len).to_string()),
+                0,
+            )
+        }
+    };
+    let mut rows_compared = 0;
+    let mut keys_compared = 0;
+    let mut stages = vec![(
+        String::from("input_embedding"),
+        String::from("decode_embed_t{t}"),
+    )];
+    for layer in 0..model.shape.num_hidden_layers {
+        stages.push((
+            format!("prefill_prepare_aux_l{layer}"),
+            format!("decode_aux_t{{t}}_l{layer}"),
+        ));
+        stages.push((
+            format!("prefill_range_l{layer}"),
+            format!("decode_range_t{{t}}_l{layer}"),
+        ));
+    }
+    for (prefill, decode) in &stages {
+        let rows = native[prefill].value["rows"]
+            .as_array()
+            .with_context(|| format!("{prefill}: missing rows"))?;
+        ensure!(
+            rows.len() == prompt_len + tokens,
+            "{prefill}: teacher-forced pass has {} rows, expected {}",
+            rows.len(),
+            prompt_len + tokens
+        );
+        for (position, row) in rows.iter().enumerate() {
+            let (stage, index) = source(prefill, decode.clone(), position);
+            ensure!(
+                autoregressive[&stage].value["rows"][index] == *row,
+                "{prefill}: position {position} differs from autoregressive {stage} row {index}"
+            );
+            rows_compared += 1;
+        }
+        if !prefill.starts_with("prefill_range_") {
+            continue;
+        }
+        let keys = native[prefill].value["kv"]
+            .as_array()
+            .with_context(|| format!("{prefill}: missing KV"))?;
+        ensure!(
+            keys.len() == rows.len(),
+            "{prefill}: teacher-forced KV has {} entries for {} rows",
+            keys.len(),
+            rows.len()
+        );
+        for (position, key) in keys.iter().enumerate() {
+            ensure!(
+                key["position"] == json!(position),
+                "{prefill}: KV entry {position} is at position {}",
+                key["position"]
+            );
+            let (stage, _) = source(prefill, decode.clone(), position);
+            let expected = autoregressive[&stage].value["kv"]
+                .as_array()
+                .with_context(|| format!("{stage}: missing KV"))?
+                .iter()
+                .find(|entry| entry["position"] == json!(position))
+                .with_context(|| format!("{stage}: no KV entry for position {position}"))?;
+            ensure!(
+                expected == key,
+                "{prefill}: KV at position {position} differs from autoregressive {stage}"
+            );
+            keys_compared += 1;
+        }
+    }
+    let checkpoints = inference_artifacts::read_checkpoint_hashes(
+        &native_dir.join(inference_artifacts::CHECKPOINT_HASHES_TXT),
+    )?;
+    Ok(json!({
+        "checkpoints": names.len(),
+        "claimed_token_ids": claimed,
+        "rows_compared": rows_compared,
+        "kv_entries_compared": keys_compared,
+        "final_checkpoint_sha256": checkpoints.last(),
+    }))
 }
 
 fn logits_stage(step: u32) -> String {
@@ -646,6 +860,7 @@ pub fn worker(spec: &Path, output: &Path, direct: bool) -> Result<()> {
             run_spec_path: spec.to_path_buf(),
             current_exe: std::env::current_exe()?,
             staged_backend: StagedExecutionBackend::InProcess,
+            claimed_token_ids: None,
         })?;
         write_json(
             &output.join("result.json"),
