@@ -52,12 +52,10 @@ fn merge_once(pieces: List<BpePiece>, buckets: List<MergeBucket>, count: u32) ->
     )
 }
 
+/// Eight merge rounds, each its own global best-pair scan and application.
 #[sequence]
-fn main(tokenizer: PromptTokenizer, initial_pieces: BpePieces) -> BpePieces {
-    let count = select!(u32, tokenizer.clone().merge_bucket_count);
-    let buckets = select!(List<MergeBucket>, tokenizer.merge_buckets);
-    let pieces0 = select!(List<BpePiece>, initial_pieces.pieces);
-    let round1 = call_seq!(merge_once, pieces0, buckets.clone(), count.clone());
+fn merge_eight(pieces: List<BpePiece>, buckets: List<MergeBucket>, count: u32) -> BpePieces {
+    let round1 = call_seq!(merge_once, pieces, buckets.clone(), count.clone());
     let pieces1 = select!(List<BpePiece>, round1.pieces);
     let round2 = call_seq!(merge_once, pieces1, buckets.clone(), count.clone());
     let pieces2 = select!(List<BpePiece>, round2.pieces);
@@ -71,6 +69,33 @@ fn main(tokenizer: PromptTokenizer, initial_pieces: BpePieces) -> BpePieces {
     let pieces6 = select!(List<BpePiece>, round6.pieces);
     let round7 = call_seq!(merge_once, pieces6, buckets.clone(), count.clone());
     let pieces7 = select!(List<BpePiece>, round7.pieces);
-    let round8 = call_seq!(merge_once, pieces7, buckets.clone(), count.clone());
-    round8
+    call_seq!(merge_once, pieces7, buckets, count)
+}
+
+/// One tokenizer batch: 64 merge rounds.
+///
+/// A batch scans only the pieces it is given, so when run preparation cuts the
+/// prompt into ranges each round costs the range's length, not the prompt's,
+/// and a batch can afford many rounds. The count MUST match
+/// `run_prep::MERGES_PER_STAGE` and the native kernel's `MERGES_PER_BATCH`.
+#[sequence]
+fn main(tokenizer: PromptTokenizer, initial_pieces: BpePieces) -> BpePieces {
+    let count = select!(u32, tokenizer.clone().merge_bucket_count);
+    let buckets = select!(List<MergeBucket>, tokenizer.merge_buckets);
+    let pieces0 = select!(List<BpePiece>, initial_pieces.pieces);
+    let batch1 = call_seq!(merge_eight, pieces0, buckets.clone(), count.clone());
+    let pieces1 = select!(List<BpePiece>, batch1.pieces);
+    let batch2 = call_seq!(merge_eight, pieces1, buckets.clone(), count.clone());
+    let pieces2 = select!(List<BpePiece>, batch2.pieces);
+    let batch3 = call_seq!(merge_eight, pieces2, buckets.clone(), count.clone());
+    let pieces3 = select!(List<BpePiece>, batch3.pieces);
+    let batch4 = call_seq!(merge_eight, pieces3, buckets.clone(), count.clone());
+    let pieces4 = select!(List<BpePiece>, batch4.pieces);
+    let batch5 = call_seq!(merge_eight, pieces4, buckets.clone(), count.clone());
+    let pieces5 = select!(List<BpePiece>, batch5.pieces);
+    let batch6 = call_seq!(merge_eight, pieces5, buckets.clone(), count.clone());
+    let pieces6 = select!(List<BpePiece>, batch6.pieces);
+    let batch7 = call_seq!(merge_eight, pieces6, buckets.clone(), count.clone());
+    let pieces7 = select!(List<BpePiece>, batch7.pieces);
+    call_seq!(merge_eight, pieces7, buckets, count)
 }

@@ -216,7 +216,8 @@ fn prompt_prepare_resolves_vocab_bucket() {
                 }]),
             }]),
             merge_buckets: List::from(vec![MergeBucket { rules: List::new() }]),
-        },
+        }
+        .into(),
         initial_pieces: BpePieces {
             pieces: List::from(vec![prompt_prepare::input::BpePiece {
                 text: "hello".to_string(),
@@ -376,7 +377,7 @@ fn sequence_check_matches_finalize_then_select_at_every_position() {
             .map(|i| value(row * 13 + i * 5 + 1))
             .collect::<Vec<_>>()
     };
-    let prompt = [3_u32, 9, 4];
+    let prompt_len = 3;
     let rows = 6;
 
     // The autoregressive path: finalize the single predicting row, select.
@@ -391,7 +392,7 @@ fn sequence_check_matches_finalize_then_select_at_every_position() {
     }
     .into();
     let mut prior = DecodeEdge::default();
-    for row in prompt.len() - 1..rows - 1 {
+    for row in prompt_len - 1..rows - 1 {
         let logits =
             routines::prefill_finalize::run_direct(&routines::prefill_finalize::Inputs::eager(
                 prefill_finalize::input::ActivationSequence {
@@ -443,26 +444,39 @@ fn sequence_check_matches_finalize_then_select_at_every_position() {
         projection: paged(&projection),
     }
     .into();
+    // Prompt range rows 0..3, then claimed ranges rows 3..5 and row 5: the
+    // second range's first token is predicted by the first range's last row,
+    // and its transcript continues the first's.
+    let sequence = |range: std::ops::Range<usize>| check::ActivationSequence {
+        rows: List::from(
+            range
+                .clone()
+                .map(|row| check::ActivationRow {
+                    token_id: 0,
+                    values: check::pack_i32s(&row_values(row)),
+                })
+                .collect::<Vec<_>>(),
+        ),
+        errors: List::new(),
+        kv: List::new(),
+        start_position: range.start as u32,
+    };
+    let claimed_range = |ids: &[u32]| check::ClaimedOutput {
+        token_ids: List::from(ids.to_vec()),
+    };
+    let first = routines::sequence_check::run_direct(&routines::sequence_check::Inputs::eager(
+        sequence(3..5),
+        sequence(0..3),
+        claimed_range(&claimed[..2]),
+        check::DecodeEdge::default(),
+        check_head.clone(),
+    ))
+    .unwrap();
     let edge = routines::sequence_check::run_direct(&routines::sequence_check::Inputs::eager(
-        check::ActivationSequence {
-            rows: List::from(
-                (0..rows)
-                    .map(|row| check::ActivationRow {
-                        token_id: 0,
-                        values: check::pack_i32s(&row_values(row)),
-                    })
-                    .collect::<Vec<_>>(),
-            ),
-            errors: List::new(),
-            kv: List::new(),
-            start_position: 0,
-        },
-        check::PromptTokenization {
-            token_ids: List::from(prompt.to_vec()),
-        },
-        check::ClaimedOutput {
-            token_ids: List::from(claimed),
-        },
+        sequence(5..6),
+        sequence(3..5),
+        claimed_range(&claimed[2..]),
+        first,
         check_head,
     ))
     .unwrap();

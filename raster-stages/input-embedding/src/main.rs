@@ -36,11 +36,13 @@ fn embed_prompt_token(
     )
 }
 
-/// Phase 2 entrypoint.
+/// Phase 2 entrypoint, for one range of the sequence.
 ///
-/// `prompt` is bound by the chain to `prompt_prepare`'s authorized output;
-/// `claimed` is a teacher-forced claim's output ids (empty in the
-/// autoregressive chain); `embedding` is a committed external.
+/// `prompt` is this range's chain-tokenized prompt ids (empty for a range of
+/// claimed output); `claimed` is this range's claimed output ids (empty for a
+/// prompt range and in the autoregressive chain); `previous` is the previous
+/// range's embedding, or `range-origin` for the first; `embedding` is a
+/// committed external.
 ///
 /// The claimed ids are embedded after the prompt's by a second push-only
 /// site deriving from the first, so the rows are `prompt ‖ claimed` in order.
@@ -48,8 +50,21 @@ fn embed_prompt_token(
 fn main(
     prompt: PromptTokenization,
     claimed: ClaimedOutput,
+    previous: ActivationSequence,
     embedding: EmbeddingTable,
 ) -> Result<ActivationSequence> {
+    let previous_start = select!(u32, previous.clone().start_position);
+    let previous_rows = select!(List<ActivationRow>, previous.rows);
+    let count_seed = call!(begin_row_count);
+    let previous_count = call_recur!(
+        tile = count_row_chunk,
+        input = previous_rows,
+        chunk = 256,
+        state = count_seed,
+        args = ()
+    );
+    let start_position = call!(range_start, previous_start, previous_count)?;
+
     let token_ids = select!(List<u32>, prompt.token_ids);
     let claimed_ids = select!(List<u32>, claimed.token_ids);
     let hidden_size = select!(u32, embedding.clone().hidden_size);
@@ -57,7 +72,7 @@ fn main(
     let embedding_scale = select!(i32, embedding.clone().embedding_scale);
     let values = select!(Bytes<196_608>, embedding.values);
 
-    let draft = call!(begin_prompt_activations);
+    let draft = call!(begin_prompt_activations, start_position);
     let prompt_rows = call_recur_seq!(
         sequence = embed_prompt_token,
         input = token_ids,

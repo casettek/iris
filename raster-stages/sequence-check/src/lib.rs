@@ -1,11 +1,14 @@
 //! `sequence-check`: tiles.
 //!
+//! One stage per range of claimed tokens.
+//!
 //! ```text
-//!   for each claimed token k:
-//!     row      = rows[prompt_len - 1 + k]          (teacher-forced: row i sees ids[..=i])
+//!   predicting = [previous range's last row] ‖ this range's rows
+//!   for each claimed token k in this range:
+//!     row      = predicting[k]                     (teacher-forced: row i sees ids[..=i])
 //!     normed   = rms_norm(row, w_final)
 //!     selected = argmax_t softcap(normed · projection[t])   (first maximum wins)
-//!   DecodeEdge { last selection, generated_token_ids = every selection }
+//!   DecodeEdge { last selection, generated_token_ids = earlier ranges' ‖ every selection }
 //! ```
 //!
 //! The scores and the tie-break are `prefill-finalize` followed by
@@ -56,16 +59,16 @@ pub fn validate_final_head(params: FinalHeadParams) -> Result<FinalHeadParams> {
     Ok(params)
 }
 
-/// The prompt-length fold's opening state: nothing counted.
-#[tile(kind = iter, description = "Open the prompt token count")]
+/// The previous range's row-count fold: nothing counted.
+#[tile(kind = iter, description = "Open the previous range's row count")]
 pub fn begin_token_count() -> TokenCount {
     TokenCount { count: 0 }
 }
 
-/// Counts one chunk of prompt token ids.
-#[tile(kind = recur, description = "Count a chunk of prompt token ids")]
-pub fn count_token_chunk(
-    input: RecurInput<Block<u32>>,
+/// Counts one chunk of the previous range's rows.
+#[tile(kind = recur, description = "Count a chunk of the previous range's rows")]
+pub fn count_row_chunk(
+    input: RecurInput<Block<ActivationRow>>,
     state: RecurState<TokenCount>,
 ) -> RecurState<TokenCount> {
     let mut state = state;
@@ -73,19 +76,44 @@ pub fn count_token_chunk(
     state
 }
 
-/// Points the cursor at the prompt's last row, which predicts the first
-/// generated token.
-#[tile(kind = iter, description = "Open the check cursor at the last prompt row")]
-pub fn begin_check_cursor(prompt_len: u32, start_position: u32) -> Result<CheckCursor> {
-    if prompt_len == 0 {
-        return Err(String::from(
-            "teacher-forced check requires a non-empty prompt to predict the first token",
-        ));
-    }
-    Ok(CheckCursor {
-        row_index: prompt_len - 1,
-        start_position,
+/// Index of the previous range's last row, which predicts this range's first
+/// claimed token.
+#[tile(kind = iter, description = "Index of the previous range's last row")]
+pub fn last_row_index(previous_rows: TokenCount) -> Result<u32> {
+    previous_rows.count.checked_sub(1).ok_or_else(|| {
+        String::from("teacher-forced check requires a non-empty range before the claimed tokens")
     })
+}
+
+/// Opens the predicting rows with the previous range's last row.
+#[tile(kind = iter, description = "Open the predicting rows at the range boundary")]
+pub fn begin_predicting_rows(boundary: ActivationRow) -> Draft<PredictingRows> {
+    let mut output = Draft::<PredictingRows>::new();
+    output.rows().push(boundary);
+    output
+}
+
+/// Appends a chunk of this range's rows after the boundary row.
+#[tile(kind = recur, description = "Append a chunk of this range's rows to the predicting rows")]
+pub fn append_predicting_rows(
+    input: RecurInput<Block<ActivationRow>>,
+    output: RecurOutput<PredictingRows>,
+) -> RecurOutput<PredictingRows> {
+    let mut output = output;
+    for row in input.into_value() {
+        output.rows().push(row);
+    }
+    output
+}
+
+/// Points the cursor at the boundary row, which predicts the token at this
+/// range's start position.
+#[tile(kind = iter, description = "Open the check cursor at the range boundary")]
+pub fn begin_check_cursor(start_position: u32) -> CheckCursor {
+    CheckCursor {
+        row_index: 0,
+        start_position,
+    }
 }
 
 /// Pairs the cursor's row with the claimed token it is meant to predict.
@@ -93,7 +121,7 @@ pub fn begin_check_cursor(prompt_len: u32, start_position: u32) -> Result<CheckC
 pub fn begin_check_step(cursor: CheckCursor, claimed_token_id: u32) -> CheckStep {
     CheckStep {
         row_index: cursor.row_index,
-        decode_position: cursor.start_position + cursor.row_index + 1,
+        decode_position: cursor.start_position + cursor.row_index,
         claimed_token_id,
         start_position: cursor.start_position,
     }
@@ -353,8 +381,8 @@ pub fn finish_check(
 
 /// Opens the output edge with the last selection's scalars.
 ///
-/// The transcript list stays empty here: the copy site below derives from
-/// this object and only pushes.
+/// The transcript list stays empty here: the copy sites below derive from
+/// this object and only push — the earlier ranges' ids, then this range's.
 #[tile(kind = iter, description = "Open the checked decode edge")]
 pub fn begin_decode_edge(summary: SelectionSummary) -> Draft<DecodeEdge> {
     let mut output = Draft::<DecodeEdge>::new();
@@ -365,7 +393,20 @@ pub fn begin_decode_edge(summary: SelectionSummary) -> Draft<DecodeEdge> {
     output
 }
 
-/// Copies a bounded chunk of selected token ids into the edge's transcript.
+/// Copies a bounded chunk of the earlier ranges' transcript into the edge.
+#[tile(kind = recur, description = "Copy earlier ranges' selected token ids")]
+pub fn copy_prior_token_ids(
+    input: RecurInput<Block<u32>>,
+    output: RecurOutput<DecodeEdge>,
+) -> RecurOutput<DecodeEdge> {
+    let mut output = output;
+    for token_id in input.into_value() {
+        output.generated_token_ids().push(token_id);
+    }
+    output
+}
+
+/// Appends a bounded chunk of this range's selected token ids to the edge.
 #[tile(kind = recur, description = "Copy selected token ids into the edge")]
 pub fn copy_selected_token_ids(
     input: RecurInput<Block<PositionSelection>>,

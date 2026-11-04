@@ -72,8 +72,9 @@
   ],
   "provenance": {
     "raster_manifest_path": "Raster.toml",
-    "raster_manifest_sha256": "ba1c374dc31ce1515599d7d4994375d4d66d3543bb7592874fd663087732a3f1",
+    "raster_manifest_sha256": "19543219fe0da690aa50392854f43b4541de52aca88b99bbaef5b7ae6db151e2",
     "teacher_forced_manifest_path": "Raster.teacher-forced.toml",
-    "teacher_forced_manifest_sha256": "41d82e9b6aa6d9a72591f5d52024fc9b3f478c14b2fa0fb042178dd46709a293"
+    "teacher_forced_manifest_sha256": "58e84299a8eeeaf169f594373f9d266f7fc36b091685669cc407edd27559f071",
+    "teacher_forced_range_size": 512
   }
 }

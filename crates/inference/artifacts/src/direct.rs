@@ -60,6 +60,16 @@ impl ModelManifest {
         self.verified_chain_template(manifest_path, ChainKind::Autoregressive)
     }
 
+    /// The teacher-forced range size the model's template was built for.
+    pub fn teacher_forced_range_size(&self) -> Result<u32> {
+        self.provenance
+            .as_ref()
+            .and_then(|provenance| provenance.teacher_forced_range_size)
+            .context(
+                "model manifest has no teacher-forced range size; rerun a full `iris model import --model <bundle-dir>`",
+            )
+    }
+
     /// The import-bound template for one chain shape.
     pub fn verified_chain_template(
         &self,
@@ -171,4 +181,7 @@ pub struct DirectInferProvenance {
     pub teacher_forced_manifest_path: Option<PathBuf>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub teacher_forced_manifest_sha256: Option<String>,
+    /// Largest teacher-forced range, in prompt pieces or claimed ids.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub teacher_forced_range_size: Option<u32>,
 }

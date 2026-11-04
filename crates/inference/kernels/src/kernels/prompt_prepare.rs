@@ -5,7 +5,8 @@ use prompt_prepare::input::{
 };
 use raster::List;
 
-pub const MERGES_PER_BATCH: usize = 8;
+/// Merge rounds per `prompt-merge` stage. MUST match its `main`.
+pub const MERGES_PER_BATCH: usize = 64;
 
 pub struct PromptPrepareDirectInputs<'a> {
     pub tokenizer: &'a PromptTokenizer,

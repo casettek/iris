@@ -14,7 +14,7 @@ pub(super) struct Boundary {
 }
 
 pub(super) fn staged_names(layers: u32, tokens: u32, tokenizer_repeats: u32) -> Vec<String> {
-    let mut names = vec!["prompt_merge_seed".into()];
+    let mut names = vec!["range_origin".into(), "prompt_merge_seed".into()];
     names.extend((0..tokenizer_repeats).map(|b| format!("prompt_merge_b{b}")));
     names.extend(["prompt_prepare".into(), "input_embedding".into()]);
     names.extend((0..layers).map(|l| format!("prefill_prepare_aux_l{l}")));
@@ -30,14 +30,49 @@ pub(super) fn staged_names(layers: u32, tokens: u32, tokenizer_repeats: u32) -> 
     names
 }
 
-/// The teacher-forced chain: one pass per layer over `prompt ‖ claimed`.
-pub(super) fn teacher_forced_names(layers: u32, tokenizer_repeats: u32) -> Vec<String> {
-    let mut names = vec!["prompt_merge_seed".into()];
-    names.extend((0..tokenizer_repeats).map(|b| format!("prompt_merge_b{b}")));
-    names.extend(["prompt_prepare".into(), "input_embedding".into()]);
-    names.extend((0..layers).map(|l| format!("prefill_prepare_aux_l{l}")));
-    names.extend((0..layers).map(|l| format!("prefill_range_l{l}")));
-    names.extend(["sequence_check".into(), "output_finalize".into()]);
+/// The shape of a ranged teacher-forced chain.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct RangedShape {
+    pub layers: u32,
+    pub prompt_ranges: u32,
+    /// Tokenizer batches per prompt range after its seed batch.
+    pub batches: u32,
+    pub claimed_ranges: u32,
+}
+
+impl RangedShape {
+    /// Reads the shape back from an executed chain's stage inventory.
+    pub(super) fn from_names(names: &[String]) -> Self {
+        let count = |prefix: &str| names.iter().filter(|name| name.starts_with(prefix)).count() as u32;
+        Self {
+            layers: count("range_p0_l"),
+            prompt_ranges: count("embed_p"),
+            batches: count("prompt_merge_p0_b"),
+            claimed_ranges: count("embed_c"),
+        }
+    }
+}
+
+/// The ranged teacher-forced chain: every prompt range tokenized and
+/// embedded, every claimed range embedded, each layer across all ranges, then
+/// each claimed range checked.
+pub(super) fn teacher_forced_names(shape: RangedShape) -> Vec<String> {
+    let mut names = vec![String::from("range_origin"), String::from("decode_init")];
+    for j in 0..shape.prompt_ranges {
+        names.push(format!("prompt_merge_seed_p{j}"));
+        names.extend((0..shape.batches).map(|b| format!("prompt_merge_p{j}_b{b}")));
+        names.extend([format!("prompt_prepare_p{j}"), format!("embed_p{j}")]);
+    }
+    names.extend((0..shape.claimed_ranges).map(|k| format!("embed_c{k}")));
+    // Each layer runs across every range before the next layer.
+    for l in 0..shape.layers {
+        names.extend((0..shape.prompt_ranges).map(|j| format!("aux_p{j}_l{l}")));
+        names.extend((0..shape.claimed_ranges).map(|k| format!("aux_c{k}_l{l}")));
+        names.extend((0..shape.prompt_ranges).map(|j| format!("range_p{j}_l{l}")));
+        names.extend((0..shape.claimed_ranges).map(|k| format!("range_c{k}_l{l}")));
+    }
+    names.extend((0..shape.claimed_ranges).map(|k| format!("check_c{k}")));
+    names.push(String::from("output_finalize"));
     names
 }
 
@@ -209,7 +244,9 @@ pub(super) fn validate_errors(stage: &str, value: &Value) -> Result<()> {
         && !stage.starts_with("prompt_merge_")
         && stage != "decode_init"
         && stage != "output_finalize"
-        && stage != "sequence_check"
+        && stage != "range_origin"
+        && !stage.starts_with("prompt_prepare_p")
+        && !stage.starts_with("check_c")
         && !stage.starts_with("decode_select_")
     {
         let errors = value["errors"]
@@ -349,7 +386,7 @@ mod tests {
     #[test]
     fn missing_duplicate_and_unexpected_boundaries_fail() {
         let names = staged_names(4, 8, 0);
-        assert_eq!(names.len(), 102);
+        assert_eq!(names.len(), 103);
         check_inventory(&names, &names).unwrap();
         assert!(check_inventory(&names, &names[..100]).is_err());
         let mut duplicate = names.clone();
@@ -364,20 +401,27 @@ mod tests {
         let direct = direct_infer::diagnostics::boundary_names(4, 8);
         assert_eq!(
             names.iter().filter(|name| !direct.contains(name)).count(),
-            11
+            12
         );
         assert!(!direct.contains(&"decode_finalize_t7".into()));
         assert!(check_inventory(&direct, &direct[..direct.len() - 1]).is_err());
     }
 
     #[test]
-    fn teacher_forced_inventory_has_one_stage_per_layer() {
-        let names = teacher_forced_names(4, 1);
-        assert_eq!(names.len(), 14);
-        assert_eq!(names[3], "input_embedding");
-        assert_eq!(names[12], "sequence_check");
-        assert!(!names.iter().any(|name| name.starts_with("decode_")));
-        assert_eq!(teacher_forced_names(35, 0).len(), 75);
+    fn ranged_inventory_round_trips_its_shape() {
+        let shape = RangedShape {
+            layers: 4,
+            prompt_ranges: 3,
+            batches: 1,
+            claimed_ranges: 2,
+        };
+        let names = teacher_forced_names(shape);
+        // origin + init, 3 × (seed + 1 batch + prepare + embed + 8 layer
+        // stages), 2 × (embed + 8 layer stages + check), output.
+        assert_eq!(names.len(), 2 + 3 * 12 + 2 * 10 + 1);
+        assert_eq!(RangedShape::from_names(&names), shape);
+        assert_eq!(names.last().map(String::as_str), Some("output_finalize"));
+        assert!(!names.iter().any(|name| name.starts_with("decode_") && name != "decode_init"));
     }
 
     #[test]

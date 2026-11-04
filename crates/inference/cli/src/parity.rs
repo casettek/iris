@@ -18,7 +18,9 @@ use sha2::{Digest, Sha256};
 use staged_infer::chain_runner::StagedExecutionBackend;
 
 use crate::claim::{build_claim, prepare_claim_run, ClaimBuildOptions};
-use compare::{compare, read_boundaries, staged_names, teacher_forced_names, Boundary};
+use compare::{
+    compare, read_boundaries, staged_names, teacher_forced_names, Boundary, RangedShape,
+};
 
 #[derive(Debug, Deserialize)]
 struct Case {
@@ -140,7 +142,10 @@ fn run_suite(root: &Path, run_dir: &Path, report: &mut Value) -> Result<()> {
         .arg(&model_bundle)
         .arg("--artifact-root")
         .arg(&artifact_root)
-        .args(["--model-id", "parity-gemma", "--no-stage-fixtures"]);
+        .args(["--model-id", "parity-gemma", "--no-stage-fixtures"])
+        // Small enough that every case's prompt and 8-token outputs split into
+        // several teacher-forced ranges.
+        .args(["--range-size", "6"]);
     logged(import, &run_dir.join("import.log"))?;
     report["import_seconds"] = json!(import_started.elapsed().as_secs_f64());
     let model_dir = artifact_root.join("parity-gemma");
@@ -331,16 +336,18 @@ fn run_case(
     report["logit_vectors_compared"] = json!(case.tokens);
     report["result"] = final_value.clone();
     let teacher_forced =
-        run_teacher_forced_leg(root, dir, case, model_path, model, exe, raster, &native)
+        run_teacher_forced_leg(root, dir, case, model_path, model, exe, raster, &native_dir)
             .context("teacher-forced leg")?;
     report["teacher_forced"] = teacher_forced;
     report["elapsed_seconds"] = json!(started.elapsed().as_secs_f64());
     println!(
-        "  PASS: {} staged checkpoints, {} direct boundaries, {} complete logit vectors, {} teacher-forced checkpoints ({:.2}s)",
+        "  PASS: {} staged checkpoints, {} direct boundaries, {} complete logit vectors, {} teacher-forced checkpoints in {} prompt + {} claimed ranges ({:.2}s)",
         names.len(),
         direct_names.len(),
         case.tokens,
         report["teacher_forced"]["checkpoints"],
+        report["teacher_forced"]["prompt_ranges"],
+        report["teacher_forced"]["claimed_ranges"],
         started.elapsed().as_secs_f64()
     );
     Ok(())
@@ -365,7 +372,7 @@ fn run_teacher_forced_leg(
     model: &ModelManifest,
     exe: &Path,
     raster: &Path,
-    autoregressive: &BTreeMap<String, Boundary>,
+    autoregressive_dir: &Path,
 ) -> Result<Value> {
     let tf_dir = dir.join("teacher-forced");
     fs::create_dir(&tf_dir)?;
@@ -415,10 +422,16 @@ fn run_teacher_forced_leg(
             .context("missing teacher-forced native chain directory")?,
     );
 
-    let names = teacher_forced_names(
-        model.shape.num_hidden_layers,
-        run_prep::tokenizer_repeat_count(prepared.prepared_run.prompt.initial_pieces.len())?,
+    let order = inference_artifacts::read_stage_order(&native_dir)?
+        .context("teacher-forced native chain recorded no stage inventory")?;
+    let shape = RangedShape::from_names(&order);
+    ensure!(
+        shape.layers == model.shape.num_hidden_layers,
+        "teacher-forced chain has {} layers per range, model has {}",
+        shape.layers,
+        model.shape.num_hidden_layers
     );
+    let names = teacher_forced_names(shape);
     let raster_outputs = read_boundaries(&raster_dir, &names, false)
         .context("teacher-forced Raster-staged artifacts")?;
     let native = read_boundaries(&native_dir, &names, false)
@@ -428,127 +441,223 @@ fn run_teacher_forced_leg(
             .context("teacher-forced Raster-staged ↔ native-staged")?;
     }
 
-    let prompt_len = case.input_token_ids.len();
-    let tokens = case.tokens as usize;
     ensure!(
-        claimed.len() == tokens,
-        "direct decode produced {} of {tokens} tokens; the pinned corpus fills its budget",
-        claimed.len()
+        claimed.len() == case.tokens as usize,
+        "direct decode produced {} of {} tokens; the pinned corpus fills its budget",
+        claimed.len(),
+        case.tokens
     );
-    for name in names
-        .iter()
-        .filter(|name| name.starts_with("prompt_") || *name == "output_finalize")
-    {
-        compare(name, &native[name], &autoregressive[name])
-            .context("teacher-forced ↔ autoregressive")?;
-    }
-    let last_select = format!("decode_select_t{}", tokens - 1);
-    compare(
-        "sequence_check",
-        &native["sequence_check"],
-        &autoregressive[&last_select],
-    )
-    .with_context(|| format!("teacher-forced check ↔ autoregressive {last_select}"))?;
-    let mut joined = case.input_token_ids.clone();
-    joined.extend(&claimed);
-    let embedded_ids = native["input_embedding"].value["rows"]
-        .as_array()
-        .context("input_embedding: missing rows")?
-        .iter()
-        .map(|row| row["token_id"].clone())
-        .collect::<Vec<_>>();
+    let mut comparison = compare_teacher_forced(&native_dir, autoregressive_dir)?;
     ensure!(
-        json!(embedded_ids) == json!(joined),
-        "input_embedding rows are not prompt ‖ claimed output"
+        comparison["prompt_token_ids"] == json!(case.input_token_ids),
+        "teacher-forced prompt ids differ from the pinned ids"
     );
-
-    // Position `prompt_len + t` comes from decode step `t` in the
-    // autoregressive chain, which embeds the token selected at step `t`.
-    let source = |prefill: &str, decode: String, position: usize| -> (String, usize) {
-        if position < prompt_len {
-            (prefill.to_string(), position)
-        } else {
-            (
-                decode.replace("{t}", &(position - prompt_len).to_string()),
-                0,
-            )
-        }
-    };
-    let mut rows_compared = 0;
-    let mut keys_compared = 0;
-    let mut stages = vec![(
-        String::from("input_embedding"),
-        String::from("decode_embed_t{t}"),
-    )];
-    for layer in 0..model.shape.num_hidden_layers {
-        stages.push((
-            format!("prefill_prepare_aux_l{layer}"),
-            format!("decode_aux_t{{t}}_l{layer}"),
-        ));
-        stages.push((
-            format!("prefill_range_l{layer}"),
-            format!("decode_range_t{{t}}_l{layer}"),
-        ));
-    }
-    for (prefill, decode) in &stages {
-        let rows = native[prefill].value["rows"]
-            .as_array()
-            .with_context(|| format!("{prefill}: missing rows"))?;
-        ensure!(
-            rows.len() == prompt_len + tokens,
-            "{prefill}: teacher-forced pass has {} rows, expected {}",
-            rows.len(),
-            prompt_len + tokens
-        );
-        for (position, row) in rows.iter().enumerate() {
-            let (stage, index) = source(prefill, decode.clone(), position);
-            ensure!(
-                autoregressive[&stage].value["rows"][index] == *row,
-                "{prefill}: position {position} differs from autoregressive {stage} row {index}"
-            );
-            rows_compared += 1;
-        }
-        if !prefill.starts_with("prefill_range_") {
-            continue;
-        }
-        let keys = native[prefill].value["kv"]
-            .as_array()
-            .with_context(|| format!("{prefill}: missing KV"))?;
-        ensure!(
-            keys.len() == rows.len(),
-            "{prefill}: teacher-forced KV has {} entries for {} rows",
-            keys.len(),
-            rows.len()
-        );
-        for (position, key) in keys.iter().enumerate() {
-            ensure!(
-                key["position"] == json!(position),
-                "{prefill}: KV entry {position} is at position {}",
-                key["position"]
-            );
-            let (stage, _) = source(prefill, decode.clone(), position);
-            let expected = autoregressive[&stage].value["kv"]
-                .as_array()
-                .with_context(|| format!("{stage}: missing KV"))?
-                .iter()
-                .find(|entry| entry["position"] == json!(position))
-                .with_context(|| format!("{stage}: no KV entry for position {position}"))?;
-            ensure!(
-                expected == key,
-                "{prefill}: KV at position {position} differs from autoregressive {stage}"
-            );
-            keys_compared += 1;
-        }
-    }
+    ensure!(
+        comparison["generated_token_ids"] == json!(claimed),
+        "teacher-forced output differs from the claimed ids"
+    );
     let checkpoints = inference_artifacts::read_checkpoint_hashes(
         &native_dir.join(inference_artifacts::CHECKPOINT_HASHES_TXT),
     )?;
+    comparison["checkpoints"] = json!(names.len());
+    comparison["prompt_ranges"] = json!(shape.prompt_ranges);
+    comparison["claimed_ranges"] = json!(shape.claimed_ranges);
+    comparison["final_checkpoint_sha256"] = json!(checkpoints.last());
+    Ok(comparison)
+}
+
+/// Compares a ranged teacher-forced native-staged chain with the
+/// autoregressive one for the same prompt and output, bit for bit and
+/// position by position.
+///
+/// The prompt ranges' token ids must concatenate to the autoregressive
+/// tokenization. Stitching each layer's ranges together, row `i` of every
+/// embedding, PLE and layer stage must equal the autoregressive prefill row
+/// `i` (`i < prompt_len`) or decode step `i - prompt_len`'s single row, and
+/// every K/V entry a range publishes — inherited or its own — the
+/// autoregressive entry at the same position. `output_finalize` must be
+/// identical, and the last range's check the final decode edge.
+///
+/// Stages are read one layer at a time, so real-model chains with hundreds of
+/// rows fit in memory.
+pub(crate) fn compare_teacher_forced(tf_dir: &Path, ar_dir: &Path) -> Result<Value> {
+    let load = |dir: &Path, stage: &str| -> Result<Boundary> {
+        let boundary = compare::read_boundary(&dir.join(stage))
+            .with_context(|| format!("{stage} in {}", dir.display()))?;
+        compare::validate_errors(stage, &boundary.value)?;
+        Ok(boundary)
+    };
+    let order = |dir: &Path| -> Result<Vec<String>> {
+        inference_artifacts::read_stage_order(dir)?
+            .with_context(|| format!("{}: missing recorded stage inventory", dir.display()))
+    };
+    let tf_names = order(tf_dir)?;
+    let shape = RangedShape::from_names(&tf_names);
+    ensure!(
+        tf_names == teacher_forced_names(shape),
+        "{}: not a ranged teacher-forced chain",
+        tf_dir.display()
+    );
+    let ar_names = order(ar_dir)?;
+    let repeats = ar_names
+        .iter()
+        .filter(|name| name.starts_with("prompt_merge_b"))
+        .count() as u32;
+
+    let prompt_ids = load(ar_dir, "prompt_prepare")?.value["token_ids"].clone();
+    let generated = load(ar_dir, "output_finalize")?.value["generated_token_ids"].clone();
+    let prompt_len = prompt_ids.as_array().context("missing prompt ids")?.len();
+    let tokens = generated.as_array().context("missing generated ids")?.len();
+    ensure!(tokens > 0, "autoregressive chain generated no tokens");
+    // `range_origin` holds no computation; chains built before it existed are
+    // still valid references.
+    let without_origin = |names: Vec<String>| {
+        names
+            .into_iter()
+            .filter(|name| name != "range_origin")
+            .collect::<Vec<_>>()
+    };
+    ensure!(
+        without_origin(ar_names) == without_origin(staged_names(shape.layers, tokens as u32, repeats)),
+        "{}: not the autoregressive chain for {} layers and {tokens} tokens",
+        ar_dir.display(),
+        shape.layers
+    );
+
+    let mut ranged_prompt = Vec::new();
+    for j in 0..shape.prompt_ranges {
+        let ids = load(tf_dir, &format!("prompt_prepare_p{j}"))?.value["token_ids"].clone();
+        ranged_prompt.extend(ids.as_array().cloned().unwrap_or_default());
+    }
+    ensure!(
+        json!(ranged_prompt) == prompt_ids,
+        "prompt ranges tokenize differently from the whole prompt"
+    );
+    compare(
+        "output_finalize",
+        &load(tf_dir, "output_finalize")?,
+        &load(ar_dir, "output_finalize")?,
+    )
+    .context("teacher-forced ↔ autoregressive")?;
+    let last_check = format!("check_c{}", shape.claimed_ranges - 1);
+    let last_select = format!("decode_select_t{}", tokens - 1);
+    compare(
+        &last_check,
+        &load(tf_dir, &last_check)?,
+        &load(ar_dir, &last_select)?,
+    )
+    .with_context(|| format!("teacher-forced {last_check} ↔ autoregressive {last_select}"))?;
+
+    // The same family of stages, ranged and autoregressive.
+    let ranges = (0..shape.prompt_ranges)
+        .map(|j| format!("p{j}"))
+        .chain((0..shape.claimed_ranges).map(|k| format!("c{k}")))
+        .collect::<Vec<_>>();
+    let mut families = vec![(
+        ranges.iter().map(|r| format!("embed_{r}")).collect::<Vec<_>>(),
+        String::from("input_embedding"),
+        (0..tokens).map(|t| format!("decode_embed_t{t}")).collect::<Vec<_>>(),
+    )];
+    for layer in 0..shape.layers {
+        families.push((
+            ranges.iter().map(|r| format!("aux_{r}_l{layer}")).collect(),
+            format!("prefill_prepare_aux_l{layer}"),
+            (0..tokens).map(|t| format!("decode_aux_t{t}_l{layer}")).collect(),
+        ));
+        families.push((
+            ranges.iter().map(|r| format!("range_{r}_l{layer}")).collect(),
+            format!("prefill_range_l{layer}"),
+            (0..tokens).map(|t| format!("decode_range_t{t}_l{layer}")).collect(),
+        ));
+    }
+    let mut rows_compared = 0;
+    let mut keys_compared = 0;
+    for (ranged, prefill, decode) in &families {
+        // Position `prompt_len + t` comes from decode step `t`, which embeds
+        // the token selected at step `t`.
+        let prefill_boundary = load(ar_dir, prefill)?;
+        let decode_boundaries = decode
+            .iter()
+            .map(|stage| load(ar_dir, stage))
+            .collect::<Result<Vec<_>>>()?;
+        let source = |position: usize| {
+            if position < prompt_len {
+                (&prefill_boundary, position)
+            } else {
+                (&decode_boundaries[position - prompt_len], 0)
+            }
+        };
+        let mut position = 0;
+        for stage in ranged {
+            let teacher = load(tf_dir, stage)?;
+            // PLE inputs carry no position; activations must start where the
+            // previous range ended.
+            if let Some(start) = teacher.value.get("start_position") {
+                ensure!(
+                    *start == json!(position),
+                    "{stage}: starts at {start}, expected {position}"
+                );
+            }
+            let rows = teacher.value["rows"]
+                .as_array()
+                .with_context(|| format!("{stage}: missing rows"))?;
+            for row in rows {
+                ensure!(
+                    position < prompt_len + tokens,
+                    "{stage}: more rows than prompt ‖ output positions"
+                );
+                let (source, index) = source(position);
+                ensure!(
+                    source.value["rows"][index] == *row,
+                    "{stage}: position {position} differs from the autoregressive row"
+                );
+                position += 1;
+                rows_compared += 1;
+            }
+            if !prefill.starts_with("prefill_range_") {
+                continue;
+            }
+            for key in teacher.value["kv"]
+                .as_array()
+                .with_context(|| format!("{stage}: missing KV"))?
+            {
+                let key_position = key["position"]
+                    .as_u64()
+                    .with_context(|| format!("{stage}: KV entry without a position"))?
+                    as usize;
+                ensure!(
+                    key_position < position,
+                    "{stage}: publishes K/V for position {key_position}, not yet reached"
+                );
+                let expected = source(key_position).0.value["kv"]
+                    .as_array()
+                    .with_context(|| format!("{stage}: autoregressive source has no KV"))?
+                    .iter()
+                    .find(|entry| entry["position"] == key["position"])
+                    .with_context(|| {
+                        format!("{stage}: no autoregressive K/V entry for position {key_position}")
+                    })?;
+                ensure!(
+                    expected == key,
+                    "{stage}: K/V at position {key_position} differs from the autoregressive entry"
+                );
+                keys_compared += 1;
+            }
+        }
+        ensure!(
+            position == prompt_len + tokens,
+            "{prefill}: ranges cover {position} positions, expected {}",
+            prompt_len + tokens
+        );
+    }
     Ok(json!({
-        "checkpoints": names.len(),
-        "claimed_token_ids": claimed,
+        "layers": shape.layers,
+        "prompt_ranges": shape.prompt_ranges,
+        "claimed_ranges": shape.claimed_ranges,
+        "prompt_token_ids": prompt_ids,
+        "generated_token_ids": generated,
         "rows_compared": rows_compared,
         "kv_entries_compared": keys_compared,
-        "final_checkpoint_sha256": checkpoints.last(),
     }))
 }
 

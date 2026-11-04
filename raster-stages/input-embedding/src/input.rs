@@ -47,6 +47,12 @@ pub struct EmbeddingTable {
     pub values: Bytes<196_608>,
 }
 
+/// Loop-carried count of the previous range's rows.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
+pub struct RowCount {
+    pub count: u32,
+}
+
 /// Loop-carried summary of failed rows: how many, and the first message.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
 pub struct ErrorSummary {

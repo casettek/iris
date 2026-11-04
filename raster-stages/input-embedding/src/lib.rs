@@ -41,17 +41,45 @@ pub fn page_of(byte_offset: u64, page_size: u64) -> u64 {
     }
 }
 
-/// Stamps the prompt's starting position onto the activation sequence.
+/// Opens the row-count fold over the previous range's embedding.
+#[tile(kind = iter, description = "Open the previous range's row count")]
+pub fn begin_row_count() -> RowCount {
+    RowCount { count: 0 }
+}
+
+/// Counts one chunk of the previous range's rows.
+#[tile(kind = recur, description = "Count a chunk of the previous range's rows")]
+pub fn count_row_chunk(
+    input: RecurInput<Block<ActivationRow>>,
+    state: RecurState<RowCount>,
+) -> RecurState<RowCount> {
+    let mut state = state;
+    state.count += input.into_value().len() as u32;
+    state
+}
+
+/// Where this range starts: right after the previous range's last row.
 ///
-/// Always zero: this stage embeds the prompt, which by definition starts the
-/// sequence. It is written rather than assumed because every consumer of an
-/// `ActivationSequence` reads `start_position` to place its tokens, and a
-/// decode step's embed stage sets a different value from the same field.
-/// Set-once, so it happens here rather than inside the per-token append.
-#[tile(kind = iter, description = "Open the prompt's activation sequence at position zero")]
-pub fn begin_prompt_activations() -> Draft<ActivationSequence> {
+/// The previous range is `range-origin` (start 0, no rows) for the first
+/// range, so positions are never chosen by run preparation: they follow from
+/// how many ids the in-chain tokenizer produced for every earlier range.
+#[tile(kind = iter, description = "Start position after the previous range")]
+pub fn range_start(previous_start: u32, previous_rows: RowCount) -> Result<u32> {
+    previous_start
+        .checked_add(previous_rows.count)
+        .ok_or_else(|| String::from("range start position overflows u32"))
+}
+
+/// Stamps this range's starting position onto its activation sequence.
+///
+/// Every consumer of an `ActivationSequence` reads `start_position` to place
+/// its tokens: RoPE and sliding-window visibility are defined over absolute
+/// positions. Set-once, so it happens here rather than inside the per-token
+/// append.
+#[tile(kind = iter, description = "Open this range's activation sequence at its start position")]
+pub fn begin_prompt_activations(start_position: u32) -> Draft<ActivationSequence> {
     let mut output = Draft::<ActivationSequence>::new();
-    output.start_position().set(0);
+    output.start_position().set(start_position);
     output
 }
 

@@ -18,6 +18,7 @@ use prefill_finalize::input as finalize_input;
 use prefill_prepare_aux::input as aux_input;
 use prefill_range::input as range_input;
 use prompt_prepare::input as prompt_input;
+use range_origin::input as origin_input;
 use sequence_check::input as check_input;
 
 #[derive(Clone, Debug)]
@@ -353,12 +354,23 @@ impl CachedStageValue {
         }
     }
 
-    pub fn as_check_prompt(&self) -> Result<check_input::PromptTokenization> {
+    pub fn as_check_prior(&self) -> Result<check_input::DecodeEdge> {
         match self {
-            Self::PromptTokenization(value) => Ok(check_input::PromptTokenization {
-                token_ids: value.token_ids.clone(),
+            Self::DecodeEdge(value) => Ok(check_input::DecodeEdge {
+                has_selected: value.has_selected,
+                decode_position: value.decode_position,
+                token_id: value.token_id,
+                value: value.value,
+                generated_token_ids: value.generated_token_ids.clone(),
             }),
-            _ => bail!("cached value is not a prompt tokenization"),
+            _ => bail!("cached value is not a decode edge"),
+        }
+    }
+
+    pub fn as_embedding_previous(&self) -> Result<embedding_input::ActivationSequence> {
+        match self {
+            Self::EmbeddedActivations(value) => Ok(value.clone()),
+            _ => bail!("cached value is not an embedded range"),
         }
     }
 
@@ -367,6 +379,23 @@ impl CachedStageValue {
             Self::RangeActivations(value) => Ok(check_activation_from_range(value)),
             _ => bail!("cached value is not a transformer layer's activation sequence"),
         }
+    }
+
+    /// The empty starting sequence is consumed exactly like an embedded range.
+    pub fn from_range_origin(value: origin_input::ActivationSequence) -> Self {
+        Self::EmbeddedActivations(embedding_input::ActivationSequence {
+            rows: map_list(&value.rows, |row| embedding_input::ActivationRow {
+                token_id: row.token_id,
+                values: row.values.clone(),
+            }),
+            errors: value.errors,
+            kv: map_list(&value.kv, |row| embedding_input::KeyRow {
+                position: row.position,
+                k: row.k.clone(),
+                v: row.v.clone(),
+            }),
+            start_position: value.start_position,
+        })
     }
 
     pub fn from_checked_edge(value: check_input::DecodeEdge) -> Self {

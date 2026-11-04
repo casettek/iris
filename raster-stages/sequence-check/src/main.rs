@@ -1,10 +1,11 @@
-//! `sequence-check`: sequences.
+//! `sequence-check`: sequences, one stage per range of claimed tokens.
 //!
 //! ```text
-//!   prompt.token_ids ──recur (chunk = 256)──▶ prompt_len ──▶ cursor at row prompt_len - 1
-//!   claimed.token_ids ──recur seq──▶ [ step · rows[i] · normalise · head pages ──recur──▶ argmax · record ]
+//!   previous.rows ──recur (chunk = 256)──▶ count ──▶ last row ─┐
+//!   activations.rows ──recur (chunk = 64)──▶ append ───────────┴▶ predicting rows
+//!   claimed.token_ids ──recur seq──▶ [ step · predicting[i] · normalise · head pages ──recur──▶ argmax · record ]
 //!   selections ──recur──▶ summary ──▶ edge scalars
-//!   selections ──recur──▶ copy ids ──▶ DecodeEdge
+//!   prior.generated_token_ids ──recur──▶ copy ──▶ selections ──recur──▶ copy ──▶ DecodeEdge
 //!   errors     ──recur──▶ summarise ──▶ assert none
 //! ```
 
@@ -43,35 +44,48 @@ fn check_position(
     (state, output)
 }
 
-/// Teacher-forced check entrypoint.
+/// Teacher-forced check entrypoint for one range of claimed tokens.
 ///
-/// `activations` is bound by the chain to the last transformer layer's output
-/// over `prompt ‖ claimed`; `prompt` to `prompt_prepare`; `claimed` and `head`
-/// are committed externals.
+/// `activations` is the last transformer layer's output for this range;
+/// `previous` is its output for the range before, whose last row predicts
+/// this range's first token; `claimed` is this range's claimed ids; `prior`
+/// is the previous range's check (or the empty `decode_init` edge); `head` is
+/// the committed output head.
 #[sequence]
 fn main(
     activations: ActivationSequence,
-    prompt: PromptTokenization,
+    previous: ActivationSequence,
     claimed: ClaimedOutput,
+    prior: DecodeEdge,
     head: FinalHead,
 ) -> Result<DecodeEdge> {
     let params = select!(FinalHeadParams, head.clone().params);
     let params = call!(validate_final_head, params)?;
 
-    let prompt_ids = select!(List<u32>, prompt.token_ids);
+    let previous_rows = select!(List<ActivationRow>, previous.rows);
     let count_seed = call!(begin_token_count);
-    let prompt_count = call_recur!(
-        tile = count_token_chunk,
-        input = prompt_ids,
+    let previous_count = call_recur!(
+        tile = count_row_chunk,
+        input = previous_rows.clone(),
         chunk = 256,
         state = count_seed,
         args = ()
     );
-    let prompt_len = select!(u32, prompt_count.count);
-    let start_position = select!(u32, activations.clone().start_position);
-    let cursor = call!(begin_check_cursor, prompt_len, start_position)?;
+    let last_index = call!(last_row_index, previous_count)?;
+    let boundary = select!(ActivationRow, previous_rows[last_index]);
+    let opened = call!(begin_predicting_rows, boundary);
+    let range_rows = select!(List<ActivationRow>, activations.clone().rows);
+    let predicting = call_recur!(
+        tile = append_predicting_rows,
+        input = range_rows,
+        chunk = 64,
+        output = opened,
+        args = ()
+    );
 
-    let rows = select!(List<ActivationRow>, activations.rows);
+    let start_position = select!(u32, activations.start_position);
+    let cursor = call!(begin_check_cursor, start_position);
+    let rows = select!(List<ActivationRow>, predicting.rows);
     let pages = select!(List<BytesPage>, head.projection.pages);
     let claimed_ids = select!(List<u32>, claimed.token_ids);
     let checked = call_recur_seq!(
@@ -104,12 +118,22 @@ fn main(
     );
     let summary = call!(finish_check, summary, error_count, first_error)?;
 
+    // Push-only sites deriving in turn from the opened edge: the earlier
+    // ranges' transcript, then this range's selections.
     let base = call!(begin_decode_edge, summary);
+    let prior_ids = select!(List<u32>, prior.generated_token_ids);
+    let carried = call_recur!(
+        tile = copy_prior_token_ids,
+        input = prior_ids,
+        chunk = 64,
+        output = base,
+        args = ()
+    );
     let edge = call_recur!(
         tile = copy_selected_token_ids,
         input = selections,
         chunk = 64,
-        output = base,
+        output = carried,
         args = ()
     );
     raster::println!("sequence check → {:?}", edge);

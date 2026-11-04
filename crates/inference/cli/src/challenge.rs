@@ -542,7 +542,58 @@ fn verify_prepared_run(prepared: &PreparedRun) -> Result<()> {
         .as_ref()
         .ok_or_else(|| anyhow::anyhow!("prepared run has no run_manifest_sha256"))?;
     verify_file_sha256(manifest_path, manifest_sha256, "frozen run manifest")?;
+    verify_prompt_ranges(prepared, manifest_path)?;
     verify_claimed_output(prepared, manifest_path)
+}
+
+/// The frozen prompt pieces must be the split of the frozen rendered prompt,
+/// and a teacher-forced run's prompt ranges the cuts run preparation makes of
+/// them. Both are deterministic in public data; recomputing them here keeps a
+/// claimer from choosing a different tokenization's inputs.
+fn verify_prompt_ranges(prepared: &PreparedRun, manifest_path: &Path) -> Result<()> {
+    let model = inference_artifacts::ModelManifest::load_verified(&prepared.model_manifest_path)?;
+    let model_dir = prepared
+        .model_manifest_path
+        .parent()
+        .context("model manifest has no parent directory")?;
+    let tokenizer: serde_json::Value = inference_artifacts::read_json(&resolve_bundle_path(
+        model_dir,
+        &model.bundle.tokenizer_path,
+    ))?;
+    let pieces = run_prep::split_prompt(&prepared.prompt.rendered_prompt, &tokenizer)?;
+    if pieces != prepared.prompt.initial_pieces {
+        bail!("frozen prompt pieces are not the split of the frozen rendered prompt");
+    }
+    if prepared.chain != ChainKind::TeacherForced {
+        return Ok(());
+    }
+    let range_size = model.teacher_forced_range_size()? as usize;
+    let ranges = run_prep::prompt_ranges(
+        &pieces,
+        range_size,
+        &run_prep::vocabulary_pairs(&tokenizer)?,
+    )?;
+    let expected = run_prep::prompt_range_commitments(&ranges)?;
+    if bound_commitments(manifest_path, "prompt_pieces")? != expected {
+        bail!("frozen run manifest's prompt ranges are not the safe cuts of the frozen prompt in ranges of {range_size}");
+    }
+    Ok(())
+}
+
+/// The commitments an indexed `[chain.input.<name>]` table binds, in order.
+fn bound_commitments(manifest_path: &Path, name: &str) -> Result<Vec<String>> {
+    let manifest: toml::Value = toml::from_str(
+        &fs::read_to_string(manifest_path)
+            .with_context(|| format!("failed to read {}", manifest_path.display()))?,
+    )
+    .with_context(|| format!("failed to parse {}", manifest_path.display()))?;
+    manifest["chain"]["input"][name]["commitments"]
+        .as_array()
+        .with_context(|| format!("frozen run manifest has no {name} commitments"))?
+        .iter()
+        .map(|value| value.as_str().map(str::to_string))
+        .collect::<Option<Vec<_>>>()
+        .with_context(|| format!("{name} commitments are not strings"))
 }
 
 /// A teacher-forced claim's posted ids must be the ones its frozen run
@@ -562,17 +613,13 @@ fn verify_claimed_output(prepared: &PreparedRun, manifest_path: &Path) -> Result
                 prepared.tokens,
                 &prepared.prompt.eos_token_ids,
             )?;
-            let commitment = run_prep::claimed_output_commitment(ids)?;
-            let manifest = fs::read_to_string(manifest_path)
-                .with_context(|| format!("failed to read {}", manifest_path.display()))?;
-            let bound = manifest
-                .lines()
-                .filter(|line| line.trim_start().starts_with("inputs.claimed ="))
-                .collect::<Vec<_>>();
-            let expected = format!("commitment = \"{commitment}\"");
-            if bound.len() != 2 || !bound.iter().all(|line| line.contains(&expected)) {
+            let model =
+                inference_artifacts::ModelManifest::load_verified(&prepared.model_manifest_path)?;
+            let range_size = model.teacher_forced_range_size()? as usize;
+            let expected = run_prep::claimed_range_commitments(ids, range_size)?;
+            if bound_commitments(manifest_path, "claimed_ids")? != expected {
                 bail!(
-                    "frozen run manifest does not bind the claimed output ids (commitment {commitment}) into input_embedding and sequence_check"
+                    "frozen run manifest does not commit to the claimed output ids in ranges of {range_size}"
                 );
             }
             Ok(())

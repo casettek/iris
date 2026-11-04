@@ -59,17 +59,26 @@ the order in which PLE work is scheduled.
 
 Each case also runs the [teacher-forced chain](../internals/raster-chain.md#teacher-forced-chain)
 over `prompt ‖ direct output`, through Raster (`--no-auth`) and native-staged, under
-`<case>/teacher-forced/`. It must agree:
+`<case>/teacher-forced/`. The gate imports with `--range-size 6` (the smallest at which the dense test vocabulary still has a cut point in every case), so every case's
+prompt and output split into several ranges, including ranges inside and past the
+16-token sliding window. It must agree:
 
 - Raster/native-staged: every teacher-forced checkpoint, byte for byte.
-- With the autoregressive native-staged chain: tokenizer stages and
-  `output_finalize` identical; `sequence_check` identical to the last
-  `decode_select_t*`; the `input_embedding` row token ids equal to the pinned
-  input ids followed by the direct output.
-- Position by position: every `input_embedding`, `prefill_prepare_aux_l*` and
-  `prefill_range_l*` row at position `i` equals the autoregressive prefill row
-  (`i < prompt_len`) or decode step `i - prompt_len`'s single row. Every
-  teacher-forced KV entry equals the autoregressive KV entry at the same position.
+- With the autoregressive native-staged chain: the prompt ranges' token ids
+  concatenate to the pinned tokenization; `output_finalize` identical; the last
+  range's check identical to the last `decode_select_t*`.
+- Position by position, stitching each layer's ranges together: every
+  `embed_*`, `aux_*_l*` and `range_*_l*` row at position `i` equals the
+  autoregressive prefill row (`i < prompt_len`) or decode step
+  `i - prompt_len`'s single row, and every range starts where the previous one
+  ended. Every K/V entry a range publishes, inherited or its own, equals the
+  autoregressive entry at the same position.
+
+`iris compare-teacher-forced --teacher-forced <chain-dir> --autoregressive <chain-dir>`
+(hidden) runs the same position-by-position comparison on any pair of chains,
+reading one layer at a time. At production sizes, compare only against direct
+inference: `claim build` already refuses a claim whose checked ids differ from
+direct decode.
 
 This is the parity gate the teacher-forced design depends on. Batched prefill over
 `N` rows and single-row decode must be bit-identical, or an honest claimer would

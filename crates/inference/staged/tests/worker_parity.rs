@@ -186,12 +186,14 @@ impl Fixture {
             self.stages.push((name, project.into()));
         };
         let from = |s: &str| format!("{{ from = {} }}", toml::Value::String(s.into()));
+        add("range_origin".into(), "range-origin", vec![]);
         add(
             "input_embedding".into(),
             "input-embedding",
             vec![
                 ("prompt", prompt),
                 ("claimed", claimed),
+                ("previous", from("range_origin")),
                 ("embedding", embedding.clone()),
             ],
         );
@@ -399,9 +401,10 @@ fn repeated_decode_has_identical_checkpoints_with_worker_and_cache_reuse() {
             serde_json::from_slice(&fs::read(run.join("staged-performance.json")).unwrap())
                 .unwrap();
         let starts = perf["auxiliary_process_starts"].as_u64().unwrap();
-        assert_eq!(perf["stages"][0]["name"], "input_embedding");
+        assert_eq!(perf["stages"][0]["name"], "range_origin");
+        assert_eq!(perf["stages"][1]["name"], "input_embedding");
         // The initial embedding retains only small verified metadata now.
-        let initial_retained = perf["stages"][0]["cache"]["retained_bytes"].as_u64().unwrap();
+        let initial_retained = perf["stages"][1]["cache"]["retained_bytes"].as_u64().unwrap();
         assert!(initial_retained <= 16 * 1024);
         if budget == 0 { assert_eq!(initial_retained, 0); }
         assert!(starts >= 1 && starts <= workers as u64);

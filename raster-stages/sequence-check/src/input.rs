@@ -54,15 +54,6 @@ pub struct ActivationSequence {
     pub start_position: u32,
 }
 
-/// The chain-tokenized prompt, used only for its length: generated position
-/// `k` is predicted by row `prompt_len - 1 + k`.
-///
-/// MUST match `PromptTokenization` in `prompt-prepare`.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
-pub struct PromptTokenization {
-    pub token_ids: List<u32>,
-}
-
 /// The claim's output token ids. MUST match `ClaimedOutput` in `input-embedding`.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
 pub struct ClaimedOutput {
@@ -109,17 +100,25 @@ pub struct DecodeEdge {
 // This stage's own types
 // ---------------------------------------------------------------------------
 
-/// Loop-carried count of prompt tokens.
+/// Loop-carried count of the previous range's rows.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
 pub struct TokenCount {
     pub count: u32,
 }
 
-/// Loop-carried position of the row that predicts the next generated token.
+/// The rows that predict this range's claimed tokens, in order: the previous
+/// range's last row, then this range's rows.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
+pub struct PredictingRows {
+    pub rows: List<ActivationRow>,
+}
+
+/// Loop-carried index of the row that predicts the next claimed token.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
 pub struct CheckCursor {
-    /// Stage-local index into `rows`.
+    /// Index into the predicting rows.
     pub row_index: u32,
+    /// Absolute position of this range's first token.
     pub start_position: u32,
 }
 

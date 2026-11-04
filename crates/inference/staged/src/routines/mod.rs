@@ -18,6 +18,7 @@ pub mod prefill_prepare_aux;
 pub mod prefill_range;
 pub mod prompt_merge;
 pub mod prompt_prepare;
+pub mod range_origin;
 pub mod sequence_check;
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -33,6 +34,7 @@ pub enum StageKind {
     DecodeEmbed,
     OutputFinalize,
     SequenceCheck,
+    RangeOrigin,
 }
 
 #[derive(Debug)]
@@ -72,11 +74,15 @@ pub struct DirectTimings {
 impl StageKind {
     pub fn from_stage_spec(project: &str, name: &str) -> Result<Self> {
         match project_basename(project) {
-            "prompt-merge" if name == "prompt_merge_seed" || name.starts_with("prompt_merge_b") => {
-                Ok(Self::PromptMerge)
+            "prompt-merge" if is_prompt_merge_name(name) => Ok(Self::PromptMerge),
+            "prompt-prepare"
+                if name == "prompt_prepare" || name.starts_with("prompt_prepare_p") =>
+            {
+                Ok(Self::PromptPrepare)
             }
-            "prompt-prepare" if name == "prompt_prepare" => Ok(Self::PromptPrepare),
-            "input-embedding" if name == "input_embedding" => Ok(Self::InputEmbedding),
+            "input-embedding" if name == "input_embedding" || name.starts_with("embed_") => {
+                Ok(Self::InputEmbedding)
+            }
             "prefill-prepare-aux" => Ok(Self::PrefillPrepareAux {
                 layer: parse_trailing_layer_index(name)?,
             }),
@@ -98,7 +104,10 @@ impl StageKind {
                 Ok(Self::DecodeEmbed)
             }
             "output-finalize" if name == "output_finalize" => Ok(Self::OutputFinalize),
-            "sequence-check" if name == "sequence_check" => Ok(Self::SequenceCheck),
+            "sequence-check" if name == "sequence_check" || name.starts_with("check_") => {
+                Ok(Self::SequenceCheck)
+            }
+            "range-origin" if name == "range_origin" => Ok(Self::RangeOrigin),
             _ => bail!("stage `{name}` with project `{project}` is not supported by staged-infer"),
         }
     }
@@ -113,16 +122,20 @@ impl StageKind {
 
     pub fn from_stage_name(name: &str) -> Result<Self> {
         match name {
-            "prompt_merge_seed" | "prompt_merge" => Ok(Self::PromptMerge),
-            _ if name.starts_with("prompt_merge_b") => Ok(Self::PromptMerge),
+            "prompt_merge" => Ok(Self::PromptMerge),
+            _ if is_prompt_merge_name(name) => Ok(Self::PromptMerge),
             "prompt_prepare" => Ok(Self::PromptPrepare),
+            _ if name.starts_with("prompt_prepare_p") => Ok(Self::PromptPrepare),
             "input_embedding" => Ok(Self::InputEmbedding),
+            _ if name.starts_with("embed_") => Ok(Self::InputEmbedding),
             "prefill_finalize" => Ok(Self::PrefillFinalize),
             "decode_init" => Ok(Self::DecodeInit),
             "decode_select_token" => Ok(Self::DecodeSelectToken),
             "decode_embed" => Ok(Self::DecodeEmbed),
             "output_finalize" => Ok(Self::OutputFinalize),
             "sequence_check" => Ok(Self::SequenceCheck),
+            _ if name.starts_with("check_") => Ok(Self::SequenceCheck),
+            "range_origin" => Ok(Self::RangeOrigin),
             _ if name.starts_with("decode_select_t") => Ok(Self::DecodeSelectToken),
             _ if name.starts_with("decode_embed_t") => Ok(Self::DecodeEmbed),
             _ if name.starts_with("decode_finalize_t") => Ok(Self::PrefillFinalize),
@@ -132,6 +145,15 @@ impl StageKind {
             _ if name.starts_with("prefill_range_l") => Ok(Self::PrefillRange {
                 layer: parse_layer_index(name, "prefill_range_l")?,
             }),
+            // Ranged teacher-forced stages: `aux_p{j}_l{l}`, `range_c{k}_l{l}`.
+            _ if name.starts_with("aux_") => Ok(Self::PrefillPrepareAux {
+                layer: parse_trailing_layer_index(name)?,
+            }),
+            _ if name.starts_with("range_p") || name.starts_with("range_c") => {
+                Ok(Self::PrefillRange {
+                    layer: parse_trailing_layer_index(name)?,
+                })
+            }
             _ if name.starts_with("decode_aux_t") => Ok(Self::PrefillPrepareAux {
                 layer: parse_trailing_layer_index(name)?,
             }),
@@ -155,6 +177,7 @@ impl StageKind {
             Self::DecodeEmbed => "decode-embed",
             Self::OutputFinalize => "output-finalize",
             Self::SequenceCheck => "sequence-check",
+            Self::RangeOrigin => "range-origin",
         }
     }
 
@@ -171,6 +194,7 @@ impl StageKind {
             Self::DecodeEmbed => "decode_embed",
             Self::OutputFinalize => "output_finalize",
             Self::SequenceCheck => "sequence_check",
+            Self::RangeOrigin => "range_origin",
         }
     }
 
@@ -185,7 +209,8 @@ impl StageKind {
             | Self::DecodeSelectToken
             | Self::DecodeEmbed
             | Self::OutputFinalize
-            | Self::SequenceCheck => None,
+            | Self::SequenceCheck
+            | Self::RangeOrigin => None,
         }
     }
 }
@@ -246,6 +271,11 @@ pub fn run_for_compare(kind: &StageKind) -> Result<DirectCompareOutput> {
             sequence_check::load_inputs_from_args,
             sequence_check::run_direct,
             "sequence_check",
+        ),
+        StageKind::RangeOrigin => compare(
+            range_origin::load_inputs_from_args,
+            range_origin::run_direct,
+            "range_origin",
         ),
     }
 }
@@ -318,6 +348,12 @@ pub fn run_and_publish(kind: &StageKind) -> Result<DirectPublishOutput> {
             "sequence_check",
             CachedStageValue::from_checked_edge,
         ),
+        StageKind::RangeOrigin => publish(
+            range_origin::load_inputs_from_args,
+            range_origin::run_direct,
+            "range_origin",
+            CachedStageValue::from_range_origin,
+        ),
     }
 }
 
@@ -346,10 +382,11 @@ pub fn run_and_publish_from_paths_with_caches(
     match kind {
         StageKind::PromptPrepare => publish(
             || {
-                prompt_prepare::load_inputs_from_paths(
+                prompt_prepare::load_inputs_from_paths_with_cache(
                     input_path,
                     input_manifest_path,
                     cached_inputs,
+                    caches.materializations,
                 )
             },
             prompt_prepare::run_direct,
@@ -357,7 +394,14 @@ pub fn run_and_publish_from_paths_with_caches(
             CachedStageValue::PromptTokenization,
         ),
         StageKind::PromptMerge => publish(
-            || prompt_merge::load_inputs_from_paths(input_path, input_manifest_path, cached_inputs),
+            || {
+                prompt_merge::load_inputs_from_paths_with_cache(
+                    input_path,
+                    input_manifest_path,
+                    cached_inputs,
+                    caches.materializations,
+                )
+            },
             prompt_merge::run_direct,
             "prompt_merge",
             CachedStageValue::BpePieces,
@@ -472,6 +516,12 @@ pub fn run_and_publish_from_paths_with_caches(
             "sequence_check",
             CachedStageValue::from_checked_edge,
         ),
+        StageKind::RangeOrigin => publish(
+            || range_origin::load_inputs_from_paths(input_path, input_manifest_path, cached_inputs),
+            range_origin::run_direct,
+            "range_origin",
+            CachedStageValue::from_range_origin,
+        ),
     }
 }
 
@@ -500,10 +550,11 @@ pub fn run_cached_from_paths_with_caches(
     match kind {
         StageKind::PromptPrepare => cache(
             || {
-                prompt_prepare::load_inputs_from_paths(
+                prompt_prepare::load_inputs_from_paths_with_cache(
                     input_path,
                     input_manifest_path,
                     cached_inputs,
+                    caches.materializations,
                 )
             },
             prompt_prepare::run_direct,
@@ -511,7 +562,14 @@ pub fn run_cached_from_paths_with_caches(
             CachedStageValue::PromptTokenization,
         ),
         StageKind::PromptMerge => cache(
-            || prompt_merge::load_inputs_from_paths(input_path, input_manifest_path, cached_inputs),
+            || {
+                prompt_merge::load_inputs_from_paths_with_cache(
+                    input_path,
+                    input_manifest_path,
+                    cached_inputs,
+                    caches.materializations,
+                )
+            },
             prompt_merge::run_direct,
             "prompt_merge",
             CachedStageValue::BpePieces,
@@ -625,6 +683,12 @@ pub fn run_cached_from_paths_with_caches(
             sequence_check::run_direct,
             "sequence_check",
             CachedStageValue::from_checked_edge,
+        ),
+        StageKind::RangeOrigin => cache(
+            || range_origin::load_inputs_from_paths(input_path, input_manifest_path, cached_inputs),
+            range_origin::run_direct,
+            "range_origin",
+            CachedStageValue::from_range_origin,
         ),
     }
 }
@@ -749,6 +813,14 @@ fn parse_trailing_layer_index(name: &str) -> Result<usize> {
         .ok_or_else(|| anyhow::anyhow!("stage `{name}` has no trailing `_lN` layer index"))?;
     raw.parse::<usize>()
         .with_context(|| format!("failed to parse layer index from `{name}`"))
+}
+
+/// Unranged tokenizer stages (`prompt_merge_seed`, `prompt_merge_b{b}`) and
+/// ranged ones (`prompt_merge_seed_p{j}`, `prompt_merge_p{j}_b{b}`).
+fn is_prompt_merge_name(name: &str) -> bool {
+    name.starts_with("prompt_merge_seed")
+        || name.starts_with("prompt_merge_b")
+        || name.starts_with("prompt_merge_p")
 }
 
 fn project_basename(project: &str) -> &str {

@@ -71,7 +71,15 @@ pub struct ImportConfig {
     pub only_direct: bool,
     /// Leave stage-local input.json and input_manifest.json fixtures untouched.
     pub no_stage_fixtures: bool,
+    /// Largest teacher-forced range, in prompt pieces or claimed ids. Every
+    /// per-position stage of the teacher-forced chain covers at most this many
+    /// positions, which bounds the cost of replaying any one of them.
+    pub range_size: u32,
 }
+
+/// Default teacher-forced range size. On Gemma 4 E2B one transformer-layer
+/// stage replays at roughly 0.4 s per row, so 512 rows is a few minutes.
+pub const DEFAULT_RANGE_SIZE: u32 = 512;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ImportResult {
@@ -100,6 +108,7 @@ fn parse_args_from(args: impl IntoIterator<Item = String>) -> Result<ImportConfi
     let mut only_ple = false;
     let mut only_direct = false;
     let mut no_stage_fixtures = false;
+    let mut range_size = DEFAULT_RANGE_SIZE;
     let mut args = args.into_iter();
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -121,6 +130,15 @@ fn parse_args_from(args: impl IntoIterator<Item = String>) -> Result<ImportConfi
             "--only-ple" => only_ple = true,
             "--only-direct" => only_direct = true,
             "--no-stage-fixtures" => no_stage_fixtures = true,
+            "--range-size" => {
+                range_size = args
+                    .next()
+                    .ok_or("--range-size <pieces> is required")?
+                    .parse()?;
+                if range_size < 2 {
+                    return Err("--range-size must be at least 2".into());
+                }
+            }
             other => return Err(format!("unknown argument '{other}'").into()),
         }
     }
@@ -138,6 +156,7 @@ fn parse_args_from(args: impl IntoIterator<Item = String>) -> Result<ImportConfi
         only_ple,
         only_direct,
         no_stage_fixtures,
+        range_size,
     })
 }
 
@@ -346,7 +365,9 @@ pub fn import_model(args: ImportConfig) -> Result<ImportResult, Box<dyn Error>> 
     println!("weights: memory-mapped DETWGT");
     println!();
 
-    let mut stages = Vec::new();
+    let mut stages = vec![String::from(
+        "[[chain.stage]]\nname = \"range_origin\"\nproject = \"raster-stages/range-origin\"\n",
+    )];
     let decoder_commitment = write_tokenizer(&tokenizer, &eos_ids, &layout, &mut stages)?;
     write_embedding(&weights, &shape, &layout, &mut stages)?;
     write_ple_layers(&weights, &shape, &layout, &mut stages)?;
@@ -370,7 +391,13 @@ pub fn import_model(args: ImportConfig) -> Result<ImportResult, Box<dyn Error>> 
     let (template_path, template) = save_model_template(&args, &manifest)?;
     let (teacher_forced_path, teacher_forced) = save_teacher_forced_template(
         &args,
-        &teacher_forced_manifest(&shape, &layout, &decoder_commitment, &stages)?,
+        &teacher_forced_manifest(
+            &shape,
+            &layout,
+            &decoder_commitment,
+            &stages,
+            args.range_size,
+        )?,
     )?;
     direct_manifest::write_model_manifest(
         &args,
@@ -378,7 +405,7 @@ pub fn import_model(args: ImportConfig) -> Result<ImportResult, Box<dyn Error>> 
         &shape,
         text,
         Some((&template_path, &template)),
-        Some((&teacher_forced_path, &teacher_forced)),
+        Some((&teacher_forced_path, &teacher_forced, args.range_size)),
     )?;
     Ok(ImportResult {
         manifest_path: Some(template_path),
@@ -431,92 +458,223 @@ fn save_teacher_forced_template(
     Ok((path, template))
 }
 
-/// The teacher-forced chain: the claimed output is embedded with the prompt,
-/// every layer runs once over `prompt ‖ claimed`, and `sequence_check`
-/// re-derives the greedy selection at every generated position.
+/// The teacher-forced chain, cut into ranges of at most `range_size`
+/// positions so no stage's cost grows with the prompt.
 ///
-/// The prefill stages are reused verbatim except that `input_embedding`
-/// binds the run's claimed ids instead of the empty claim. There is no
-/// separate join stage: one that small would have a trace too short to
-/// commit at the challenge window. `prefill_finalize` and the decode repeat are dropped;
-/// `output_finalize` reads the checked edge, which is byte-identical to the
-/// autoregressive chain's final `decode.edge` for an honest claim.
+/// Run preparation cuts the prompt's pieces into ranges at boundaries no merge
+/// can cross, and the claimed ids into ranges of the same size. Every prompt
+/// range is tokenized and embedded, every claimed range embedded; then each
+/// layer runs across all ranges in order (`range_p{j}_l{l}`, then
+/// `range_c{k}_l{l}`), and `check_c{k}` re-derives the greedy selection for
+/// each claimed range. A layer's range takes its rows from the layer below and
+/// its inherited K/V cache from its own previous range, exactly as a decode
+/// step does.
+///
+/// Counts, the last prompt range's index, and the per-range externals are
+/// filled in by run preparation. The tokenizer batch count is fixed here:
+/// a range of at most `range_size` pieces needs at most that many merges.
 fn teacher_forced_manifest(
     shape: &Shape,
     layout: &ArtifactLayout,
     decoder_commitment: &str,
     prefill_stages: &[String],
+    range_size: u32,
 ) -> Result<String, Box<dyn Error>> {
+    let tokenizer = stage_external_commitment(prefill_stages, "prompt_prepare", "tokenizer")?;
+    let embedding = stage_external_commitment(prefill_stages, "input_embedding", "embedding")?;
+    let no_claim = stage_external_commitment(prefill_stages, "input_embedding", "claimed")?;
     let head = stage_external_commitment(prefill_stages, "prefill_finalize", "head")?;
-    let claimed_line = external_line(
-        "claimed",
+    let no_prompt = no_prompt_commitment(layout)?;
+    let tokenizer_line = external_line(
+        "tokenizer",
         layout,
-        RUN_PLACEHOLDER_DIR,
-        "claimed_output",
-        INITIAL_PIECES_PLACEHOLDER_COMMITMENT,
+        "raster-stages/prompt-prepare",
+        "tokenizer",
+        &tokenizer,
     );
+    let embedding_line = external_line(
+        "embedding",
+        layout,
+        "raster-stages/input-embedding",
+        "embedding",
+        &embedding,
+    );
+    let range_input = |name: &str, family: &str, index: &str| {
+        let path = |extension: &str| {
+            path_string(&Path::new(RUN_PLACEHOLDER_DIR).join(format!("{family}_{{{index}}}.{extension}")))
+        };
+        format!(
+            "\n[chain.input.{name}]\nindex = \"{index}\"\npath = {:?}\nindex_path = {:?}\ncommitments = []\n",
+            path("rastered"),
+            path("rindex"),
+        )
+    };
+    let batches = run_prep::tokenizer_repeat_count(range_size as usize)?;
+    let last_layer = shape.layers - 1;
+    let first_shared = shape.layers.saturating_sub(shape.num_kv_shared_layers);
+    let mut donors = (0..shape.layers)
+        .map(|layer| shape.kv_donor_layer(layer))
+        .filter(|donor| *donor >= 0)
+        .collect::<Vec<_>>();
+    donors.sort_unstable();
+    donors.dedup();
+    if donors.len() > 2 {
+        return Err(format!(
+            "teacher-forced ranges support at most two donor candidates, model declares {}",
+            donors.len()
+        )
+        .into());
+    }
+
     let mut out = String::from("[chain]\nname = \"iris\"\nversion = \"0.1.0\"\n");
-    let mut joined = false;
-    for stage in prefill_stages {
-        let name = stage
-            .lines()
-            .find_map(|line| line.strip_prefix("name = "))
-            .map(|name| name.trim_matches('"'));
-        match name {
-            Some("prefill_finalize") => continue,
-            Some("input_embedding") => {
-                // Same program, embedding the claim after the prompt instead of
-                // the empty one.
-                let mut replaced = 0;
-                let stage = stage
-                    .lines()
-                    .map(|line| {
-                        if line.starts_with("inputs.claimed =") {
-                            replaced += 1;
-                            claimed_line.trim_end().to_string()
-                        } else {
-                            line.to_string()
-                        }
-                    })
-                    .collect::<Vec<_>>()
-                    .join("\n");
-                if replaced != 1 {
-                    return Err("input_embedding has no claimed binding to replace".into());
-                }
-                out.push('\n');
-                out.push_str(&stage);
-                out.push('\n');
-                joined = true;
-            }
-            _ => {
-                out.push('\n');
-                out.push_str(stage);
-            }
+    out.push_str(&indexed_model_inputs(shape, layout, prefill_stages)?);
+    out.push_str(&range_input("prompt_pieces", "pieces", "j"));
+    out.push_str(&range_input("claimed_ids", "claimed", "k"));
+    out.push_str(
+        "\n[[chain.stage]]\nname = \"range_origin\"\nproject = \"raster-stages/range-origin\"\n\
+         \n[[chain.stage]]\nname = \"decode_init\"\nproject = \"raster-stages/decode-init\"\n",
+    );
+
+    // Tokenize and embed every range first.
+    out.push_str("\n[[chain.repeat]]\nname = \"prompt\"\nindex = \"j\"\ncount = 0\n");
+    out.push_str(&format!(
+        "\n  [[chain.repeat.stage]]\n\
+         name = \"prompt_merge_seed_p{{j}}\"\n\
+         project = \"raster-stages/prompt-merge\"\n\
+         {tokenizer_line}\
+         inputs.initial_pieces = {{ input = \"prompt_pieces_{{j}}\" }}\n"
+    ));
+    let merged = if batches > 0 {
+        out.push_str(&format!(
+            "\n  [[chain.repeat.stage]]\n\
+             name = \"prompt_merge_p{{j}}_b{{b}}\"\n\
+             index = \"b\"\n\
+             count = {batches}\n\
+             project = \"raster-stages/prompt-merge\"\n\
+             inputs.initial_pieces = {{ from = \"prompt_merge_p{{j}}_b{{b-1}}\", first = \"prompt_merge_seed_p{{j}}\" }}\n\
+             {tokenizer_line}"
+        ));
+        format!("prompt_merge_p{{j}}_b{}", batches - 1)
+    } else {
+        String::from("prompt_merge_seed_p{j}")
+    };
+    out.push_str(&format!(
+        "\n  [[chain.repeat.stage]]\n\
+         name = \"prompt_prepare_p{{j}}\"\n\
+         project = \"raster-stages/prompt-prepare\"\n\
+         inputs.merged_pieces = {{ from = \"{merged}\" }}\n\
+         {tokenizer_line}\
+         \n  [[chain.repeat.stage]]\n\
+         name = \"embed_p{{j}}\"\n\
+         project = \"raster-stages/input-embedding\"\n\
+         inputs.prompt = {{ from = \"prompt_prepare_p{{j}}\" }}\n\
+         {}\
+         inputs.previous = {{ from = \"embed_p{{j-1}}\", first = \"range_origin\" }}\n\
+         {embedding_line}",
+        external_line("claimed", layout, "raster-stages/input-embedding", "no_claim", &no_claim),
+    ));
+    out.push_str("\n[[chain.repeat]]\nname = \"claimed_embed\"\nindex = \"k\"\ncount = 0\n");
+    out.push_str(&format!(
+        "\n  [[chain.repeat.stage]]\n\
+         name = \"embed_c{{k}}\"\n\
+         project = \"raster-stages/input-embedding\"\n\
+         {}\
+         inputs.claimed = {{ input = \"claimed_ids_{{k}}\" }}\n\
+         inputs.previous = {{ from = \"embed_c{{k-1}}\", first = \"embed_p{LAST_PROMPT_RANGE}\" }}\n\
+         {embedding_line}",
+        external_line("prompt", layout, "raster-stages/input-embedding", "no_prompt", &no_prompt),
+    ));
+
+    // Then each layer across every range, so a layer's weights are loaded
+    // once per claim rather than once per range. Range `j` of layer `l`
+    // needs layer `l - 1`'s range `j` and layer `l`'s range `j - 1`, both
+    // already computed in this order. The inner fans' counts are the range
+    // counts, filled in by run preparation.
+    let layer_block = |name: &str, start: usize, count: usize, first_rows: &dyn Fn(&str, &str) -> String, donor: &dyn Fn(Option<&i32>, &str, &str) -> String| -> String {
+        let mut text = format!(
+            "\n[[chain.repeat]]\nname = \"{name}\"\nindex = \"l\"\nstart = {start}\ncount = {count}\n"
+        );
+        for (p, r) in [("p", "j"), ("c", "k")] {
+            text.push_str(&format!(
+                "\n  [[chain.repeat.stage]]\n\
+                 name = \"aux_{p}{{{r}}}_l{{l}}\"\n\
+                 index = \"{r}\"\n\
+                 count = 0\n\
+                 project = \"raster-stages/prefill-prepare-aux\"\n\
+                 inputs.embedded = {{ from = \"embed_{p}{{{r}}}\" }}\n\
+                 inputs.layer = {{ input = \"aux_layer_{{l}}\" }}\n"
+            ));
         }
+        for (p, r, first_kv) in [
+            ("p", "j", String::from("range_origin")),
+            ("c", "k", format!("range_p{LAST_PROMPT_RANGE}_l{{l}}")),
+        ] {
+            text.push_str(&format!(
+                "\n  [[chain.repeat.stage]]\n\
+                 name = \"range_{p}{{{r}}}_l{{l}}\"\n\
+                 index = \"{r}\"\n\
+                 count = 0\n\
+                 project = \"raster-stages/prefill-range\"\n\
+                 inputs.activations = {{ from = \"range_{p}{{{r}}}_l{{l-1}}\", first = \"{}\" }}\n\
+                 inputs.prior_kv = {{ from = \"range_{p}{{{r}-1}}_l{{l}}\", first = \"{first_kv}\" }}\n\
+                 inputs.donor_a_kv = {{ from = \"{}\" }}\n\
+                 inputs.donor_b_kv = {{ from = \"{}\" }}\n\
+                 inputs.ple = {{ from = \"aux_{p}{{{r}}}_l{{l}}\" }}\n\
+                 inputs.layer = {{ input = \"transformer_layer_{{l}}\" }}\n",
+                first_rows(p, r),
+                donor(donors.first(), p, r),
+                donor(donors.get(1), p, r),
+            ));
+        }
+        text
+    };
+    if first_shared > 0 {
+        out.push_str(&layer_block(
+            "layers",
+            0,
+            first_shared,
+            &|p, r| format!("embed_{p}{{{r}}}"),
+            &|_, _, _| String::from("range_origin"),
+        ));
     }
-    if !joined {
-        return Err("generated prefill manifest has no input_embedding stage".into());
+    if shape.num_kv_shared_layers > 0 {
+        let last_own = first_shared.saturating_sub(1);
+        out.push_str(&layer_block(
+            "shared_layers",
+            first_shared,
+            shape.num_kv_shared_layers,
+            &|p, r| format!("range_{p}{{{r}}}_l{last_own}"),
+            &|donor, p, r| {
+                donor
+                    .map(|layer| format!("range_{p}{{{r}}}_l{layer}"))
+                    .unwrap_or_else(|| String::from("range_origin"))
+            },
+        ));
     }
+
+    out.push_str("\n[[chain.repeat]]\nname = \"claimed\"\nindex = \"k\"\ncount = 0\n");
+    out.push_str(
+        "\n  [chain.repeat.exports.edge]\n\
+         stage = \"check_c{k}\"\n\
+         entry = \"decode_init\"\n",
+    );
+    out.push_str(&format!(
+        "\n  [[chain.repeat.stage]]\n\
+         name = \"check_c{{k}}\"\n\
+         project = \"raster-stages/sequence-check\"\n\
+         inputs.activations = {{ from = \"range_c{{k}}_l{last_layer}\" }}\n\
+         inputs.previous = {{ from = \"range_c{{k-1}}_l{last_layer}\", first = \"range_p{LAST_PROMPT_RANGE}_l{last_layer}\" }}\n\
+         inputs.claimed = {{ input = \"claimed_ids_{{k}}\" }}\n\
+         inputs.prior = {{ from = \"check_c{{k-1}}\", first = \"decode_init\" }}\n\
+         {}",
+        external_line("head", layout, "raster-stages/prefill-finalize", "head", &head),
+    ));
     out.push_str(&format!(
         "\n[[chain.stage]]\n\
-         name = \"sequence_check\"\n\
-         project = \"raster-stages/sequence-check\"\n\
-         inputs.activations = {{ from = \"prefill_range_l{}\" }}\n\
-         inputs.prompt = {{ from = \"prompt_prepare\" }}\n\
-         {claimed_line}{}\
-         \n[[chain.stage]]\n\
          name = \"output_finalize\"\n\
          project = \"raster-stages/output-finalize\"\n\
-         inputs.edge = {{ from = \"sequence_check\" }}\n\
+         inputs.edge = {{ from = \"claimed.edge\" }}\n\
          {}",
-        shape.layers - 1,
-        external_line(
-            "head",
-            layout,
-            "raster-stages/prefill-finalize",
-            "head",
-            &head
-        ),
         external_line(
             "decoder",
             layout,
@@ -526,6 +684,19 @@ fn teacher_forced_manifest(
         )
     ));
     Ok(out)
+}
+
+/// Run preparation replaces this with the index of the last prompt range.
+const LAST_PROMPT_RANGE: &str = "@LAST_PROMPT_RANGE@";
+
+/// The empty prompt a claimed range embeds before its claimed ids.
+fn no_prompt_commitment(layout: &ArtifactLayout) -> Result<String, Box<dyn Error>> {
+    write_external(
+        &PromptTokenization::default(),
+        layout,
+        "raster-stages/input-embedding",
+        "no_prompt",
+    )
 }
 
 fn stage_external_commitment(
@@ -1105,6 +1276,7 @@ fn write_embedding(
             "name = \"input_embedding\"\n",
             "project = \"raster-stages/input-embedding\"\n",
             "inputs.prompt = {{ from = \"prompt_prepare\" }}\n",
+            "inputs.previous = {{ from = \"range_origin\" }}\n",
             "{}{}"
         ),
         external_line(
@@ -1687,6 +1859,7 @@ mod tests {
                 only_ple: false,
                 only_direct: false,
                 no_stage_fixtures: false,
+                range_size: DEFAULT_RANGE_SIZE,
             }
         );
     }
@@ -1779,6 +1952,7 @@ mod tests {
             only_ple: false,
             only_direct: false,
             no_stage_fixtures: false,
+            range_size: DEFAULT_RANGE_SIZE,
         };
         let layout = ArtifactLayout::from_config(&config);
 
@@ -1811,6 +1985,7 @@ mod tests {
             only_ple: false,
             only_direct: false,
             no_stage_fixtures: false,
+            range_size: DEFAULT_RANGE_SIZE,
         };
         let layout = ArtifactLayout::from_config(&config);
 
@@ -1841,6 +2016,7 @@ mod tests {
             only_ple: false,
             only_direct: false,
             no_stage_fixtures: false,
+            range_size: DEFAULT_RANGE_SIZE,
         };
         let layout = ArtifactLayout::from_config(&config);
         let path = path_from_dir(

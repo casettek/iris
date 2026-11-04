@@ -286,26 +286,30 @@ pub(crate) fn prepare_claim_run(options: &ClaimBuildOptions) -> Result<PreparedC
                 }
             };
             run_prep::validate_claimed_length(&ids, run_spec.tokens, &prompt.eos_token_ids)?;
-            let external = run_prep::write_claimed_output(&ids, &prompt_dir)?;
-            Some((ids, external))
+            let range_size = model_manifest.teacher_forced_range_size()? as usize;
+            let pairs = run_prep::vocabulary_pairs(&tokenizer)?;
+            let ranges = run_prep::prompt_ranges(&prompt.initial_pieces, range_size, &pairs)?;
+            let prompt_files = run_prep::write_prompt_ranges(&ranges, &prompt_dir)?;
+            let claimed_files = run_prep::write_claimed_ranges(&ids, range_size, &prompt_dir)?;
+            Some((ids, prompt_files, claimed_files))
         }
     };
 
     let template_dir = template_path
         .parent()
         .ok_or_else(|| anyhow::anyhow!("manifest template has no parent directory"))?;
-    let run_manifest = render_run_manifest(
-        &template,
-        template_dir,
-        &RunExternal::new(&pieces_path, &pieces_index_path, &pieces_commitment),
-        match &claimed {
-            Some((_, (path, index_path, commitment))) => {
-                RunTokens::TeacherForced(RunExternal::new(path, index_path, commitment))
-            }
-            None => RunTokens::Autoregressive(run_spec.tokens),
-        },
-        run_prep::tokenizer_repeat_count(prompt.initial_pieces.len())?,
-    )?;
+    let run_manifest = match &claimed {
+        Some((_, prompt_files, claimed_files)) => {
+            render_ranged_manifest(&template, template_dir, prompt_files, claimed_files)?
+        }
+        None => render_run_manifest(
+            &template,
+            template_dir,
+            &RunExternal::new(&pieces_path, &pieces_index_path, &pieces_commitment),
+            run_spec.tokens,
+            run_prep::tokenizer_repeat_count(prompt.initial_pieces.len())?,
+        )?,
+    };
     let manifest_path = run_dir.join("Raster.toml");
     fs::create_dir_all(&run_dir)
         .with_context(|| format!("failed to create {}", run_dir.display()))?;
@@ -322,7 +326,7 @@ pub(crate) fn prepare_claim_run(options: &ClaimBuildOptions) -> Result<PreparedC
         run_manifest_path: Some(manifest_path.clone()),
         run_manifest_sha256: Some(run_manifest_sha256),
         chain: run_spec.chain,
-        claimed_token_ids: claimed.map(|(ids, _)| ids),
+        claimed_token_ids: claimed.map(|(ids, _, _)| ids),
     };
     write_json(&run_dir.join(PREPARED_RUN_JSON), &prepared_run)?;
 
@@ -334,6 +338,125 @@ pub(crate) fn prepare_claim_run(options: &ClaimBuildOptions) -> Result<PreparedC
 
 /// Where model templates point run-specific externals until a run fills them.
 const RUN_PLACEHOLDER_DIR: &str = "target/iris/run-prompt-placeholder/";
+
+/// Marks where the teacher-forced template names the last prompt range.
+const LAST_PROMPT_RANGE: &str = "@LAST_PROMPT_RANGE@";
+
+/// Fills the teacher-forced template for one run: the range counts, the last
+/// prompt range's index, and each range's committed pieces or claimed ids.
+pub(crate) fn render_ranged_manifest(
+    template: &str,
+    template_dir: &Path,
+    prompt: &[run_prep::RunFile],
+    claimed: &[run_prep::RunFile],
+) -> Result<String> {
+    anyhow::ensure!(
+        !prompt.is_empty() && !claimed.is_empty(),
+        "a teacher-forced run needs at least one prompt range and one claimed range"
+    );
+    let template = inference_artifacts::resolve_raster_manifest_paths(template, template_dir)?;
+    let last_prompt = (prompt.len() - 1).to_string();
+    let mut table = String::new();
+    let mut name = String::new();
+    let mut fan_index = String::new();
+    // Prompt repeats, claimed repeats, prompt externals, claimed externals,
+    // per-layer prompt fans, per-layer claimed fans.
+    let mut replaced = [0_usize; 6];
+    let mut out = Vec::new();
+    for line in template.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') {
+            table = trimmed.to_string();
+            name.clear();
+            fan_index.clear();
+        }
+        if trimmed.starts_with("name =") {
+            let value: toml::Value = toml::from_str(trimmed)?;
+            name = value["name"]
+                .as_str()
+                .context("invalid stage/repeat name")?
+                .to_string();
+        }
+        if trimmed.starts_with("index =") {
+            let value: toml::Value = toml::from_str(trimmed)?;
+            fan_index = value["index"]
+                .as_str()
+                .context("invalid repeat index")?
+                .to_string();
+        }
+        let files = match table.as_str() {
+            "[chain.input.prompt_pieces]" => Some((prompt, 2)),
+            "[chain.input.claimed_ids]" => Some((claimed, 3)),
+            _ => None,
+        };
+        if let Some((files, slot)) = files {
+            if let Some(key) = ["index_path", "path"]
+                .into_iter()
+                .find(|key| trimmed.starts_with(&format!("{key} =")))
+            {
+                // Keep the indexed file name (`pieces_{j}.rastered`), move it
+                // from the placeholder directory to this run's.
+                let value: toml::Value = toml::from_str(trimmed)?;
+                let placeholder = value[key].as_str().context("invalid input path")?;
+                anyhow::ensure!(
+                    placeholder.contains(RUN_PLACEHOLDER_DIR),
+                    "teacher-forced input path {placeholder} is not a run placeholder"
+                );
+                let file_name = Path::new(placeholder)
+                    .file_name()
+                    .context("input path has no file name")?;
+                let dir = files[0].path.parent().context("run file has no directory")?;
+                out.push(format!("{key} = {:?}", dir.join(file_name)));
+                continue;
+            }
+            if trimmed.starts_with("commitments =") {
+                replaced[slot] += 1;
+                out.push(String::from("commitments = ["));
+                out.extend(
+                    files
+                        .iter()
+                        .enumerate()
+                        .map(|(index, file)| format!("  {:?}, # {index}", file.commitment)),
+                );
+                out.push(String::from("]"));
+                continue;
+            }
+        }
+        if table == "[[chain.repeat]]" && trimmed.starts_with("count =") {
+            let range_count = match name.as_str() {
+                "prompt" => Some((0, prompt.len())),
+                "claimed_embed" | "claimed" => Some((1, claimed.len())),
+                // Layer blocks keep their model-fixed counts.
+                "layers" | "shared_layers" => None,
+                other => anyhow::bail!("unexpected repeat `{other}` in teacher-forced template"),
+            };
+            if let Some((slot, count)) = range_count {
+                replaced[slot] += 1;
+                out.push(format!("count = {count}"));
+                continue;
+            }
+        }
+        // A layer block's inner fans run once per prompt or claimed range.
+        if table == "[[chain.repeat.stage]]" && trimmed.starts_with("count =") {
+            let range_count = match fan_index.as_str() {
+                "j" => Some((4, prompt.len())),
+                "k" => Some((5, claimed.len())),
+                _ => None,
+            };
+            if let Some((slot, count)) = range_count {
+                replaced[slot] += 1;
+                out.push(format!("count = {count}"));
+                continue;
+            }
+        }
+        out.push(line.replace(LAST_PROMPT_RANGE, &last_prompt));
+    }
+    if replaced[..4] != [1, 2, 1, 1] || replaced[4] == 0 || replaced[4] != replaced[5] {
+        anyhow::bail!("incompatible teacher-forced template: expected [prompt repeats, claimed repeats, prompt commitments, claimed commitments] = [1, 2, 1, 1] and matching per-layer range fans; found {replaced:?}");
+    }
+    out.push(String::new());
+    Ok(out.join("\n"))
+}
 
 /// One run-specific external: the files and commitment a template
 /// placeholder is replaced with.
@@ -360,26 +483,21 @@ impl<'a> RunExternal<'a> {
     }
 }
 
-/// How a run fixes its generated tokens: a decode repeat count, or the
-/// claimed ids a teacher-forced pass checks.
-pub(crate) enum RunTokens<'a> {
-    Autoregressive(u32),
-    TeacherForced(RunExternal<'a>),
-}
-
+/// Fills the autoregressive template for one run: the prompt's pieces, the
+/// decode count, and the tokenizer repeat count.
 pub(crate) fn render_run_manifest(
     template: &str,
     template_dir: &Path,
     pieces: &RunExternal<'_>,
-    tokens: RunTokens<'_>,
+    tokens: u32,
     tokenizer_repeats: u32,
 ) -> Result<String> {
     let pieces_line = pieces.binding("initial_pieces");
     let template = inference_artifacts::resolve_raster_manifest_paths(template, template_dir)?;
     let mut table = "";
     let mut name = String::new();
-    // Seed binding, decode count, tokenize count, claimed bindings.
-    let mut replaced = [0_usize; 4];
+    // Seed binding, decode count, tokenize count.
+    let mut replaced = [0_usize; 3];
     let mut out = Vec::new();
     for line in template.lines() {
         let trimmed = line.trim();
@@ -408,36 +526,14 @@ pub(crate) fn render_run_manifest(
             replaced[2] += 1;
             out.push(format!("count = {tokenizer_repeats}"));
         } else if table == "repeat" && trimmed.starts_with("count =") && name == "decode" {
-            let RunTokens::Autoregressive(count) = &tokens else {
-                anyhow::bail!(
-                    "teacher-forced run manifest cannot fill an autoregressive decode repeat"
-                );
-            };
             replaced[1] += 1;
-            out.push(format!("count = {count}"));
-        } else if table == "stage"
-            && trimmed.starts_with("inputs.claimed =")
-            && trimmed.contains(RUN_PLACEHOLDER_DIR)
-        {
-            // The autoregressive chain's empty claim is a model external and
-            // stays; only the teacher-forced run placeholder is filled.
-            let RunTokens::TeacherForced(claimed) = &tokens else {
-                anyhow::bail!("autoregressive run manifest has a claimed-output binding");
-            };
-            replaced[3] += 1;
-            out.push(claimed.binding("claimed"));
+            out.push(format!("count = {tokens}"));
         } else {
             out.push(line.to_string());
         }
     }
-    // The teacher-forced template binds the claim into both the embedding and
-    // the check stage, and has no decode repeat.
-    let expected = match tokens {
-        RunTokens::Autoregressive(_) => [1, 1, 1, 0],
-        RunTokens::TeacherForced(_) => [1, 0, 1, 2],
-    };
-    if replaced != expected {
-        anyhow::bail!("incompatible manifest template: expected [seed binding, decode count, tokenize count, claimed bindings] = {expected:?}; found {replaced:?}");
+    if replaced != [1, 1, 1] {
+        anyhow::bail!("incompatible manifest template: expected one seed prompt binding and named decode/tokenize counts; found {replaced:?}");
     }
     out.push(String::new());
     Ok(out.join("\n"))
@@ -807,7 +903,7 @@ project = "raster-stages/decode-select-token"
             template,
             Path::new("/repo"),
             &pieces,
-            RunTokens::Autoregressive(7),
+            7,
             0,
         )
         .unwrap();
@@ -826,84 +922,100 @@ project = "raster-stages/decode-select-token"
         assert!(!manifest.contains("old.rastered"));
         assert_eq!(manifest.matches("inputs.initial_pieces =").count(), 2);
 
-        let claimed = RunExternal::new(
-            Path::new("/tmp/run/prompt/claimed_output.rastered"),
-            Path::new("/tmp/run/prompt/claimed_output.rindex"),
-            "def",
-        );
-        assert!(render_run_manifest(
-            template,
-            Path::new("/repo"),
-            &pieces,
-            RunTokens::TeacherForced(claimed),
-            0,
-        )
-        .unwrap_err()
-        .to_string()
-        .contains("cannot fill an autoregressive decode repeat"));
     }
 
     #[test]
-    fn teacher_forced_manifest_binds_claim_into_join_and_check() {
+    fn ranged_manifest_fills_counts_inputs_and_last_prompt_range() {
         let template = r#"[chain]
 name = "iris"
 
-[[chain.stage]]
-name = "prompt_merge_seed"
-project = "raster-stages/prompt-merge"
-inputs.initial_pieces = { external = { path = "target/iris/run-prompt-placeholder/initial_pieces.rastered", index_path = "target/iris/run-prompt-placeholder/initial_pieces.rindex", commitment = "0000" } }
+[chain.input.prompt_pieces]
+index = "j"
+path = "/repo/target/iris/run-prompt-placeholder/pieces_{j}.rastered"
+index_path = "/repo/target/iris/run-prompt-placeholder/pieces_{j}.rindex"
+commitments = []
+
+[chain.input.claimed_ids]
+index = "k"
+path = "/repo/target/iris/run-prompt-placeholder/claimed_{k}.rastered"
+index_path = "/repo/target/iris/run-prompt-placeholder/claimed_{k}.rindex"
+commitments = []
 
 [[chain.repeat]]
-name = "tokenize"
-index = "b"
+name = "prompt"
+index = "j"
 count = 0
 
-[[chain.stage]]
-name = "input_embedding"
-project = "raster-stages/input-embedding"
-inputs.prompt = { from = "prompt_prepare" }
-inputs.claimed = { external = { path = "target/iris/run-prompt-placeholder/claimed_output.rastered", index_path = "target/iris/run-prompt-placeholder/claimed_output.rindex", commitment = "0000" } }
+[[chain.repeat]]
+name = "claimed_embed"
+index = "k"
+count = 0
 
-[[chain.stage]]
-name = "sequence_check"
-project = "raster-stages/sequence-check"
-inputs.claimed = { external = { path = "target/iris/run-prompt-placeholder/claimed_output.rastered", index_path = "target/iris/run-prompt-placeholder/claimed_output.rindex", commitment = "0000" } }
+  [[chain.repeat.stage]]
+name = "embed_c{k}"
+inputs.previous = { from = "embed_c{k-1}", first = "embed_p@LAST_PROMPT_RANGE@" }
+
+[[chain.repeat]]
+name = "layers"
+index = "l"
+start = 0
+count = 4
+
+  [[chain.repeat.stage]]
+name = "range_p{j}_l{l}"
+index = "j"
+count = 0
+
+  [[chain.repeat.stage]]
+name = "range_c{k}_l{l}"
+index = "k"
+count = 0
+
+[[chain.repeat]]
+name = "claimed"
+index = "k"
+count = 0
 "#;
-        let pieces = RunExternal::new(
-            Path::new("/tmp/run/prompt/initial_pieces.rastered"),
-            Path::new("/tmp/run/prompt/initial_pieces.rindex"),
-            "abc",
-        );
-        let claimed = RunExternal::new(
-            Path::new("/tmp/run/prompt/claimed_output.rastered"),
-            Path::new("/tmp/run/prompt/claimed_output.rindex"),
-            "def",
-        );
-        let manifest = render_run_manifest(
-            template,
-            Path::new("/repo"),
-            &pieces,
-            RunTokens::TeacherForced(claimed),
-            3,
-        )
-        .unwrap();
+        let file = |name: &str, commitment: &str| run_prep::RunFile {
+            path: PathBuf::from(format!("/tmp/run/prompt/{name}.rastered")),
+            index_path: PathBuf::from(format!("/tmp/run/prompt/{name}.rindex")),
+            commitment: commitment.into(),
+        };
+        let prompt = [file("pieces_0", "a0"), file("pieces_1", "a1"), file("pieces_2", "a2")];
+        let claimed = [file("claimed_0", "c0")];
+        let manifest =
+            render_ranged_manifest(template, Path::new("/repo"), &prompt, &claimed).unwrap();
+        let parsed: toml::Value = toml::from_str(&manifest).unwrap();
+        let inputs = &parsed["chain"]["input"];
         assert_eq!(
-            manifest
-                .matches("path = \"/tmp/run/prompt/claimed_output.rastered\"")
-                .count(),
-            2
+            inputs["prompt_pieces"]["path"].as_str(),
+            Some("/tmp/run/prompt/pieces_{j}.rastered")
         );
-        assert_eq!(manifest.matches("commitment = \"def\"").count(), 2);
-        assert!(manifest.contains("count = 3"));
+        assert_eq!(
+            inputs["claimed_ids"]["index_path"].as_str(),
+            Some("/tmp/run/prompt/claimed_{k}.rindex")
+        );
+        assert_eq!(
+            inputs["prompt_pieces"]["commitments"],
+            toml::Value::try_from(["a0", "a1", "a2"]).unwrap()
+        );
+        assert_eq!(
+            inputs["claimed_ids"]["commitments"],
+            toml::Value::try_from(["c0"]).unwrap()
+        );
+        let repeats = parsed["chain"]["repeat"].as_array().unwrap();
+        let count = |value: &toml::Value| value["count"].as_integer();
+        assert_eq!(count(&repeats[0]), Some(3));
+        assert_eq!(count(&repeats[1]), Some(1));
+        // The layer block keeps its count; its fans run once per range.
+        assert_eq!(count(&repeats[2]), Some(4));
+        let fans = repeats[2]["stage"].as_array().unwrap();
+        assert_eq!(count(&fans[0]), Some(3));
+        assert_eq!(count(&fans[1]), Some(1));
+        assert_eq!(count(&repeats[3]), Some(1));
+        assert!(manifest.contains(r#"first = "embed_p2""#));
         assert!(!manifest.contains("run-prompt-placeholder"));
-        assert!(render_run_manifest(
-            template,
-            Path::new("/repo"),
-            &pieces,
-            RunTokens::Autoregressive(1),
-            3,
-        )
-        .is_err());
+        assert!(render_ranged_manifest(template, Path::new("/repo"), &prompt, &[]).is_err());
     }
 
     #[test]

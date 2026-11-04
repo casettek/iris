@@ -133,34 +133,158 @@ pub fn write_initial_pieces(
     Ok((data_path, index_path, commitment))
 }
 
-/// Writes a teacher-forced claim's output ids as the run's `claimed` external.
-pub fn write_claimed_output(
-    token_ids: &[u32],
-    dir: &Path,
-) -> Result<(std::path::PathBuf, std::path::PathBuf, String)> {
+/// One run-specific external: its data file, index and commitment.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RunFile {
+    pub path: std::path::PathBuf,
+    pub index_path: std::path::PathBuf,
+    pub commitment: String,
+}
+
+fn write_run_file<T: serde::Serialize>(value: &T, dir: &Path, name: &str) -> Result<RunFile> {
+    fs::create_dir_all(dir).with_context(|| format!("failed to create {}", dir.display()))?;
+    let path = dir.join(format!("{name}.rastered"));
+    let index_path = dir.join(format!("{name}.rindex"));
+    let commitment = raster::write_raster_files(value, &path, &index_path)
+        .map_err(|error| anyhow::anyhow!("{error}"))?;
+    Ok(RunFile {
+        path,
+        index_path,
+        commitment,
+    })
+}
+
+/// Every pair of adjacent characters inside some vocabulary token.
+///
+/// A merge always produces a vocabulary token, and a merge across the
+/// boundary between two pieces produces one containing the left piece's last
+/// character followed by the right piece's first. So a boundary whose pair is
+/// not in this set can never be crossed, and the pieces on either side
+/// tokenize independently to the same ids as the whole prompt.
+pub fn vocabulary_pairs(tokenizer: &serde_json::Value) -> Result<BTreeSet<(char, char)>> {
+    let vocab = vocab_map(tokenizer_model(tokenizer)?)?;
+    let mut pairs = BTreeSet::new();
+    for token in vocab.keys() {
+        let chars = token.chars().collect::<Vec<_>>();
+        pairs.extend(chars.windows(2).map(|pair| (pair[0], pair[1])));
+    }
+    Ok(pairs)
+}
+
+fn can_cut(left: &PreparedPiece, right: &PreparedPiece, pairs: &BTreeSet<(char, char)>) -> bool {
+    if left.segment != right.segment {
+        return true;
+    }
+    match (left.text.chars().last(), right.text.chars().next()) {
+        (Some(last), Some(first)) => !pairs.contains(&(last, first)),
+        _ => true,
+    }
+}
+
+/// Cuts the prompt's pieces into ranges of at most `range_size` pieces, each
+/// ending at the last boundary no merge can cross.
+///
+/// Fails rather than overflow a range: a range's tokenizer batches are sized
+/// for `range_size` pieces, so a longer one would not finish merging.
+pub fn prompt_ranges(
+    pieces: &[PreparedPiece],
+    range_size: usize,
+    pairs: &BTreeSet<(char, char)>,
+) -> Result<Vec<Vec<PreparedPiece>>> {
+    ensure!(!pieces.is_empty(), "a teacher-forced claim needs a non-empty prompt");
+    ensure!(range_size >= 2, "range size must be at least 2");
+    let mut ranges = Vec::new();
+    let mut start = 0;
+    while start < pieces.len() {
+        let limit = (start + range_size).min(pieces.len());
+        let end = if limit == pieces.len() {
+            limit
+        } else {
+            (start + 1..=limit)
+                .rev()
+                .find(|&cut| can_cut(&pieces[cut - 1], &pieces[cut], pairs))
+                .with_context(|| {
+                    format!(
+                        "pieces {start}..{limit} contain no boundary a merge cannot cross; \
+                         reimport with a larger --range-size"
+                    )
+                })?
+        };
+        ranges.push(pieces[start..end].to_vec());
+        start = end;
+    }
+    Ok(ranges)
+}
+
+fn range_pieces(range: &[PreparedPiece]) -> BpePieces {
+    BpePieces {
+        pieces: List::from(
+            range
+                .iter()
+                .map(|piece| BpePiece {
+                    text: piece.text.clone(),
+                    segment: piece.segment,
+                })
+                .collect::<Vec<_>>(),
+        ),
+    }
+}
+
+/// The commitments `write_prompt_ranges` would bind for these ranges.
+pub fn prompt_range_commitments(ranges: &[Vec<PreparedPiece>]) -> Result<Vec<String>> {
+    ranges
+        .iter()
+        .map(|range| {
+            let (_, _, commitment) = raster::encode_raster_value(&range_pieces(range))
+                .map_err(|error| anyhow::anyhow!("{error}"))?;
+            Ok(commitment)
+        })
+        .collect()
+}
+
+/// Writes each prompt range's pieces as `pieces_{j}`.
+pub fn write_prompt_ranges(ranges: &[Vec<PreparedPiece>], dir: &Path) -> Result<Vec<RunFile>> {
+    ranges
+        .iter()
+        .enumerate()
+        .map(|(index, range)| write_run_file(&range_pieces(range), dir, &format!("pieces_{index}")))
+        .collect()
+}
+
+/// A claim's output ids cut into ranges of at most `range_size`.
+pub fn claimed_ranges(token_ids: &[u32], range_size: usize) -> Result<Vec<ClaimedOutput>> {
     ensure!(
         !token_ids.is_empty(),
         "a teacher-forced claim needs at least one output token"
     );
-    fs::create_dir_all(dir).with_context(|| format!("failed to create {}", dir.display()))?;
-    let claimed = ClaimedOutput {
-        token_ids: List::from(token_ids.to_vec()),
-    };
-    let data_path = dir.join("claimed_output.rastered");
-    let index_path = dir.join("claimed_output.rindex");
-    let commitment = raster::write_raster_files(&claimed, &data_path, &index_path)
-        .map_err(|error| anyhow::anyhow!("{error}"))?;
-    Ok((data_path, index_path, commitment))
+    ensure!(range_size >= 1, "range size must be positive");
+    Ok(token_ids
+        .chunks(range_size)
+        .map(|chunk| ClaimedOutput {
+            token_ids: List::from(chunk.to_vec()),
+        })
+        .collect())
 }
 
-/// The commitment `write_claimed_output` would bind for these ids.
-pub fn claimed_output_commitment(token_ids: &[u32]) -> Result<String> {
-    let claimed = ClaimedOutput {
-        token_ids: List::from(token_ids.to_vec()),
-    };
-    let (_, _, commitment) =
-        raster::encode_raster_value(&claimed).map_err(|error| anyhow::anyhow!("{error}"))?;
-    Ok(commitment)
+/// Writes each claimed range as `claimed_{k}`.
+pub fn write_claimed_ranges(token_ids: &[u32], range_size: usize, dir: &Path) -> Result<Vec<RunFile>> {
+    claimed_ranges(token_ids, range_size)?
+        .iter()
+        .enumerate()
+        .map(|(index, range)| write_run_file(range, dir, &format!("claimed_{index}")))
+        .collect()
+}
+
+/// The commitments `write_claimed_ranges` would bind for these ids.
+pub fn claimed_range_commitments(token_ids: &[u32], range_size: usize) -> Result<Vec<String>> {
+    claimed_ranges(token_ids, range_size)?
+        .iter()
+        .map(|range| {
+            let (_, _, commitment) =
+                raster::encode_raster_value(range).map_err(|error| anyhow::anyhow!("{error}"))?;
+            Ok(commitment)
+        })
+        .collect()
 }
 
 /// A claim's output must fill its token budget unless it ends at EOS: the
@@ -199,10 +323,13 @@ pub fn supports_gemma_turns(vocab: &BTreeMap<String, u32>) -> bool {
         .all(|token| vocab.contains_key(*token))
 }
 
-/// The number of ordinary repeats after the mandatory eight-operation seed.
+/// Merge rounds per `prompt-merge` stage. MUST match its `main`.
+pub const MERGES_PER_STAGE: usize = 64;
+
+/// The number of ordinary repeats after the mandatory seed batch.
 pub fn tokenizer_repeat_count(piece_count: usize) -> Result<u32> {
     let merges = piece_count.saturating_sub(1);
-    let batches = (merges / 8 + usize::from(merges % 8 != 0)).max(1);
+    let batches = merges.div_ceil(MERGES_PER_STAGE).max(1);
     u32::try_from(batches - 1).context("tokenizer repeat count exceeds u32")
 }
 

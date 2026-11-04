@@ -287,6 +287,7 @@ mod tests {
                 raster_manifest_sha256: String::from("raster-sha"),
                 teacher_forced_manifest_path: Some(PathBuf::from("../Raster.teacher-forced.toml")),
                 teacher_forced_manifest_sha256: Some(String::from("teacher-forced-sha")),
+                teacher_forced_range_size: Some(512),
             }),
         };
 

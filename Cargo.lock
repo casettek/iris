@@ -2087,6 +2087,7 @@ dependencies = [
  "prefill-prepare-aux",
  "prefill-range",
  "prompt-prepare",
+ "range-origin",
  "raster",
  "rayon",
  "sequence-check",
@@ -3213,6 +3214,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "range-origin"
+version = "0.1.0"
+dependencies = [
+ "raster",
+ "serde",
+]
+
+[[package]]
 name = "raster"
 version = "0.1.0"
 dependencies = [
@@ -3920,6 +3929,7 @@ dependencies = [
  "output-finalize",
  "prompt-prepare",
  "raster",
+ "serde",
  "serde_json",
 ]
 
@@ -4357,6 +4367,7 @@ dependencies = [
  "prefill-prepare-aux",
  "prefill-range",
  "prompt-prepare",
+ "range-origin",
  "raster",
  "raster-core",
  "raster-runtime",

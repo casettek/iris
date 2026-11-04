@@ -79,6 +79,15 @@ enum Commands {
     ReplayProfile(ReplayProfileArgs),
     /// Run the pinned three-path end-to-end parity suite.
     TestParity,
+    /// Compare a teacher-forced chain with the autoregressive chain for the
+    /// same prompt and output, position by position.
+    #[command(hide = true)]
+    CompareTeacherForced {
+        #[arg(long = "teacher-forced")]
+        teacher_forced: PathBuf,
+        #[arg(long)]
+        autoregressive: PathBuf,
+    },
     #[command(hide = true)]
     ParityWorker {
         #[arg(long)]
@@ -130,6 +139,9 @@ struct ModelImportArgs {
     /// Do not overwrite the stage-local manual input fixtures.
     #[arg(long)]
     no_stage_fixtures: bool,
+    /// Largest teacher-forced range, in prompt pieces or claimed ids.
+    #[arg(long = "range-size", default_value_t = model_import::DEFAULT_RANGE_SIZE)]
+    range_size: u32,
 }
 
 #[derive(Debug, Args)]
@@ -291,6 +303,14 @@ fn execute(cli: Cli) -> Result<ExitCode> {
         }
         Some(Commands::TestParity) => {
             parity::run()?;
+            Ok(ExitCode::SUCCESS)
+        }
+        Some(Commands::CompareTeacherForced {
+            teacher_forced,
+            autoregressive,
+        }) => {
+            let comparison = parity::compare_teacher_forced(&teacher_forced, &autoregressive)?;
+            println!("{}", serde_json::to_string_pretty(&comparison)?);
             Ok(ExitCode::SUCCESS)
         }
         Some(Commands::ParityWorker {
@@ -944,6 +964,7 @@ impl ModelImportArgs {
             only_ple: self.only_ple,
             only_direct: self.only_direct,
             no_stage_fixtures: self.no_stage_fixtures,
+            range_size: self.range_size,
         }
     }
 }
@@ -1176,6 +1197,7 @@ mod tests {
             only_ple: false,
             only_direct: false,
             no_stage_fixtures: false,
+            range_size: model_import::DEFAULT_RANGE_SIZE,
         }
         .into_import_config();
 
@@ -1192,6 +1214,7 @@ mod tests {
                 only_ple: false,
                 only_direct: false,
                 no_stage_fixtures: false,
+                range_size: model_import::DEFAULT_RANGE_SIZE,
             }
         );
     }

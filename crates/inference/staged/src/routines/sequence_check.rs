@@ -13,15 +13,14 @@ use inference_kernels::kernels::sequence_check::{
     SequenceCheckDirectInputs,
 };
 use prefill_finalize::input::unpack_i32s;
-use sequence_check::input::{
-    ActivationSequence, ClaimedOutput, DecodeEdge, FinalHead, PromptTokenization,
-};
+use sequence_check::input::{ActivationSequence, ClaimedOutput, DecodeEdge, FinalHead};
 use std::{path::Path, sync::Arc};
 
 pub struct Inputs {
     pub activations: ActivationSequence,
-    pub prompt: PromptTokenization,
+    pub previous: ActivationSequence,
     pub claimed: ClaimedOutput,
+    pub prior: DecodeEdge,
     head: Weights,
 }
 enum Weights {
@@ -32,14 +31,16 @@ impl Inputs {
     /// Already-materialized comparison path; indexed Raster inputs use the paged head.
     pub fn eager(
         activations: ActivationSequence,
-        prompt: PromptTokenization,
+        previous: ActivationSequence,
         claimed: ClaimedOutput,
+        prior: DecodeEdge,
         head: Arc<FinalHead>,
     ) -> Self {
         Self {
             activations,
-            prompt,
+            previous,
             claimed,
+            prior,
             head: Weights::Eager(head),
         }
     }
@@ -84,8 +85,9 @@ pub fn run_direct(inputs: &Inputs) -> Result<DecodeEdge> {
     let edge = match &inputs.head {
         Weights::Eager(head) => run_sequence_check_direct(SequenceCheckDirectInputs {
             activations: &inputs.activations,
-            prompt: &inputs.prompt,
+            previous: &inputs.previous,
             claimed: &inputs.claimed,
+            prior: &inputs.prior,
             head,
         })?,
         Weights::Paged(head) => run_paged(inputs, head)?,
@@ -97,7 +99,7 @@ fn run_paged(inputs: &Inputs, head: &PagedHead) -> Result<DecodeEdge> {
     let norm_weights = unpack_i32s(&params.norm_weights).map_err(anyhow::Error::msg)?;
     let positions = check_positions(
         &inputs.activations,
-        &inputs.prompt,
+        &inputs.previous,
         &inputs.claimed,
         &CheckHeadParams {
             hidden_size: params.hidden_size,
@@ -116,7 +118,7 @@ fn run_paged(inputs: &Inputs, head: &PagedHead) -> Result<DecodeEdge> {
             "sequence check: claimed token at position {position} is not the greedy selection"
         );
     }
-    decode_edge(&positions, &selections)
+    decode_edge(&positions, &selections, &inputs.prior)
 }
 fn load_inputs_from_initialized_runtime(
     cached_inputs: &CachedInputs,
@@ -127,8 +129,9 @@ fn load_inputs_from_initialized_runtime(
 ) -> Result<Inputs> {
     let binding = raster::start_program(&[
         raster::entry_argument_spec::<ActivationSequence>("activations"),
-        raster::entry_argument_spec::<PromptTokenization>("prompt"),
+        raster::entry_argument_spec::<ActivationSequence>("previous"),
         raster::entry_argument_spec::<ClaimedOutput>("claimed"),
+        raster::entry_argument_spec::<DecodeEdge>("prior"),
         raster::entry_argument_spec::<FinalHead>("head"),
     ])?;
     let activations = match cached_inputs.get("activations") {
@@ -137,11 +140,18 @@ fn load_inputs_from_initialized_runtime(
             ActivationSequence,
         >(binding.reference.clone(), "activations")),
     };
-    let prompt = match cached_inputs.get("prompt") {
-        Some(value) => value.as_check_prompt()?,
+    let previous = match cached_inputs.get("previous") {
+        Some(value) => value.as_check_activation_sequence()?,
         None => raster::materialize_auth_return(raster::entry_argument_auth_ref::<
-            PromptTokenization,
-        >(binding.reference.clone(), "prompt")),
+            ActivationSequence,
+        >(binding.reference.clone(), "previous")),
+    };
+    let prior = match cached_inputs.get("prior") {
+        Some(value) => value.as_check_prior()?,
+        None => raster::materialize_auth_return(raster::entry_argument_auth_ref::<DecodeEdge>(
+            binding.reference.clone(),
+            "prior",
+        )),
     };
     let claimed = raster::materialize_auth_return(
         raster::entry_argument_auth_ref::<ClaimedOutput>(binding.reference.clone(), "claimed"),
@@ -168,8 +178,9 @@ fn load_inputs_from_initialized_runtime(
     };
     Ok(Inputs {
         activations,
-        prompt,
+        previous,
         claimed,
+        prior,
         head,
     })
 }

@@ -12,8 +12,7 @@ use inference_kernels::kernels::input_embedding::{
     run_input_embedding_direct, InputEmbeddingDirectInputs,
 };
 use input_embedding::input::{
-    pack_i32s, ActivationRow, ActivationSequence, ClaimedOutput, EmbeddingTable,
-    PromptTokenization,
+    pack_i32s, ActivationRow, ActivationSequence, ClaimedOutput, EmbeddingTable, PromptTokenization,
 };
 use raster::List;
 use std::{path::Path, sync::Arc};
@@ -22,6 +21,8 @@ pub struct Inputs {
     pub prompt: PromptTokenization,
     /// Embedded after the prompt; empty in the autoregressive chain.
     pub claimed: ClaimedOutput,
+    /// Where this range starts: right after the previous range's rows.
+    pub start_position: u32,
     embedding: Weights,
 }
 enum Weights {
@@ -34,6 +35,7 @@ impl Inputs {
         Self {
             prompt,
             claimed: ClaimedOutput::default(),
+            start_position: 0,
             embedding: Weights::Eager(embedding),
         }
     }
@@ -89,13 +91,13 @@ pub fn load_inputs_from_paths_with_cache(
     })
 }
 pub fn run_direct(inputs: &Inputs) -> Result<ActivationSequence> {
-    match &inputs.embedding {
+    let mut output = match &inputs.embedding {
         Weights::Eager(embedding) => run_input_embedding_direct(InputEmbeddingDirectInputs {
             prompt: &PromptTokenization {
                 token_ids: List::from(inputs.token_ids().collect::<Vec<_>>()),
             },
             embedding,
-        }),
+        })?,
         Weights::Selective(embedding) => {
             let rows = inputs
                 .token_ids()
@@ -106,14 +108,16 @@ pub fn run_direct(inputs: &Inputs) -> Result<ActivationSequence> {
                     })
                 })
                 .collect::<Result<Vec<_>>>()?;
-            Ok(ActivationSequence {
+            ActivationSequence {
                 rows: List::from(rows),
                 errors: List::new(),
                 kv: List::new(),
                 start_position: 0,
-            })
+            }
         }
-    }
+    };
+    output.start_position = inputs.start_position;
+    Ok(output)
 }
 fn load_inputs_from_initialized_runtime(
     cached_inputs: &CachedInputs,
@@ -125,6 +129,7 @@ fn load_inputs_from_initialized_runtime(
     let binding = raster::start_program(&[
         raster::entry_argument_spec::<PromptTokenization>("prompt"),
         raster::entry_argument_spec::<ClaimedOutput>("claimed"),
+        raster::entry_argument_spec::<ActivationSequence>("previous"),
         raster::entry_argument_spec::<EmbeddingTable>("embedding"),
     ])?;
     let prompt = match cached_inputs.get("prompt") {
@@ -133,10 +138,19 @@ fn load_inputs_from_initialized_runtime(
             PromptTokenization,
         >(binding.reference.clone(), "prompt")),
     };
-    let claimed = raster::materialize_auth_return(raster::entry_argument_auth_ref::<ClaimedOutput>(
-        binding.reference.clone(),
-        "claimed",
-    ));
+    let claimed = raster::materialize_auth_return(
+        raster::entry_argument_auth_ref::<ClaimedOutput>(binding.reference.clone(), "claimed"),
+    );
+    let previous = match cached_inputs.get("previous") {
+        Some(value) => value.as_embedding_previous()?,
+        None => raster::materialize_auth_return(raster::entry_argument_auth_ref::<
+            ActivationSequence,
+        >(binding.reference.clone(), "previous")),
+    };
+    let start_position = previous
+        .start_position
+        .checked_add(previous.rows.len() as u32)
+        .ok_or_else(|| anyhow::anyhow!("range start position overflows u32"))?;
 
     let embedding = if raster_inputs(&binding) {
         Weights::Selective(embedding::load(
@@ -167,6 +181,7 @@ fn load_inputs_from_initialized_runtime(
     Ok(Inputs {
         prompt,
         claimed,
+        start_position,
         embedding,
     })
 }

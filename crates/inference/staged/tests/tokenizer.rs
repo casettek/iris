@@ -130,18 +130,22 @@ fn production_reference_ids() {
 
 #[test]
 fn batch_boundaries_and_budget_rejection() {
-    for merges_needed in [0_usize, 1, 7, 8, 9, 15, 16, 17] {
+    let batch = run_prep::MERGES_PER_STAGE;
+    for merges_needed in [0, 1, batch - 1, batch, batch + 1, 2 * batch - 1, 2 * batch, 2 * batch + 1] {
+        // Distinct single-character pieces, more than the ASCII letters.
         let text = (0..=merges_needed)
-            .map(|i| char::from(b'a' + i as u8))
+            .map(|i| char::from_u32(0x100 + i as u32).unwrap())
             .collect::<String>();
         let mut vocab = serde_json::Map::new();
         for (i, c) in text.chars().enumerate() {
             vocab.insert(c.to_string(), json!(i));
         }
+        let chars = text.chars().collect::<Vec<_>>();
+        let prefix = |len: usize| chars[..len].iter().collect::<String>();
         let mut merges = vec![];
-        for i in 2..=text.len() {
-            vocab.insert(text[..i].to_string(), json!(100 + i));
-            merges.push(json!([&text[..i - 1], &text[i - 1..i]]));
+        for i in 2..=chars.len() {
+            vocab.insert(prefix(i), json!(1000 + i));
+            merges.push(json!([prefix(i - 1), chars[i - 1].to_string()]));
         }
         let tokenizer = json!({"model":{"type":"BPE","vocab":vocab,"merges":merges}});
         let table = run_prep::prompt_tokenizer(&tokenizer).unwrap();
@@ -156,7 +160,7 @@ fn batch_boundaries_and_budget_rejection() {
             .is_err());
         }
         let batches = run_prep::tokenizer_repeat_count(merged.pieces.len()).unwrap() + 1;
-        for batch in 0..batches {
+        for index in 0..batches {
             merged = run_merge_batch(PromptPrepareDirectInputs {
                 tokenizer: &table,
                 initial_pieces: &merged,
@@ -165,7 +169,7 @@ fn batch_boundaries_and_budget_rejection() {
             assert_eq!(
                 merged.pieces.len(),
                 (merges_needed + 1)
-                    .saturating_sub((batch as usize + 1) * 8)
+                    .saturating_sub((index as usize + 1) * batch)
                     .max(1)
             );
         }
@@ -217,7 +221,7 @@ fn special_segments_forbid_otherwise_eligible_merges() {
 
 #[test]
 fn repeat_count_is_checked_and_empty_inputs_need_only_seed() {
-    for (pieces, count) in [(0, 0), (1, 0), (9, 0), (10, 1), (17, 1), (18, 2)] {
+    for (pieces, count) in [(0, 0), (1, 0), (65, 0), (66, 1), (129, 1), (130, 2)] {
         assert_eq!(run_prep::tokenizer_repeat_count(pieces).unwrap(), count);
     }
     if usize::BITS > 32 {

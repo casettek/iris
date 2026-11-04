@@ -2,7 +2,6 @@ use anyhow::{bail, ensure, Result};
 use raster::List;
 use sequence_check::input::{
     dot, rms_norm, softcap, unpack_i32s, ActivationSequence, ClaimedOutput, DecodeEdge, FinalHead,
-    PromptTokenization,
 };
 
 use crate::tensor::Matrix;
@@ -55,35 +54,36 @@ pub fn score_row(normalized: &[i32], row: &[i32], cap: i32) -> Result<i32> {
     ))
 }
 
-/// Locates and normalises the row predicting each claimed token.
+/// Locates and normalises the row predicting each claimed token of a range.
 ///
-/// Generated token `k` is predicted by row `prompt_len - 1 + k`: causal
-/// attention means that row has seen exactly the prompt and the first `k`
-/// claimed tokens, the same inputs the autoregressive decode step saw.
+/// The predicting rows are the previous range's last row followed by this
+/// range's rows: claimed token `k` sits at `start_position + k` and is
+/// predicted by the row before it. Causal attention means that row has seen
+/// exactly the tokens the autoregressive decode step saw.
 pub fn check_positions(
     activations: &ActivationSequence,
-    prompt: &PromptTokenization,
+    previous: &ActivationSequence,
     claimed: &ClaimedOutput,
     params: &CheckHeadParams<'_>,
 ) -> Result<Vec<CheckPosition>> {
-    let prompt_len = prompt.token_ids.len();
-    if prompt_len == 0 {
-        bail!("teacher-forced check requires a non-empty prompt to predict the first token");
-    }
+    let boundary = previous.rows.iter().last().ok_or_else(|| {
+        anyhow::anyhow!("teacher-forced check requires a non-empty range before the claimed tokens")
+    })?;
     if claimed.token_ids.is_empty() {
         bail!("teacher-forced check requires at least one claimed output token");
     }
-    let rows = activations.rows.iter().collect::<Vec<_>>();
+    let predicting = std::iter::once(boundary)
+        .chain(activations.rows.iter())
+        .collect::<Vec<_>>();
     claimed
         .token_ids
         .iter()
         .enumerate()
         .map(|(k, claimed_token_id)| {
-            let row_index = prompt_len - 1 + k;
-            let row = rows.get(row_index).ok_or_else(|| {
+            let row = predicting.get(k).ok_or_else(|| {
                 anyhow::anyhow!(
-                    "claimed token {k} is predicted by row {row_index}, but the pass has {} rows",
-                    rows.len()
+                    "claimed token {k} has no predicting row: the range has {} rows",
+                    activations.rows.len()
                 )
             })?;
             let mut normalized = unpack_i32s(&row.values).map_err(anyhow::Error::msg)?;
@@ -96,7 +96,7 @@ pub fn check_positions(
             rms_norm(&mut normalized, params.norm_weights, params.norm_eps)
                 .map_err(anyhow::Error::msg)?;
             Ok(CheckPosition {
-                decode_position: activations.start_position + row_index as u32 + 1,
+                decode_position: activations.start_position + k as u32,
                 claimed_token_id: *claimed_token_id,
                 normalized,
             })
@@ -105,8 +105,13 @@ pub fn check_positions(
 }
 
 /// Publishes the selections in the `DecodeEdge` shape `output-finalize`
-/// consumes. Disagreement with the claim is published, not raised.
-pub fn decode_edge(positions: &[CheckPosition], selections: &[Selection]) -> Result<DecodeEdge> {
+/// consumes, after the earlier ranges' transcript. Disagreement with the
+/// claim is published, not raised.
+pub fn decode_edge(
+    positions: &[CheckPosition],
+    selections: &[Selection],
+    prior: &DecodeEdge,
+) -> Result<DecodeEdge> {
     ensure!(
         positions.len() == selections.len(),
         "{} check positions produced {} selections",
@@ -122,9 +127,11 @@ pub fn decode_edge(positions: &[CheckPosition], selections: &[Selection]) -> Res
         token_id: last.token_id,
         value: last.value,
         generated_token_ids: List::from(
-            selections
+            prior
+                .generated_token_ids
                 .iter()
-                .map(|selection| selection.token_id)
+                .copied()
+                .chain(selections.iter().map(|selection| selection.token_id))
                 .collect::<Vec<_>>(),
         ),
     })
@@ -141,8 +148,9 @@ pub fn first_mismatch(positions: &[CheckPosition], selections: &[Selection]) -> 
 
 pub struct SequenceCheckDirectInputs<'a> {
     pub activations: &'a ActivationSequence,
-    pub prompt: &'a PromptTokenization,
+    pub previous: &'a ActivationSequence,
     pub claimed: &'a ClaimedOutput,
+    pub prior: &'a DecodeEdge,
     pub head: &'a FinalHead,
 }
 
@@ -169,7 +177,7 @@ pub fn run_sequence_check_direct(inputs: SequenceCheckDirectInputs<'_>) -> Resul
         softcap: head.softcap,
         norm_weights: &norm_weights,
     };
-    let positions = check_positions(inputs.activations, inputs.prompt, inputs.claimed, &params)?;
+    let positions = check_positions(inputs.activations, inputs.previous, inputs.claimed, &params)?;
 
     let stride = u64::from(head.hidden_size) * 4;
     let byte_len = inputs.head.projection.byte_len();
@@ -200,5 +208,5 @@ pub fn run_sequence_check_direct(inputs: SequenceCheckDirectInputs<'_>) -> Resul
                 .ok_or_else(|| anyhow::anyhow!("the head scored no token"))
         })
         .collect::<Result<Vec<_>>>()?;
-    decode_edge(&positions, &selections)
+    decode_edge(&positions, &selections, inputs.prior)
 }

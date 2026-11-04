@@ -90,6 +90,29 @@ impl RetainedWeightBytes for prefill_finalize::input::FinalHead {
     }
 }
 
+impl RetainedWeightBytes for prompt_prepare::input::PromptTokenizer {
+    fn retained_weight_bytes(&self) -> usize {
+        let string = |value: &String| std::mem::size_of::<String>() + value.capacity();
+        let vocab = self
+            .vocab_buckets
+            .iter()
+            .flat_map(|bucket| bucket.entries.iter())
+            .map(|entry| std::mem::size_of_val(entry) + entry.token.capacity())
+            .sum::<usize>();
+        let merges = self
+            .merge_buckets
+            .iter()
+            .flat_map(|bucket| bucket.rules.iter())
+            .map(|rule| 4 + string(&rule.left) + string(&rule.right) + string(&rule.merged))
+            .sum::<usize>();
+        std::mem::size_of::<Self>()
+            + (self.vocab_buckets.len() + self.merge_buckets.len())
+                * std::mem::size_of::<raster::List<()>>()
+            + vocab
+            + merges
+    }
+}
+
 impl RetainedWeightBytes for sequence_check::input::FinalHead {
     fn retained_weight_bytes(&self) -> usize {
         std::mem::size_of::<Self>()

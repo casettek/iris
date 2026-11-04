@@ -17,7 +17,7 @@ pub fn write_model_manifest(
     shape: &Shape,
     text_config: &serde_json::Value,
     raster_manifest: Option<(&Path, &str)>,
-    teacher_forced_manifest: Option<(&Path, &str)>,
+    teacher_forced_manifest: Option<(&Path, &str, u32)>,
 ) -> Result<PathBuf, Box<dyn Error>> {
     let artifact_dir = args.artifact_dir();
     fs::create_dir_all(&artifact_dir)?;
@@ -27,8 +27,9 @@ pub fn write_model_manifest(
             format!("{:x}", Sha256::digest(text.as_bytes())),
         ))
     };
+    let range_size = teacher_forced_manifest.map(|(_, _, range_size)| range_size);
     let teacher_forced = teacher_forced_manifest
-        .map(template_provenance)
+        .map(|(path, text, _)| template_provenance((path, text)))
         .transpose()?;
     let manifest_path = artifact_dir.join(MODEL_MANIFEST_JSON);
     let model_detwgt = args.model_dir.join("model.detwgt");
@@ -81,6 +82,7 @@ pub fn write_model_manifest(
                     raster_manifest_sha256,
                     teacher_forced_manifest_path,
                     teacher_forced_manifest_sha256,
+                    teacher_forced_range_size: range_size,
                 }
             },
         ),

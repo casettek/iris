@@ -796,6 +796,12 @@ fn write_staged_fixture(dir: &Path, eos_ids: &[u32]) {
         "embedding",
         &embedding,
     );
+    let no_claim_commitment = write_staged_external(
+        dir,
+        "raster-stages/input-embedding",
+        "no_claim",
+        &input_embedding::input::ClaimedOutput::default(),
+    );
     let head_commitment =
         write_staged_external(dir, "raster-stages/prefill-finalize", "head", &head);
     let decoder_commitment =
@@ -809,6 +815,10 @@ name = "direct-parity"
 version = "0.1.0"
 
 [[chain.stage]]
+name = "range_origin"
+project = "raster-stages/range-origin"
+
+[[chain.stage]]
 name = "prompt_prepare"
 project = "raster-stages/prompt-prepare"
 inputs.tokenizer = {{ external = {{ path = "raster-stages/prompt-prepare/tokenizer.rastered", index_path = "raster-stages/prompt-prepare/tokenizer.rindex", commitment = "{tokenizer_commitment}" }} }}
@@ -818,6 +828,8 @@ inputs.merged_pieces = {{ external = {{ path = "raster-stages/prompt-prepare/ini
 name = "input_embedding"
 project = "raster-stages/input-embedding"
 inputs.prompt = {{ from = "prompt_prepare" }}
+inputs.claimed = {{ external = {{ path = "raster-stages/input-embedding/no_claim.rastered", index_path = "raster-stages/input-embedding/no_claim.rindex", commitment = "{no_claim_commitment}" }} }}
+inputs.previous = {{ from = "range_origin" }}
 inputs.embedding = {{ external = {{ path = "raster-stages/input-embedding/embedding.rastered", index_path = "raster-stages/input-embedding/embedding.rindex", commitment = "{embedding_commitment}" }} }}
 
 [[chain.stage]]

@@ -40,43 +40,89 @@ This is the default autoregressive chain (`Raster.toml`).
 ## Teacher-forced chain
 
 A full import also writes `Raster.teacher-forced.toml` beside the model's
-`Raster.toml`, and records its hash in the model manifest's provenance. Run specs
-select it with `chain = "teacher-forced"`. It verifies a *known* output with one
-pass per layer over `prompt ‖ claimed_output` instead of replaying the decode loop:
+`Raster.toml`, and records its hash and range size in the model manifest's
+provenance. Run specs select it with `chain = "teacher-forced"`. It verifies a
+*known* output with one pass over `prompt ‖ claimed_output`, cut into ranges of
+at most `--range-size` positions (default 512), instead of replaying the decode
+loop.
 
-1. Tokenization, `prompt_prepare`: unchanged.
-2. `input-embedding`: embeds the chain-tokenized prompt ids, then the claim's
-   output ids (a run-specific `claimed` external), into one `N = prompt_len +
-   tokens` row sequence. The autoregressive chain binds an empty committed claim
-   (`no_claim`) to the same program.
-3. `prefill-prepare-aux`, `prefill-range`: the unchanged programs over all `N` rows.
-4. `sequence-check`: for each claimed token `k`, scores row `prompt_len - 1 + k`
-   against the head and takes the first-maximum argmax, exactly as
-   `prefill-finalize` followed by `decode-select-token` would.
-5. `output-finalize`: unchanged, reading the checked edge.
+### Ranges
 
-The join lives inside `input-embedding` instead of a stage of its own: a stage
-that only concatenates ids has a trace no longer than the 128-item fraud window,
-which Raster cannot commit, so a lie there could never be disputed (see
-[`short-stage-fraud-window`](../issues/short-stage-fraud-window.md)). Stages are
-sized so every one can be challenged.
+Run preparation cuts the prompt's initial pieces into ranges of at most
+`range_size` pieces, each ending at a boundary no merge can cross: two pieces
+whose adjacent characters appear together in no vocabulary token. Every merge
+produces a vocabulary token, so pieces on either side of such a boundary tokenize
+independently to exactly the ids of the whole prompt. On Gemma 4 E2B only one
+token (`>▁</`) spans a space, so almost every space is a boundary. Fails rather
+than overflow a range. The claimed ids are cut into ranges of the same size.
 
-Causal attention means row `i` of the pass sees exactly the tokens the decode
-step at position `i` saw, so for an honest claim every row and KV entry equals the
-autoregressive chain's, the check stage's `DecodeEdge` equals its final
-`decode.edge`, and the final checkpoint hash is identical.
+Each prompt range `p{j}`:
+
+1. `prompt_merge_seed_p{j}`, `prompt_merge_p{j}_b{b}`, `prompt_prepare_p{j}`:
+   the range's pieces, 64 merges per stage. Each merge scans only the range, so
+   total tokenizer work is linear in the prompt. The batch count is fixed at
+   import from the range size.
+2. `embed_p{j}`: `input-embedding` over the range's ids, starting where the
+   previous range's embedding ended (`range_origin` for the first).
+3. `aux_p{j}_l{l}`, `range_p{j}_l{l}`: the unchanged `prefill-prepare-aux` and
+   `prefill-range` programs. A layer's range takes its rows from the layer below
+   and its inherited K/V cache from its own previous range. That is exactly a
+   decode step with more than one row, so the layer program needs no change.
+   Sliding-window layers carry only the window; global layers carry every
+   earlier key.
+
+Each claimed range `c{k}` runs `embed_c{k}` (an empty prompt, this range's
+claimed ids), `aux_c{k}_l{l}`, `range_c{k}_l{l}`, and `check_c{k}`.
+
+The chain runs every tokenizer and embedding stage first, then each layer across
+all ranges in order (`aux_p*_l{l}`, `aux_c*_l{l}`, `range_p*_l{l}`,
+`range_c*_l{l}`) before the next layer, then the checks. Range `j` of layer `l`
+needs only layer `l − 1`'s range `j` and layer `l`'s range `j − 1`, so this
+order is valid. It loads each layer's weights once per claim instead of once
+per range, and a challenger recomputing up to a dispute at layer `l` runs only
+layers `0..=l`. Measured on Gemma 4 E2B at 568 prompt tokens, range-by-range
+order made the layer stages 3× slower than one stage per layer.
+
+`check_c{k}`:
+`sequence-check` scores the previous range's last row followed by this range's
+rows against the head, takes the first-maximum argmax at each position exactly as
+`prefill-finalize` followed by `decode-select-token` would, and appends the
+selections to the previous check's transcript. The last check's `DecodeEdge`
+feeds the unchanged `output-finalize`.
+
+The repeat counts, the last prompt range's index, and the per-range externals
+(`pieces_{j}`, `claimed_{k}`) are filled in by run preparation into the frozen run
+manifest. `range-origin` is the empty sequence at position 0 that the first
+range of each binding starts from, because a repeat's `first` fallback must name a
+stage. The autoregressive chain binds its single `input_embedding` to it too.
+
+### Soundness
+
+Causal attention means row `i` sees exactly the tokens the decode step at
+position `i` saw. For an honest claim every row and K/V entry equals the
+autoregressive chain's, the last check's `DecodeEdge` equals its final
+`decode.edge`, and `output_finalize` is identical.
 
 `sequence-check` re-derives the greedy selections rather than asserting the
 claimed ones: an aborting stage has no output to hash or replay. A claim is
 therefore well-formed only if `output_finalize`'s ids equal its posted ids.
-False claims are caught one of three ways: a doctored layer output diverges at that
-layer, a doctored check output diverges at `sequence_check`, and honest
-checkpoints over non-greedy tokens publish the greedy ids instead of the posted
-ones (`challenge build` reports this as a rejected claimed output).
+False claims are caught one of three ways: a doctored layer output diverges at
+that (layer, range) stage, a doctored check output diverges at that check, and
+honest checkpoints over non-greedy tokens publish the greedy ids instead of the
+posted ones (`challenge build` reports this as a rejected claimed output).
 
-For Gemma 4 E2B the chain has 75 stages plus one per tokenizer merge round,
-independent of the token count. A single `prefill_range` stage now processes `N` rows, and
-`sequence_check` sweeps the head once per claimed token.
+### Cost
+
+Every per-position stage covers at most `range_size` positions, so its replay
+cost is bounded independently of the prompt length, except that a global-attention
+layer's late ranges still read every earlier key. The stage count grows linearly
+with the prompt: per prompt range one seed, `⌈(range_size − 1) / 64⌉ − 1` merge
+batches, prepare, embed and two stages per layer.
+
+Carrying K/V forward copies it, because Raster can extend only an object created
+inside the same program, and a stage's input is not one. Sliding-window layers
+copy at most the window; global layers copy all earlier positions, so their
+total K/V data grows quadratically with the number of ranges.
 
 The layer loop lives in the chain manifest rather than in one Raster program. A generated model expands one program over many stage instances, preserving bounded replay units and per-stage auditability.
 

@@ -30,8 +30,10 @@ chain = "teacher-forced"
 ```
 
 Preparation first runs direct inference to discover the output ids. They must
-fill `tokens` unless the last one is EOS. They are written as the run's
-`claimed_output.rastered` external and frozen into `prepared_run.json`
+fill `tokens` unless the last one is EOS. The prompt's pieces are cut into ranges
+at boundaries no merge can cross, and the ids into ranges of the model's range
+size; each range is written as its own external (`pieces_{j}`, `claimed_{k}`)
+under the run's `prompt/` directory. The ids are frozen into `prepared_run.json`
 (`chain`, `claimed_token_ids`). The staged pass then runs the model-specific
 `Raster.teacher-forced.toml`. If `sequence_check`'s greedy selections differ from
 the direct ids, claim build fails: direct and teacher-forced inference are not in

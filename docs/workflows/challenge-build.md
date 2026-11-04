@@ -25,8 +25,8 @@ Flow:
 8. Write the challenge artifacts only after that parity check passes. A mismatch fails challenge construction with a native/Raster parity error identifying the stage, differing field, and both values. The replay files remain available for debugging.
 
 For a teacher-forced claim, step 2 also checks two things: the frozen claimed ids
-obey the token-budget rule, and both `inputs.claimed` bindings in the frozen run
-manifest commit to them. If every checkpoint then matches but `output_finalize`'s
+obey the token-budget rule, and the frozen run manifest's `claimed_ids`
+commitments are exactly those ids cut into the model's range size. If every checkpoint then matches but `output_finalize`'s
 ids differ from the posted ids, there is no stage to dispute. The claim is refuted
 by its own final record: the challenge reports `claimed output rejected` with the
 first differing token, and does not replay. A claim whose `sequence_check` or layer

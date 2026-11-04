@@ -87,6 +87,10 @@ commitments = [
 ]
 
 [[chain.stage]]
+name = "range_origin"
+project = "/home/amcas/Development/iris/raster-stages/range-origin"
+
+[[chain.stage]]
 name = "prompt_merge_seed"
 project = "/home/amcas/Development/iris/raster-stages/prompt-merge"
 inputs.tokenizer = { external = { path = "/home/amcas/Development/iris/runtime/model-artifacts/gemma-4-E2B-detwgt/raster/prompt-prepare/tokenizer.rastered", index_path = "/home/amcas/Development/iris/runtime/model-artifacts/gemma-4-E2B-detwgt/raster/prompt-prepare/tokenizer.rindex", commitment = "aa9b15cfd910f92b91638a8af385aef31f5166466d7871652946f32575812718" } }
@@ -117,6 +121,7 @@ inputs.tokenizer = { external = { path = "/home/amcas/Development/iris/runtime/m
 name = "input_embedding"
 project = "/home/amcas/Development/iris/raster-stages/input-embedding"
 inputs.prompt = { from = "prompt_prepare" }
+inputs.previous = { from = "range_origin" }
 inputs.claimed = { external = { path = "/home/amcas/Development/iris/runtime/model-artifacts/gemma-4-E2B-detwgt/raster/input-embedding/no_claim.rastered", index_path = "/home/amcas/Development/iris/runtime/model-artifacts/gemma-4-E2B-detwgt/raster/input-embedding/no_claim.rindex", commitment = "94f6d7424f2abc4846e1e7b1cf592ea061ee6d9841b31ac1e040e6dd917f87b0" } }
 inputs.embedding = { external = { path = "/home/amcas/Development/iris/runtime/model-artifacts/gemma-4-E2B-detwgt/raster/input-embedding/embedding.rastered", index_path = "/home/amcas/Development/iris/runtime/model-artifacts/gemma-4-E2B-detwgt/raster/input-embedding/embedding.rindex", commitment = "ff2f470ca568b4849bc4e145d9df0e6d933e53f22a3e674178d67bb037ecc41f" } }
 
