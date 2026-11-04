@@ -120,10 +120,11 @@ To deliberately update the bundle, edit the generator and run it without
 generator supplies independently calculated tokenization expectations; the gate
 does not bless current implementation outputs as new expected values.
 
-The model uses four layers, hidden width 128, FFN width 512, four query heads,
-two KV heads, head width 32, PLE width 8, and vocabulary size 512. Sliding/full
+The model uses four layers, hidden width 128, FFN width 2048, four query heads,
+two KV heads, head width 32, PLE width 32, and vocabulary size 512. Sliding/full
 attention alternates, layers 2/3 borrow from layers 0/1, and the sliding window is
-16 tokens. Dense signed Q16.16 matrices span full and partial Raster pages.
+16 tokens. The embedding tables, head, and attention and MLP matrices are dense
+signed `Q8_0` blocks; each MLP matrix spans a full and a partial Raster page.
 
 The short raw prompt has 5 input tokens and generates 1 token. The second raw
 prompt has 15 input tokens and generates 8. The wrapped prompt has 33 input

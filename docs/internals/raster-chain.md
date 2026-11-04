@@ -92,8 +92,13 @@ order made the layer stages 3× slower than one stage per layer.
 `sequence-check` scores the previous range's last row followed by this range's
 rows against the head, takes the first-maximum argmax at each position exactly as
 `prefill-finalize` followed by `decode-select-token` would, and appends the
-selections to the previous check's transcript. The last check's `DecodeEdge`
-feeds the unchanged `output-finalize`.
+selections to the previous check's transcript. It also compares each selection
+with the claimed id at that position and commits the result as the edge's claim
+verdict: `claim_mismatches`, the previous check's count plus this range's, and
+`first_claim_mismatch_position`, the earliest one. The last check's `DecodeEdge`
+feeds `output-finalize`, which publishes the verdict in the final output beside
+the ids and text. The autoregressive chain carries the same fields and always
+publishes zero, because it is given no claimed ids.
 
 The repeat counts, the last prompt range's index, and the per-range externals
 (`pieces_{j}`, `claimed_{k}`) are filled in by run preparation into the frozen run
@@ -108,13 +113,26 @@ position `i` saw. For an honest claim every row and K/V entry equals the
 autoregressive chain's, the last check's `DecodeEdge` equals its final
 `decode.edge`, and `output_finalize` is identical.
 
-`sequence-check` re-derives the greedy selections rather than asserting the
-claimed ones: an aborting stage has no output to hash or replay. A claim is
-therefore well-formed only if `output_finalize`'s ids equal its posted ids.
-False claims are caught one of three ways: a doctored layer output diverges at
-that (layer, range) stage, a doctored check output diverges at that check, and
-honest checkpoints over non-greedy tokens publish the greedy ids instead of the
-posted ones (`challenge build` reports this as a rejected claimed output).
+The claimed ids are an input to this chain, so a claim must not be able to post
+an output other than the one the chain consumed. It cannot: a teacher-forced
+claim posts no output ids of its own. Its output is `output_finalize`'s record,
+and it stands only if that record's `claim_mismatches` is zero.
+
+`sequence-check` publishes the verdict rather than aborting on a disagreement,
+because an aborting stage has no output to hash or replay. False claims are
+caught one of three ways:
+
+- **A doctored layer output** diverges at that (layer, range) stage, and a
+  challenge replays it.
+- **A doctored verdict.** A claimer who feeds non-greedy ids and commits a clean
+  verdict anyway diverges at that check, and a challenge replays it.
+- **Honest execution over non-greedy ids** has no divergent stage. It commits a
+  non-zero verdict, so the claim refutes itself in its own final record.
+  `challenge build` reports this as a rejected claimed output.
+
+The prompt side stays outside the chain: run preparation splits the rendered
+prompt into pieces and ranges natively, and a challenger re-derives both from
+the frozen prompt text before recomputing.
 
 ### Cost
 

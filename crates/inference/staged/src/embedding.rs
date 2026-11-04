@@ -32,7 +32,11 @@ impl StaticEmbedding {
         Ok(Self {
             hidden_size: source.select(fields(&["embedding", "hidden_size"]))?,
             scale: source.select(fields(&["embedding", "embedding_scale"]))?,
-            region: PageRegion::load(source, &["embedding", "values"])?,
+            region: PageRegion::load(
+                source,
+                &["embedding", "values"],
+                crate::verified_weights::Q8_PAGE_SIZE,
+            )?,
         })
     }
 }
@@ -62,16 +66,16 @@ pub(crate) fn load(
             );
         }
         // Raster selects one page per token, including for zero-width rows.
-        input_embedding::input::unpack_i32s_at(&pages[&index], offset, metadata.hidden_size)
+        input_embedding::input::q8_row_at(&pages[&index], offset, metadata.hidden_size)
             .map_err(anyhow::Error::msg)?;
     }
     Ok(SelectedEmbedding { metadata, pages })
 }
 
+/// The token's `Q8_0` row: `width / 32 · 34` bytes per row.
 fn row_offset(token: u32, width: u32) -> Result<u64> {
     u64::from(token)
-        .checked_mul(u64::from(width))
-        .and_then(|n| n.checked_mul(4))
+        .checked_mul(u64::from(width) / 32 * 34)
         .context("embedding row offset overflow")
 }
 
@@ -82,9 +86,8 @@ impl SelectedEmbedding {
             .pages
             .get(&(offset / self.metadata.region.page_size))
             .context("selected embedding page missing")?;
-        let values =
-            input_embedding::input::unpack_i32s_at(page, offset, self.metadata.hidden_size)
-                .map_err(anyhow::Error::msg)?;
+        let values = input_embedding::input::q8_row_at(page, offset, self.metadata.hidden_size)
+            .map_err(anyhow::Error::msg)?;
         let scale = Act::from_bits(self.metadata.scale);
         Ok(values
             .into_iter()

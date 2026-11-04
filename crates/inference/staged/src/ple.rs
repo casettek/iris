@@ -7,8 +7,8 @@ use inference_kernels::{
     weight_budget::RetainedWeightBytes,
 };
 use prefill_prepare_aux::input::{
-    add_sat, pack_i32s, rms_norm, scale_row, unpack_i32s, unpack_i32s_at, ActivationSequence,
-    PleLayerInputs, PleLayerParams, PleRow, PAGE_SIZE,
+    add_sat, pack_i32s, q8_row_at, rms_norm, scale_row, unpack_i32s, ActivationSequence,
+    PleLayerInputs, PleLayerParams, PleRow, PAGE_SIZE, Q8_PAGE_SIZE,
 };
 use raster::{Bytes, BytesPage, List};
 use raster_core::input::{SelectorPath, SelectorSegment};
@@ -99,7 +99,7 @@ impl StaticWeights {
         );
         let embedding_page_size = source.select(fields(&["layer", "embeddings", "page_size"]))?;
         ensure!(
-            embedding_page_size == PAGE_SIZE,
+            embedding_page_size == Q8_PAGE_SIZE,
             "PLE embedding page size mismatch"
         );
         let embedding_byte_len = source.select(fields(&["layer", "embeddings", "byte_len"]))?;
@@ -157,7 +157,8 @@ pub(crate) fn load(
         None => Arc::new(StaticWeights::load(&source)?),
     };
     let mut pages = BTreeMap::new();
-    let width_bytes = u64::from(weights.params.ple_width) * 4;
+    // One `Q8_0` row per token: `ple_width / 32 · 34` bytes.
+    let width_bytes = u64::from(weights.params.ple_width) / 32 * 34;
     for row in embedded.rows.iter() {
         let offset = u64::from(row.token_id)
             .checked_mul(width_bytes)
@@ -184,8 +185,7 @@ pub(crate) fn load(
             entry.insert(page);
         }
         // Do not stitch a row spanning pages: Raster selects exactly one page.
-        unpack_i32s_at(&pages[&index], offset, weights.params.ple_width)
-            .map_err(anyhow::Error::msg)?;
+        q8_row_at(&pages[&index], offset, weights.params.ple_width).map_err(anyhow::Error::msg)?;
     }
     Ok(SelectedWeights { weights, pages })
 }
@@ -208,13 +208,12 @@ pub(crate) fn run(
         let mut projected = matvec_from_source(&projection, &activation)?;
         scale_row(&mut projected, params.projection_scalar);
         rms_norm(&mut projected, &norm, params.norm_eps).map_err(anyhow::Error::msg)?;
-        let offset = u64::from(row.token_id) * u64::from(params.ple_width) * 4;
+        let offset = u64::from(row.token_id) * (u64::from(params.ple_width) / 32 * 34);
         let page = selected
             .pages
             .get(&(offset / weights.embedding_page_size))
             .context("PLE selected page missing")?;
-        let mut values =
-            unpack_i32s_at(page, offset, params.ple_width).map_err(anyhow::Error::msg)?;
+        let mut values = q8_row_at(page, offset, params.ple_width).map_err(anyhow::Error::msg)?;
         scale_row(&mut values, params.embedding_scale);
         for (value, projection) in values.iter_mut().zip(projected) {
             *value = add_sat(*value, projection);

@@ -146,7 +146,11 @@ pub(crate) fn input_documents_from_args() -> (Option<String>, Option<String>) {
     (arg("--input"), arg("--input-manifest"))
 }
 
-pub(crate) const PAGE_SIZE: u64 = 196_608;
+/// Page size of the `Q8_0` embedding table.
+pub(crate) const Q8_PAGE_SIZE: u64 = 195_840;
+
+/// Page size of the `Q8_0` head projection (see `prefill_finalize::input::PAGE_SIZE`).
+pub(crate) const Q8_HEAD_PAGE_SIZE: u64 = 52_224;
 
 #[derive(Clone, Copy)]
 pub(crate) struct PageRegion {
@@ -156,7 +160,11 @@ pub(crate) struct PageRegion {
 }
 
 impl PageRegion {
-    pub(crate) fn load(source: &VerifiedSelections, prefix: &[&str]) -> Result<Self> {
+    pub(crate) fn load(
+        source: &VerifiedSelections,
+        prefix: &[&str],
+        expected_page_size: u64,
+    ) -> Result<Self> {
         let path = |field| {
             let mut names = prefix.to_vec();
             names.push(field);
@@ -165,7 +173,7 @@ impl PageRegion {
         let byte_len: u64 = source.select(path("byte_len"))?;
         let page_size: u64 = source.select(path("page_size"))?;
         let page_count = source.list_len(path("pages"))?;
-        ensure!(page_size == PAGE_SIZE, "weight page size mismatch");
+        ensure!(page_size == expected_page_size, "weight page size mismatch");
         ensure!(
             page_count == byte_len.div_ceil(page_size),
             "weight page count mismatch"

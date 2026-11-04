@@ -361,6 +361,8 @@ impl CachedStageValue {
                 decode_position: value.decode_position,
                 token_id: value.token_id,
                 value: value.value,
+                claim_mismatches: value.claim_mismatches,
+                first_claim_mismatch_position: value.first_claim_mismatch_position,
                 generated_token_ids: value.generated_token_ids.clone(),
             }),
             _ => bail!("cached value is not a decode edge"),
@@ -404,6 +406,8 @@ impl CachedStageValue {
             decode_position: value.decode_position,
             token_id: value.token_id,
             value: value.value,
+            claim_mismatches: value.claim_mismatches,
+            first_claim_mismatch_position: value.first_claim_mismatch_position,
             generated_token_ids: value.generated_token_ids,
         })
     }
@@ -611,6 +615,8 @@ fn decode_embed_edge_from_decode(
         decode_position: source.decode_position,
         token_id: source.token_id,
         value: source.value,
+        claim_mismatches: source.claim_mismatches,
+        first_claim_mismatch_position: source.first_claim_mismatch_position,
         generated_token_ids: source.generated_token_ids.clone(),
     }
 }
@@ -621,6 +627,8 @@ fn output_edge_from_decode(source: &decode_input::DecodeEdge) -> output_input::D
         decode_position: source.decode_position,
         token_id: source.token_id,
         value: source.value,
+        claim_mismatches: source.claim_mismatches,
+        first_claim_mismatch_position: source.first_claim_mismatch_position,
         generated_token_ids: source.generated_token_ids.clone(),
     }
 }

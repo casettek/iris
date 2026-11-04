@@ -8,7 +8,7 @@ mod support;
 
 #[sequence]
 fn test_logits(
-    weights: Bytes<196_608>,
+    weights: Bytes<52_224>,
     normalized: NormalizedPosition,
     params: FinalHeadParams,
     token_count: u32,
@@ -27,9 +27,9 @@ fn test_logits(
 fn one_page_tiles_preserve_every_logit_and_its_token_id() {
     raster::init_with(support::Counter);
     let _scope = raster::__private::SequenceScopeGuard::enter("chunk_fixture");
-    for rows in support::cases() {
+    for rows in support::q8_cases::<PAGE_SIZE>() {
         support::reset_count();
-        let (weights, expected) = support::fixture(rows);
+        let (weights, expected) = support::q8_fixture::<PAGE_SIZE>(rows);
         let values = pack_i32s(&vec![support::ONE; support::WIDTH as usize]);
         let logits = raster::materialize_auth_return(__raster_sequence_auth_test_logits(
             weights,
@@ -51,7 +51,7 @@ fn one_page_tiles_preserve_every_logit_and_its_token_id() {
             assert_eq!(logit.token_id, id as u32);
             assert_eq!(logit.value, value);
         }
-        let pages = rows.div_ceil(support::ROWS_PER_PAGE);
+        let pages = rows.div_ceil(PAGE_SIZE as usize / support::Q8_ROW_BYTES);
         assert_eq!(support::iteration_count(), pages);
     }
 }

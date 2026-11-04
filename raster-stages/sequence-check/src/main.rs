@@ -4,7 +4,8 @@
 //!   previous.rows ──recur (chunk = 256)──▶ count ──▶ last row ─┐
 //!   activations.rows ──recur (chunk = 64)──▶ append ───────────┴▶ predicting rows
 //!   claimed.token_ids ──recur seq──▶ [ step · predicting[i] · normalise · head pages ──recur──▶ argmax · record ]
-//!   selections ──recur──▶ summary ──▶ edge scalars
+//!   selections ──recur──▶ summary ─┐
+//!   prior.claim_mismatches ────────┴▶ edge scalars + claim verdict
 //!   prior.generated_token_ids ──recur──▶ copy ──▶ selections ──recur──▶ copy ──▶ DecodeEdge
 //!   errors     ──recur──▶ summarise ──▶ assert none
 //! ```
@@ -118,9 +119,18 @@ fn main(
     );
     let summary = call!(finish_check, summary, error_count, first_error)?;
 
+    // The verdict accumulates across ranges, so the last check's edge, the
+    // one `output_finalize` publishes, covers every claimed token.
+    let prior_mismatches = select!(u32, prior.clone().claim_mismatches);
+    let prior_first_mismatch = select!(u32, prior.clone().first_claim_mismatch_position);
     // Push-only sites deriving in turn from the opened edge: the earlier
     // ranges' transcript, then this range's selections.
-    let base = call!(begin_decode_edge, summary);
+    let base = call!(
+        begin_decode_edge,
+        summary,
+        prior_mismatches,
+        prior_first_mismatch
+    );
     let prior_ids = select!(List<u32>, prior.generated_token_ids);
     let carried = call_recur!(
         tile = copy_prior_token_ids,

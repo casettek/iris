@@ -16,7 +16,7 @@ use prefill_prepare_aux::*;
 fn prepare_ple_row(
     input: RecurSequenceInput<ActivationRow>,
     output: RecurSequenceOutput<PleLayerInputs>,
-    embeddings: Bytes<196_608>,
+    embeddings: Bytes<195_840>,
     projection_pages: List<BytesPage>,
     params: PleLayerParams,
     page_size: u64,
@@ -54,7 +54,7 @@ fn main(embedded: ActivationSequence, layer: PleLayer) -> Result<PleLayerInputs>
     let declared_params = select!(PleLayerParams, layer.clone().params);
     let params = call!(validate_layer_params, declared_params)?;
     let page_size = select!(u64, layer.clone().embeddings.page_size);
-    let embeddings = select!(Bytes<196_608>, layer.clone().embeddings);
+    let embeddings = select!(Bytes<195_840>, layer.clone().embeddings);
     let proj_len = select!(u64, layer.clone().projection.byte_len);
     let projection_pages = select!(List<BytesPage>, layer.projection.pages);
     let hidden = select!(u32, params.clone().hidden_size);

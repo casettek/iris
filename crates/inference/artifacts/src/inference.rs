@@ -9,6 +9,15 @@ pub struct InferenceResult {
     pub generated_token_ids_sha256: String,
     pub generated_text: String,
     pub stop_reason: String,
+    /// `output-finalize`'s claim verdict: how many generated positions were
+    /// given a claimed token that is not the greedy selection there. Only a
+    /// teacher-forced chain is given claimed tokens; a teacher-forced claim
+    /// stands only if this is zero.
+    #[serde(default)]
+    pub claim_mismatches: u32,
+    /// Absolute sequence position of the first disagreement, or zero.
+    #[serde(default)]
+    pub first_claim_mismatch_position: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

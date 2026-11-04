@@ -6,7 +6,7 @@ use prefill_finalize::input::{
 use raster::List;
 use rayon::prelude::*;
 
-use crate::tensor::{self, Matrix};
+use crate::tensor::{self, MatrixSource, Q8Matrix};
 
 pub struct PrefillFinalizeDirectInputs<'a> {
     pub activations: &'a ActivationSequence,
@@ -37,7 +37,7 @@ pub fn run_prefill_finalize_direct(
     .map_err(anyhow::Error::msg)?;
 
     let projection = projection_matrix(inputs.head, &params)?;
-    let scores = projection.matvec(&values)?;
+    let scores = MatrixSource::matvec(&projection, &values)?;
     let logits = if tensor::use_parallel() {
         scores
             .par_iter()
@@ -85,13 +85,13 @@ fn validate_head(params: &FinalHeadParams) -> Result<FinalHeadParams> {
     Ok(params.clone())
 }
 
-fn projection_matrix(head: &FinalHead, params: &FinalHeadParams) -> Result<Matrix> {
-    let stride = params.hidden_size as u64 * 4;
+fn projection_matrix(head: &FinalHead, params: &FinalHeadParams) -> Result<Q8Matrix> {
+    let stride = det_num::q8::row_bytes(params.hidden_size as usize).unwrap_or(0) as u64;
     let byte_len = head.projection.byte_len();
     if stride == 0 || byte_len % stride != 0 {
-        bail!("projection has {byte_len} bytes, expected a whole number of hidden-width rows");
+        bail!("projection has {byte_len} bytes, expected a whole number of hidden-width Q8_0 rows");
     }
-    Matrix::from_region(
+    Q8Matrix::from_region(
         "projection",
         &head.projection,
         (byte_len / stride) as usize,

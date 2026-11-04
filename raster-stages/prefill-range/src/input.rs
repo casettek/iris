@@ -22,6 +22,11 @@ pub const ONE: i32 = 1 << FRAC_BITS;
 /// Replay-unit page size for every weight matrix in this program.
 pub const PAGE_SIZE: u64 = 196_608;
 
+/// Replay-unit page size for the `Q8_0` matrices: whole rows of
+/// `in / 32 · 34` bytes for every width this chain is imported with. MUST
+/// match the importer's `Q8_PAGE_SIZE`.
+pub const Q8_PAGE_SIZE: u64 = 195_840;
+
 // ---------------------------------------------------------------------------
 // The pipeline's activation type — field-for-field identical in every stage
 // that passes activations on.
@@ -144,20 +149,21 @@ pub struct LayerParams {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
 pub struct TransformerLayer {
     pub params: LayerParams,
-    #[page_size = 196_608]
-    pub w_q: Bytes<196_608>,
-    #[page_size = 196_608]
-    pub w_k: Bytes<196_608>,
-    #[page_size = 196_608]
-    pub w_v: Bytes<196_608>,
-    #[page_size = 196_608]
-    pub w_o: Bytes<196_608>,
-    #[page_size = 196_608]
-    pub w_gate: Bytes<196_608>,
-    #[page_size = 196_608]
-    pub w_up: Bytes<196_608>,
-    #[page_size = 196_608]
-    pub w_down: Bytes<196_608>,
+    // Projection and MLP matrices: `Q8_0` rows, `in / 32 · 34` bytes each.
+    #[page_size = 195_840]
+    pub w_q: Bytes<195_840>,
+    #[page_size = 195_840]
+    pub w_k: Bytes<195_840>,
+    #[page_size = 195_840]
+    pub w_v: Bytes<195_840>,
+    #[page_size = 195_840]
+    pub w_o: Bytes<195_840>,
+    #[page_size = 195_840]
+    pub w_gate: Bytes<195_840>,
+    #[page_size = 195_840]
+    pub w_up: Bytes<195_840>,
+    #[page_size = 195_840]
+    pub w_down: Bytes<195_840>,
     /// PLE gate: hidden -> ple_width.
     #[page_size = 196_608]
     pub ple_input_gate: Bytes<196_608>,

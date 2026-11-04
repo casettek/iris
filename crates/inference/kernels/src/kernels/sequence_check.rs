@@ -1,10 +1,10 @@
 use anyhow::{bail, ensure, Result};
 use raster::List;
 use sequence_check::input::{
-    dot, rms_norm, softcap, unpack_i32s, ActivationSequence, ClaimedOutput, DecodeEdge, FinalHead,
+    rms_norm, softcap, unpack_i32s, ActivationSequence, ClaimedOutput, DecodeEdge, FinalHead,
 };
 
-use crate::tensor::Matrix;
+use crate::tensor::{MatrixSource, Q8Matrix};
 
 /// The final-norm and softcap parameters every check position shares.
 pub struct CheckHeadParams<'a> {
@@ -47,9 +47,10 @@ impl Argmax {
 }
 
 /// Scores one row of the projection exactly as the head page tiles do.
-pub fn score_row(normalized: &[i32], row: &[i32], cap: i32) -> Result<i32> {
+/// One vocabulary entry's softcapped score against a `Q8_0` head row.
+pub fn score_row(normalized: &[i32], row: &[u8], cap: i32) -> Result<i32> {
     Ok(softcap(
-        dot(normalized, row).map_err(anyhow::Error::msg)?,
+        det_num::q8::dot_row(normalized, row).map_err(anyhow::Error::msg)?,
         cap,
     ))
 }
@@ -106,7 +107,8 @@ pub fn check_positions(
 
 /// Publishes the selections in the `DecodeEdge` shape `output-finalize`
 /// consumes, after the earlier ranges' transcript. Disagreement with the
-/// claim is published, not raised.
+/// claim is published in the claim verdict, not raised: the earlier ranges'
+/// count plus this range's, keeping the earliest position.
 pub fn decode_edge(
     positions: &[CheckPosition],
     selections: &[Selection],
@@ -121,11 +123,23 @@ pub fn decode_edge(
     let (last_position, last) = positions.last().zip(selections.last()).ok_or_else(|| {
         anyhow::anyhow!("teacher-forced check requires at least one claimed output token")
     })?;
+    let mismatches = positions
+        .iter()
+        .zip(selections)
+        .filter(|(position, selection)| position.claimed_token_id != selection.token_id)
+        .count() as u32;
+    let first_claim_mismatch_position = if prior.claim_mismatches > 0 {
+        prior.first_claim_mismatch_position
+    } else {
+        first_mismatch(positions, selections).unwrap_or(0)
+    };
     Ok(DecodeEdge {
         has_selected: true,
         decode_position: last_position.decode_position,
         token_id: last.token_id,
         value: last.value,
+        claim_mismatches: prior.claim_mismatches.saturating_add(mismatches),
+        first_claim_mismatch_position,
         generated_token_ids: List::from(
             prior
                 .generated_token_ids
@@ -179,13 +193,13 @@ pub fn run_sequence_check_direct(inputs: SequenceCheckDirectInputs<'_>) -> Resul
     };
     let positions = check_positions(inputs.activations, inputs.previous, inputs.claimed, &params)?;
 
-    let stride = u64::from(head.hidden_size) * 4;
+    let stride = det_num::q8::row_bytes(head.hidden_size as usize).unwrap_or(0) as u64;
     let byte_len = inputs.head.projection.byte_len();
     ensure!(
-        byte_len % stride == 0,
-        "projection has {byte_len} bytes, expected a whole number of hidden-width rows"
+        stride != 0 && byte_len % stride == 0,
+        "projection has {byte_len} bytes, expected a whole number of hidden-width Q8_0 rows"
     );
-    let projection = Matrix::from_region(
+    let projection = Q8Matrix::from_region(
         "projection",
         &inputs.head.projection,
         (byte_len / stride) as usize,

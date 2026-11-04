@@ -16,7 +16,7 @@ use input_embedding::*;
 fn embed_prompt_token(
     input: RecurSequenceInput<u32>,
     output: RecurSequenceOutput<ActivationSequence>,
-    values: Bytes<196_608>,
+    values: Bytes<195_840>,
     hidden_size: u32,
     page_size: u64,
     embedding_scale: i32,
@@ -70,7 +70,7 @@ fn main(
     let hidden_size = select!(u32, embedding.clone().hidden_size);
     let page_size = select!(u64, embedding.clone().values.page_size);
     let embedding_scale = select!(i32, embedding.clone().embedding_scale);
-    let values = select!(Bytes<196_608>, embedding.values);
+    let values = select!(Bytes<195_840>, embedding.values);
 
     let draft = call!(begin_prompt_activations, start_position);
     let prompt_rows = call_recur_seq!(

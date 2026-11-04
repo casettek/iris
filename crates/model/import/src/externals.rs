@@ -13,6 +13,16 @@ use serde::{Deserialize, Serialize};
 /// Replay-unit page size shared by every `Bytes<P>` region this importer writes.
 pub const PAGE_SIZE: u64 = 196_608;
 
+/// Page size of every `Q8_0` region: a whole number of rows for each row
+/// width `in / 32 · 34` this chain is imported with. MUST match the stages'
+/// `Q8_PAGE_SIZE` / embedding and head `PAGE_SIZE`.
+pub const Q8_PAGE_SIZE: u64 = 195_840;
+
+/// Page size of the head projection: at most 384 rows of a 128-wide head,
+/// under Raster's per-page budget for the logit `prefill-finalize` writes per
+/// row. MUST match `prefill-finalize` and `sequence-check`.
+pub const Q8_HEAD_PAGE_SIZE: u64 = 52_224;
+
 /// Packs Q16.16 values as little-endian i32s.
 pub fn pack_i32_bytes(values: &[i32]) -> Vec<u8> {
     let mut out = Vec::with_capacity(values.len() * 4);
@@ -90,8 +100,8 @@ pub struct DecoderTable {
 pub struct EmbeddingTable {
     pub hidden_size: u32,
     pub embedding_scale: i32,
-    #[page_size = 196_608]
-    pub values: Bytes<196_608>,
+    #[page_size = 195_840]
+    pub values: Bytes<195_840>,
 }
 
 /// A claimed range's `prompt` input: no prompt ids before its claimed ids.
@@ -123,8 +133,8 @@ pub struct PleLayerParams {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
 pub struct PleLayer {
     pub params: PleLayerParams,
-    #[page_size = 196_608]
-    pub embeddings: Bytes<196_608>,
+    #[page_size = 195_840]
+    pub embeddings: Bytes<195_840>,
     #[page_size = 196_608]
     pub projection: Bytes<196_608>,
 }
@@ -162,20 +172,20 @@ pub struct LayerParams {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
 pub struct TransformerLayer {
     pub params: LayerParams,
-    #[page_size = 196_608]
-    pub w_q: Bytes<196_608>,
-    #[page_size = 196_608]
-    pub w_k: Bytes<196_608>,
-    #[page_size = 196_608]
-    pub w_v: Bytes<196_608>,
-    #[page_size = 196_608]
-    pub w_o: Bytes<196_608>,
-    #[page_size = 196_608]
-    pub w_gate: Bytes<196_608>,
-    #[page_size = 196_608]
-    pub w_up: Bytes<196_608>,
-    #[page_size = 196_608]
-    pub w_down: Bytes<196_608>,
+    #[page_size = 195_840]
+    pub w_q: Bytes<195_840>,
+    #[page_size = 195_840]
+    pub w_k: Bytes<195_840>,
+    #[page_size = 195_840]
+    pub w_v: Bytes<195_840>,
+    #[page_size = 195_840]
+    pub w_o: Bytes<195_840>,
+    #[page_size = 195_840]
+    pub w_gate: Bytes<195_840>,
+    #[page_size = 195_840]
+    pub w_up: Bytes<195_840>,
+    #[page_size = 195_840]
+    pub w_down: Bytes<195_840>,
     #[page_size = 196_608]
     pub ple_input_gate: Bytes<196_608>,
     #[page_size = 196_608]
@@ -195,6 +205,6 @@ pub struct FinalHeadParams {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
 pub struct FinalHead {
     pub params: FinalHeadParams,
-    #[page_size = 196_608]
-    pub projection: Bytes<196_608>,
+    #[page_size = 52_224]
+    pub projection: Bytes<52_224>,
 }

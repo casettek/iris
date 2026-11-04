@@ -20,7 +20,7 @@ use serde::{Deserialize, Serialize};
 
 /// Replay-unit page size for the logits projection. MUST match
 /// `prefill-finalize`: both stages read the same committed head external.
-pub const PAGE_SIZE: u64 = 196_608;
+pub const PAGE_SIZE: u64 = 52_224;
 
 // ---------------------------------------------------------------------------
 // Boundary types
@@ -77,8 +77,9 @@ pub struct FinalHeadParams {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
 pub struct FinalHead {
     pub params: FinalHeadParams,
-    #[page_size = 196_608]
-    pub projection: Bytes<196_608>,
+    /// `Q8_0` rows, one per vocabulary entry.
+    #[page_size = 52_224]
+    pub projection: Bytes<52_224>,
 }
 
 /// The stage's authorized output: the greedy selection at every generated
@@ -93,6 +94,13 @@ pub struct DecodeEdge {
     pub decode_position: u32,
     pub token_id: u32,
     pub value: i32,
+    /// The claim verdict so far: how many claimed tokens, in this range and
+    /// every earlier one, are not the greedy selection at their position.
+    /// Zero for an honest claim, as on every autoregressive edge.
+    pub claim_mismatches: u32,
+    /// Absolute sequence position of the first disagreement, or zero when
+    /// there is none.
+    pub first_claim_mismatch_position: u32,
     pub generated_token_ids: List<u32>,
 }
 

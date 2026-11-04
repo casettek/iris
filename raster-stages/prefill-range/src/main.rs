@@ -34,21 +34,21 @@ fn project_token(
     let normed = call!(qkv_normed, prep.clone());
     let acc_q = call!(zero_accum, q_len);
     let q = call_recur!(
-        tile = mac_weight_page,
+        tile = mac_q8_weight_page,
         input = w_q,
         state = acc_q,
         args = (normed.clone(), hidden.clone())
     );
     let acc_k = call!(zero_accum, kv_len.clone());
     let k = call_recur!(
-        tile = mac_weight_page,
+        tile = mac_q8_weight_page,
         input = w_k,
         state = acc_k,
         args = (normed.clone(), hidden.clone())
     );
     let acc_v = call!(zero_accum, kv_len);
     let v = call_recur!(
-        tile = mac_weight_page,
+        tile = mac_q8_weight_page,
         input = w_v,
         state = acc_v,
         args = (normed, hidden)
@@ -165,7 +165,7 @@ fn attend_token(
     let hidden = select!(u32, params.clone().hidden_size);
     let acc_o = call!(zero_accum, hidden.clone());
     let attn_proj = call_recur!(
-        tile = mac_weight_page,
+        tile = mac_q8_weight_page,
         input = w_o,
         state = acc_o,
         args = (context_values, q_len)
@@ -182,14 +182,14 @@ fn attend_token(
     let ffn = select!(u32, params.clone().ffn_size);
     let acc_gate = call!(zero_accum, ffn.clone());
     let gate = call_recur!(
-        tile = mac_weight_page,
+        tile = mac_q8_weight_page,
         input = w_gate,
         state = acc_gate,
         args = (ff_in_values.clone(), hidden.clone())
     );
     let acc_up = call!(zero_accum, ffn.clone());
     let up = call_recur!(
-        tile = mac_weight_page,
+        tile = mac_q8_weight_page,
         input = w_up,
         state = acc_up,
         args = (ff_in_values, hidden.clone())
@@ -198,7 +198,7 @@ fn attend_token(
     let gated_values = call!(packed_values, gated);
     let acc_down = call!(zero_accum, hidden.clone());
     let ff = call_recur!(
-        tile = mac_weight_page,
+        tile = mac_q8_weight_page,
         input = w_down,
         state = acc_down,
         args = (gated_values, ffn)

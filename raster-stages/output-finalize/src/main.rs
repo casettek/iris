@@ -21,7 +21,7 @@ fn decode_generated_token(
 #[sequence]
 fn main(edge: DecodeEdge, decoder: DecoderTable) -> Result<GeneratedOutput> {
     let has_selected = select!(bool, edge.clone().has_selected);
-    let ids = select!(List<u32>, edge.generated_token_ids);
+    let ids = select!(List<u32>, edge.clone().generated_token_ids);
     let ids_for_decode = clone!(ids);
     let tokens = select!(List<DecoderToken>, decoder.tokens);
 
@@ -36,7 +36,14 @@ fn main(edge: DecodeEdge, decoder: DecoderTable) -> Result<GeneratedOutput> {
     let count = select!(u32, state.clone().count);
     call!(validate_decode_edge, has_selected, count)?;
 
-    let draft = call!(begin_generated_output, state);
+    let claim_mismatches = select!(u32, edge.clone().claim_mismatches);
+    let first_claim_mismatch = select!(u32, edge.first_claim_mismatch_position);
+    let draft = call!(
+        begin_generated_output,
+        state,
+        claim_mismatches,
+        first_claim_mismatch
+    );
     let output = call_recur!(
         tile = copy_output_token_ids,
         input = ids,

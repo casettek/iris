@@ -8,7 +8,11 @@
 //!     row      = predicting[k]                     (teacher-forced: row i sees ids[..=i])
 //!     normed   = rms_norm(row, w_final)
 //!     selected = argmax_t softcap(normed · projection[t])   (first maximum wins)
-//!   DecodeEdge { last selection, generated_token_ids = earlier ranges' ‖ every selection }
+//!   DecodeEdge {
+//!     last selection,
+//!     claim_mismatches    = earlier ranges' + #{k : selected_k ≠ claimed_k},
+//!     generated_token_ids = earlier ranges' ‖ every selection,
+//!   }
 //! ```
 //!
 //! The scores and the tie-break are `prefill-finalize` followed by
@@ -18,9 +22,11 @@
 //! scanning the materialized list.
 //!
 //! The stage re-derives the greedy continuation rather than asserting the
-//! claimed one. An honest claim's output is byte-identical to the
-//! autoregressive chain's final decode edge; a claim whose tokens are not the
-//! greedy continuation publishes different ids from the ones it posted.
+//! claimed one, and commits the comparison as the edge's claim verdict. An
+//! honest claim's output is byte-identical to the autoregressive chain's final
+//! decode edge. A claim whose tokens are not the greedy continuation, run
+//! honestly, publishes a non-zero verdict; one that publishes a clean verdict
+//! anyway has doctored this stage, and a challenge replays it here.
 //!
 //! `#![no_std]` so the same tiles compile into RISC0 replay guests.
 
@@ -219,35 +225,30 @@ pub fn score_head_page(
     };
     let hidden = params.hidden_size as usize;
     let page = input.into_value();
-    let weights = match unpack_i32s(&page) {
-        Ok(values) => values,
-        Err(error) => {
-            record_argmax_error(&mut state, error);
+    let stride = match det_num::q8::row_bytes(hidden) {
+        Some(stride) if page.len() % stride == 0 => stride,
+        _ => {
+            record_argmax_error(
+                &mut state,
+                alloc::format!(
+                    "projection page at offset {} is not a whole number of hidden-width Q8_0 rows",
+                    page.offset()
+                ),
+            );
             return state;
         }
     };
-    if hidden == 0 || weights.len() % hidden != 0 {
-        record_argmax_error(
-            &mut state,
-            alloc::format!(
-                "projection page at offset {} is not a whole number of hidden-width rows",
-                page.offset()
-            ),
-        );
-        return state;
-    }
-    let stride = hidden as u64 * 4;
-    if page.offset() % stride != 0 {
+    if page.offset() % stride as u64 != 0 {
         record_argmax_error(
             &mut state,
             String::from("projection page offset is not row-aligned"),
         );
         return state;
     }
-    let first_id = (page.offset() / stride) as u32;
-    for (local, row) in weights.chunks_exact(hidden).enumerate() {
+    let first_id = (page.offset() / stride as u64) as u32;
+    for (local, row) in page.as_slice().chunks_exact(stride).enumerate() {
         let token_id = first_id + local as u32;
-        match dot(&position, row) {
+        match det_num::q8::dot_row(&position, row) {
             Ok(score) => {
                 let value = softcap(score, params.softcap);
                 if !state.has_value || value > state.value {
@@ -351,7 +352,8 @@ pub fn summarise_errors(
 /// Fails the program when a position went unscored or nothing was claimed.
 ///
 /// A disagreement with the claim is not a failure: it is published in the
-/// output's ids, which is what makes it disputable.
+/// output's claim verdict, which is what makes it disputable. An aborting
+/// stage has no output to hash or replay.
 #[tile(kind = iter, description = "Reject an incomplete teacher-forced check")]
 pub fn finish_check(
     summary: SelectionSummary,
@@ -379,17 +381,35 @@ pub fn finish_check(
     Ok(summary)
 }
 
-/// Opens the output edge with the last selection's scalars.
+/// Opens the output edge with the last selection's scalars and the claim
+/// verdict: the earlier ranges' disagreements plus this range's, keeping the
+/// earliest position.
 ///
 /// The transcript list stays empty here: the copy sites below derive from
 /// this object and only push — the earlier ranges' ids, then this range's.
 #[tile(kind = iter, description = "Open the checked decode edge")]
-pub fn begin_decode_edge(summary: SelectionSummary) -> Draft<DecodeEdge> {
+pub fn begin_decode_edge(
+    summary: SelectionSummary,
+    prior_mismatches: u32,
+    prior_first_mismatch_position: u32,
+) -> Draft<DecodeEdge> {
     let mut output = Draft::<DecodeEdge>::new();
     output.has_selected().set(summary.has_selected);
     output.decode_position().set(summary.decode_position);
     output.token_id().set(summary.token_id);
     output.value().set(summary.value);
+    // Saturating: any non-zero count rejects the claim, and a saturated count
+    // stays non-zero.
+    output
+        .claim_mismatches()
+        .set(prior_mismatches.saturating_add(summary.mismatches));
+    output
+        .first_claim_mismatch_position()
+        .set(if prior_mismatches > 0 {
+            prior_first_mismatch_position
+        } else {
+            summary.first_mismatch_position
+        });
     output
 }
 

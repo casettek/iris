@@ -23,7 +23,7 @@ use std::error::Error;
 use std::path::Path;
 
 const MAGIC: &[u8; 8] = b"DNWGTV0\0";
-const DETWGT_VERSION: u32 = 2;
+const DETWGT_VERSION: u32 = 3;
 const DET_NUM_SPEC_VERSION: u32 = 1;
 const PAYLOAD_ALIGNMENT: usize = 64;
 
@@ -92,7 +92,7 @@ pub fn load(path: &Path) -> Result<Artifact, Box<dyn Error>> {
         return Err(format!("{} is not a detwgt artifact", path.display()).into());
     }
     let version = cursor.u32()?;
-    if version != DETWGT_VERSION {
+    if !(2..=DETWGT_VERSION).contains(&version) {
         return Err(format!(
             "{} is detwgt v{version}; this importer reads v{DETWGT_VERSION} (re-run gemma-det-num-wgt-converter)",
             path.display()
@@ -118,6 +118,12 @@ pub fn load(path: &Path) -> Result<Artifact, Box<dyn Error>> {
         let element_width = cursor.u32()?;
         let payload_len = cursor.u64()? as usize;
         let _max_row_mass = cursor.u64()?;
+        if element_width == crate::Q8_0_WIDTH {
+            return Err(format!(
+                "tensor '{name}' is Q8_0; the eager reader holds Q16.16 values only (use MmapDetwgt)"
+            )
+            .into());
+        }
         if payload_len != element_count * (element_width as usize / 8) {
             return Err(format!("tensor '{name}' payload length does not match its width").into());
         }

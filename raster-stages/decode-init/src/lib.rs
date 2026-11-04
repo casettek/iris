@@ -19,5 +19,9 @@ pub fn initialize_decode_edge() -> Draft<DecodeEdge> {
     output.decode_position().set(0);
     output.token_id().set(0);
     output.value().set(0);
+    // No claimed token has been checked, so none has disagreed. This is also
+    // the verdict the first teacher-forced check accumulates onto.
+    output.claim_mismatches().set(0);
+    output.first_claim_mismatch_position().set(0);
     output
 }

@@ -122,10 +122,12 @@ pub fn build_challenge(options: ChallengeBuildOptions) -> Result<ChallengeBuildR
     let Some(divergence) = divergence else {
         // Every checkpoint agrees, so there is no stage to dispute. A
         // teacher-forced claim can still be refuted by its own final record:
-        // honest hashes over a non-greedy output publish the greedy ids.
-        if let Some(reason) =
-            claimed_output_disagreement(claimed_input.prepared_run.as_ref(), final_result.as_ref())?
-        {
+        // honest execution over non-greedy ids commits a non-zero verdict.
+        if let Some(reason) = claimed_output_rejection(
+            claimed_input.prepared_run.as_ref(),
+            &manifest_path,
+            final_result.as_ref(),
+        )? {
             return Ok(ChallengeBuildResult {
                 outcome: ChallengeBuildOutcome::ClaimedOutputRejected {
                     reason,
@@ -542,8 +544,7 @@ fn verify_prepared_run(prepared: &PreparedRun) -> Result<()> {
         .as_ref()
         .ok_or_else(|| anyhow::anyhow!("prepared run has no run_manifest_sha256"))?;
     verify_file_sha256(manifest_path, manifest_sha256, "frozen run manifest")?;
-    verify_prompt_ranges(prepared, manifest_path)?;
-    verify_claimed_output(prepared, manifest_path)
+    verify_prompt_ranges(prepared, manifest_path)
 }
 
 /// The frozen prompt pieces must be the split of the frozen rendered prompt,
@@ -626,58 +627,55 @@ fn bound_commitments(manifest_path: &Path, name: &str) -> Result<Vec<String>> {
         .with_context(|| format!("{name} commitments are not strings"))
 }
 
-/// A teacher-forced claim's posted ids must be the ones its frozen run
-/// manifest commits to, and must obey the token-budget rule.
-fn verify_claimed_output(prepared: &PreparedRun, manifest_path: &Path) -> Result<()> {
-    match (prepared.chain, &prepared.claimed_token_ids) {
-        (ChainKind::Autoregressive, None) => Ok(()),
-        (ChainKind::Autoregressive, Some(_)) => {
-            bail!("autoregressive prepared run unexpectedly carries claimed output ids")
-        }
-        (ChainKind::TeacherForced, None) => {
-            bail!("teacher-forced prepared run has no claimed output ids")
-        }
-        (ChainKind::TeacherForced, Some(ids)) => {
-            run_prep::validate_claimed_length(
-                ids,
-                prepared.tokens,
-                &prepared.prompt.eos_token_ids,
-            )?;
-            let model =
-                inference_artifacts::ModelManifest::load_verified(&prepared.model_manifest_path)?;
-            let range_size = model.teacher_forced_range_size()? as usize;
-            let expected = run_prep::claimed_range_commitments(ids, range_size)?;
-            if bound_commitments(manifest_path, "claimed_ids")? != expected {
-                bail!(
-                    "frozen run manifest does not commit to the claimed output ids in ranges of {range_size}"
-                );
-            }
-            Ok(())
-        }
-    }
-}
-
-/// After a trace with no divergence, a teacher-forced claim still stands only
-/// if the checked selections are the ids it posted.
-pub(crate) fn claimed_output_disagreement(
+/// Why a claim whose every checkpoint matched is still rejected, if it is.
+///
+/// With no divergent stage to dispute, a claim stands or falls on its own
+/// final record. Every rule here reads only that record and the frozen run
+/// manifest: the claim posts no output of its own to compare against.
+///
+/// The first rule is the verdict `sequence_check` commits. Honest execution
+/// over non-greedy claimed ids publishes a non-zero count; a claimer who
+/// wanted a clean count instead had to doctor a check stage, which diverges
+/// and is replayed rather than reaching this point.
+///
+/// With a clean verdict the final ids are exactly the claimed ids the chain
+/// consumed, so the remaining rules apply to them: the token budget, and the
+/// cut into ranges of the model's range size. The cut bounds each check's
+/// replay cost; it is a shape rule, not what makes the output correct.
+pub(crate) fn claimed_output_rejection(
     prepared: Option<&PreparedRun>,
+    manifest_path: &Path,
     final_result: Option<&inference_artifacts::InferenceResult>,
 ) -> Result<Option<String>> {
-    let Some(claimed) = prepared.and_then(|prepared| prepared.claimed_token_ids.as_ref()) else {
+    let Some(prepared) = prepared.filter(|prepared| prepared.chain == ChainKind::TeacherForced)
+    else {
         return Ok(None);
     };
-    let checked = final_result
-        .map(|result| result.generated_token_ids.as_slice())
-        .context(
-            "teacher-forced recomputation produced no final output to check the claim against",
-        )?;
-    Ok(crate::claim::first_disagreement(claimed, checked).map(|position| {
-        format!(
-            "claimed output is not the greedy continuation at generated token {position}: claimed {:?}, greedy {:?}",
-            claimed.get(position),
-            checked.get(position)
-        )
-    }))
+    let result = final_result.context(
+        "teacher-forced recomputation produced no final output to check the claim against",
+    )?;
+    if result.claim_mismatches > 0 {
+        return Ok(Some(format!(
+            "claimed output is not the greedy continuation: the committed verdict counts {} claimed token(s) that differ from the greedy selection, the first at sequence position {}",
+            result.claim_mismatches, result.first_claim_mismatch_position
+        )));
+    }
+    let ids = &result.generated_token_ids;
+    if let Err(error) =
+        run_prep::validate_claimed_length(ids, prepared.tokens, &prepared.prompt.eos_token_ids)
+    {
+        return Ok(Some(format!("{error:#}")));
+    }
+    let model = inference_artifacts::ModelManifest::load_verified(&prepared.model_manifest_path)?;
+    let range_size = model.teacher_forced_range_size()? as usize;
+    if bound_commitments(manifest_path, "claimed_ids")?
+        != run_prep::claimed_range_commitments(ids, range_size)?
+    {
+        return Ok(Some(format!(
+            "frozen run manifest does not bind the output ids in ranges of {range_size}"
+        )));
+    }
+    Ok(None)
 }
 
 fn resolve_bundle_path(base: &Path, path: &Path) -> PathBuf {
@@ -1147,13 +1145,78 @@ mod tests {
             run_manifest_path: Some(run_manifest),
             run_manifest_sha256: Some(String::from("wrong")),
             chain: Default::default(),
-            claimed_token_ids: None,
         };
 
         let error = verify_prepared_run(&prepared).unwrap_err();
         assert!(error.to_string().contains("run manifest hash mismatch"));
 
         fs::remove_dir_all(base).unwrap();
+    }
+
+    #[test]
+    fn teacher_forced_claim_is_judged_by_its_committed_verdict() {
+        let prepared = |chain| PreparedRun {
+            version: inference_artifacts::PREPARED_RUN_VERSION,
+            run_spec_path: PathBuf::from("inference.toml"),
+            model_manifest_path: PathBuf::from("unread/manifest.json"),
+            model_manifest_sha256: String::from("unread"),
+            prompt: inference_artifacts::PreparedPrompt {
+                resolved_prompt: String::from("hello"),
+                rendered_prompt: String::from("hello"),
+                initial_pieces: Vec::new(),
+                eos_token_ids: vec![1],
+            },
+            tokens: 3,
+            run_manifest_path: None,
+            run_manifest_sha256: None,
+            chain,
+        };
+        let result = |ids: Vec<u32>, claim_mismatches, first_claim_mismatch_position| {
+            inference_artifacts::InferenceResult {
+                generated_token_count: ids.len() as u32,
+                generated_token_ids: ids,
+                generated_token_ids_sha256: String::from("sha"),
+                generated_text: String::new(),
+                stop_reason: String::from("max_new_tokens"),
+                claim_mismatches,
+                first_claim_mismatch_position,
+            }
+        };
+        let manifest = Path::new("unread/Raster.toml");
+        let teacher_forced = prepared(ChainKind::TeacherForced);
+
+        // The committed verdict rejects the claim before anything is read
+        // from disk.
+        let reason = claimed_output_rejection(
+            Some(&teacher_forced),
+            manifest,
+            Some(&result(vec![5, 6, 7], 2, 9)),
+        )
+        .unwrap()
+        .unwrap();
+        assert!(reason.contains("counts 2 claimed token(s)"), "{reason}");
+        assert!(reason.contains("sequence position 9"), "{reason}");
+
+        // A clean verdict over a truncated output still breaks the budget.
+        let reason = claimed_output_rejection(
+            Some(&teacher_forced),
+            manifest,
+            Some(&result(vec![5, 6], 0, 0)),
+        )
+        .unwrap()
+        .unwrap();
+        assert!(reason.contains("does not end at EOS"), "{reason}");
+
+        // A teacher-forced claim must have a final record to be judged by.
+        assert!(claimed_output_rejection(Some(&teacher_forced), manifest, None).is_err());
+
+        // Autoregressive claims and bare traces carry no claimed ids.
+        let autoregressive = prepared(ChainKind::Autoregressive);
+        assert_eq!(
+            claimed_output_rejection(Some(&autoregressive), manifest, None).unwrap(),
+            None
+        );
+        assert_eq!(claimed_output_rejection(None, manifest, None).unwrap(), None);
     }
 
     fn trace(checkpoints: Vec<Checkpoint>) -> CheckpointTrace {

@@ -1,6 +1,6 @@
 use anyhow::{bail, Result};
 use decode_embed::input::{
-    pack_i32s, unpack_i32s_at, ActivationRow, ActivationSequence, DecodeEdge, EmbeddingTable,
+    pack_i32s, q8_row_at, ActivationRow, ActivationSequence, DecodeEdge, EmbeddingTable,
 };
 use det_num::ops::mul_sat;
 use det_num::Act;
@@ -18,7 +18,7 @@ pub fn run_decode_embed_direct(inputs: DecodeEmbedDirectInputs<'_>) -> Result<Ac
 
     let token_id = inputs.selected.token_id;
     let hidden_size = inputs.embedding.hidden_size;
-    let byte_off = token_id as u64 * hidden_size as u64 * 4;
+    let byte_off = token_id as u64 * (hidden_size as u64 / 32 * 34);
     let page_size = inputs.embedding.values.page_size();
     let page_idx = if page_size == 0 {
         0
@@ -29,7 +29,7 @@ pub fn run_decode_embed_direct(inputs: DecodeEmbedDirectInputs<'_>) -> Result<Ac
     let Some(page) = page else {
         bail!("1 prompt token(s) could not be embedded; first: token {token_id} has no embedding row of the declared width");
     };
-    let values = unpack_i32s_at(page, byte_off, hidden_size).map_err(|_| {
+    let values = q8_row_at(page, byte_off, hidden_size).map_err(|_| {
         anyhow::anyhow!(
             "1 prompt token(s) could not be embedded; first: token {token_id} has no embedding row of the declared width"
         )

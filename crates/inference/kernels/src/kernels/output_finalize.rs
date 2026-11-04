@@ -54,5 +54,7 @@ pub fn run_output_finalize_direct(
         } else {
             String::from("max_new_tokens")
         },
+        claim_mismatches: inputs.edge.claim_mismatches,
+        first_claim_mismatch_position: inputs.edge.first_claim_mismatch_position,
     })
 }

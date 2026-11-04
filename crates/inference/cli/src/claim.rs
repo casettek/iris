@@ -34,6 +34,10 @@ pub struct ClaimBuildOptions {
 pub(crate) struct PreparedClaimRun {
     pub(crate) prepared_run: PreparedRun,
     pub(crate) manifest_path: PathBuf,
+    /// The ids written into a teacher-forced run's `claimed_ids` externals.
+    /// Kept for the claimer's own tooling only: the claim posts no copy of
+    /// them, because its output is the chain's final record.
+    pub(crate) claimed_token_ids: Option<Vec<u32>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -95,25 +99,21 @@ pub fn build_claim(options: ClaimBuildOptions) -> Result<ClaimBuildResult> {
         staged_backend: options.staged_backend,
         parity_policy: ParityPolicy::Skip,
     })?;
-    if let Some(claimed) = &prepared.prepared_run.claimed_token_ids {
-        let checked = checkpointed
-            .final_result
-            .as_ref()
-            .map(|result| result.generated_token_ids.as_slice())
-            .context("teacher-forced chain produced no final output")?;
-        if let Some(position) = first_disagreement(claimed, checked) {
-            let message = format!(
-                "teacher-forced selection disagrees with the claimed output at generated token {position}: claimed {:?}, greedy {:?}",
-                claimed.get(position),
-                checked.get(position)
-            );
+    // A claimer applies the rule a challenger will: the claim is judged by
+    // its own final record.
+    if prepared.prepared_run.chain == ChainKind::TeacherForced {
+        if let Some(reason) = crate::challenge::claimed_output_rejection(
+            Some(&prepared.prepared_run),
+            &prepared.manifest_path,
+            checkpointed.final_result.as_ref(),
+        )? {
             if options.claimed_token_ids.is_none() {
                 // The ids came from direct decode, so the two paths are not
                 // bit-identical: an honest claimer would convict itself.
-                anyhow::bail!("{message}; direct and teacher-forced inference are not in parity");
+                anyhow::bail!("{reason}; direct and teacher-forced inference are not in parity");
             }
             eprintln!(
-                "warning: {message}; writing the claim anyway because --claimed-ids was given"
+                "warning: {reason}; writing the claim anyway because --claimed-ids was given"
             );
         }
     }
@@ -178,16 +178,6 @@ pub fn corrupt_checkpoint_hashes(
         original_hash,
         corrupted_hash,
     })
-}
-
-/// The first generated position where a teacher-forced claim's posted ids
-/// and the chain's greedy selections differ, including a length difference.
-pub(crate) fn first_disagreement(claimed: &[u32], checked: &[u32]) -> Option<usize> {
-    claimed
-        .iter()
-        .zip(checked)
-        .position(|(claimed, checked)| claimed != checked)
-        .or_else(|| (claimed.len() != checked.len()).then(|| claimed.len().min(checked.len())))
 }
 
 fn write_claim_result(
@@ -335,13 +325,13 @@ pub(crate) fn prepare_claim_run(options: &ClaimBuildOptions) -> Result<PreparedC
         run_manifest_path: Some(manifest_path.clone()),
         run_manifest_sha256: Some(run_manifest_sha256),
         chain: run_spec.chain,
-        claimed_token_ids: claimed.map(|(ids, ..)| ids),
     };
     write_json(&run_dir.join(PREPARED_RUN_JSON), &prepared_run)?;
 
     Ok(PreparedClaimRun {
         prepared_run,
         manifest_path,
+        claimed_token_ids: claimed.map(|(ids, ..)| ids),
     })
 }
 
@@ -790,7 +780,6 @@ mod tests {
                 run_manifest_path: Some(manifest_path.clone()),
                 run_manifest_sha256: Some(String::from("run-sha")),
                 chain: Default::default(),
-                claimed_token_ids: None,
             },
         )
         .unwrap();
@@ -1058,13 +1047,6 @@ count = 0
         assert!(
             render_ranged_manifest(template, Path::new("/repo"), &prompt, &claimed, 0).is_err()
         );
-    }
-
-    #[test]
-    fn first_disagreement_reports_value_and_length_differences() {
-        assert_eq!(first_disagreement(&[1, 2, 3], &[1, 2, 3]), None);
-        assert_eq!(first_disagreement(&[1, 9, 3], &[1, 2, 3]), Some(1));
-        assert_eq!(first_disagreement(&[1, 2], &[1, 2, 3]), Some(2));
     }
 
     fn write_stage(base: &PathBuf, stage: &str, commitment: &str, output: &[u8]) {

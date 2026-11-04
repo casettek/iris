@@ -133,8 +133,14 @@ pub fn validate_decode_edge(has_selected: bool, count: u32) -> Result<u32> {
     Ok(count)
 }
 
+/// Opens the final output: the finished transcript state and the claim
+/// verdict carried from the edge.
 #[tile(kind = iter, description = "Open final generated output")]
-pub fn begin_generated_output(state: FinalizeState) -> Draft<GeneratedOutput> {
+pub fn begin_generated_output(
+    state: FinalizeState,
+    claim_mismatches: u32,
+    first_claim_mismatch_position: u32,
+) -> Draft<GeneratedOutput> {
     let mut output = Draft::<GeneratedOutput>::new();
     let digest = Sha256::digest(state.json.as_bytes());
     output.generated_token_count().set(state.count);
@@ -147,6 +153,10 @@ pub fn begin_generated_output(state: FinalizeState) -> Draft<GeneratedOutput> {
     } else {
         String::from("max_new_tokens")
     });
+    output.claim_mismatches().set(claim_mismatches);
+    output
+        .first_claim_mismatch_position()
+        .set(first_claim_mismatch_position);
     output
 }
 

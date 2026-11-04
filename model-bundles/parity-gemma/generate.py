@@ -15,31 +15,60 @@ import struct
 ROOT = Path(__file__).resolve().parent
 SEED = 0x51A7E123
 ONE = 65536
+Q8_0 = 8  # detwgt v3 element width for Q8_0 blocks
+
+
+def scale_q24(bits):
+    """A half-precision scale's exact value in units of 2^-24 (det_num::q8)."""
+    exponent, mantissa = (bits >> 10) & 0x1F, bits & 0x3FF
+    magnitude = mantissa if exponent == 0 else (1024 + mantissa) << (exponent - 1)
+    return -magnitude if bits & 0x8000 else magnitude
+
+
+def round_half_even(value, shift):
+    floor = value >> shift
+    remainder = value - (floor << shift)
+    half = 1 << (shift - 1)
+    return floor + 1 if remainder > half or (remainder == half and floor & 1) else floor
 
 
 def build():
     state = SEED
     tensors = []
 
-    def tensor(name, dims, amplitude, center=0):
+    def next_state():
         nonlocal state
+        state ^= (state << 13) & 0xFFFFFFFF
+        state ^= state >> 17
+        state ^= (state << 5) & 0xFFFFFFFF
+        return state
+
+    def tensor(name, dims, amplitude, center=0):
         values = []
         for _ in range(math.prod(dims)):
-            state ^= (state << 13) & 0xFFFFFFFF
-            state ^= state >> 17
-            state ^= (state << 5) & 0xFFFFFFFF
             # Nonzero, signed fractional coefficients at several magnitudes.
-            value = state % (2 * amplitude) - amplitude
+            value = next_state() % (2 * amplitude) - amplitude
             values.append(center + (value if value else 1))
-        tensors.append((name, dims, values))
+        tensors.append((name, dims, 32, values))
+
+    def blocks(name, dims, scale_base):
+        """Q8_0 rows: per 32 values a half-precision scale near `scale_base`
+        (bits), then 32 signed bytes."""
+        payload = bytearray()
+        for _ in range(math.prod(dims) // 32):
+            payload += struct.pack("<H", scale_base + next_state() % 64)
+            payload += bytes((next_state() % 255 - 127) & 0xFF for _ in range(32))
+        tensors.append((name, dims, Q8_0, bytes(payload)))
 
     prefix = "model.language_model."
-    tensor(prefix + "embed_tokens.weight", [512, 128], 4096)
-    tensor(prefix + "embed_tokens_per_layer.weight", [512, 32], 8192)
-    tensor(prefix + "per_layer_model_projection.weight", [32, 128], 4096)
-    tensor(prefix + "per_layer_projection_norm.weight", [8], 8192, ONE)
+    # Scale bits 0x1000 ≈ 2^-11 and 0x1400 ≈ 2^-10: weights up to about
+    # 0.0625 and 0.125, the magnitudes of the Q16.16 amplitudes 4096 and 8192.
+    blocks(prefix + "embed_tokens.weight", [512, 128], 0x1000)
+    blocks(prefix + "embed_tokens_per_layer.weight", [512, 128], 0x1400)
+    tensor(prefix + "per_layer_model_projection.weight", [128, 128], 4096)
+    tensor(prefix + "per_layer_projection_norm.weight", [32], 8192, ONE)
     tensor(prefix + "norm.weight", [128], 8192, ONE)
-    tensor(prefix + "lm_head.weight", [512, 128], 8192)
+    blocks(prefix + "lm_head.weight", [512, 128], 0x1400)
     for layer in range(4):
         at = prefix + f"layers.{layer}."
         for name, dims in [
@@ -47,11 +76,16 @@ def build():
             ("self_attn.k_proj.weight", [64, 128]),
             ("self_attn.v_proj.weight", [64, 128]),
             ("self_attn.o_proj.weight", [128, 128]),
-            ("mlp.gate_proj.weight", [512, 128]),
-            ("mlp.up_proj.weight", [512, 128]),
-            ("mlp.down_proj.weight", [128, 512]),
-            ("per_layer_input_gate.weight", [8, 128]),
-            ("per_layer_projection.weight", [128, 8]),
+            # 2048-wide so each MLP matrix fills one Q8_0 page and spills
+            # into a second, partial one.
+            ("mlp.gate_proj.weight", [2048, 128]),
+            ("mlp.up_proj.weight", [2048, 128]),
+            ("mlp.down_proj.weight", [128, 2048]),
+        ]:
+            blocks(at + name, dims, 0x1000)
+        for name, dims in [
+            ("per_layer_input_gate.weight", [32, 128]),
+            ("per_layer_projection.weight", [128, 32]),
         ]:
             tensor(at + name, dims, 4096)
         for name, width in [
@@ -64,19 +98,35 @@ def build():
             ("self_attn.k_norm.weight", 32),
         ]:
             tensor(at + name, [width], 8192, ONE)
-        tensors.append((at + "layer_scalar", [1], [ONE]))
+        tensors.append((at + "layer_scalar", [1], 32, [ONE]))
 
-    weights = bytearray(b"DNWGTV0\0" + struct.pack("<IIQ", 2, 1, len(tensors)))
-    for name, dims, values in tensors:
+    weights = bytearray(b"DNWGTV0\0" + struct.pack("<IIQ", 3, 1, len(tensors)))
+    for name, dims, width, data in tensors:
         name = name.encode()
         row_width = dims[-1]
-        mass = max(sum(abs(x) for x in values[i:i + row_width])
-                   for i in range(0, len(values), row_width))
+        if width == Q8_0:
+            # Row mass of the dequantized values: q · scale in Q16.16, rounded
+            # half to even, exactly as det_num::q8::dequantize_row.
+            row_bytes = row_width // 32 * 34
+            mass = 0
+            for start in range(0, len(data), row_bytes):
+                row = data[start:start + row_bytes]
+                total = 0
+                for block in range(0, row_bytes, 34):
+                    scale = scale_q24(struct.unpack_from("<H", row, block)[0])
+                    total += sum(abs(round_half_even(q * scale, 8))
+                                 for q in struct.unpack_from("<32b", row, block + 2))
+                mass = max(mass, total)
+            payload = data
+        else:
+            mass = max(sum(abs(x) for x in data[i:i + row_width])
+                       for i in range(0, len(data), row_width))
+            payload = struct.pack("<" + "i" * len(data), *data)
         weights += struct.pack("<I", len(name)) + name + struct.pack("<I", len(dims))
         weights += struct.pack("<" + "Q" * len(dims), *dims)
-        weights += struct.pack("<QIQQ", len(values), 32, len(values) * 4, mass)
+        weights += struct.pack("<QIQQ", math.prod(dims), width, len(payload), mass)
         weights += b"\0" * (-len(weights) % 64)
-        weights += struct.pack("<" + "i" * len(values), *values)
+        weights += payload
 
     specials = ["<unk>", "<pad>", "<bos>", "<|turn>", "<turn|>", "<eos>"]
     words = specials + ["</w>", "\n", "▁", "é"]
@@ -97,9 +147,9 @@ def build():
                                    "single_word": False, "lstrip": False, "rstrip": False, "normalized": False}
                                   for word in specials]}
     config = {"text_config": {
-        "hidden_size": 128, "intermediate_size": 512, "num_hidden_layers": 4,
+        "hidden_size": 128, "intermediate_size": 2048, "num_hidden_layers": 4,
         "num_attention_heads": 4, "num_key_value_heads": 2, "head_dim": 32,
-        "hidden_size_per_layer_input": 8, "vocab_size": 512, "sliding_window": 16,
+        "hidden_size_per_layer_input": 32, "vocab_size": 512, "sliding_window": 16,
         "num_kv_shared_layers": 2, "rms_norm_eps": 0.000001,
         "tie_word_embeddings": False, "final_logit_softcapping": 1.0,
         "eos_token_id": [vocab["<eos>"]],

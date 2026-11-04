@@ -2,8 +2,7 @@ use anyhow::{bail, Result};
 use det_num::ops::mul_sat;
 use det_num::Act;
 use input_embedding::input::{
-    pack_i32s, unpack_i32s_at, ActivationRow, ActivationSequence, EmbeddingTable,
-    PromptTokenization,
+    pack_i32s, q8_row_at, ActivationRow, ActivationSequence, EmbeddingTable, PromptTokenization,
 };
 use raster::List;
 
@@ -26,7 +25,7 @@ pub fn run_input_embedding_direct(
     let mut rows = Vec::with_capacity(inputs.prompt.token_ids.len());
 
     for token_id in inputs.prompt.token_ids.iter().copied() {
-        let byte_off = token_id as u64 * hidden_size as u64 * 4;
+        let byte_off = token_id as u64 * (hidden_size as u64 / 32 * 34);
         let page_idx = if page_size == 0 {
             0
         } else {
@@ -35,7 +34,7 @@ pub fn run_input_embedding_direct(
         let page = pages.get(page_idx as usize).ok_or_else(|| {
             anyhow::anyhow!("token {token_id} has no embedding row of the declared width")
         })?;
-        let values = unpack_i32s_at(page, byte_off, hidden_size)
+        let values = q8_row_at(page, byte_off, hidden_size)
             .map_err(anyhow::Error::msg)
             .map_err(|_| {
                 anyhow::anyhow!("token {token_id} has no embedding row of the declared width")

@@ -9,6 +9,7 @@ use clap::{Args, Parser, Subcommand};
 mod challenge;
 mod challenge_profile;
 mod claim;
+mod convert;
 mod fault;
 mod infer;
 mod parity;
@@ -113,6 +114,25 @@ enum Commands {
 enum ModelCommand {
     /// Import a model bundle into committed Raster inference externals.
     Import(ModelImportArgs),
+    /// Convert a GGUF model (Q8_0 weights) into a model bundle.
+    Convert(ModelConvertArgs),
+}
+
+#[derive(Debug, Args)]
+struct ModelConvertArgs {
+    /// The GGUF file.
+    #[arg(long)]
+    gguf: PathBuf,
+    /// Directory holding the model's config.json and tokenizer.json, copied
+    /// into the bundle.
+    #[arg(long)]
+    metadata: PathBuf,
+    /// Bundle directory to write.
+    #[arg(long)]
+    out: PathBuf,
+    /// Write block tensors as dequantized Q16.16 values instead of Q8_0.
+    #[arg(long, hide = true)]
+    dequantize: bool,
 }
 
 #[derive(Debug, Args)]
@@ -178,7 +198,7 @@ struct ClaimBuildArgs {
     #[arg(long, default_value = inference_artifacts::INFERENCE_RUN_SPEC_TOML)]
     run: PathBuf,
 
-    /// Debug: post these comma-separated output ids in a teacher-forced claim
+    /// Debug: claim these comma-separated output ids in a teacher-forced claim
     /// instead of discovering them, to build claims that should be refuted.
     #[arg(long = "claimed-ids", value_delimiter = ',', hide = true)]
     claimed_ids: Option<Vec<u32>>,
@@ -319,6 +339,12 @@ fn execute(cli: Cli) -> Result<ExitCode> {
             direct,
         }) => {
             parity::worker(&run, &output, direct)?;
+            Ok(ExitCode::SUCCESS)
+        }
+        Some(Commands::Model {
+            command: ModelCommand::Convert(args),
+        }) => {
+            convert::convert_bundle(&args.gguf, &args.metadata, &args.out, args.dequantize)?;
             Ok(ExitCode::SUCCESS)
         }
         Some(Commands::Model {
@@ -1172,6 +1198,8 @@ mod tests {
             generated_token_ids_sha256: String::from("sha"),
             generated_text: String::from("Ciao"),
             stop_reason: String::from("eos"),
+            claim_mismatches: 0,
+            first_claim_mismatch_position: 0,
         };
 
         let trace = render_token_trace(&result, &decoder);

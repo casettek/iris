@@ -24,15 +24,26 @@ Flow:
 7. Compare the Raster replay checkpoint with the native recomputed checkpoint. The stage name, input commitment, output structural commitment, and output SHA-256 must all match, yielding the same checkpoint hash.
 8. Write the challenge artifacts only after that parity check passes. A mismatch fails challenge construction with a native/Raster parity error identifying the stage, differing field, and both values. The replay files remain available for debugging.
 
-For a teacher-forced claim, step 2 also checks three things. The frozen prompt
-ranges and tokenizer batch count must be the ones run preparation derives from
-the frozen prompt. The frozen claimed ids must obey the token-budget rule. And
-the frozen run manifest's `claimed_ids` commitments must be exactly those ids
-cut into the model's range size. If every checkpoint then matches but `output_finalize`'s
-ids differ from the posted ids, there is no stage to dispute. The claim is refuted
-by its own final record: the challenge reports `claimed output rejected` with the
-first differing token, and does not replay. A claim whose `sequence_check` or layer
-checkpoint is doctored diverges there and replays that stage as usual.
+For a teacher-forced claim, step 2 also checks that the frozen prompt ranges and
+tokenizer batch count are the ones run preparation derives from the frozen
+prompt. A claim whose `sequence_check` or layer checkpoint is doctored diverges
+there and replays that stage as usual.
+
+If every checkpoint matches, there is no stage to dispute, and the claim is
+judged by its own final record, `output_finalize`. The claim posts no other
+copy of its output. It is rejected, without a replay, when:
+
+- **The committed verdict is not clean.** `claim_mismatches` counts claimed ids
+  that are not the greedy selection, and `first_claim_mismatch_position` says
+  where the first one is.
+- **The output breaks the token budget.** It must fill `tokens` unless its last
+  id is EOS, and it must not continue past an EOS.
+- **The claimed ranges are cut wrongly.** The frozen run manifest's `claimed_ids`
+  commitments must be the output ids cut into the model's range size. This bounds
+  each check's replay cost; with a clean verdict the output ids are exactly the
+  claimed ids the chain consumed.
+
+The challenge then reports `claimed output rejected` with the reason.
 
 Challenge hash verification happens during recomputation. Sequential stages stop immediately at the first mismatch. Parallel aux waves still execute with the existing parallelism; if a mismatch is found in the middle of a completed aux batch, later batch outputs may exist on disk but are ignored for the challenge trace and replay seed.
 

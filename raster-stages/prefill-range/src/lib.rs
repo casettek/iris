@@ -128,14 +128,16 @@ pub fn kv_out_len(params: LayerParams) -> u32 {
     params.num_kv_heads * params.head_dim
 }
 
-#[tile(kind = iter, description = "Reject a weight region of the wrong byte length")]
+#[tile(kind = iter, description = "Reject a Q8_0 weight region of the wrong byte length")]
 pub fn assert_matrix_bytes(byte_len: u64, out_len: u32, in_width: u32) -> Result<u32> {
-    let expected = out_len as u64 * in_width as u64 * 4;
+    let row = det_num::q8::row_bytes(in_width as usize)
+        .ok_or_else(|| alloc::format!("matrix width {in_width} is not whole Q8_0 blocks"))?;
+    let expected = out_len as u64 * row as u64;
     if byte_len == expected {
         Ok(0)
     } else {
         Err(alloc::format!(
-            "matrix has {byte_len} bytes, expected {expected} ({out_len} x {in_width} i32s)"
+            "matrix has {byte_len} bytes, expected {expected} ({out_len} x {in_width} Q8_0)"
         ))
     }
 }
@@ -245,6 +247,62 @@ pub fn mac_weight_page(
         state.error = error;
     }
     state
+}
+
+#[tile(
+    kind = recur,
+    description = "MAC one Q8_0 weight page into the output accumulator",
+    estimated_cycles = 800_000
+)]
+pub fn mac_q8_weight_page(
+    input: RecurInput<BytesPage>,
+    state: RecurState<ProjAccum>,
+    row: BytesPage,
+    in_width: u32,
+) -> RecurState<ProjAccum> {
+    let mut state = state;
+    if !state.error.is_empty() {
+        return state;
+    }
+    let page = input.into_value();
+    if let Err(error) = mac_q8_page(&mut state, &page, &row, in_width) {
+        state.error = error;
+    }
+    state
+}
+
+fn mac_q8_page(
+    state: &mut ProjAccum,
+    page: &BytesPage,
+    row: &BytesPage,
+    in_width: u32,
+) -> core::result::Result<(), String> {
+    let row = unpack_i32s(row)?;
+    if row.len() != in_width as usize {
+        return Err(alloc::format!(
+            "activation has {} values, expected in_width {in_width}",
+            row.len()
+        ));
+    }
+    let stride = det_num::q8::row_bytes(row.len())
+        .ok_or_else(|| alloc::format!("matvec in_width {in_width} is not whole Q8_0 blocks"))?;
+    if page.len() % stride != 0 {
+        return Err(String::from("weight page does not contain whole output rows"));
+    }
+    if page.offset() % stride as u64 != 0 {
+        return Err(String::from("weight page offset is not row-aligned"));
+    }
+    let mut out = unpack_i32s(&state.values)?;
+    let start_row = (page.offset() / stride as u64) as usize;
+    for (local, weights) in page.as_slice().chunks_exact(stride).enumerate() {
+        let out_idx = start_row + local;
+        if out_idx >= out.len() {
+            return Err(String::from("weight page writes past the accumulator"));
+        }
+        out[out_idx] = det_num::q8::dot_row(&row, weights)?;
+    }
+    state.values = pack_i32s(&out);
+    Ok(())
 }
 
 fn mac_page(

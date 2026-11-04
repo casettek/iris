@@ -7,8 +7,7 @@ use anyhow::{ensure, Context, Result};
 use inference_kernels::kernels::sequence_check::{score_row, Argmax, Selection};
 use inference_kernels::weight_budget::RetainedWeightBytes;
 use prefill_finalize::input::{
-    dot, rms_norm, softcap, unpack_i32s, ActivationSequence, FinalHeadParams, LogitEntry,
-    PrefillLogits,
+    rms_norm, softcap, unpack_i32s, ActivationSequence, FinalHeadParams, LogitEntry, PrefillLogits,
 };
 use raster::{BytesPage, List};
 use raster_runtime::EntryArgumentsBinding;
@@ -55,7 +54,11 @@ impl StaticHead {
             params.norm_weights.len() as u64 == u64::from(params.hidden_size) * 4,
             "final norm weights width mismatch"
         );
-        let region = PageRegion::load(source, &["head", "projection"])?;
+        let region = PageRegion::load(
+            source,
+            &["head", "projection"],
+            crate::verified_weights::Q8_HEAD_PAGE_SIZE,
+        )?;
         Ok(Self { params, region })
     }
 }
@@ -99,7 +102,7 @@ impl PagedHead {
 pub(crate) fn select_positions(positions: &[&[i32]], head: &PagedHead) -> Result<Vec<Selection>> {
     let params = &head.metadata.params;
     let hidden = params.hidden_size as usize;
-    let stride = u64::from(params.hidden_size) * 4;
+    let stride = det_num::q8::row_bytes(hidden).context("head width is not whole Q8_0 blocks")?;
     for position in positions {
         ensure!(
             position.len() == hidden,
@@ -119,21 +122,20 @@ pub(crate) fn select_positions(positions: &[&[i32]], head: &PagedHead) -> Result
         let pages = (next..end)
             .map(|index| {
                 let page = region.page(&head.source, &["head", "projection"], index)?;
-                let weights = unpack_i32s(&page).map_err(anyhow::Error::msg)?;
                 ensure!(
-                    weights.len() % hidden == 0,
+                    page.len() % stride == 0,
                     "projection page is not a whole number of hidden-width rows"
                 );
                 ensure!(
-                    page.offset() % stride == 0,
+                    page.offset() % stride as u64 == 0,
                     "projection page offset is not row-aligned"
                 );
-                Ok(((page.offset() / stride) as u32, weights))
+                Ok(((page.offset() / stride as u64) as u32, page))
             })
             .collect::<Result<Vec<_>>>()?;
         let fold = |(position, best): (&&[i32], &mut Argmax)| -> Result<()> {
-            for (first_id, weights) in &pages {
-                for (local, row) in weights.chunks_exact(hidden).enumerate() {
+            for (first_id, page) in &pages {
+                for (local, row) in page.as_slice().chunks_exact(stride).enumerate() {
                     best.observe(
                         first_id + local as u32,
                         score_row(position, row, params.softcap)?,
@@ -211,23 +213,23 @@ pub(crate) fn run_measured(
         stats.load_verify += started.elapsed();
         let started = Instant::now();
         let score = |page: &BytesPage| -> Result<Vec<LogitEntry>> {
-            let weights = unpack_i32s(page).map_err(anyhow::Error::msg)?;
-            let hidden = params.hidden_size as usize;
-            let stride = u64::from(params.hidden_size) * 4;
+            let stride = det_num::q8::row_bytes(params.hidden_size as usize)
+                .context("head width is not whole Q8_0 blocks")?;
             ensure!(
-                weights.len() % hidden == 0,
+                page.len() % stride == 0,
                 "projection page is not a whole number of hidden-width rows"
             );
             ensure!(
-                page.offset() % stride == 0,
+                page.offset() % stride as u64 == 0,
                 "projection page offset is not row-aligned"
             );
-            let first_id = (page.offset() / stride) as u32;
-            weights
-                .chunks_exact(hidden)
+            let first_id = (page.offset() / stride as u64) as u32;
+            page.as_slice()
+                .chunks_exact(stride)
                 .enumerate()
                 .map(|(local, row)| {
-                    let value = dot(&normalized, row).map_err(anyhow::Error::msg)?;
+                    let value =
+                        det_num::q8::dot_row(&normalized, row).map_err(anyhow::Error::msg)?;
                     Ok(LogitEntry {
                         token_id: first_id + local as u32,
                         value: softcap(value, params.softcap),
@@ -235,8 +237,8 @@ pub(crate) fn run_measured(
                 })
                 .collect()
         };
-        // Indexed parallel collection preserves page order. Dot products keep
-        // Raster's left-to-right saturating MAC order within each row.
+        // Indexed parallel collection preserves page order; each row's
+        // `Q8_0` dot product is exact until its one rounding.
         let scored = if parallel && rayon::current_num_threads() > 1 {
             pages.par_iter().map(score).collect::<Result<Vec<_>>>()?
         } else {

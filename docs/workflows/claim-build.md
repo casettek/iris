@@ -34,14 +34,16 @@ fill `tokens` unless the last one is EOS. The prompt's pieces are cut into range
 of at most the model's range size in tokens, at boundaries no merge can cross,
 and the ids into ranges of the same size. The tokenizer batch count is set for
 the range needing the most merges. Each range is written as its own external (`pieces_{j}`, `claimed_{k}`)
-under the run's `prompt/` directory. The ids are frozen into `prepared_run.json`
-(`chain`, `claimed_token_ids`). The staged pass then runs the model-specific
-`Raster.teacher-forced.toml`. If `sequence_check`'s greedy selections differ from
-the direct ids, claim build fails: direct and teacher-forced inference are not in
-parity, and the claim would refute itself.
+under the run's `prompt/` directory, and the frozen run manifest commits to them.
+`prepared_run.json` records `chain` but no copy of the ids: the claim's output is
+the chain's final `output_finalize` record. The staged pass then runs the
+model-specific `Raster.teacher-forced.toml`, and claim build applies the rule a
+challenger will. If the final record's committed verdict counts any claimed id
+that is not the greedy selection, claim build fails: direct and teacher-forced
+inference are not in parity, and the claim would refute itself.
 
-The hidden debug flag `--claimed-ids 1,2,3` posts the given ids instead of
-discovering them. A disagreement is then a warning, and the claim is written anyway.
+The hidden debug flag `--claimed-ids 1,2,3` claims the given ids instead of
+discovering them. A rejection is then a warning, and the claim is written anyway.
 This builds deliberately false claims for challenge tests.
 
 Per-stage checkpoint files live under `target/staged-infer/runs/<run>/<stage>/`:

@@ -1117,6 +1117,7 @@ name = "detwgt"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "det-num",
  "memmap2",
 ]
 
@@ -2125,6 +2126,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "det-num",
  "direct-infer",
  "hex",
  "inference-artifacts",

@@ -19,8 +19,13 @@ pub const FRAC_BITS: u32 = 16;
 /// One unit (`1.0`) in Q16.16.
 pub const ONE: i32 = 1 << FRAC_BITS;
 
-/// Replay-unit page size for PLE tables and the projection matrix.
+/// Replay-unit page size for the projection matrix.
 pub const PAGE_SIZE: u64 = 196_608;
+
+/// Replay-unit page size for the PLE table: whole `Q8_0` rows of
+/// `ple_width / 32 · 34` bytes (32 → 34, 256 → 272). MUST match the
+/// importer's `Q8_PAGE_SIZE`.
+pub const Q8_PAGE_SIZE: u64 = 195_840;
 
 // ---------------------------------------------------------------------------
 // Types crossing the stage boundary
@@ -78,8 +83,9 @@ pub struct PleLayerParams {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
 pub struct PleLayer {
     pub params: PleLayerParams,
-    #[page_size = 196_608]
-    pub embeddings: Bytes<196_608>,
+    /// This layer's `Q8_0` slice of the packed per-layer table, vocab rows.
+    #[page_size = 195_840]
+    pub embeddings: Bytes<195_840>,
     #[page_size = 196_608]
     pub projection: Bytes<196_608>,
 }
@@ -169,7 +175,7 @@ pub fn unpack_i32s(page: &BytesPage) -> core::result::Result<Vec<i32>, String> {
         .collect())
 }
 
-pub fn unpack_i32s_at(
+pub fn q8_row_at(
     page: &BytesPage,
     byte_off: u64,
     n_values: u32,
@@ -177,17 +183,17 @@ pub fn unpack_i32s_at(
     let local = byte_off
         .checked_sub(page.offset())
         .ok_or_else(|| String::from("row offset is before this page"))? as usize;
-    let len = n_values as usize * 4;
+    let len = det_num::q8::row_bytes(n_values as usize)
+        .ok_or_else(|| alloc::format!("row width {n_values} is not whole Q8_0 blocks"))?;
     let bytes = page.as_slice().get(local..local + len).ok_or_else(|| {
         alloc::format!(
             "row at byte {byte_off} spans past this page (local {local}, need {len}, have {})",
             page.len()
         )
     })?;
-    Ok(bytes
-        .chunks_exact(4)
-        .map(|chunk| i32::from_le_bytes(chunk.try_into().expect("chunks_exact(4)")))
-        .collect())
+    let mut values = alloc::vec![0; n_values as usize];
+    det_num::q8::dequantize_row(bytes, &mut values).map_err(String::from)?;
+    Ok(values)
 }
 
 // ---------------------------------------------------------------------------

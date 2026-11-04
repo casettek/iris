@@ -1,8 +1,9 @@
 //! Phase 2 — `input-embedding`: tiles.
 //!
 //! Gathers one embedding row per prompt token id. The table is a paged byte
-//! region, addressed by `token_id * hidden_size * 4`; an out-of-range id
-//! aborts (a list has no non-membership proof).
+//! region of `Q8_0` rows, addressed by `token_id · hidden_size / 32 · 34` and
+//! dequantized on the way out; an out-of-range id aborts (a list has no
+//! non-membership proof).
 //!
 //! `#![no_std]` so the same tiles compile into RISC0 replay guests.
 
@@ -25,10 +26,11 @@ pub fn begin_row_lookup(token_id: u32) -> u32 {
     token_id
 }
 
-/// `token_id * hidden_size * 4` — the byte offset of that row in the table.
+/// `token_id · hidden_size / 32 · 34` — the byte offset of that `Q8_0` row in
+/// the table.
 #[tile(kind = iter, description = "Byte offset of an embedding row")]
 pub fn embedding_byte_offset(token_id: u32, hidden_size: u32) -> u64 {
-    token_id as u64 * hidden_size as u64 * 4
+    token_id as u64 * (hidden_size as u64 / 32 * 34)
 }
 
 /// Page index containing a byte offset.
@@ -95,7 +97,7 @@ pub fn append_activation_row(
     embedding_scale: i32,
 ) -> Draft<ActivationSequence> {
     let mut output = output;
-    match unpack_i32s_at(&page, byte_off, hidden_size) {
+    match q8_row_at(&page, byte_off, hidden_size) {
         // Gemma scales the embedding by sqrt(hidden) before layer 0. Applied
         // here, with the canonical multiply, because the row is only ever read
         // once — and because an unscaled activation is not detectably wrong

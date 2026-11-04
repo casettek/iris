@@ -162,6 +162,8 @@ pub(crate) fn inference_result_from_generated(output: GeneratedOutput) -> Infere
         generated_token_ids_sha256: output.generated_token_ids_sha256,
         generated_text: output.generated_text,
         stop_reason: output.stop_reason,
+        claim_mismatches: output.claim_mismatches,
+        first_claim_mismatch_position: output.first_claim_mismatch_position,
     }
 }
 

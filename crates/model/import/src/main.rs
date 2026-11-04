@@ -1243,7 +1243,7 @@ fn write_embedding(
             // by local `f32_to_act` so the committed bits match the
             // deterministic path exactly rather than approximately.
             embedding_scale: det_num::f32_to_act((shape.hidden as f32).sqrt()).to_bits(),
-            values: mapped_weights::rows(
+            values: mapped_weights::q8_rows(
                 weights,
                 "model.language_model.embed_tokens.weight",
                 0,
@@ -1308,7 +1308,7 @@ fn write_ple_layers(
         let end = start + shape.ple_width;
 
         // The packed [vocab, layers · width] table gives this layer its slice.
-        let embeddings = mapped_weights::columns(
+        let embeddings = mapped_weights::q8_columns(
             weights,
             "model.language_model.embed_tokens_per_layer.weight",
             start,
@@ -1492,18 +1492,18 @@ fn write_transformer_layers(
                     &weights.values(&at("post_per_layer_input_norm.weight"))?,
                 ),
             },
-            w_q: mapped_weights::tensor(weights, &at("self_attn.q_proj.weight"))?,
-            w_k: mapped_weights::tensor(weights, &at("self_attn.k_proj.weight"))?,
-            w_v: mapped_weights::tensor(weights, &v_name)?,
-            w_o: mapped_weights::tensor(weights, &at("self_attn.o_proj.weight"))?,
-            w_gate: mapped_weights::tensor(weights, &at("mlp.gate_proj.weight"))?,
-            w_up: mapped_weights::tensor(weights, &at("mlp.up_proj.weight"))?,
+            w_q: mapped_weights::q8_tensor(weights, &at("self_attn.q_proj.weight"))?,
+            w_k: mapped_weights::q8_tensor(weights, &at("self_attn.k_proj.weight"))?,
+            w_v: mapped_weights::q8_tensor(weights, &v_name)?,
+            w_o: mapped_weights::q8_tensor(weights, &at("self_attn.o_proj.weight"))?,
+            w_gate: mapped_weights::q8_tensor(weights, &at("mlp.gate_proj.weight"))?,
+            w_up: mapped_weights::q8_tensor(weights, &at("mlp.up_proj.weight"))?,
             ple_input_gate: mapped_weights::tensor(weights, &at("per_layer_input_gate.weight"))?,
             ple_layer_projection: mapped_weights::tensor(
                 weights,
                 &at("per_layer_projection.weight"),
             )?,
-            w_down: mapped_weights::tensor(weights, &at("mlp.down_proj.weight"))?,
+            w_down: mapped_weights::q8_tensor(weights, &at("mlp.down_proj.weight"))?,
         };
 
         let name = format!("layer{layer_idx}");
@@ -1607,7 +1607,7 @@ fn write_head(
                 softcap,
                 norm_weights: page_of_i32s(&weights.values("model.language_model.norm.weight")?),
             },
-            projection: mapped_weights::rows(weights, projection, 0, shape.vocab)?,
+            projection: mapped_weights::q8_rows(weights, projection, 0, shape.vocab)?,
         },
         layout,
         "raster-stages/prefill-finalize",

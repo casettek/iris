@@ -3,7 +3,9 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use direct_infer::detwgt::MmapDetwgt;
-use direct_infer::model::{DirectFinalHead, DirectMatrixView, DirectTransformerLayer};
+use direct_infer::model::{
+    DirectFinalHead, DirectMatrixView, DirectQ8View, DirectTransformerLayer,
+};
 use direct_infer::view_kernels::{run_prefill_range_view, score_prefill_logits_view};
 use direct_infer::{DirectInferenceConfig, DirectInferenceExecutor};
 use inference_artifacts::{
@@ -29,6 +31,8 @@ use sha2::{Digest, Sha256};
 use staged_infer::{UncheckpointedInferenceConfig, UncheckpointedInferenceExecutor};
 
 const ONE: i32 = 1 << 16;
+/// Hidden width of the fixtures: one `Q8_0` block, the narrowest int8 row.
+const W: usize = 32;
 
 #[test]
 fn direct_executor_reports_missing_direct_manifest_message() {
@@ -147,30 +151,29 @@ fn final_head_logits_feed_shared_decode_select_tie_break() {
     let dir = temp_dir("stream-final-head");
     fs::create_dir_all(&dir).unwrap();
     let detwgt = dir.join("model.detwgt");
-    let projection = vec![ONE, 0, ONE, 0, 0, 0];
     write_detwgt(
         &detwgt,
         &[TensorFixture {
             name: "projection",
-            dims: vec![3, 2],
-            element_width: 32,
-            values: projection.clone(),
+            dims: vec![3, W as u64],
+            element_width: 8,
+            values: one_hot_rows(&[Some(0), None, Some(0)]),
         }],
     );
     let model = MmapDetwgt::open(&detwgt).unwrap();
     let head = DirectFinalHead {
         params: FinalHeadParams {
-            hidden_size: 2,
+            hidden_size: W as u32,
             norm_eps: 0,
             softcap: 0,
-            norm_weights: pack_i32_page(&[ONE, ONE]),
+            norm_weights: pack_i32_page(&[ONE; W]),
         },
-        projection: DirectMatrixView::new(model.matrix("projection", 3, 2).unwrap()),
+        projection: DirectQ8View::new(model.q8_matrix("projection").unwrap()),
     };
     let activations = prefill_range::input::ActivationSequence {
         rows: List::from(vec![prefill_range::input::ActivationRow {
             token_id: 1,
-            values: pack_i32_page(&[ONE, 0]),
+            values: pack_i32_page(&one_hot_rows(&[Some(0)])),
         }]),
         errors: List::new(),
         kv: List::new(),
@@ -203,26 +206,36 @@ fn native_decode_rotary_outputs_match_prefill_across_chunks() {
     let dir = temp_dir("decode-rope");
     fs::create_dir_all(&dir).unwrap();
     let detwgt = dir.join("model.detwgt");
-    let identity = [ONE, 0, 0, ONE];
+    let identity = one_hot_rows(&(0..W).map(Some).collect::<Vec<_>>());
     write_detwgt(
         &detwgt,
-        &[TensorFixture {
-            name: "identity",
-            dims: vec![2, 2],
-            element_width: 32,
-            values: identity.to_vec(),
-        }],
+        &[
+            TensorFixture {
+                name: "identity",
+                dims: vec![W as u64, W as u64],
+                element_width: 32,
+                values: identity.clone(),
+            },
+            TensorFixture {
+                name: "q8_identity",
+                dims: vec![W as u64, W as u64],
+                element_width: 8,
+                values: identity.clone(),
+            },
+        ],
     );
     let model = MmapDetwgt::open(&detwgt).unwrap();
-    let matrix = DirectMatrixView::new(model.matrix("identity", 2, 2).unwrap());
-    let norm = pack_i32s(&[ONE, ONE]);
+    let matrix = DirectMatrixView::new(model.matrix("identity", W, W).unwrap());
+    let q8_matrix = DirectQ8View::new(model.q8_matrix("q8_identity").unwrap());
+    let norm = pack_i32s(&[ONE; W]);
+    let unit = pack_i32s(&one_hot_rows(&[Some(0)]));
     let params = LayerParams {
         layer_idx: 0,
-        hidden_size: 2,
-        ffn_size: 2,
+        hidden_size: W as u32,
+        ffn_size: W as u32,
         num_heads: 1,
         num_kv_heads: 1,
-        head_dim: 2,
+        head_dim: W as u32,
         sliding_window: 0,
         attn_scale: ONE,
         layer_scalar: 0,
@@ -237,32 +250,32 @@ fn native_decode_rotary_outputs_match_prefill_across_chunks() {
         norm_post_attn: norm.clone(),
         norm_pre_ffw: norm.clone(),
         norm_post_ffw: norm.clone(),
-        q_norm: pack_i32s(&[ONE, 0]),
-        k_norm: pack_i32s(&[ONE, 0]),
-        ple_width: 2,
+        q_norm: unit.clone(),
+        k_norm: unit,
+        ple_width: W as u32,
         ple_post_norm: norm,
     };
     let view = DirectTransformerLayer {
         params: params.clone(),
-        w_q: matrix,
-        w_k: matrix,
-        w_v: matrix,
-        w_o: matrix,
-        w_gate: matrix,
-        w_up: matrix,
-        w_down: matrix,
+        w_q: q8_matrix,
+        w_k: q8_matrix,
+        w_v: q8_matrix,
+        w_o: q8_matrix,
+        w_gate: q8_matrix,
+        w_up: q8_matrix,
+        w_down: q8_matrix,
         ple_input_gate: matrix,
         ple_layer_projection: matrix,
     };
     let layer = TransformerLayer {
         params,
-        w_q: paged(&identity),
-        w_k: paged(&identity),
-        w_v: paged(&identity),
-        w_o: paged(&identity),
-        w_gate: paged(&identity),
-        w_up: paged(&identity),
-        w_down: paged(&identity),
+        w_q: q8_paged(&identity),
+        w_k: q8_paged(&identity),
+        w_v: q8_paged(&identity),
+        w_o: q8_paged(&identity),
+        w_gate: q8_paged(&identity),
+        w_up: q8_paged(&identity),
+        w_down: q8_paged(&identity),
         ple_input_gate: paged(&identity),
         ple_layer_projection: paged(&identity),
     };
@@ -278,7 +291,12 @@ fn native_decode_rotary_outputs_match_prefill_across_chunks() {
                 .map(|token_id| ActivationRow {
                     token_id,
                     // Distinct V rows make attention outputs sensitive to Q.
-                    values: pack_i32s(&[ONE, if token_id % 2 == 0 { ONE } else { -ONE }]),
+                    values: pack_i32s(&{
+                        // Every lane at magnitude ONE keeps the RMS at ONE.
+                        let mut row = [ONE; W];
+                        row[1] = if token_id % 2 == 0 { ONE } else { -ONE };
+                        row
+                    }),
                 })
                 .collect::<Vec<_>>(),
         ),
@@ -288,7 +306,7 @@ fn native_decode_rotary_outputs_match_prefill_across_chunks() {
         layer_idx: 0,
         rows: List::from(vec![
             PleRow {
-                values: pack_i32s(&[ONE, ONE])
+                values: pack_i32s(&[ONE; W])
             };
             5
         ]),
@@ -307,7 +325,10 @@ fn native_decode_rotary_outputs_match_prefill_across_chunks() {
         .unwrap()
     };
     let reference = run_staged(&activations, &empty);
-    assert_eq!(unpack_i32s(&reference.kv[1].k).unwrap(), [35408, 55146]);
+    assert_eq!(
+        unpack_i32s(&reference.kv[1].k).unwrap()[..2],
+        [35408, 55146]
+    );
 
     let mut prior = empty.clone();
     // Prefill one token, decode twice, then process a two-token chunk.
@@ -369,21 +390,21 @@ fn direct_executor_runs_from_direct_manifest_without_raster_toml() {
         &[
             TensorFixture {
                 name: "model.language_model.embed_tokens.weight",
-                dims: vec![3, 2],
-                element_width: 32,
-                values: vec![0, 0, ONE, 0, 0, ONE],
+                dims: vec![3, W as u64],
+                element_width: 8,
+                values: one_hot_rows(&[None, Some(0), Some(1)]),
             },
             TensorFixture {
                 name: "model.language_model.lm_head.weight",
-                dims: vec![3, 2],
-                element_width: 32,
-                values: vec![0, 0, 0, 0, ONE, 0],
+                dims: vec![3, W as u64],
+                element_width: 8,
+                values: one_hot_rows(&[None, None, Some(0)]),
             },
             TensorFixture {
                 name: "model.language_model.norm.weight",
-                dims: vec![2],
+                dims: vec![W as u64],
                 element_width: 32,
-                values: vec![ONE, ONE],
+                values: vec![ONE; W],
             },
         ],
     );
@@ -410,7 +431,7 @@ fn direct_executor_runs_from_direct_manifest_without_raster_toml() {
                 tokenizer_sha256: sha256_file(&tokenizer),
             },
             shape: DirectInferShape {
-                hidden_size: 2,
+                hidden_size: W as u32,
                 num_hidden_layers: 0,
                 num_attention_heads: 1,
                 num_key_value_heads: 1,
@@ -600,7 +621,7 @@ struct TensorFixture {
 fn write_detwgt(path: &Path, tensors: &[TensorFixture]) {
     let mut bytes = Vec::new();
     bytes.extend_from_slice(b"DNWGTV0\0");
-    bytes.extend_from_slice(&2_u32.to_le_bytes());
+    bytes.extend_from_slice(&3_u32.to_le_bytes());
     bytes.extend_from_slice(&1_u32.to_le_bytes());
     bytes.extend_from_slice(&(tensors.len() as u64).to_le_bytes());
     for tensor in tensors {
@@ -612,13 +633,17 @@ fn write_detwgt(path: &Path, tensors: &[TensorFixture]) {
         }
         bytes.extend_from_slice(&(tensor.values.len() as u64).to_le_bytes());
         bytes.extend_from_slice(&tensor.element_width.to_le_bytes());
-        let payload_len = tensor.values.len() * (tensor.element_width as usize / 8);
+        let payload_len = match tensor.element_width {
+            8 => q8_exact(&tensor.values).len(),
+            width => tensor.values.len() * (width as usize / 8),
+        };
         bytes.extend_from_slice(&(payload_len as u64).to_le_bytes());
         bytes.extend_from_slice(&0_u64.to_le_bytes());
         while bytes.len() % 64 != 0 {
             bytes.push(0);
         }
         match tensor.element_width {
+            8 => bytes.extend(q8_exact(&tensor.values)),
             16 => {
                 for value in &tensor.values {
                     bytes.extend_from_slice(&(*value as i16).to_le_bytes());
@@ -659,21 +684,21 @@ fn write_tiny_model_detwgt(path: &Path) {
         &[
             TensorFixture {
                 name: "model.language_model.embed_tokens.weight",
-                dims: vec![3, 2],
-                element_width: 32,
-                values: vec![0, 0, ONE, 0, 0, ONE],
+                dims: vec![3, W as u64],
+                element_width: 8,
+                values: one_hot_rows(&[None, Some(0), Some(1)]),
             },
             TensorFixture {
                 name: "model.language_model.lm_head.weight",
-                dims: vec![3, 2],
-                element_width: 32,
-                values: vec![0, 0, 0, 0, ONE, 0],
+                dims: vec![3, W as u64],
+                element_width: 8,
+                values: one_hot_rows(&[None, None, Some(0)]),
             },
             TensorFixture {
                 name: "model.language_model.norm.weight",
-                dims: vec![2],
+                dims: vec![W as u64],
                 element_width: 32,
-                values: vec![ONE, ONE],
+                values: vec![ONE; W],
             },
         ],
     );
@@ -691,7 +716,7 @@ fn tiny_direct_manifest(detwgt: &Path, config: &Path, tokenizer: &Path) -> Model
             tokenizer_sha256: sha256_file(tokenizer),
         },
         shape: DirectInferShape {
-            hidden_size: 2,
+            hidden_size: W as u32,
             num_hidden_layers: 0,
             num_attention_heads: 1,
             num_key_value_heads: 1,
@@ -749,18 +774,18 @@ fn write_staged_fixture(dir: &Path, eos_ids: &[u32]) {
         }]),
     };
     let embedding = EmbeddingTable {
-        hidden_size: 2,
+        hidden_size: W as u32,
         embedding_scale: ONE,
-        values: paged(&[0, 0, ONE, 0, 0, ONE]),
+        values: q8_paged(&one_hot_rows(&[None, Some(0), Some(1)])),
     };
     let head = FinalHead {
         params: FinalHeadParams {
-            hidden_size: 2,
+            hidden_size: W as u32,
             norm_eps: 0,
             softcap: 0,
-            norm_weights: pack_i32_page(&[ONE, ONE]),
+            norm_weights: pack_i32_page(&[ONE; W]),
         },
-        projection: paged(&[0, 0, 0, 0, ONE, 0]),
+        projection: q8_paged(&one_hot_rows(&[None, None, Some(0)])),
     };
     let decoder = DecoderTable {
         tokens: List::from(vec![
@@ -897,6 +922,37 @@ fn tiny_prompt_tokenizer() -> PromptTokenizer {
 
 fn tiny_tokenizer_json() -> &'static str {
     r#"{"model":{"type":"BPE","vocab":{"<pad>":0,"h":1,"Hi":2},"merges":[]},"added_tokens":[]}"#
+}
+
+/// Rows `W` wide: `Some(col)` is `ONE` at `col`, `None` is all zero.
+fn one_hot_rows(hot: &[Option<usize>]) -> Vec<i32> {
+    hot.iter()
+        .flat_map(|col| (0..W).map(move |i| if Some(i) == *col { ONE } else { 0 }))
+        .collect()
+}
+
+/// Q16.16 `values` as exact `Q8_0` blocks: each block takes the largest
+/// power-of-two scale that represents all its values exactly.
+fn q8_exact(values: &[i32]) -> Vec<u8> {
+    let mut out = Vec::new();
+    for block in values.chunks(32) {
+        assert_eq!(block.len(), 32, "Q8_0 rows are whole blocks");
+        let k = (0..=14)
+            .find(|k| {
+                let step = ONE >> k;
+                block
+                    .iter()
+                    .all(|v| v % step == 0 && (v / step).abs() <= 127)
+            })
+            .expect("values are not exactly representable as Q8_0");
+        out.extend_from_slice(&(((15 - k) as u16) << 10).to_le_bytes());
+        out.extend(block.iter().map(|v| (v / (ONE >> k)) as i8 as u8));
+    }
+    out
+}
+
+fn q8_paged<const P: u64>(values: &[i32]) -> Bytes<P> {
+    Bytes::<P>::paged(q8_exact(values)).unwrap()
 }
 
 fn paged(values: &[i32]) -> Bytes<196_608> {

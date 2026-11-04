@@ -396,7 +396,6 @@ fn run_teacher_forced_leg(
         claimed_token_ids: None,
     })?;
     let claimed = prepared
-        .prepared_run
         .claimed_token_ids
         .clone()
         .context("teacher-forced preparation recorded no claimed ids")?;
@@ -860,7 +859,7 @@ fn validate_model_bundle(
             && shape.num_attention_heads == 4
             && shape.num_key_value_heads == 2
             && shape.head_dim == 32
-            && shape.hidden_size_per_layer_input == 8
+            && shape.hidden_size_per_layer_input == 32
             && shape.sliding_window == 16
             && shape.num_kv_shared_layers == 2
             && shape.vocab_size == 512
@@ -875,17 +874,21 @@ fn validate_model_bundle(
             "mlp.up_proj.weight",
             "mlp.down_proj.weight",
         ] {
-            let values =
-                weights.values(&format!("model.language_model.layers.{layer}.{tensor}"))?;
+            let matrix =
+                weights.q8_matrix(&format!("model.language_model.layers.{layer}.{tensor}"))?;
+            let bytes = matrix.rows() * det_num::q8::row_bytes(matrix.cols()).unwrap_or(0);
             ensure!(
-                values.len() == 128 * 512
-                    && values.len() * 4 > 196_608
-                    && (values.len() * 4) % 196_608 != 0,
-                "model bundle does not cross a page with a partial tail"
+                matrix.rows() * matrix.cols() == 128 * 2048
+                    && bytes > 195_840
+                    && bytes % 195_840 != 0,
+                "model bundle does not cross a Q8_0 page with a partial tail"
             );
+            let values = (0..matrix.rows())
+                .map(|row| matrix.row_dequantized(row))
+                .collect::<Result<Vec<_>>>()?
+                .concat();
             ensure!(
-                values.iter().all(|v| *v != 0)
-                    && values.iter().any(|v| *v < 0)
+                values.iter().any(|v| *v < 0)
                     && values.iter().any(|v| *v > 0)
                     && values.iter().any(|v| v % 65536 != 0),
                 "model bundle weights are not dense signed fractional values"
@@ -908,17 +911,17 @@ fn validate_model_bundle(
                 .as_array()
                 .context("missing imported matrix pages")?;
             ensure!(
-                matrix["page_size"] == json!(196_608)
-                    && matrix["byte_len"] == json!(262_144)
+                matrix["page_size"] == json!(195_840)
+                    && matrix["byte_len"] == json!(278_528)
                     && pages.len() == 2
-                    && pages[0]["bytes"].as_str().map(str::len) == Some(196_608 * 2)
-                    && pages[1]["bytes"].as_str().map(str::len) == Some(65_536 * 2),
+                    && pages[0]["bytes"].as_str().map(str::len) == Some(195_840 * 2)
+                    && pages[1]["bytes"].as_str().map(str::len) == Some(82_688 * 2),
                 "layer{layer}.{name}: imported matrix must contain a full page and a partial tail"
             );
         }
         let params = &value["params"];
         ensure!(
-            params["ffn_size"] == json!(512) && params["ple_width"] == json!(8),
+            params["ffn_size"] == json!(2048) && params["ple_width"] == json!(32),
             "incorrect imported FFN or PLE shape"
         );
         ensure!(

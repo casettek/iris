@@ -70,10 +70,11 @@ pub fn run_ple_prepare_view(
         prefill_prepare_aux::input::rms_norm(&mut projected, &norm_weights, layer.params.norm_eps)
             .map_err(anyhow::Error::msg)?;
 
-        let embedding = layer.embeddings.row(row.token_id as usize)?;
-        let mut embedded = embedding
-            .subslice(layer.embedding_start, layer.params.ple_width as usize)?
-            .values();
+        let mut embedded = layer.embeddings.row_columns(
+            row.token_id as usize,
+            layer.embedding_start,
+            layer.params.ple_width as usize,
+        )?;
         scale_row(&mut embedded, layer.params.embedding_scale);
         for (value, projected_value) in embedded.iter_mut().zip(projected) {
             *value = prefill_prepare_aux::input::add_sat(*value, projected_value);

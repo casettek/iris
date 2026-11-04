@@ -114,7 +114,8 @@ pub fn begin_logits(token_count: u32, start_position: u32) -> Draft<PrefillLogit
     output
 }
 
-/// Scores one page of the vocabulary: a dot product per row, then softcap.
+/// Scores one page of the vocabulary: a `Q8_0` dot product per row, then
+/// softcap.
 #[tile(
     kind = recur,
     description = "Score one page of the vocabulary",
@@ -144,31 +145,26 @@ pub fn project_logit_page(
     }
 
     let page = input.into_value();
-    let weights = match unpack_i32s(&page) {
-        Ok(values) => values,
-        Err(error) => {
-            output.errors().push(error);
+    let stride = match det_num::q8::row_bytes(hidden) {
+        Some(stride) if page.len() % stride == 0 => stride,
+        _ => {
+            output.errors().push(alloc::format!(
+                "projection page at offset {} is not a whole number of hidden-width Q8_0 rows",
+                page.offset()
+            ));
             return output;
         }
     };
-    if hidden == 0 || weights.len() % hidden != 0 {
-        output.errors().push(alloc::format!(
-            "projection page at offset {} is not a whole number of hidden-width rows",
-            page.offset()
-        ));
-        return output;
-    }
-    let stride = hidden as u64 * 4;
-    if page.offset() % stride != 0 {
+    if page.offset() % stride as u64 != 0 {
         output.errors().push(String::from(
             "projection page offset is not row-aligned",
         ));
         return output;
     }
-    let first_id = (page.offset() / stride) as u32;
-    for (local, row) in weights.chunks_exact(hidden).enumerate() {
+    let first_id = (page.offset() / stride as u64) as u32;
+    for (local, row) in page.as_slice().chunks_exact(stride).enumerate() {
         let token_id = first_id + local as u32;
-        match dot(&position, row) {
+        match det_num::q8::dot_row(&position, row) {
             Ok(value) => output.logits().push(LogitEntry {
                 token_id,
                 value: softcap(value, params.softcap),

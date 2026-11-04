@@ -31,7 +31,9 @@ pub enum ChainKind {
     #[default]
     Autoregressive,
     /// One pass over `prompt ‖ claimed output`, then a greedy check of every
-    /// generated position. The claimed ids are frozen into the prepared run.
+    /// generated position. The claimed ids are the frozen run manifest's
+    /// `claimed_ids` externals; the claim's output is the chain's final
+    /// record, whose committed verdict says whether they were greedy.
     TeacherForced,
 }
 
@@ -55,9 +57,6 @@ pub struct PreparedRun {
     pub run_manifest_sha256: Option<String>,
     #[serde(default, skip_serializing_if = "ChainKind::is_autoregressive")]
     pub chain: ChainKind,
-    /// The claim's output ids, present exactly for teacher-forced runs.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub claimed_token_ids: Option<Vec<u32>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

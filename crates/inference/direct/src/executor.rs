@@ -141,6 +141,8 @@ impl DirectInferenceExecutor {
             decode_position: edge.decode_position,
             token_id: edge.token_id,
             value: edge.value,
+            claim_mismatches: edge.claim_mismatches,
+            first_claim_mismatch_position: edge.first_claim_mismatch_position,
             generated_token_ids: edge.generated_token_ids.clone(),
         };
         let decoder = model.decoder_table()?;
@@ -157,6 +159,8 @@ impl DirectInferenceExecutor {
             generated_token_ids_sha256: output.generated_token_ids_sha256,
             generated_text: output.generated_text,
             stop_reason: output.stop_reason,
+            claim_mismatches: output.claim_mismatches,
+            first_claim_mismatch_position: output.first_claim_mismatch_position,
         };
         timings.push(phase_timing("output_finalize", finalize_started.elapsed()));
 

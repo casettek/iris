@@ -283,6 +283,90 @@ impl MatrixSource for Matrix {
     }
 }
 
+/// A `Q8_0` matrix: rows of 34-byte blocks, as committed. Products go
+/// through `det_num::q8::dot_row`; there is deliberately no Q16.16 view,
+/// because a dequantized product rounds differently.
+#[derive(Clone, Debug)]
+pub struct Q8Matrix {
+    bytes: Vec<u8>,
+    rows: usize,
+    cols: usize,
+    row_bytes: usize,
+}
+
+impl Q8Matrix {
+    pub(crate) fn allocated_bytes(&self) -> usize {
+        self.bytes.capacity()
+    }
+
+    pub fn from_region<const P: u64>(
+        name: &str,
+        region: &Bytes<P>,
+        rows: usize,
+        cols: usize,
+    ) -> Result<Self> {
+        Self::from_bytes(name, region_bytes(name, region, P)?, rows, cols)
+    }
+
+    pub fn from_bytes(name: &str, bytes: Vec<u8>, rows: usize, cols: usize) -> Result<Self> {
+        let row_bytes = det_num::q8::row_bytes(cols)
+            .ok_or_else(|| anyhow!("{name} rows of {cols} values are not whole Q8_0 blocks"))?;
+        let expected = rows
+            .checked_mul(row_bytes)
+            .ok_or_else(|| anyhow!("{name} matrix shape overflows usize"))?;
+        if bytes.len() != expected {
+            bail!(
+                "{name} has {} bytes, expected {expected} ({rows} x {cols} Q8_0)",
+                bytes.len()
+            );
+        }
+        Ok(Self {
+            bytes,
+            rows,
+            cols,
+            row_bytes,
+        })
+    }
+
+    pub fn row(&self, row_idx: usize) -> &[u8] {
+        &self.bytes[row_idx * self.row_bytes..(row_idx + 1) * self.row_bytes]
+    }
+
+    /// One row's Q16.16 values, for lookups (embeddings), not products.
+    pub fn row_dequantized(&self, row_idx: usize) -> Result<Vec<i32>> {
+        if row_idx >= self.rows {
+            bail!("Q8_0 row {row_idx} out of range for {} rows", self.rows);
+        }
+        let mut out = vec![0; self.cols];
+        det_num::q8::dequantize_row(self.row(row_idx), &mut out).map_err(anyhow::Error::msg)?;
+        Ok(out)
+    }
+}
+
+impl MatrixSource for Q8Matrix {
+    fn rows(&self) -> usize {
+        self.rows
+    }
+
+    fn cols(&self) -> usize {
+        self.cols
+    }
+
+    fn row_values_into(&self, _row_idx: usize, _out: &mut Vec<i32>) -> Result<()> {
+        bail!("Q8_0 rows have no Q16.16 values; products use row_dot")
+    }
+
+    fn row_dot(&self, row_idx: usize, input: &[i32]) -> Result<i32> {
+        if row_idx >= self.rows {
+            bail!(
+                "deterministic linear row index {row_idx} out of range for {} rows",
+                self.rows
+            );
+        }
+        det_num::q8::dot_row(input, self.row(row_idx)).map_err(anyhow::Error::msg)
+    }
+}
+
 pub fn matvec_from_source(matrix: &impl MatrixSource, input: &[i32]) -> Result<Vec<i32>> {
     matrix.matvec(input)
 }
@@ -310,10 +394,6 @@ pub fn linear_slab_from_source(input: &Slab, matrix: &impl MatrixSource) -> Resu
             .try_for_each(|(out_row, in_row)| matrix.matvec_into(in_row, out_row))?;
     }
     Ok(output)
-}
-
-pub(crate) fn linear_slab(input: &Slab, matrix: &Matrix) -> Result<Slab> {
-    linear_slab_from_source(input, matrix)
 }
 
 pub fn dot_bits(a: &[i32], b: &[i32]) -> i32 {
@@ -344,7 +424,23 @@ pub(crate) fn unpack_page_i32s(page: &BytesPage) -> Result<Vec<i32>> {
 }
 
 pub(crate) fn unpack_region_i32s<const P: u64>(name: &str, region: &Bytes<P>) -> Result<Vec<i32>> {
-    if region.page_size() != P || P != PAGE_SIZE {
+    let bytes = region_bytes(name, region, PAGE_SIZE)?;
+    if bytes.len() % 4 != 0 {
+        bail!("{name} byte length {} is not i32-aligned", bytes.len());
+    }
+    Ok(bytes
+        .chunks_exact(4)
+        .map(|chunk| i32::from_le_bytes(chunk.try_into().expect("chunks_exact(4)")))
+        .collect())
+}
+
+/// A region's pages, checked for order and size, joined into one buffer.
+pub(crate) fn region_bytes<const P: u64>(
+    name: &str,
+    region: &Bytes<P>,
+    page_size: u64,
+) -> Result<Vec<u8>> {
+    if region.page_size() != P || P != page_size {
         bail!(
             "{name} page size mismatch: declared {P}, artifact {}",
             region.page_size()
@@ -374,13 +470,7 @@ pub(crate) fn unpack_region_i32s<const P: u64>(name: &str, region: &Bytes<P>) ->
             region.byte_len()
         );
     }
-    if bytes.len() % 4 != 0 {
-        bail!("{name} byte length {} is not i32-aligned", bytes.len());
-    }
-    Ok(bytes
-        .chunks_exact(4)
-        .map(|chunk| i32::from_le_bytes(chunk.try_into().expect("chunks_exact(4)")))
-        .collect())
+    Ok(bytes)
 }
 
 pub(crate) fn pack_i32_page(values: &[i32]) -> BytesPage {

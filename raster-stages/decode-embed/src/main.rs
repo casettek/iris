@@ -28,7 +28,7 @@ fn main(selected: DecodeEdge, embedding: EmbeddingTable) -> Result<ActivationSeq
     let hidden_size = select!(u32, embedding.clone().hidden_size);
     let page_size = select!(u64, embedding.clone().values.page_size);
     let embedding_scale = select!(i32, embedding.clone().embedding_scale);
-    let values = select!(Bytes<196_608>, embedding.values);
+    let values = select!(Bytes<195_840>, embedding.values);
 
     let byte_off = call!(embedding_byte_offset, token_id.clone(), hidden_size.clone());
     let page_idx = call!(page_of, byte_off.clone(), page_size);

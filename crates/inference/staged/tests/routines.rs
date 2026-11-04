@@ -20,6 +20,46 @@ fn bytes_of_i32s(values: &[i32]) -> Vec<u8> {
     bytes
 }
 
+/// Hidden width of the fixtures: one `Q8_0` block, the narrowest int8 row.
+const W: usize = 32;
+
+/// Rows `W` wide, each holding its listed values then zeros.
+fn wide_rows(rows: &[&[i32]]) -> Vec<i32> {
+    rows.iter()
+        .flat_map(|head| {
+            let mut row = vec![0; W];
+            row[..head.len()].copy_from_slice(head);
+            row
+        })
+        .collect()
+}
+
+fn identity() -> Vec<i32> {
+    (0..W * W)
+        .map(|i| if i % (W + 1) == 0 { ONE } else { 0 })
+        .collect()
+}
+
+/// Q16.16 `values` as exact `Q8_0` blocks: each block takes the largest
+/// power-of-two scale that represents all its values exactly.
+fn q8_paged<const P: u64>(values: &[i32]) -> Bytes<P> {
+    let mut out = Vec::new();
+    for block in values.chunks(32) {
+        assert_eq!(block.len(), 32, "Q8_0 rows are whole blocks");
+        let k = (0..=14)
+            .find(|k| {
+                let step = ONE >> k;
+                block
+                    .iter()
+                    .all(|v| v % step == 0 && (v / step).abs() <= 127)
+            })
+            .expect("values are not exactly representable as Q8_0");
+        out.extend_from_slice(&(((15 - k) as u16) << 10).to_le_bytes());
+        out.extend(block.iter().map(|v| (v / (ONE >> k)) as i8 as u8));
+    }
+    Bytes::<P>::paged(out).unwrap()
+}
+
 fn paged(values: &[i32]) -> Bytes<196_608> {
     Bytes::<196_608>::paged(bytes_of_i32s(values)).unwrap()
 }
@@ -53,6 +93,8 @@ fn decode_select_token_keeps_first_token_on_tie() {
             decode_position: 8,
             token_id: 11,
             value: 1,
+            claim_mismatches: 0,
+            first_claim_mismatch_position: 0,
             generated_token_ids: List::from(vec![11, 12]),
         },
     };
@@ -120,18 +162,15 @@ fn decode_embed_uses_selected_decode_position() {
         decode_position: 9,
         token_id: 1,
         value: 10,
+        claim_mismatches: 0,
+        first_claim_mismatch_position: 0,
         generated_token_ids: List::from(vec![1]),
     };
     let embedding: std::sync::Arc<decode_embed::input::EmbeddingTable> =
         decode_embed::input::EmbeddingTable {
-            hidden_size: 2,
+            hidden_size: W as u32,
             embedding_scale: ONE,
-            values: decode_embed::input::EmbeddingTable {
-                hidden_size: 2,
-                embedding_scale: ONE,
-                values: paged(&[0, 0, ONE, 2 * ONE]),
-            }
-            .values,
+            values: q8_paged(&wide_rows(&[&[], &[ONE, 2 * ONE]])),
         }
         .into();
     let inputs = routines::decode_embed::Inputs::eager(selected, embedding.clone());
@@ -170,6 +209,8 @@ fn output_finalize_decodes_generated_ids() {
             decode_position: 2,
             token_id: 1,
             value: 10,
+            claim_mismatches: 2,
+            first_claim_mismatch_position: 1,
             generated_token_ids: List::from(vec![0, 1]),
         },
         decoder: DecoderTable {
@@ -197,6 +238,9 @@ fn output_finalize_decodes_generated_ids() {
     .unwrap();
 
     assert_same_json(&output, &kernel_output);
+    // The claim verdict is published as the edge carried it.
+    assert_eq!(output.claim_mismatches, 2);
+    assert_eq!(output.first_claim_mismatch_position, 1);
     assert_eq!(output.generated_token_count, 2);
     assert_eq!(output.generated_token_ids.as_slice(), &[0, 1]);
     assert_eq!(output.generated_text, " Hi!");
@@ -244,9 +288,9 @@ fn input_embedding_gathers_and_scales_rows() {
         token_ids: List::from(vec![1]),
     };
     let embedding: std::sync::Arc<input_embedding::input::EmbeddingTable> = EmbeddingTable {
-        hidden_size: 2,
+        hidden_size: W as u32,
         embedding_scale: ONE,
-        values: paged(&[0, 0, ONE, 2 * ONE]),
+        values: q8_paged(&wide_rows(&[&[], &[ONE, 2 * ONE]])),
     }
     .into();
     let inputs = routines::input_embedding::Inputs::eager(prompt, embedding.clone());
@@ -268,11 +312,11 @@ fn input_embedding_gathers_and_scales_rows() {
 
 #[test]
 fn prefill_prepare_aux_publishes_one_row() {
-    let norm = prefill_prepare_aux::input::pack_i32s(&[ONE, ONE]);
+    let norm = prefill_prepare_aux::input::pack_i32s(&[ONE; W]);
     let activation = prefill_prepare_aux::input::ActivationSequence {
         rows: List::from(vec![prefill_prepare_aux::input::ActivationRow {
             token_id: 0,
-            values: prefill_prepare_aux::input::pack_i32s(&[ONE, 0]),
+            values: prefill_prepare_aux::input::pack_i32s(&wide_rows(&[&[ONE]])),
         }]),
         errors: List::new(),
         kv: List::new(),
@@ -282,16 +326,16 @@ fn prefill_prepare_aux_publishes_one_row() {
     let layer = std::sync::Arc::new(PleLayer {
         params: PleLayerParams {
             layer_idx: 7,
-            hidden_size: 2,
-            ple_width: 2,
+            hidden_size: W as u32,
+            ple_width: W as u32,
             embedding_scale: ONE,
             projection_scalar: ONE,
             input_scale: ONE,
             norm_eps: 0,
             norm_weights: norm.clone(),
         },
-        embeddings: paged(&[ONE, 0]),
-        projection: paged(&[ONE, 0, 0, ONE]),
+        embeddings: q8_paged(&wide_rows(&[&[ONE]])),
+        projection: paged(&identity()),
     });
     let inputs = routines::prefill_prepare_aux::Inputs::eager(activation, layer.clone());
     let output = routines::prefill_prepare_aux::run_direct(&inputs).unwrap();
@@ -311,24 +355,24 @@ fn prefill_prepare_aux_publishes_one_row() {
 
 #[test]
 fn prefill_prepare_aux_preserves_prompt_row_order() {
-    let norm = prefill_prepare_aux::input::pack_i32s(&[ONE, ONE]);
+    let norm = prefill_prepare_aux::input::pack_i32s(&[ONE; W]);
     let row = |token_id, values: &[i32]| prefill_prepare_aux::input::ActivationRow {
         token_id,
-        values: prefill_prepare_aux::input::pack_i32s(values),
+        values: prefill_prepare_aux::input::pack_i32s(&wide_rows(&[values])),
     };
     let layer = || PleLayer {
         params: PleLayerParams {
             layer_idx: 7,
-            hidden_size: 2,
-            ple_width: 2,
+            hidden_size: W as u32,
+            ple_width: W as u32,
             embedding_scale: ONE,
             projection_scalar: ONE,
             input_scale: ONE,
             norm_eps: 0,
             norm_weights: norm.clone(),
         },
-        embeddings: paged(&[0, 0, ONE, 0, 0, ONE]),
-        projection: paged(&[ONE, 0, 0, ONE]),
+        embeddings: q8_paged(&wide_rows(&[&[], &[ONE], &[0, ONE]])),
+        projection: paged(&identity()),
     };
     let run = |rows| {
         routines::prefill_prepare_aux::run_direct(&routines::prefill_prepare_aux::Inputs::eager(
@@ -364,13 +408,21 @@ fn prefill_prepare_aux_preserves_prompt_row_order() {
 #[test]
 fn sequence_check_matches_finalize_then_select_at_every_position() {
     use sequence_check::input as check;
-    let hidden = 4;
+    let hidden = W;
     let vocab = 16;
     // Fractional, signed, and with repeated projection rows so ties occur.
     let value = |seed: usize| ((seed * 7919 % 131) as i32 - 65) * (ONE / 37);
-    let projection = (0..vocab * hidden)
-        .map(|i| value(i % (hidden * 11)))
+    // One Q8_0 block per row at scale 2^-7; rows repeat with period 5.
+    let projection_bytes = (0..vocab)
+        .flat_map(|row| {
+            let mut block = 0x2000_u16.to_le_bytes().to_vec();
+            block.extend(
+                (0..hidden).map(|i| ((((row % 5) * 13 + i * 7) % 131) as i32 - 65) as i8 as u8),
+            );
+            block
+        })
         .collect::<Vec<_>>();
+    let projection = || Bytes::<52_224>::paged(projection_bytes.clone()).unwrap();
     let norm = (0..hidden).map(|i| ONE + value(i) / 3).collect::<Vec<_>>();
     let row_values = |row: usize| {
         (0..hidden)
@@ -388,7 +440,7 @@ fn sequence_check_matches_finalize_then_select_at_every_position() {
             softcap: 30 * ONE,
             norm_weights: prefill_finalize::input::pack_i32s(&norm),
         },
-        projection: paged(&projection),
+        projection: projection(),
     }
     .into();
     let mut prior = DecodeEdge::default();
@@ -441,7 +493,7 @@ fn sequence_check_matches_finalize_then_select_at_every_position() {
             softcap: 30 * ONE,
             norm_weights: check::pack_i32s(&norm),
         },
-        projection: paged(&projection),
+        projection: projection(),
     }
     .into();
     // Prompt range rows 0..3, then claimed ranges rows 3..5 and row 5: the
@@ -464,22 +516,61 @@ fn sequence_check_matches_finalize_then_select_at_every_position() {
     let claimed_range = |ids: &[u32]| check::ClaimedOutput {
         token_ids: List::from(ids.to_vec()),
     };
-    let first = routines::sequence_check::run_direct(&routines::sequence_check::Inputs::eager(
-        sequence(3..5),
-        sequence(0..3),
-        claimed_range(&claimed[..2]),
-        check::DecodeEdge::default(),
-        check_head.clone(),
-    ))
-    .unwrap();
-    let edge = routines::sequence_check::run_direct(&routines::sequence_check::Inputs::eager(
-        sequence(5..6),
-        sequence(3..5),
-        claimed_range(&claimed[2..]),
-        first,
-        check_head,
-    ))
-    .unwrap();
+    let run_check = |claimed: &[u32]| {
+        let first =
+            routines::sequence_check::run_direct(&routines::sequence_check::Inputs::eager(
+                sequence(3..5),
+                sequence(0..3),
+                claimed_range(&claimed[..2]),
+                check::DecodeEdge::default(),
+                check_head.clone(),
+            ))
+            .unwrap();
+        let edge = routines::sequence_check::run_direct(&routines::sequence_check::Inputs::eager(
+            sequence(5..6),
+            sequence(3..5),
+            claimed_range(&claimed[2..]),
+            first.clone(),
+            check_head.clone(),
+        ))
+        .unwrap();
+        (first, edge)
+    };
+    let (first, edge) = run_check(&claimed);
+
+    // The verdict is committed, and the second range carries the first's.
+    assert_eq!(prior.claim_mismatches, 0);
+    assert_eq!(first.claim_mismatches, 1);
+    assert_eq!(first.first_claim_mismatch_position, prompt_len as u32 + 1);
+    assert_eq!(edge.claim_mismatches, 1);
+    assert_eq!(edge.first_claim_mismatch_position, prompt_len as u32 + 1);
+
+    // A disagreement only in the second range is counted there.
+    let mut late = prior
+        .generated_token_ids
+        .iter()
+        .copied()
+        .collect::<Vec<_>>();
+    late[2] = (late[2] + 1) % vocab as u32;
+    let (late_first, late_edge) = run_check(&late);
+    assert_eq!(late_first.claim_mismatches, 0);
+    assert_eq!(late_first.first_claim_mismatch_position, 0);
+    assert_eq!(late_edge.claim_mismatches, 1);
+    assert_eq!(late_edge.first_claim_mismatch_position, prompt_len as u32 + 2);
+
+    // An honest claim publishes a clean verdict and the autoregressive edge.
+    let honest = prior
+        .generated_token_ids
+        .iter()
+        .copied()
+        .collect::<Vec<_>>();
+    let (_, honest_edge) = run_check(&honest);
+    assert_eq!(honest_edge.claim_mismatches, 0);
+    assert_eq!(honest_edge.first_claim_mismatch_position, 0);
+    assert_eq!(
+        serde_json::to_value(&honest_edge).unwrap(),
+        serde_json::to_value(&prior).unwrap()
+    );
 
     assert_eq!(edge.has_selected, prior.has_selected);
     assert_eq!(edge.decode_position, prior.decode_position);
@@ -493,11 +584,11 @@ fn sequence_check_matches_finalize_then_select_at_every_position() {
 
 #[test]
 fn prefill_finalize_scores_projection_rows() {
-    let norm = prefill_finalize::input::pack_i32s(&[ONE, ONE]);
+    let norm = prefill_finalize::input::pack_i32s(&[ONE; W]);
     let activations = prefill_finalize::input::ActivationSequence {
         rows: List::from(vec![prefill_finalize::input::ActivationRow {
             token_id: 7,
-            values: prefill_finalize::input::pack_i32s(&[ONE, 0]),
+            values: prefill_finalize::input::pack_i32s(&wide_rows(&[&[ONE]])),
         }]),
         errors: List::new(),
         kv: List::new(),
@@ -506,12 +597,12 @@ fn prefill_finalize_scores_projection_rows() {
 
     let head: std::sync::Arc<FinalHead> = FinalHead {
         params: FinalHeadParams {
-            hidden_size: 2,
+            hidden_size: W as u32,
             norm_eps: 0,
             softcap: 0,
             norm_weights: norm,
         },
-        projection: paged(&[ONE, 0, 0, ONE]),
+        projection: q8_paged(&wide_rows(&[&[ONE], &[0, ONE]])),
     }
     .into();
     let inputs = routines::prefill_finalize::Inputs::eager(activations, head.clone());

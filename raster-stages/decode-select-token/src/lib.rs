@@ -84,6 +84,9 @@ pub fn begin_decode_edge(selected: SelectedToken) -> Draft<DecodeEdge> {
     output.decode_position().set(selected.decode_position);
     output.token_id().set(selected.token_id);
     output.value().set(selected.value);
+    // Autoregressive decode is given no claimed tokens, so none can disagree.
+    output.claim_mismatches().set(0);
+    output.first_claim_mismatch_position().set(0);
     output
 }
 

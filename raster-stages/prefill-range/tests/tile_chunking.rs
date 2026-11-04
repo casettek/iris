@@ -18,6 +18,18 @@ fn test_projection(weights: Bytes<196_608>, row: BytesPage, width: u32, rows: u3
     )
 }
 
+#[sequence]
+fn test_q8_projection(weights: Bytes<195_840>, row: BytesPage, width: u32, rows: u32) -> ProjAccum {
+    let pages = select!(List<BytesPage>, weights.pages);
+    let acc = call!(zero_accum, rows);
+    call_recur!(
+        tile = mac_q8_weight_page,
+        input = pages,
+        state = acc,
+        args = (row, width)
+    )
+}
+
 #[test]
 fn one_page_tiles_cover_empty_short_full_and_odd_page_counts() {
     raster::init_with(support::Counter);
@@ -34,6 +46,22 @@ fn one_page_tiles_cover_empty_short_full_and_odd_page_counts() {
         assert!(projected.error.is_empty(), "{}", projected.error);
         assert_eq!(unpack_i32s(&projected.values).unwrap(), expected);
         let pages = rows.div_ceil(support::ROWS_PER_PAGE);
+        assert_eq!(support::iteration_count(), pages);
+    }
+    // The int8 matrices use their own tile; the counter is global, so they
+    // run in this same test rather than in parallel with it.
+    for rows in support::q8_cases::<Q8_PAGE_SIZE>() {
+        support::reset_count();
+        let (weights, expected) = support::q8_fixture::<Q8_PAGE_SIZE>(rows);
+        let projected = raster::materialize_auth_return(__raster_sequence_auth_test_q8_projection(
+            weights,
+            raster::into_auth_ref(pack_i32s(&vec![support::ONE; support::WIDTH as usize])),
+            raster::into_auth_ref(support::WIDTH),
+            raster::into_auth_ref(rows as u32),
+        ));
+        assert!(projected.error.is_empty(), "{}", projected.error);
+        assert_eq!(unpack_i32s(&projected.values).unwrap(), expected);
+        let pages = rows.div_ceil(Q8_PAGE_SIZE as usize / support::Q8_ROW_BYTES);
         assert_eq!(support::iteration_count(), pages);
     }
 }

@@ -10,8 +10,8 @@ use raster::List;
 use rayon::prelude::*;
 
 use crate::tensor::{
-    dot_bits, linear_slab, mac_weighted_value, pack_i32_page, requantize_acc, unpack_page_i32s,
-    Matrix, Slab,
+    dot_bits, linear_slab_from_source, mac_weighted_value, pack_i32_page, requantize_acc,
+    unpack_page_i32s, Matrix, MatrixSource, Q8Matrix, Slab,
 };
 use crate::MaterializationCacheKey;
 use ::prefill_range::input::{
@@ -236,13 +236,13 @@ struct QueryState {
 }
 
 struct LayerWeights {
-    w_q: Matrix,
-    w_k: Matrix,
-    w_v: Matrix,
-    w_o: Matrix,
-    w_gate: Matrix,
-    w_up: Matrix,
-    w_down: Matrix,
+    w_q: Q8Matrix,
+    w_k: Q8Matrix,
+    w_v: Q8Matrix,
+    w_o: Q8Matrix,
+    w_gate: Q8Matrix,
+    w_up: Q8Matrix,
+    w_down: Q8Matrix,
     ple_input_gate: Matrix,
     ple_layer_projection: Matrix,
 }
@@ -258,12 +258,12 @@ impl LayerWeights {
                 &self.w_gate,
                 &self.w_up,
                 &self.w_down,
-                &self.ple_input_gate,
-                &self.ple_layer_projection,
             ]
             .iter()
             .map(|m| m.allocated_bytes())
             .sum::<usize>()
+            + self.ple_input_gate.allocated_bytes()
+            + self.ple_layer_projection.allocated_bytes()
     }
     fn from_layer(layer: &TransformerLayer, params: &LayerParams) -> Result<Self> {
         let hidden = params.hidden_size as usize;
@@ -272,13 +272,13 @@ impl LayerWeights {
         let kv_len = params.num_kv_heads as usize * params.head_dim as usize;
         let ple_width = params.ple_width as usize;
         Ok(Self {
-            w_q: Matrix::from_region("w_q", &layer.w_q, q_len, hidden)?,
-            w_k: Matrix::from_region("w_k", &layer.w_k, kv_len, hidden)?,
-            w_v: Matrix::from_region("w_v", &layer.w_v, kv_len, hidden)?,
-            w_o: Matrix::from_region("w_o", &layer.w_o, hidden, q_len)?,
-            w_gate: Matrix::from_region("w_gate", &layer.w_gate, ffn, hidden)?,
-            w_up: Matrix::from_region("w_up", &layer.w_up, ffn, hidden)?,
-            w_down: Matrix::from_region("w_down", &layer.w_down, hidden, ffn)?,
+            w_q: Q8Matrix::from_region("w_q", &layer.w_q, q_len, hidden)?,
+            w_k: Q8Matrix::from_region("w_k", &layer.w_k, kv_len, hidden)?,
+            w_v: Q8Matrix::from_region("w_v", &layer.w_v, kv_len, hidden)?,
+            w_o: Q8Matrix::from_region("w_o", &layer.w_o, hidden, q_len)?,
+            w_gate: Q8Matrix::from_region("w_gate", &layer.w_gate, ffn, hidden)?,
+            w_up: Q8Matrix::from_region("w_up", &layer.w_up, ffn, hidden)?,
+            w_down: Q8Matrix::from_region("w_down", &layer.w_down, hidden, ffn)?,
             ple_input_gate: Matrix::from_region(
                 "ple_input_gate",
                 &layer.ple_input_gate,
@@ -406,9 +406,9 @@ fn project_tokens(
     let k_norm = unpack_page_i32s(&params.k_norm)?;
     let hidden = params.hidden_size as usize;
     let normed = normed_input_slab(rows, &norm_input, params.norm_eps, hidden)?;
-    let mut q = linear_slab(&normed, &weights.w_q)?;
-    let mut k = linear_slab(&normed, &weights.w_k)?;
-    let mut v = linear_slab(&normed, &weights.w_v)?;
+    let mut q = linear_slab_from_source(&normed, &weights.w_q)?;
+    let mut k = linear_slab_from_source(&normed, &weights.w_k)?;
+    let mut v = linear_slab_from_source(&normed, &weights.w_v)?;
 
     let head_dim = params.head_dim as usize;
     for row_idx in 0..rows.rows() {
@@ -596,13 +596,13 @@ fn attend_token(
             params.donor_b_layer
         );
     };
-    let attn_proj = weights.w_o.matvec(&context)?;
+    let attn_proj = MatrixSource::matvec(&weights.w_o, &context)?;
     let residual = attn_residual(query, attn_proj, params)?;
     let ff_in = pre_ff_norm(&residual, params)?;
-    let gate = weights.w_gate.matvec(&ff_in)?;
-    let up = weights.w_up.matvec(&ff_in)?;
+    let gate = MatrixSource::matvec(&weights.w_gate, &ff_in)?;
+    let up = MatrixSource::matvec(&weights.w_up, &ff_in)?;
     let gated = gelu_mul(gate, up)?;
-    let ff = weights.w_down.matvec(&gated)?;
+    let ff = MatrixSource::matvec(&weights.w_down, &gated)?;
     let xs = finish_mlp(&residual, &ff_in, ff, params)?;
     let ple_row = ple_rows
         .get(query.local as usize)
@@ -827,14 +827,21 @@ mod tests {
     use raster::Bytes;
     use std::sync::Arc;
 
+    /// One `Q8_0` block wide: the smallest width an int8 matrix can have.
+    const N: usize = 32;
+
+    fn ones() -> raster::BytesPage {
+        pack_i32s(&[1 << 16; N])
+    }
+
     fn tiny_params() -> LayerParams {
         LayerParams {
             layer_idx: 0,
-            hidden_size: 2,
-            ffn_size: 2,
+            hidden_size: N as u32,
+            ffn_size: N as u32,
             num_heads: 1,
             num_kv_heads: 1,
-            head_dim: 2,
+            head_dim: N as u32,
             sliding_window: 0,
             attn_scale: 0,
             layer_scalar: 0,
@@ -845,27 +852,37 @@ mod tests {
             kv_donor_layer: -1,
             donor_a_layer: -2,
             donor_b_layer: -3,
-            norm_input: pack_i32s(&[1 << 16, 1 << 16]),
-            norm_post_attn: pack_i32s(&[1 << 16, 1 << 16]),
-            norm_pre_ffw: pack_i32s(&[1 << 16, 1 << 16]),
-            norm_post_ffw: pack_i32s(&[1 << 16, 1 << 16]),
-            q_norm: pack_i32s(&[1 << 16, 1 << 16]),
-            k_norm: pack_i32s(&[1 << 16, 1 << 16]),
-            ple_width: 2,
-            ple_post_norm: pack_i32s(&[1 << 16, 1 << 16]),
+            norm_input: ones(),
+            norm_post_attn: ones(),
+            norm_pre_ffw: ones(),
+            norm_post_ffw: ones(),
+            q_norm: ones(),
+            k_norm: ones(),
+            ple_width: N as u32,
+            ple_post_norm: ones(),
         }
     }
 
-    fn paged(values: &[i32]) -> Bytes<196_608> {
-        let mut bytes = Vec::with_capacity(values.len() * 4);
-        for value in values {
-            bytes.extend_from_slice(&value.to_le_bytes());
-        }
+    /// The `N`-wide identity in Q16.16.
+    fn identity() -> Bytes<196_608> {
+        let bytes: Vec<u8> = (0..N * N)
+            .flat_map(|i| (if i % (N + 1) == 0 { 1 << 16 } else { 0_i32 }).to_le_bytes())
+            .collect();
         Bytes::<196_608>::paged(bytes).unwrap()
     }
 
+    /// The `N`-wide identity as `Q8_0`: scale 1.0, a single 1 per row. Exact.
+    fn q8_identity() -> Bytes<195_840> {
+        let mut bytes = Vec::with_capacity(N * 34);
+        for row in 0..N {
+            bytes.extend_from_slice(&0x3c00_u16.to_le_bytes());
+            bytes.extend((0..N).map(|col| u8::from(col == row)));
+        }
+        Bytes::<195_840>::paged(bytes).unwrap()
+    }
+
     fn tiny_layer() -> TransformerLayer {
-        let matrix = paged(&[1 << 16, 0, 0, 1 << 16]);
+        let matrix = q8_identity();
         TransformerLayer {
             params: tiny_params(),
             w_q: matrix.clone(),
@@ -874,9 +891,9 @@ mod tests {
             w_o: matrix.clone(),
             w_gate: matrix.clone(),
             w_up: matrix.clone(),
-            w_down: matrix.clone(),
-            ple_input_gate: matrix.clone(),
-            ple_layer_projection: matrix,
+            w_down: matrix,
+            ple_input_gate: identity(),
+            ple_layer_projection: identity(),
         }
     }
 
@@ -885,10 +902,12 @@ mod tests {
         const ONE: i32 = 1 << 16;
         let mut layer = tiny_layer();
         layer.params.rotary_dim = 2;
-        // Identity projections of [ONE, ONE] normalise exactly; these weights
-        // leave the rotary pair [ONE, 0] in both Q and K.
-        layer.params.q_norm = pack_i32s(&[ONE, 0]);
-        layer.params.k_norm = pack_i32s(&[ONE, 0]);
+        // Identity projections of all-ONE rows normalise exactly; these
+        // weights leave the rotary pair [ONE, 0] and zeros in both Q and K.
+        let mut unit = [0; N];
+        unit[0] = ONE;
+        layer.params.q_norm = pack_i32s(&unit);
+        layer.params.k_norm = pack_i32s(&unit);
         let params = &layer.params;
         let weights = LayerWeights::from_layer(&layer, params).unwrap();
 
@@ -897,13 +916,14 @@ mod tests {
             for row_count in [1, 2] {
                 let rows = InputRows {
                     token_ids: vec![7; row_count],
-                    slab: Slab::from_rows(vec![vec![ONE, ONE]; row_count]).unwrap(),
+                    slab: Slab::from_rows(vec![vec![ONE; N]; row_count]).unwrap(),
                 };
                 let (queries, keys) =
                     project_tokens(&rows, &weights, params, positions[0]).unwrap();
                 for (local, (query, key)) in queries.iter().zip(&keys).enumerate() {
                     let position = positions[local];
-                    let mut expected = [Act::from_bits(ONE), Act::from_bits(0)];
+                    let mut expected = [Act::from_bits(0); N];
+                    expected[0] = Act::from_bits(ONE);
                     rope_rotate_pairs_in_place(
                         &mut expected,
                         2,
@@ -913,14 +933,14 @@ mod tests {
                     );
                     let expected = expected.map(|lane| lane.to_bits());
                     if position == 1 {
-                        assert_eq!(expected, [35408, 55146]);
+                        assert_eq!(expected[..2], [35408, 55146]);
                     }
                     assert_eq!(query.position, position);
                     assert_eq!(query.local, local as u32);
                     assert_eq!(key.position, position);
                     assert_eq!(query.q, expected, "Q at position {position}");
                     assert_eq!(unpack_page_i32s(&key.k).unwrap(), expected);
-                    assert_eq!(unpack_page_i32s(&key.v).unwrap(), [ONE, ONE]);
+                    assert_eq!(unpack_page_i32s(&key.v).unwrap(), [ONE; N]);
                 }
             }
         }

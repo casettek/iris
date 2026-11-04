@@ -20,8 +20,12 @@ pub const FRAC_BITS: u32 = 16;
 /// One unit (`1.0`) in Q16.16.
 pub const ONE: i32 = 1 << FRAC_BITS;
 
-/// Replay-unit page size for the logits projection.
-pub const PAGE_SIZE: u64 = 196_608;
+/// Replay-unit page size for the logits projection: whole `Q8_0` rows of
+/// `hidden_size / 32 · 34` bytes. `prefill-finalize` writes one logit per row,
+/// and Raster allows about 64 KiB of writes per page, so a page holds at most
+/// 384 rows of a 128-wide head (32 at 1536). MUST match the importer's
+/// `Q8_HEAD_PAGE_SIZE`.
+pub const PAGE_SIZE: u64 = 52_224;
 
 // ---------------------------------------------------------------------------
 // The pipeline's activation type — field-for-field identical in every stage
@@ -81,8 +85,9 @@ pub struct FinalHeadParams {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
 pub struct FinalHead {
     pub params: FinalHeadParams,
-    #[page_size = 196_608]
-    pub projection: Bytes<196_608>,
+    /// `Q8_0` rows, one per vocabulary entry.
+    #[page_size = 52_224]
+    pub projection: Bytes<52_224>,
 }
 
 /// Loop-carried result of walking the prompt to its last position.

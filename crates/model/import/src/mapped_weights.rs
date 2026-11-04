@@ -59,6 +59,48 @@ impl Pages {
     }
 }
 
+/// A `Q8_0` tensor's rows `start..end`, paged so no row spans two pages.
+pub(super) fn q8_rows<const P: u64>(
+    weights: &MmapDetwgt,
+    name: &str,
+    start: usize,
+    end: usize,
+) -> Result<Bytes<P>> {
+    let cols = weights.q8_matrix(name)?.cols();
+    q8_paged(name, cols, weights.q8_rows(name, start, end)?.to_vec())
+}
+
+/// A whole `Q8_0` tensor.
+pub(super) fn q8_tensor<const P: u64>(weights: &MmapDetwgt, name: &str) -> Result<Bytes<P>> {
+    let rows = weights.q8_matrix(name)?.rows();
+    q8_rows(weights, name, 0, rows)
+}
+
+/// Columns `start..end` of every row of a `Q8_0` tensor, on block boundaries.
+pub(super) fn q8_columns<const P: u64>(
+    weights: &MmapDetwgt,
+    name: &str,
+    start: usize,
+    end: usize,
+) -> Result<Bytes<P>> {
+    q8_paged(
+        name,
+        end - start,
+        weights.q8_column_blocks(name, start, end)?,
+    )
+}
+
+fn q8_paged<const P: u64>(name: &str, cols: usize, bytes: Vec<u8>) -> Result<Bytes<P>> {
+    let row = det_num::q8::row_bytes(cols)
+        .ok_or_else(|| format!("'{name}' rows of {cols} values are not whole Q8_0 blocks"))?;
+    if P as usize % row != 0 {
+        return Err(
+            format!("'{name}' Q8_0 rows of {row} bytes do not divide the {P}-byte page").into(),
+        );
+    }
+    Ok(Bytes::<P>::paged(bytes)?)
+}
+
 pub(super) fn tensor(weights: &MmapDetwgt, name: &str) -> Result<Bytes<PAGE_SIZE>> {
     let mut pages = Pages::default();
     pages.append(weights.slice(name)?)?;

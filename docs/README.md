@@ -14,6 +14,7 @@ Start with the workflow docs when you want to run the repo, and the internals do
 ## Internals
 
 - [Raster chain](internals/raster-chain.md)
+- [Numerics](internals/numerics.md)
 - [Artifacts](internals/artifacts.md)
 - [Development](internals/development.md)
 

@@ -16,19 +16,36 @@ fn paged(values: &[i32]) -> Bytes<196_608> {
     )
     .unwrap()
 }
-fn identity_2() -> Vec<i32> {
-    vec![ONE, 0, 0, ONE]
+/// One `Q8_0` block wide: the narrowest an int8 matrix can be.
+const N: usize = 32;
+fn identity() -> Vec<i32> {
+    (0..N * N)
+        .map(|i| if i % (N + 1) == 0 { ONE } else { 0 })
+        .collect()
+}
+/// `rows` one-hot `Q8_0` rows of width `N` (row `r` is 1 at column `r`),
+/// each scaled by the half-precision `scale`. Exact: every value is 0 or `scale`.
+fn q8_one_hot<const P: u64>(rows: usize, scale: u16) -> Bytes<P> {
+    let mut bytes = Vec::with_capacity(rows * 34);
+    for row in 0..rows {
+        bytes.extend_from_slice(&scale.to_le_bytes());
+        bytes.extend((0..N).map(|col| u8::from(col == row)));
+    }
+    Bytes::paged(bytes).unwrap()
+}
+fn q8_identity() -> Bytes<195_840> {
+    q8_one_hot(N, 0x3c00)
 }
 fn tiny_layer(kv_donor_layer: i32) -> TransformerLayer {
-    let norm = pack_i32s(&[ONE, ONE]);
+    let norm = pack_i32s(&[ONE; N]);
     TransformerLayer {
         params: LayerParams {
             layer_idx: 0,
-            hidden_size: 2,
-            ffn_size: 2,
+            hidden_size: N as u32,
+            ffn_size: N as u32,
             num_heads: 1,
             num_kv_heads: 1,
-            head_dim: 2,
+            head_dim: N as u32,
             sliding_window: 0,
             attn_scale: 0,
             layer_scalar: 0,
@@ -49,18 +66,18 @@ fn tiny_layer(kv_donor_layer: i32) -> TransformerLayer {
             norm_post_ffw: norm.clone(),
             q_norm: norm.clone(),
             k_norm: norm.clone(),
-            ple_width: 2,
+            ple_width: N as u32,
             ple_post_norm: norm,
         },
-        w_q: paged(&identity_2()),
-        w_k: paged(&identity_2()),
-        w_v: paged(&identity_2()),
-        w_o: paged(&identity_2()),
-        w_gate: paged(&identity_2()),
-        w_up: paged(&identity_2()),
-        w_down: paged(&identity_2()),
-        ple_input_gate: paged(&identity_2()),
-        ple_layer_projection: paged(&identity_2()),
+        w_q: q8_identity(),
+        w_k: q8_identity(),
+        w_v: q8_identity(),
+        w_o: q8_identity(),
+        w_gate: q8_identity(),
+        w_up: q8_identity(),
+        w_down: q8_identity(),
+        ple_input_gate: paged(&identity()),
+        ple_layer_projection: paged(&identity()),
     }
 }
 
@@ -109,21 +126,21 @@ impl Fixture {
         let embedding = self.external(
             "embedding",
             &input_embedding::input::EmbeddingTable {
-                hidden_size: 2,
+                hidden_size: N as u32,
                 embedding_scale: ONE,
-                values: paged(&identity_2()),
+                values: q8_one_hot(2, 0x3c00),
             },
         );
         let head = self.external(
             "head",
             &prefill_finalize::input::FinalHead {
                 params: prefill_finalize::input::FinalHeadParams {
-                    hidden_size: 2,
+                    hidden_size: N as u32,
                     norm_eps: 1,
                     softcap: 0,
-                    norm_weights: pack_i32s(&[ONE, ONE]),
+                    norm_weights: pack_i32s(&[ONE; N]),
                 },
-                projection: paged(&identity_2()),
+                projection: q8_one_hot(2, 0x3c00),
             },
         );
         let decoder = self.external(
@@ -152,7 +169,7 @@ impl Fixture {
             layer.params.attn_scale = ONE;
             layer.params.norm_eps = 1;
             if l == 1 {
-                layer.w_up = paged(&[ONE / 2, 0, 0, ONE / 2]);
+                layer.w_up = q8_one_hot(N, 0x3800); // 0.5 · identity
             }
             layers.push(self.external(&format!("layer{l}"), &layer));
             aux.push(self.external(
@@ -160,16 +177,16 @@ impl Fixture {
                 &prefill_prepare_aux::input::PleLayer {
                     params: prefill_prepare_aux::input::PleLayerParams {
                         layer_idx: l,
-                        hidden_size: 2,
-                        ple_width: 2,
+                        hidden_size: N as u32,
+                        ple_width: N as u32,
                         embedding_scale: ONE,
                         projection_scalar: ONE,
                         input_scale: ONE,
                         norm_eps: 1,
-                        norm_weights: pack_i32s(&[ONE, ONE]),
+                        norm_weights: pack_i32s(&[ONE; N]),
                     },
-                    embeddings: paged(&identity_2()),
-                    projection: paged(&identity_2()),
+                    embeddings: q8_one_hot(2, 0x3c00),
+                    projection: paged(&identity()),
                 },
             ));
         }

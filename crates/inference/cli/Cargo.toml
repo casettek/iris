@@ -25,6 +25,7 @@ postcard = { version = "1", features = ["alloc"] }
 anyhow = "1.0"
 clap = { version = "4.5", features = ["derive"] }
 direct-infer = { path = "../direct" }
+det-num = { path = "../../det-num" }
 staged-infer = { path = "../staged" }
 hex = "0.4"
 inference-artifacts = { path = "../artifacts" }

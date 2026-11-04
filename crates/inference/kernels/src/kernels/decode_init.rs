@@ -10,6 +10,8 @@ pub fn run_decode_init_direct(_inputs: DecodeInitDirectInputs) -> Result<DecodeE
         decode_position: 0,
         token_id: 0,
         value: 0,
+        claim_mismatches: 0,
+        first_claim_mismatch_position: 0,
         generated_token_ids: List::new(),
     })
 }

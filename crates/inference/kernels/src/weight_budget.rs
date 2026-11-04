@@ -133,12 +133,12 @@ impl RetainedWeightBytes for prefill_range::input::TransformerLayer {
                 &self.w_gate,
                 &self.w_up,
                 &self.w_down,
-                &self.ple_input_gate,
-                &self.ple_layer_projection,
             ]
             .iter()
             .map(|r| region(r))
             .sum::<usize>()
+            + region(&self.ple_input_gate)
+            + region(&self.ple_layer_projection)
             + [
                 &p.norm_input,
                 &p.norm_post_attn,

@@ -13,5 +13,9 @@ pub struct DecodeEdge {
     pub decode_position: u32,
     pub token_id: u32,
     pub value: i32,
+    /// The teacher-forced claim verdict. Zero here and on every
+    /// autoregressive edge: see `DecodeEdge` in `decode-select-token`.
+    pub claim_mismatches: u32,
+    pub first_claim_mismatch_position: u32,
     pub generated_token_ids: List<u32>,
 }

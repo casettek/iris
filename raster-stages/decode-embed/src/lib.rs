@@ -33,10 +33,11 @@ pub fn require_selected_token(has_selected: bool) -> Result<bool> {
     }
 }
 
-/// `token_id * hidden_size * 4` — the byte offset of that row in the table.
+/// `token_id · hidden_size / 32 · 34` — the byte offset of that `Q8_0` row in
+/// the table.
 #[tile(kind = iter, description = "Byte offset of an embedding row")]
 pub fn embedding_byte_offset(token_id: u32, hidden_size: u32) -> u64 {
-    token_id as u64 * hidden_size as u64 * 4
+    token_id as u64 * (hidden_size as u64 / 32 * 34)
 }
 
 /// Page index containing a byte offset.
@@ -74,7 +75,7 @@ pub fn embed_decode_token(
 ) -> Draft<ActivationSequence> {
     let mut output = Draft::<ActivationSequence>::new();
     output.start_position().set(decode_position);
-    match unpack_i32s_at(&page, byte_off, hidden_size) {
+    match q8_row_at(&page, byte_off, hidden_size) {
         // Gemma scales the embedding by sqrt(hidden) before layer 0. Applied
         // here, with the canonical multiply, because the row is only ever read
         // once — and because an unscaled activation is not detectably wrong

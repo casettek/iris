@@ -14,6 +14,11 @@ use std::{
 
 const ONE: i32 = 1 << 16;
 
+/// Bytes of one `Q8_0` PLE row `width` values wide.
+fn row_bytes(width: usize) -> usize {
+    width / 32 * 34
+}
+
 struct Fixture {
     dir: PathBuf,
     layer: PleLayer,
@@ -22,8 +27,15 @@ struct Fixture {
 
 impl Fixture {
     fn new(pages: usize, width: usize) -> Self {
-        let count = (pages - 1) * PAGE_SIZE as usize / 4 + width * 3;
-        let values: Vec<_> = (0..count).map(|i| ((i % 97) as i32 - 48) * 2311).collect();
+        let rows = (pages - 1) * Q8_PAGE_SIZE as usize / row_bytes(width) + 3;
+        // Varied finite scales and signed bytes, one `Q8_0` block at a time.
+        let embeddings: Vec<u8> = (0..rows * width / 32)
+            .flat_map(|block| {
+                let mut bytes = (0x2400 + (block * 37 % 701) as u16).to_le_bytes().to_vec();
+                bytes.extend((0..32).map(|i| (((block * 32 + i) % 97) as i32 - 48) as i8 as u8));
+                bytes
+            })
+            .collect();
         let layer = PleLayer {
             params: PleLayerParams {
                 layer_idx: 3,
@@ -35,13 +47,7 @@ impl Fixture {
                 norm_eps: 1,
                 norm_weights: pack_i32s(&vec![ONE; width]),
             },
-            embeddings: Bytes::paged(
-                values
-                    .iter()
-                    .flat_map(|v| v.to_le_bytes())
-                    .collect::<Vec<_>>(),
-            )
-            .unwrap(),
+            embeddings: Bytes::paged(embeddings).unwrap(),
             projection: Bytes::paged(
                 (0..width * 2)
                     .flat_map(|i| ((i as i32 - 3) * 17001).to_le_bytes())
@@ -49,8 +55,8 @@ impl Fixture {
             )
             .unwrap(),
         };
-        let rows_per_page = PAGE_SIZE as u32 / (width as u32 * 4);
-        let tokens = [0, rows_per_page, rows_per_page, (count / width - 1) as u32];
+        let rows_per_page = (Q8_PAGE_SIZE as usize / row_bytes(width)) as u32;
+        let tokens = [0, rows_per_page, rows_per_page, (rows - 1) as u32];
         let embedded = ActivationSequence {
             rows: List::from(
                 tokens
@@ -173,14 +179,14 @@ impl Drop for Fixture {
 
 #[test]
 fn reads_only_distinct_requested_pages_and_reuses_verified_static_weights() {
-    let f = Fixture::new(4, 4);
+    let f = Fixture::new(4, 32);
     let budget = Arc::new(WeightBudget::new(1 << 20));
     let cache = MaterializationCache::with_budget(budget.clone());
     let first = f.load(Some(&cache)).unwrap();
     assert_eq!(first.pages.keys().copied().collect::<Vec<_>>(), [0, 1, 3]);
     assert_eq!(
         first.pages.values().map(BytesPage::len).sum::<usize>(),
-        2 * PAGE_SIZE as usize + 48
+        2 * Q8_PAGE_SIZE as usize + 3 * row_bytes(32)
     );
     f.assert_parity(&first);
     let second = f.load(Some(&cache)).unwrap();
@@ -192,7 +198,7 @@ fn reads_only_distinct_requested_pages_and_reuses_verified_static_weights() {
 
 #[test]
 fn cache_budget_bypass_and_changed_commitments_preserve_values() {
-    let mut f = Fixture::new(4, 4);
+    let mut f = Fixture::new(4, 32);
     for bytes in [0, 1, 1 << 20] {
         let budget = Arc::new(WeightBudget::new(bytes));
         let cache = MaterializationCache::with_budget(budget.clone());
@@ -208,7 +214,7 @@ fn cache_budget_bypass_and_changed_commitments_preserve_values() {
 
 #[test]
 fn saturation_and_negative_fixed_point_values_match_eager() {
-    let mut f = Fixture::new(4, 4);
+    let mut f = Fixture::new(4, 32);
     f.layer.params.embedding_scale = i32::MAX;
     f.layer.params.input_scale = i32::MIN;
     f.layer.params.projection_scalar = i32::MIN;
@@ -219,6 +225,8 @@ fn saturation_and_negative_fixed_point_values_match_eager() {
     f.layer.projection = Bytes::paged(
         [i32::MAX, i32::MIN, -1, 0, 1, -ONE, ONE, i32::MAX]
             .iter()
+            .cycle()
+            .take(f.layer.projection.byte_len() as usize / 4)
             .flat_map(|v| v.to_le_bytes())
             .collect::<Vec<_>>(),
     )
@@ -229,7 +237,7 @@ fn saturation_and_negative_fixed_point_values_match_eager() {
 
 #[test]
 fn bad_tokens_cross_page_rows_and_projection_geometry_fail() {
-    let mut f = Fixture::new(4, 4);
+    let mut f = Fixture::new(4, 32);
     f.load(None).unwrap();
     f.embedded.rows = List::from(vec![ActivationRow {
         token_id: u32::MAX,
@@ -237,10 +245,10 @@ fn bad_tokens_cross_page_rows_and_projection_geometry_fail() {
     }]);
     f.write(false);
     assert!(f.load(None).is_err());
-    // Width 5 does not divide a page: this row starts in page 0 and ends in 1.
-    let mut f = Fixture::new(4, 5);
+    // 238-byte rows do not divide a page: this row starts in page 0 and ends in 1.
+    let mut f = Fixture::new(4, 224);
     f.embedded.rows = List::from(vec![ActivationRow {
-        token_id: (PAGE_SIZE / 20) as u32,
+        token_id: (Q8_PAGE_SIZE as usize / row_bytes(224)) as u32,
         values: pack_i32s(&[ONE, ONE]),
     }]);
     f.write(false);
@@ -252,7 +260,7 @@ fn bad_tokens_cross_page_rows_and_projection_geometry_fail() {
         })
         .is_err()
     );
-    let mut f = Fixture::new(4, 4);
+    let mut f = Fixture::new(4, 32);
     let page = &f.layer.projection.pages()[0];
     f.layer.projection.pages = List::from(vec![BytesPage::__from_parts(
         0,
@@ -265,7 +273,7 @@ fn bad_tokens_cross_page_rows_and_projection_geometry_fail() {
 
 #[test]
 fn committed_malformed_embedding_geometry_is_rejected() {
-    let mut f = Fixture::new(4, 4);
+    let mut f = Fixture::new(4, 32);
     f.load(None).unwrap();
     let mut pages = f
         .layer
@@ -282,7 +290,7 @@ fn committed_malformed_embedding_geometry_is_rejected() {
 
 #[test]
 fn corrupt_selected_bytes_and_index_proofs_never_enter_cache() {
-    let f = Fixture::new(4, 4);
+    let f = Fixture::new(4, 32);
     let budget = Arc::new(WeightBudget::new(1 << 20));
     let cache = MaterializationCache::with_budget(budget.clone());
     let mut data = fs::read(f.dir.join("layer.bin")).unwrap();
@@ -314,7 +322,7 @@ fn corrupt_selected_bytes_and_index_proofs_never_enter_cache() {
 
 #[test]
 fn changed_declared_commitment_cannot_hit_a_verified_cache_entry() {
-    let f = Fixture::new(4, 4);
+    let f = Fixture::new(4, 32);
     let cache = MaterializationCache::with_budget(Arc::new(WeightBudget::new(1 << 20)));
     f.load(Some(&cache)).unwrap();
     let path = f.dir.join("input_manifest.json");
@@ -339,7 +347,7 @@ fn typed_values_must_match_proven_payload() {
             Ok(Self(p))
         }
     }
-    let f = Fixture::new(4, 4);
+    let f = Fixture::new(4, 32);
     let input = f.dir.join("input.json");
     let manifest = f.dir.join("input_manifest.json");
     with_stage_sequence_scope(&input, &manifest, || {
@@ -361,7 +369,7 @@ fn typed_values_must_match_proven_payload() {
 
 #[test]
 fn postcard_inputs_keep_eager_compatibility() {
-    let f = Fixture::new(4, 4);
+    let f = Fixture::new(4, 32);
     f.write(true);
     let inputs = crate::routines::prefill_prepare_aux::load_inputs_from_paths(
         &f.dir.join("input.json"),
@@ -393,7 +401,7 @@ fn multi_page_matches_authenticated_raster_stage() {
     let bin = PathBuf::from(
         std::env::var_os("STAGED_INFER_REPLAY_BIN_DIR").expect("build Raster stage binaries first"),
     );
-    let mut f = Fixture::new(4, 4);
+    let mut f = Fixture::new(4, 32);
     for boundary_values in [false, true] {
         if boundary_values {
             f.layer.params.embedding_scale = i32::MAX;
@@ -402,6 +410,8 @@ fn multi_page_matches_authenticated_raster_stage() {
             f.layer.projection = Bytes::paged(
                 [i32::MAX, i32::MIN, -1, 0, 1, -ONE, ONE, i32::MAX]
                     .iter()
+                    .cycle()
+                    .take(f.layer.projection.byte_len() as usize / 4)
                     .flat_map(|v| v.to_le_bytes())
                     .collect::<Vec<_>>(),
             )
@@ -445,7 +455,7 @@ fn multi_page_matches_authenticated_raster_stage() {
 #[test]
 #[ignore = "release loading benchmark; no wall-clock threshold"]
 fn selective_loading_benchmark() {
-    let f = Fixture::new(128, 4);
+    let f = Fixture::new(128, 32);
     let input = f.dir.join("input.json");
     let manifest = f.dir.join("input_manifest.json");
     let mut eager_ns = 0;
@@ -477,5 +487,5 @@ fn selective_loading_benchmark() {
         f.assert_parity(&selected);
     }
     println!("PLE benchmark: table_bytes={} selected_embedding_bytes={} eager_mean_ms={:.3} selective_mean_ms={:.3}",
-        f.layer.embeddings.byte_len(), 2 * PAGE_SIZE + 48, eager_ns as f64 / 5e6, selective_ns as f64 / 5e6);
+        f.layer.embeddings.byte_len(), 2 * Q8_PAGE_SIZE as usize + 3 * row_bytes(32), eager_ns as f64 / 5e6, selective_ns as f64 / 5e6);
 }

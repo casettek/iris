@@ -42,10 +42,10 @@ pub fn begin_ple_task(token: ActivationRow) -> PleTask {
     }
 }
 
-/// `token_id * ple_width * 4`.
+/// `token_id · ple_width / 32 · 34`: the token's `Q8_0` row.
 #[tile(kind = iter, description = "Byte offset of a PLE embedding row")]
 pub fn ple_byte_offset(token_id: u32, ple_width: u32) -> u64 {
-    token_id as u64 * ple_width as u64 * 4
+    token_id as u64 * (ple_width as u64 / 32 * 34)
 }
 
 /// Page index containing a byte offset.
@@ -215,7 +215,7 @@ fn combine_row(
     if !projected.error.is_empty() {
         return Err(projected.error.clone());
     }
-    let mut embedded = unpack_i32s_at(emb_page, byte_off, params.ple_width)?;
+    let mut embedded = q8_row_at(emb_page, byte_off, params.ple_width)?;
     let projected = unpack_i32s(&projected.values)?;
     if embedded.len() != projected.len() {
         return Err(alloc::format!(

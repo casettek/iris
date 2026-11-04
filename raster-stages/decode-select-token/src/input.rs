@@ -75,5 +75,14 @@ pub struct DecodeEdge {
     pub decode_position: u32,
     pub token_id: u32,
     pub value: i32,
+    /// How many transcript positions were given a claimed token that differs
+    /// from the greedy selection there. Only the teacher-forced chain's
+    /// `sequence-check` is given claimed tokens; autoregressive decode selects
+    /// its own and always publishes zero. It shares this type so the chains
+    /// stay field-for-field compatible with `output-finalize`.
+    pub claim_mismatches: u32,
+    /// Absolute sequence position of the first such disagreement, or zero
+    /// when there is none.
+    pub first_claim_mismatch_position: u32,
     pub generated_token_ids: List<u32>,
 }

@@ -39,6 +39,9 @@ pub fn run_decode_select_token_direct(
         decode_position: inputs.logits.decode_position,
         token_id: best_token,
         value: best_value,
+        // Autoregressive decode is given no claimed tokens.
+        claim_mismatches: 0,
+        first_claim_mismatch_position: 0,
         generated_token_ids: List::from(generated_token_ids),
     })
 }

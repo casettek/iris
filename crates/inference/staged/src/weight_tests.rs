@@ -4,7 +4,7 @@ use crate::{
     cache::{materialization_key_from_stage_files, CachedInputs, MaterializationCache},
     embedding::{self, SelectedEmbedding, StaticEmbedding},
     routines,
-    verified_weights::PAGE_SIZE,
+    verified_weights::{Q8_HEAD_PAGE_SIZE as HEAD_PAGE_SIZE, Q8_PAGE_SIZE as PAGE_SIZE},
 };
 use anyhow::Result;
 use inference_kernels::weight_budget::WeightBudget;
@@ -165,11 +165,24 @@ impl Drop for Fixture {
         }
     }
 }
+/// Bytes of one `Q8_0` row `width` values wide.
+fn row_bytes(width: u32) -> u64 {
+    u64::from(width) / 32 * 34
+}
+/// Varied `Q8_0` rows filling `pages - 1` pages of `page_size` and three
+/// more rows: finite scales across a wide range, signed values.
+fn q8_rows(pages: usize, width: u32, page_size: u64) -> Vec<u8> {
+    let rows = (pages as u64 - 1) * page_size / row_bytes(width) + 3;
+    (0..rows * u64::from(width) / 32)
+        .flat_map(|block| {
+            let mut bytes = (0x2000 + (block * 31 % 977) as u16).to_le_bytes().to_vec();
+            bytes.extend((0..32).map(|i| (((block * 32 + i) % 193) as i32 - 96) as i8 as u8));
+            bytes
+        })
+        .collect()
+}
 fn table(pages: usize, width: u32) -> EmbeddingTable {
-    let count = (pages - 1) * PAGE_SIZE as usize / 4 + width as usize * 3;
-    let bytes = (0..count)
-        .flat_map(|i| (((i % 193) as i32 - 96) * 19871).to_le_bytes())
-        .collect::<Vec<_>>();
+    let bytes = q8_rows(pages, width, PAGE_SIZE);
     EmbeddingTable {
         hidden_size: width,
         embedding_scale: -ONE / 2,
@@ -179,14 +192,14 @@ fn table(pages: usize, width: u32) -> EmbeddingTable {
 fn prompt_fixture(pages: usize, width: u32) -> (Fixture, EmbeddingTable, PromptTokenization) {
     let f = Fixture::new();
     let table = table(pages, width);
-    let per_page = PAGE_SIZE as u32 / (width * 4);
+    let per_page = (PAGE_SIZE / row_bytes(width)) as u32;
     let prompt = PromptTokenization {
         token_ids: List::from(vec![
             0,
             per_page - 1,
             per_page,
             per_page,
-            (table.values.byte_len() / (u64::from(width) * 4) - 1) as u32,
+            (table.values.byte_len() / row_bytes(width) - 1) as u32,
         ]),
     };
     f.write("embedding", &table);
@@ -221,13 +234,15 @@ fn edge(token_id: u32) -> decode_embed::input::DecodeEdge {
         decode_position: 137,
         token_id,
         value: 0,
+        claim_mismatches: 0,
+        first_claim_mismatch_position: 0,
         generated_token_ids: List::from(vec![token_id]),
     }
 }
 
 #[test]
 fn embedding_gathers_distinct_pages_and_caches_only_metadata() {
-    let (f, table, prompt) = prompt_fixture(8, 4);
+    let (f, table, prompt) = prompt_fixture(8, 32);
     let expected = eager_prompt(&table, &prompt);
     for bytes in [0, 32, 1 << 20] {
         let budget = Arc::new(WeightBudget::new(bytes));
@@ -251,11 +266,18 @@ fn embedding_gathers_distinct_pages_and_caches_only_metadata() {
 
 #[test]
 fn embedding_fixed_point_boundaries_empty_prompt_and_decode_position() {
-    let (f, mut table, mut prompt) = prompt_fixture(4, 4);
-    let boundary = [i32::MIN, i32::MAX, -1, 0, 1, -ONE, ONE];
+    let (f, mut table, mut prompt) = prompt_fixture(4, 32);
+    // Extreme half-precision scales (largest, smallest subnormal, zero, both
+    // signs) against extreme bytes: dequantized rows saturate both ways.
+    let scales = [0x7bff_u16, 0xfbff, 0x0001, 0x8001, 0x0000, 0x3c00];
+    let values = [-128_i8, 127, -1, 0, 1];
     table.values = Bytes::paged(
-        (0..table.values.byte_len() as usize / 4)
-            .flat_map(|i| boundary[i % boundary.len()].to_le_bytes())
+        (0..table.values.byte_len() as usize / 34)
+            .flat_map(|block| {
+                let mut bytes = scales[block % scales.len()].to_le_bytes().to_vec();
+                bytes.extend((0..32).map(|i| values[(block + i) % values.len()] as u8));
+                bytes
+            })
             .collect::<Vec<_>>(),
     )
     .unwrap();
@@ -292,8 +314,9 @@ fn embedding_fixed_point_boundaries_empty_prompt_and_decode_position() {
 
 #[test]
 fn embedding_rejects_missing_rows_cross_page_rows_and_bad_geometry() {
-    let (f, mut table, mut prompt) = prompt_fixture(4, 5);
-    prompt.token_ids = List::from(vec![(PAGE_SIZE / 20) as u32]);
+    // 238-byte rows do not divide the page, so this row spans two.
+    let (f, mut table, mut prompt) = prompt_fixture(4, 224);
+    prompt.token_ids = List::from(vec![(PAGE_SIZE / row_bytes(224)) as u32]);
     f.write("prompt", &prompt);
     assert!(f.prompt(None).is_err());
     prompt.token_ids = List::from(vec![u32::MAX]);
@@ -309,7 +332,7 @@ fn embedding_rejects_missing_rows_cross_page_rows_and_bad_geometry() {
 
 #[test]
 fn embedding_rejects_corruption_and_separates_commitments_and_paths() {
-    let (f, mut table, prompt) = prompt_fixture(4, 4);
+    let (f, mut table, prompt) = prompt_fixture(4, 32);
     let cache = MaterializationCache::with_budget(Arc::new(WeightBudget::new(1 << 20)));
     let first = f
         .selected(prompt.token_ids.as_slice(), Some(&cache))
@@ -320,7 +343,7 @@ fn embedding_rejects_corruption_and_separates_commitments_and_paths() {
         .selected(prompt.token_ids.as_slice(), Some(&cache))
         .unwrap();
     assert!(!Arc::ptr_eq(&first.metadata, &second.metadata));
-    let (other, _, other_prompt) = prompt_fixture(4, 4);
+    let (other, _, other_prompt) = prompt_fixture(4, 32);
     let other_weights = other
         .selected(other_prompt.token_ids.as_slice(), Some(&cache))
         .unwrap();
@@ -348,7 +371,7 @@ fn embedding_rejects_corruption_and_separates_commitments_and_paths() {
 
 #[test]
 fn embedding_postcard_and_mixed_inputs_keep_compatibility() {
-    let (f, table, prompt) = prompt_fixture(4, 4);
+    let (f, table, prompt) = prompt_fixture(4, 32);
     let expected = eager_prompt(&table, &prompt);
     f.postcard("prompt", &prompt);
     assert_eq!(f.prompt(None).unwrap(), expected);
@@ -359,7 +382,7 @@ fn embedding_postcard_and_mixed_inputs_keep_compatibility() {
 #[test]
 #[ignore = "requires unchanged Raster stage binaries"]
 fn embedding_multi_page_authenticated_raster_parity() {
-    let (f, mut table, prompt) = prompt_fixture(4, 4);
+    let (f, mut table, prompt) = prompt_fixture(4, 32);
     f.compare_raster("input-embedding", &f.prompt(None).unwrap(), "prompt-raster");
     let selected = edge(prompt.token_ids[4]);
     f.write("selected", &selected);
@@ -392,7 +415,7 @@ fn embedding_multi_page_authenticated_raster_parity() {
 #[test]
 #[ignore = "release benchmark; informational timings"]
 fn embedding_loading_benchmark() {
-    let (f, table, prompt) = prompt_fixture(128, 4);
+    let (f, table, prompt) = prompt_fixture(128, 32);
     let mut eager = 0;
     let mut selective = 0;
     for _ in 0..7 {
@@ -443,7 +466,7 @@ fn head_fixture(pages: usize) -> (Fixture, FinalHead, ActivationSequence) {
             softcap: 0,
             norm_weights: pack_i32s(&vec![ONE; width as usize]),
         },
-        projection: table(pages, width).values,
+        projection: Bytes::paged(q8_rows(pages, width, HEAD_PAGE_SIZE)).unwrap(),
     };
     let activations = ActivationSequence {
         rows: List::from(vec![
@@ -516,10 +539,10 @@ fn head_batches_are_bounded_and_all_logits_match_eager() {
         assert_eq!(actual.decode_position, 31);
         assert_eq!(stats.pages, pages as u64);
         assert_eq!(stats.peak_batch_pages, pages.min(BATCH_PAGES));
-        assert!(stats.peak_batch_payload_bytes <= BATCH_PAGES * PAGE_SIZE as usize);
+        assert!(stats.peak_batch_payload_bytes <= BATCH_PAGES * HEAD_PAGE_SIZE as usize);
         assert_eq!(
             actual.logits.len() as u64,
-            head.projection.byte_len() / (256 * 4)
+            head.projection.byte_len() / row_bytes(256)
         );
         for (index, logit) in actual.logits.iter().enumerate() {
             assert_eq!(logit.token_id, index as u32);
@@ -530,11 +553,18 @@ fn head_batches_are_bounded_and_all_logits_match_eager() {
 #[test]
 fn head_saturation_normalization_softcap_and_metadata_cache() {
     let (f, mut head, mut activations) = head_fixture(4);
-    // Long runs of extreme products force saturating i64 MACs, then change sign.
+    // Extreme scales and bytes, positive then negative within each row,
+    // drive the exact sums far past i32 before the one saturating rounding.
     head.params.norm_weights = pack_i32s(&vec![i32::MAX; 256]);
     head.projection = Bytes::paged(
-        (0..head.projection.byte_len() as usize / 4)
-            .flat_map(|i| (if i % 256 < 128 { i32::MAX } else { i32::MIN }).to_le_bytes())
+        (0..head.projection.byte_len() as usize / 272)
+            .flat_map(|_| {
+                (0..8).flat_map(|block| {
+                    let mut bytes = 0x7bff_u16.to_le_bytes().to_vec();
+                    bytes.extend([if block < 4 { 127_i8 } else { -128 } as u8; 32]);
+                    bytes
+                })
+            })
             .collect::<Vec<_>>(),
     )
     .unwrap();
@@ -599,21 +629,25 @@ fn head_rejects_missing_extra_misaligned_and_partial_rows() {
                 pages.pop();
             }
             1 => pages.push(pages.last().unwrap().clone()),
-            2 => pages[1] = BytesPage::__from_parts(1, PAGE_SIZE + 4, pages[1].as_slice().to_vec()),
+            2 => {
+                pages[1] =
+                    BytesPage::__from_parts(1, HEAD_PAGE_SIZE + 4, pages[1].as_slice().to_vec())
+            }
             _ => pages[0] = BytesPage::__from_parts(0, 0, pages[0].as_slice()[..100].to_vec()),
         }
         bad.projection.pages = List::from(pages);
         f.write("head", &bad);
         assert!(f.finalize(None).is_err());
     }
+    // 238-byte rows: 220 of them end 136 bytes into the second page.
     let mut split = head;
-    split.params.hidden_size = 5;
-    split.params.norm_weights = pack_i32s(&[ONE; 5]);
-    split.projection = Bytes::paged(vec![0; PAGE_SIZE as usize + 12]).unwrap();
+    split.params.hidden_size = 224;
+    split.params.norm_weights = pack_i32s(&[ONE; 224]);
+    split.projection = Bytes::paged(vec![0; 220 * 238]).unwrap();
     let activations = ActivationSequence {
         rows: List::from(vec![ActivationRow {
             token_id: 0,
-            values: pack_i32s(&[ONE; 5]),
+            values: pack_i32s(&[ONE; 224]),
         }]),
         errors: List::new(),
         kv: List::new(),
@@ -687,8 +721,14 @@ fn head_multi_page_authenticated_raster_parity() {
             head.params.softcap = ONE;
             head.params.norm_weights = pack_i32s(&vec![i32::MAX; 256]);
             head.projection = Bytes::paged(
-                (0..head.projection.byte_len() as usize / 4)
-                    .flat_map(|i| (if i % 256 < 128 { i32::MAX } else { i32::MIN }).to_le_bytes())
+                (0..head.projection.byte_len() as usize / 272)
+                    .flat_map(|_| {
+                        (0..8).flat_map(|block| {
+                            let mut bytes = 0x7bff_u16.to_le_bytes().to_vec();
+                            bytes.extend([if block < 4 { 127_i8 } else { -128 } as u8; 32]);
+                            bytes
+                        })
+                    })
                     .collect::<Vec<_>>(),
             )
             .unwrap();
@@ -702,12 +742,12 @@ fn head_multi_page_authenticated_raster_parity() {
             &format!("head-raster-{boundary}"),
         );
     }
-    head.params.hidden_size = 5;
-    head.params.norm_weights = pack_i32s(&[ONE; 5]);
-    head.projection = Bytes::paged(vec![0; PAGE_SIZE as usize + 12]).unwrap();
+    head.params.hidden_size = 224;
+    head.params.norm_weights = pack_i32s(&[ONE; 224]);
+    head.projection = Bytes::paged(vec![0; 220 * 238]).unwrap();
     activations.rows = List::from(vec![ActivationRow {
         token_id: 0,
-        values: pack_i32s(&[ONE; 5]),
+        values: pack_i32s(&[ONE; 224]),
     }]);
     f.write("head", &head);
     f.write("activations", &activations);

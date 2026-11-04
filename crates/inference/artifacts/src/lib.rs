@@ -349,7 +349,6 @@ mod tests {
             run_manifest_path: Some(PathBuf::from("target/runs/run/Raster.toml")),
             run_manifest_sha256: Some(String::from("run-sha")),
             chain: Default::default(),
-            claimed_token_ids: None,
         };
 
         assert_eq!(
