@@ -110,23 +110,28 @@ pub fn finalize_prompt(inputs: PromptPrepareDirectInputs<'_>) -> Result<PromptTo
     })
 }
 
+/// Applies ranked merges until none is eligible.
+pub fn merge_fully(
+    mut pieces: Vec<BpePiece>,
+    tokenizer: &PromptTokenizer,
+) -> Result<Vec<BpePiece>> {
+    loop {
+        let best = best_merge(&pieces, tokenizer)?;
+        if !best.matched {
+            return Ok(pieces);
+        }
+        apply(&mut pieces, best);
+    }
+}
+
 /// Direct inference has no checkpoint budget, but obeys the same ranked ordering.
 pub fn run_prompt_prepare_direct(
     inputs: PromptPrepareDirectInputs<'_>,
 ) -> Result<PromptTokenization> {
-    let mut pieces = inputs
-        .initial_pieces
-        .pieces
-        .iter()
-        .cloned()
-        .collect::<Vec<_>>();
-    loop {
-        let best = best_merge(&pieces, inputs.tokenizer)?;
-        if !best.matched {
-            break;
-        }
-        apply(&mut pieces, best);
-    }
+    let pieces = merge_fully(
+        inputs.initial_pieces.pieces.iter().cloned().collect(),
+        inputs.tokenizer,
+    )?;
     finalize_prompt(PromptPrepareDirectInputs {
         tokenizer: inputs.tokenizer,
         initial_pieces: &BpePieces {

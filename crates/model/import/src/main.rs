@@ -71,7 +71,7 @@ pub struct ImportConfig {
     pub only_direct: bool,
     /// Leave stage-local input.json and input_manifest.json fixtures untouched.
     pub no_stage_fixtures: bool,
-    /// Largest teacher-forced range, in prompt pieces or claimed ids. Every
+    /// Largest teacher-forced range, in prompt tokens or claimed ids. Every
     /// per-position stage of the teacher-forced chain covers at most this many
     /// positions, which bounds the cost of replaying any one of them.
     pub range_size: u32,
@@ -133,7 +133,7 @@ fn parse_args_from(args: impl IntoIterator<Item = String>) -> Result<ImportConfi
             "--range-size" => {
                 range_size = args
                     .next()
-                    .ok_or("--range-size <pieces> is required")?
+                    .ok_or("--range-size <tokens> is required")?
                     .parse()?;
                 if range_size < 2 {
                     return Err("--range-size must be at least 2".into());
@@ -391,13 +391,7 @@ pub fn import_model(args: ImportConfig) -> Result<ImportResult, Box<dyn Error>> 
     let (template_path, template) = save_model_template(&args, &manifest)?;
     let (teacher_forced_path, teacher_forced) = save_teacher_forced_template(
         &args,
-        &teacher_forced_manifest(
-            &shape,
-            &layout,
-            &decoder_commitment,
-            &stages,
-            args.range_size,
-        )?,
+        &teacher_forced_manifest(&shape, &layout, &decoder_commitment, &stages)?,
     )?;
     direct_manifest::write_model_manifest(
         &args,
@@ -461,8 +455,9 @@ fn save_teacher_forced_template(
 /// The teacher-forced chain, cut into ranges of at most `range_size`
 /// positions so no stage's cost grows with the prompt.
 ///
-/// Run preparation cuts the prompt's pieces into ranges at boundaries no merge
-/// can cross, and the claimed ids into ranges of the same size. Every prompt
+/// Run preparation cuts the prompt into ranges of at most `range_size` tokens
+/// at boundaries no merge can cross, and the claimed ids into ranges of the
+/// same size. Every prompt
 /// range is tokenized and embedded, every claimed range embedded; then each
 /// layer runs across all ranges in order (`range_p{j}_l{l}`, then
 /// `range_c{k}_l{l}`), and `check_c{k}` re-derives the greedy selection for
@@ -470,15 +465,15 @@ fn save_teacher_forced_template(
 /// its inherited K/V cache from its own previous range, exactly as a decode
 /// step does.
 ///
-/// Counts, the last prompt range's index, and the per-range externals are
-/// filled in by run preparation. The tokenizer batch count is fixed here:
-/// a range of at most `range_size` pieces needs at most that many merges.
+/// Counts, the last prompt range's index, the tokenizer batch count and the
+/// per-range externals are filled in by run preparation. A range's merge
+/// count depends on its text, not only its token count, and `prompt_prepare`
+/// refuses pieces that could still merge, so too few batches cannot pass.
 fn teacher_forced_manifest(
     shape: &Shape,
     layout: &ArtifactLayout,
     decoder_commitment: &str,
     prefill_stages: &[String],
-    range_size: u32,
 ) -> Result<String, Box<dyn Error>> {
     let tokenizer = stage_external_commitment(prefill_stages, "prompt_prepare", "tokenizer")?;
     let embedding = stage_external_commitment(prefill_stages, "input_embedding", "embedding")?;
@@ -509,7 +504,6 @@ fn teacher_forced_manifest(
             path("rindex"),
         )
     };
-    let batches = run_prep::tokenizer_repeat_count(range_size as usize)?;
     let last_layer = shape.layers - 1;
     let first_shared = shape.layers.saturating_sub(shape.num_kv_shared_layers);
     let mut donors = (0..shape.layers)
@@ -544,25 +538,20 @@ fn teacher_forced_manifest(
          {tokenizer_line}\
          inputs.initial_pieces = {{ input = \"prompt_pieces_{{j}}\" }}\n"
     ));
-    let merged = if batches > 0 {
-        out.push_str(&format!(
-            "\n  [[chain.repeat.stage]]\n\
-             name = \"prompt_merge_p{{j}}_b{{b}}\"\n\
-             index = \"b\"\n\
-             count = {batches}\n\
-             project = \"raster-stages/prompt-merge\"\n\
-             inputs.initial_pieces = {{ from = \"prompt_merge_p{{j}}_b{{b-1}}\", first = \"prompt_merge_seed_p{{j}}\" }}\n\
-             {tokenizer_line}"
-        ));
-        format!("prompt_merge_p{{j}}_b{}", batches - 1)
-    } else {
-        String::from("prompt_merge_seed_p{j}")
-    };
+    out.push_str(&format!(
+        "\n  [[chain.repeat.stage]]\n\
+         name = \"prompt_merge_p{{j}}_b{{b}}\"\n\
+         index = \"b\"\n\
+         count = 0\n\
+         project = \"raster-stages/prompt-merge\"\n\
+         inputs.initial_pieces = {{ from = \"prompt_merge_p{{j}}_b{{b-1}}\", first = \"prompt_merge_seed_p{{j}}\" }}\n\
+         {tokenizer_line}"
+    ));
     out.push_str(&format!(
         "\n  [[chain.repeat.stage]]\n\
          name = \"prompt_prepare_p{{j}}\"\n\
          project = \"raster-stages/prompt-prepare\"\n\
-         inputs.merged_pieces = {{ from = \"{merged}\" }}\n\
+         inputs.merged_pieces = {{ from = \"prompt_merge_p{{j}}_b{LAST_MERGE_BATCH}\" }}\n\
          {tokenizer_line}\
          \n  [[chain.repeat.stage]]\n\
          name = \"embed_p{{j}}\"\n\
@@ -688,6 +677,10 @@ fn teacher_forced_manifest(
 
 /// Run preparation replaces this with the index of the last prompt range.
 const LAST_PROMPT_RANGE: &str = "@LAST_PROMPT_RANGE@";
+
+/// Run preparation replaces this with the index of each range's last
+/// tokenizer batch.
+const LAST_MERGE_BATCH: &str = "@LAST_MERGE_BATCH@";
 
 /// The empty prompt a claimed range embeds before its claimed ids.
 fn no_prompt_commitment(layout: &ArtifactLayout) -> Result<String, Box<dyn Error>> {

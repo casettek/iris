@@ -120,7 +120,7 @@ inputs.initial_pieces = { input = "prompt_pieces_{j}" }
   [[chain.repeat.stage]]
 name = "prompt_merge_p{j}_b{b}"
 index = "b"
-count = 7
+count = 0
 project = "/home/amcas/Development/iris/raster-stages/prompt-merge"
 inputs.initial_pieces = { from = "prompt_merge_p{j}_b{b-1}", first = "prompt_merge_seed_p{j}" }
 inputs.tokenizer = { external = { path = "/home/amcas/Development/iris/runtime/model-artifacts/gemma-4-E2B-detwgt/raster/prompt-prepare/tokenizer.rastered", index_path = "/home/amcas/Development/iris/runtime/model-artifacts/gemma-4-E2B-detwgt/raster/prompt-prepare/tokenizer.rindex", commitment = "aa9b15cfd910f92b91638a8af385aef31f5166466d7871652946f32575812718" } }
@@ -128,7 +128,7 @@ inputs.tokenizer = { external = { path = "/home/amcas/Development/iris/runtime/m
   [[chain.repeat.stage]]
 name = "prompt_prepare_p{j}"
 project = "/home/amcas/Development/iris/raster-stages/prompt-prepare"
-inputs.merged_pieces = { from = "prompt_merge_p{j}_b6" }
+inputs.merged_pieces = { from = "prompt_merge_p{j}_b@LAST_MERGE_BATCH@" }
 inputs.tokenizer = { external = { path = "/home/amcas/Development/iris/runtime/model-artifacts/gemma-4-E2B-detwgt/raster/prompt-prepare/tokenizer.rastered", index_path = "/home/amcas/Development/iris/runtime/model-artifacts/gemma-4-E2B-detwgt/raster/prompt-prepare/tokenizer.rindex", commitment = "aa9b15cfd910f92b91638a8af385aef31f5166466d7871652946f32575812718" } }
 
   [[chain.repeat.stage]]

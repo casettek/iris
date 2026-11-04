@@ -547,9 +547,10 @@ fn verify_prepared_run(prepared: &PreparedRun) -> Result<()> {
 }
 
 /// The frozen prompt pieces must be the split of the frozen rendered prompt,
-/// and a teacher-forced run's prompt ranges the cuts run preparation makes of
-/// them. Both are deterministic in public data; recomputing them here keeps a
-/// claimer from choosing a different tokenization's inputs.
+/// and a teacher-forced run's prompt ranges and tokenizer batch count the ones
+/// run preparation derives from them. All are deterministic in public data;
+/// recomputing them here keeps a claimer from choosing a different
+/// tokenization's inputs, or too few batches for `prompt_prepare` to finish.
 fn verify_prompt_ranges(prepared: &PreparedRun, manifest_path: &Path) -> Result<()> {
     let model = inference_artifacts::ModelManifest::load_verified(&prepared.model_manifest_path)?;
     let model_dir = prepared
@@ -572,12 +573,41 @@ fn verify_prompt_ranges(prepared: &PreparedRun, manifest_path: &Path) -> Result<
         &pieces,
         range_size,
         &run_prep::vocabulary_pairs(&tokenizer)?,
+        &run_prep::prompt_tokenizer(&tokenizer)?,
     )?;
     let expected = run_prep::prompt_range_commitments(&ranges)?;
     if bound_commitments(manifest_path, "prompt_pieces")? != expected {
-        bail!("frozen run manifest's prompt ranges are not the safe cuts of the frozen prompt in ranges of {range_size}");
+        bail!("frozen run manifest's prompt ranges are not the safe cuts of the frozen prompt in ranges of {range_size} tokens");
+    }
+    let repeats = run_prep::range_tokenizer_repeat_count(&ranges)?;
+    if tokenizer_batch_count(manifest_path)? != i64::from(repeats) {
+        bail!("frozen run manifest does not run {repeats} tokenizer batches per prompt range");
     }
     Ok(())
+}
+
+/// The count of the `prompt` repeat's tokenizer batch fan.
+fn tokenizer_batch_count(manifest_path: &Path) -> Result<i64> {
+    let manifest: toml::Value = toml::from_str(
+        &fs::read_to_string(manifest_path)
+            .with_context(|| format!("failed to read {}", manifest_path.display()))?,
+    )
+    .with_context(|| format!("failed to parse {}", manifest_path.display()))?;
+    manifest["chain"]["repeat"]
+        .as_array()
+        .and_then(|repeats| {
+            repeats
+                .iter()
+                .find(|repeat| repeat["name"].as_str() == Some("prompt"))
+        })
+        .and_then(|prompt| prompt["stage"].as_array())
+        .and_then(|stages| {
+            stages
+                .iter()
+                .find(|stage| stage.get("index").and_then(|index| index.as_str()) == Some("b"))
+        })
+        .and_then(|fan| fan["count"].as_integer())
+        .context("frozen run manifest has no tokenizer batch fan")
 }
 
 /// The commitments an indexed `[chain.input.<name>]` table binds, in order.

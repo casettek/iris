@@ -49,19 +49,24 @@ loop.
 ### Ranges
 
 Run preparation cuts the prompt's initial pieces into ranges of at most
-`range_size` pieces, each ending at a boundary no merge can cross: two pieces
+`range_size` tokens, each ending at a boundary no merge can cross: two pieces
 whose adjacent characters appear together in no vocabulary token. Every merge
 produces a vocabulary token, so pieces on either side of such a boundary tokenize
 independently to exactly the ids of the whole prompt. On Gemma 4 E2B only one
-token (`>▁</`) spans a space, so almost every space is a boundary. Fails rather
-than overflow a range. The claimed ids are cut into ranges of the same size.
+token (`>▁</`) spans a space, so almost every space is a boundary. Run
+preparation merges each stretch between boundaries natively to count its
+tokens, then packs whole stretches into ranges. It fails if one stretch alone is
+longer than `range_size` tokens. The claimed ids are cut into ranges of the same
+size.
 
 Each prompt range `p{j}`:
 
 1. `prompt_merge_seed_p{j}`, `prompt_merge_p{j}_b{b}`, `prompt_prepare_p{j}`:
    the range's pieces, 64 merges per stage. Each merge scans only the range, so
-   total tokenizer work is linear in the prompt. The batch count is fixed at
-   import from the range size.
+   total tokenizer work is linear in the prompt. Every range runs the same
+   number of batches, enough for the range needing the most merges. Run
+   preparation fills it in, and `challenge build` recomputes it. Too few
+   cannot pass: `prompt_prepare` rejects pieces that could still merge.
 2. `embed_p{j}`: `input-embedding` over the range's ids, starting where the
    previous range's embedding ended (`range_origin` for the first).
 3. `aux_p{j}_l{l}`, `range_p{j}_l{l}`: the unchanged `prefill-prepare-aux` and
@@ -116,8 +121,8 @@ posted ones (`challenge build` reports this as a rejected claimed output).
 Every per-position stage covers at most `range_size` positions, so its replay
 cost is bounded independently of the prompt length, except that a global-attention
 layer's late ranges still read every earlier key. The stage count grows linearly
-with the prompt: per prompt range one seed, `⌈(range_size − 1) / 64⌉ − 1` merge
-batches, prepare, embed and two stages per layer.
+with the prompt: per prompt range one seed, at least one more merge batch (a
+range needs about one per 64 merges), prepare, embed and two stages per layer.
 
 Carrying K/V forward copies it, because Raster can extend only an object created
 inside the same program, and a stage's input is not one. Sliding-window layers

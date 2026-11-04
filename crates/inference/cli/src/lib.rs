@@ -139,7 +139,7 @@ struct ModelImportArgs {
     /// Do not overwrite the stage-local manual input fixtures.
     #[arg(long)]
     no_stage_fixtures: bool,
-    /// Largest teacher-forced range, in prompt pieces or claimed ids.
+    /// Largest teacher-forced range, in prompt tokens or claimed ids.
     #[arg(long = "range-size", default_value_t = model_import::DEFAULT_RANGE_SIZE)]
     range_size: u32,
 }

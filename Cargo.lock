@@ -3925,6 +3925,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "inference-artifacts",
+ "inference-kernels",
  "input-embedding",
  "output-finalize",
  "prompt-prepare",

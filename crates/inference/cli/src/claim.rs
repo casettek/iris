@@ -287,11 +287,16 @@ pub(crate) fn prepare_claim_run(options: &ClaimBuildOptions) -> Result<PreparedC
             };
             run_prep::validate_claimed_length(&ids, run_spec.tokens, &prompt.eos_token_ids)?;
             let range_size = model_manifest.teacher_forced_range_size()? as usize;
-            let pairs = run_prep::vocabulary_pairs(&tokenizer)?;
-            let ranges = run_prep::prompt_ranges(&prompt.initial_pieces, range_size, &pairs)?;
+            let ranges = run_prep::prompt_ranges(
+                &prompt.initial_pieces,
+                range_size,
+                &run_prep::vocabulary_pairs(&tokenizer)?,
+                &run_prep::prompt_tokenizer(&tokenizer)?,
+            )?;
             let prompt_files = run_prep::write_prompt_ranges(&ranges, &prompt_dir)?;
             let claimed_files = run_prep::write_claimed_ranges(&ids, range_size, &prompt_dir)?;
-            Some((ids, prompt_files, claimed_files))
+            let merge_repeats = run_prep::range_tokenizer_repeat_count(&ranges)?;
+            Some((ids, prompt_files, claimed_files, merge_repeats))
         }
     };
 
@@ -299,9 +304,13 @@ pub(crate) fn prepare_claim_run(options: &ClaimBuildOptions) -> Result<PreparedC
         .parent()
         .ok_or_else(|| anyhow::anyhow!("manifest template has no parent directory"))?;
     let run_manifest = match &claimed {
-        Some((_, prompt_files, claimed_files)) => {
-            render_ranged_manifest(&template, template_dir, prompt_files, claimed_files)?
-        }
+        Some((_, prompt_files, claimed_files, merge_repeats)) => render_ranged_manifest(
+            &template,
+            template_dir,
+            prompt_files,
+            claimed_files,
+            *merge_repeats,
+        )?,
         None => render_run_manifest(
             &template,
             template_dir,
@@ -326,7 +335,7 @@ pub(crate) fn prepare_claim_run(options: &ClaimBuildOptions) -> Result<PreparedC
         run_manifest_path: Some(manifest_path.clone()),
         run_manifest_sha256: Some(run_manifest_sha256),
         chain: run_spec.chain,
-        claimed_token_ids: claimed.map(|(ids, _, _)| ids),
+        claimed_token_ids: claimed.map(|(ids, ..)| ids),
     };
     write_json(&run_dir.join(PREPARED_RUN_JSON), &prepared_run)?;
 
@@ -342,26 +351,37 @@ const RUN_PLACEHOLDER_DIR: &str = "target/iris/run-prompt-placeholder/";
 /// Marks where the teacher-forced template names the last prompt range.
 const LAST_PROMPT_RANGE: &str = "@LAST_PROMPT_RANGE@";
 
+/// Marks where the teacher-forced template names each range's last tokenizer
+/// batch.
+const LAST_MERGE_BATCH: &str = "@LAST_MERGE_BATCH@";
+
 /// Fills the teacher-forced template for one run: the range counts, the last
-/// prompt range's index, and each range's committed pieces or claimed ids.
+/// prompt range's index, the tokenizer batches after each range's seed, and
+/// each range's committed pieces or claimed ids.
 pub(crate) fn render_ranged_manifest(
     template: &str,
     template_dir: &Path,
     prompt: &[run_prep::RunFile],
     claimed: &[run_prep::RunFile],
+    merge_repeats: u32,
 ) -> Result<String> {
     anyhow::ensure!(
         !prompt.is_empty() && !claimed.is_empty(),
         "a teacher-forced run needs at least one prompt range and one claimed range"
     );
+    anyhow::ensure!(
+        merge_repeats > 0,
+        "a prompt range needs at least one tokenizer batch after its seed"
+    );
     let template = inference_artifacts::resolve_raster_manifest_paths(template, template_dir)?;
     let last_prompt = (prompt.len() - 1).to_string();
+    let last_merge = (merge_repeats - 1).to_string();
     let mut table = String::new();
     let mut name = String::new();
     let mut fan_index = String::new();
     // Prompt repeats, claimed repeats, prompt externals, claimed externals,
-    // per-layer prompt fans, per-layer claimed fans.
-    let mut replaced = [0_usize; 6];
+    // per-layer prompt fans, per-layer claimed fans, tokenizer batch fans.
+    let mut replaced = [0_usize; 7];
     let mut out = Vec::new();
     for line in template.lines() {
         let trimmed = line.trim();
@@ -441,6 +461,7 @@ pub(crate) fn render_ranged_manifest(
             let range_count = match fan_index.as_str() {
                 "j" => Some((4, prompt.len())),
                 "k" => Some((5, claimed.len())),
+                "b" => Some((6, merge_repeats as usize)),
                 _ => None,
             };
             if let Some((slot, count)) = range_count {
@@ -449,10 +470,17 @@ pub(crate) fn render_ranged_manifest(
                 continue;
             }
         }
-        out.push(line.replace(LAST_PROMPT_RANGE, &last_prompt));
+        out.push(
+            line.replace(LAST_PROMPT_RANGE, &last_prompt)
+                .replace(LAST_MERGE_BATCH, &last_merge),
+        );
     }
-    if replaced[..4] != [1, 2, 1, 1] || replaced[4] == 0 || replaced[4] != replaced[5] {
-        anyhow::bail!("incompatible teacher-forced template: expected [prompt repeats, claimed repeats, prompt commitments, claimed commitments] = [1, 2, 1, 1] and matching per-layer range fans; found {replaced:?}");
+    if replaced[..4] != [1, 2, 1, 1]
+        || replaced[4] == 0
+        || replaced[4] != replaced[5]
+        || replaced[6] != 1
+    {
+        anyhow::bail!("incompatible teacher-forced template: expected [prompt repeats, claimed repeats, prompt commitments, claimed commitments] = [1, 2, 1, 1], matching per-layer range fans and one tokenizer batch fan; found {replaced:?}");
     }
     out.push(String::new());
     Ok(out.join("\n"))
@@ -946,6 +974,15 @@ name = "prompt"
 index = "j"
 count = 0
 
+  [[chain.repeat.stage]]
+name = "prompt_merge_p{j}_b{b}"
+index = "b"
+count = 0
+
+  [[chain.repeat.stage]]
+name = "prompt_prepare_p{j}"
+inputs.merged_pieces = { from = "prompt_merge_p{j}_b@LAST_MERGE_BATCH@" }
+
 [[chain.repeat]]
 name = "claimed_embed"
 index = "k"
@@ -984,7 +1021,7 @@ count = 0
         let prompt = [file("pieces_0", "a0"), file("pieces_1", "a1"), file("pieces_2", "a2")];
         let claimed = [file("claimed_0", "c0")];
         let manifest =
-            render_ranged_manifest(template, Path::new("/repo"), &prompt, &claimed).unwrap();
+            render_ranged_manifest(template, Path::new("/repo"), &prompt, &claimed, 5).unwrap();
         let parsed: toml::Value = toml::from_str(&manifest).unwrap();
         let inputs = &parsed["chain"]["input"];
         assert_eq!(
@@ -1006,6 +1043,8 @@ count = 0
         let repeats = parsed["chain"]["repeat"].as_array().unwrap();
         let count = |value: &toml::Value| value["count"].as_integer();
         assert_eq!(count(&repeats[0]), Some(3));
+        assert_eq!(count(&repeats[0]["stage"][0]), Some(5));
+        assert!(manifest.contains(r#"from = "prompt_merge_p{j}_b4""#));
         assert_eq!(count(&repeats[1]), Some(1));
         // The layer block keeps its count; its fans run once per range.
         assert_eq!(count(&repeats[2]), Some(4));
@@ -1015,7 +1054,10 @@ count = 0
         assert_eq!(count(&repeats[3]), Some(1));
         assert!(manifest.contains(r#"first = "embed_p2""#));
         assert!(!manifest.contains("run-prompt-placeholder"));
-        assert!(render_ranged_manifest(template, Path::new("/repo"), &prompt, &[]).is_err());
+        assert!(render_ranged_manifest(template, Path::new("/repo"), &prompt, &[], 5).is_err());
+        assert!(
+            render_ranged_manifest(template, Path::new("/repo"), &prompt, &claimed, 0).is_err()
+        );
     }
 
     #[test]

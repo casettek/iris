@@ -24,9 +24,11 @@ Flow:
 7. Compare the Raster replay checkpoint with the native recomputed checkpoint. The stage name, input commitment, output structural commitment, and output SHA-256 must all match, yielding the same checkpoint hash.
 8. Write the challenge artifacts only after that parity check passes. A mismatch fails challenge construction with a native/Raster parity error identifying the stage, differing field, and both values. The replay files remain available for debugging.
 
-For a teacher-forced claim, step 2 also checks two things: the frozen claimed ids
-obey the token-budget rule, and the frozen run manifest's `claimed_ids`
-commitments are exactly those ids cut into the model's range size. If every checkpoint then matches but `output_finalize`'s
+For a teacher-forced claim, step 2 also checks three things. The frozen prompt
+ranges and tokenizer batch count must be the ones run preparation derives from
+the frozen prompt. The frozen claimed ids must obey the token-budget rule. And
+the frozen run manifest's `claimed_ids` commitments must be exactly those ids
+cut into the model's range size. If every checkpoint then matches but `output_finalize`'s
 ids differ from the posted ids, there is no stage to dispute. The claim is refuted
 by its own final record: the challenge reports `claimed output rejected` with the
 first differing token, and does not replay. A claim whose `sequence_check` or layer

@@ -74,7 +74,7 @@
     "raster_manifest_path": "Raster.toml",
     "raster_manifest_sha256": "19543219fe0da690aa50392854f43b4541de52aca88b99bbaef5b7ae6db151e2",
     "teacher_forced_manifest_path": "Raster.teacher-forced.toml",
-    "teacher_forced_manifest_sha256": "58e84299a8eeeaf169f594373f9d266f7fc36b091685669cc407edd27559f071",
+    "teacher_forced_manifest_sha256": "d817d21833d93d4560efafcfa5e29caffc6ad677e827b135a4ad5e829b3cd0ea",
     "teacher_forced_range_size": 512
   }
 }

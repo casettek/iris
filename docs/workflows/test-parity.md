@@ -59,7 +59,7 @@ the order in which PLE work is scheduled.
 
 Each case also runs the [teacher-forced chain](../internals/raster-chain.md#teacher-forced-chain)
 over `prompt ‖ direct output`, through Raster (`--no-auth`) and native-staged, under
-`<case>/teacher-forced/`. The gate imports with `--range-size 6` (the smallest at which the dense test vocabulary still has a cut point in every case), so every case's
+`<case>/teacher-forced/`. The gate imports with `--range-size 6` (six tokens per range), so every case's
 prompt and output split into several ranges, including ranges inside and past the
 16-token sliding window. It must agree:
 
