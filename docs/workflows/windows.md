@@ -35,13 +35,13 @@ artifact directory rather than replacing a manifest used by an active WSL run:
 
 ```powershell
 .\target\windows\release\iris.exe model import `
-  --model ..\models\gemma-4-E2B-detwgt `
+  --model ..\models\gemma-4-E2B-q8 `
   --artifact-root runtime/windows-model-artifacts `
   --no-stage-fixtures
 ```
 
 Set `model_manifest` in a separate run spec to
-`runtime/windows-model-artifacts/gemma-4-E2B-detwgt/manifest.json`, then run:
+`runtime/windows-model-artifacts/gemma-4-E2B-q8/manifest.json`, then run:
 
 ```powershell
 .\target\windows\release\iris.exe infer --run inference-windows.toml

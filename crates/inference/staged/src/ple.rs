@@ -157,18 +157,11 @@ pub(crate) fn load(
         None => Arc::new(StaticWeights::load(&source)?),
     };
     let mut pages = BTreeMap::new();
-    // One `Q8_0` row per token: `ple_width / 32 · 34` bytes.
-    let width_bytes = u64::from(weights.params.ple_width) / 32 * 34;
     for row in embedded.rows.iter() {
-        let offset = u64::from(row.token_id)
-            .checked_mul(width_bytes)
-            .context("PLE row offset overflow")?;
-        ensure!(
-            offset
-                .checked_add(width_bytes)
-                .is_some_and(|end| end <= weights.embedding_byte_len),
-            "PLE row missing for token {}",
-            row.token_id
+        let offset = prefill_prepare_aux::ple_row_offset(
+            row.token_id,
+            weights.params.ple_width,
+            weights.embedding_byte_len,
         );
         let index = offset / weights.embedding_page_size;
         if let std::collections::btree_map::Entry::Vacant(entry) = pages.entry(index) {
@@ -208,7 +201,11 @@ pub(crate) fn run(
         let mut projected = matvec_from_source(&projection, &activation)?;
         scale_row(&mut projected, params.projection_scalar);
         rms_norm(&mut projected, &norm, params.norm_eps).map_err(anyhow::Error::msg)?;
-        let offset = u64::from(row.token_id) * (u64::from(params.ple_width) / 32 * 34);
+        let offset = prefill_prepare_aux::ple_row_offset(
+            row.token_id,
+            params.ple_width,
+            weights.embedding_byte_len,
+        );
         let page = selected
             .pages
             .get(&(offset / weights.embedding_page_size))

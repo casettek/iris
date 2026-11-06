@@ -16,7 +16,7 @@ just challenge \
 Flow:
 
 1. Load the claimed `checkpoints.txt` and use `claim_bundle.json` only as today's local carrier for `prepared_run.json`.
-2. Check that the model selected by `--run` (default: `inference.toml`) matches the frozen model manifest, verify the bundle and model template once, and verify the frozen run manifest. Run the checkpointed staged executor with that frozen run manifest; its prompt and token count are preserved even if the current run spec has changed.
+2. Verify the frozen run manifest's hash, then prepare the challenger's own run: the claim's prompt, `raw_prompt`, `tokens` and claimed ids, from the model `--run` (default: `inference.toml`) selects. Run the checkpointed staged executor on that manifest. The prompt and token count are the claim's even if the current run spec has changed.
 3. After each recomputed checkpoint, hash the verifier's local checkpoint record and compare it to the claimed hash at the same index.
 4. If no divergence exists, report the claimed and recomputed traces.
 5. If a divergence exists, seed a replay directory with all prior recomputed stages.
@@ -24,24 +24,33 @@ Flow:
 7. Compare the Raster replay checkpoint with the native recomputed checkpoint. The stage name, input commitment, output structural commitment, and output SHA-256 must all match, yielding the same checkpoint hash.
 8. Write the challenge artifacts only after that parity check passes. A mismatch fails challenge construction with a native/Raster parity error identifying the stage, differing field, and both values. The replay files remain available for debugging.
 
-For a teacher-forced claim, step 2 also checks that the frozen prompt ranges and
-tokenizer batch count are the ones run preparation derives from the frozen
-prompt. A claim whose `sequence_check` or layer checkpoint is doctored diverges
-there and replays that stage as usual.
+Recomputing the claimer's manifest would rerun the claimer's model and agree with
+it, which is why step 2 prepares a new run. The claimed ids are checked against the
+frozen manifest's commitments. The challenger does not need the claimer's model files. If the selected model's id is not the
+one the claim names it warns and carries on. The run then diverges at the first
+stage whose committed inputs differ: `prompt_bind` for another configuration or
+text, `prompt_seed_p{j}` for another cut, or the first stage reading other weights.
+A claim whose `sequence_check` or layer checkpoint is doctored diverges there and
+replays that stage as usual.
 
 If every checkpoint matches, there is no stage to dispute, and the claim is
 judged by its own final record, `output_finalize`. The claim posts no other
 copy of its output. It is rejected, without a replay, when:
 
+- **The prompt was not prepared correctly.** `prompt_fault` is non-zero, or
+  `prompt_complete` is not set.
+- **A check could not stand behind its edge.** `check_fault` is non-zero:
+  a position with no predicting row, a range with no tokens or more than the range
+  size, or a range that does not continue the sequence. `check_fault_position`
+  says where. The range limit is what bounds each check's replay cost.
 - **The committed verdict is not clean.** `claim_mismatches` counts claimed ids
   that are not the greedy selection, and `first_claim_mismatch_position` says
   where the first one is.
-- **The output breaks the token budget.** It must fill `tokens` unless its last
-  id is EOS, and it must not continue past an EOS.
-- **The claimed ranges are cut wrongly.** The frozen run manifest's `claimed_ids`
-  commitments must be the output ids cut into the model's range size. This bounds
-  each check's replay cost; with a clean verdict the output ids are exactly the
-  claimed ids the chain consumed.
+- **The output breaks the token budget.** `output_fault` is non-zero: the output
+  must fill `max_new_tokens` unless it reaches EOS, and must not continue past EOS.
+
+The chain establishes all of these. The challenge reads them from the final record
+and computes none of them itself.
 
 The challenge then reports `claimed output rejected` with the reason.
 
@@ -85,7 +94,11 @@ just challenge \
   target/staged-infer/runs/.../checkpoints.corrupt.txt
 ```
 
-`--claim` and `--trace` remain lower-level debug inputs that compare full checkpoint records. `--trace` prepares a run from `--run` because a trace alone has no frozen run metadata. It uses that run spec’s model, prompt, and token count. `challenge locate` remains reserved. See [Fault proving](fault-prove.md) for `challenge corrupt` and `fault prove`.
+`--claim` and `--trace` remain lower-level debug inputs that compare full checkpoint records. `--trace` prepares a run from `--run` because a trace alone has no frozen run metadata. It uses that run spec’s model, prompt, and token count, and discovers the output with direct inference. `challenge locate` remains reserved. See [Fault proving](fault-prove.md) for `challenge corrupt` and `fault prove`.
+
+A stage whose trace is 128 steps or fewer cannot be replayed at this window, so a
+challenge that lands on one fails at the replay. See
+[short-stage-fraud-window](../issues/short-stage-fraud-window.md).
 
 The authenticated challenge-stage replay explicitly uses `--fraud-proof-window-size 128`.
 It builds `commit.bin` during execution with RAM working storage and no raw trace.

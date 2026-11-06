@@ -955,24 +955,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "decode-embed"
-version = "0.1.0"
-dependencies = [
- "det-num",
- "raster",
- "serde",
-]
-
-[[package]]
 name = "decode-init"
-version = "0.1.0"
-dependencies = [
- "raster",
- "serde",
-]
-
-[[package]]
-name = "decode-select-token"
 version = "0.1.0"
 dependencies = [
  "raster",
@@ -1138,24 +1121,21 @@ name = "direct-infer"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "decode-embed",
- "decode-select-token",
  "det-num",
  "detwgt",
  "inference-artifacts",
  "inference-kernels",
  "input-embedding",
  "output-finalize",
- "prefill-finalize",
  "prefill-prepare-aux",
  "prefill-range",
  "prompt-prepare",
  "raster",
  "run-prep",
+ "sequence-check",
  "serde",
  "serde_json",
  "sha2",
- "staged-infer",
 ]
 
 [[package]]
@@ -2079,12 +2059,9 @@ name = "inference-kernels"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "decode-embed",
- "decode-select-token",
  "det-num",
  "input-embedding",
  "output-finalize",
- "prefill-finalize",
  "prefill-prepare-aux",
  "prefill-range",
  "prompt-prepare",
@@ -2103,6 +2080,7 @@ dependencies = [
  "det-num",
  "raster",
  "serde",
+ "sha2",
 ]
 
 [[package]]
@@ -2923,16 +2901,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "prefill-finalize"
-version = "0.1.0"
-dependencies = [
- "det-num",
- "raster",
- "raster-runtime",
- "serde",
-]
-
-[[package]]
 name = "prefill-prepare-aux"
 version = "0.1.0"
 dependencies = [
@@ -2971,11 +2939,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "prompt-bind"
+version = "0.1.0"
+dependencies = [
+ "raster",
+ "serde",
+ "sha2",
+]
+
+[[package]]
+name = "prompt-core"
+version = "0.1.0"
+dependencies = [
+ "raster",
+ "serde",
+ "sha2",
+]
+
+[[package]]
 name = "prompt-merge"
 version = "0.1.0"
 dependencies = [
  "raster",
  "serde",
+ "sha2",
 ]
 
 [[package]]
@@ -2984,6 +2971,16 @@ version = "0.1.0"
 dependencies = [
  "raster",
  "serde",
+ "sha2",
+]
+
+[[package]]
+name = "prompt-seed"
+version = "0.1.0"
+dependencies = [
+ "raster",
+ "serde",
+ "sha2",
 ]
 
 [[package]]
@@ -3932,8 +3929,10 @@ dependencies = [
  "output-finalize",
  "prompt-prepare",
  "raster",
+ "sequence-check",
  "serde",
  "serde_json",
+ "sha2",
 ]
 
 [[package]]
@@ -4137,6 +4136,7 @@ dependencies = [
  "det-num",
  "raster",
  "serde",
+ "sha2",
 ]
 
 [[package]]
@@ -4358,15 +4358,12 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
- "decode-embed",
- "decode-select-token",
  "det-num",
  "hex",
  "inference-artifacts",
  "inference-kernels",
  "input-embedding",
  "output-finalize",
- "prefill-finalize",
  "prefill-prepare-aux",
  "prefill-range",
  "prompt-prepare",

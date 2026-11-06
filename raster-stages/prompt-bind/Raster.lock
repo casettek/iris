@@ -1,0 +1,62 @@
+{
+  "format": 1,
+  "program_commitment": "00faccbc756a26c4af82a5bf0d9f61d7b5dbeab053f048cc0048e80ad3ea8de8",
+  "tiles": {
+    "advance_split": {
+      "image_id": "dca43ddc89d9d811157e83f6a68da0d2f635904bdf5acafc9d208984640a9edd",
+      "source_hash": "5128d7c09eb231c60000000000001281"
+    },
+    "append_atom_pieces": {
+      "image_id": "04b34c0a06b5e7d78b43f2903cc8f13b694bce2ed86e5335df15394be9ab0c05",
+      "source_hash": "5128d7c09eb231c60000000000001281"
+    },
+    "begin_atom_step": {
+      "image_id": "46013847e396bb8e168a8417f6337ce9a83bef90f67aad017295111fbd3076ec",
+      "source_hash": "5128d7c09eb231c60000000000001281"
+    },
+    "begin_scan": {
+      "image_id": "00367bf6358c7a5a8df90df11af12a3343b74add85543c730fb58fd6cd9fbea7",
+      "source_hash": "5128d7c09eb231c60000000000001281"
+    },
+    "begin_split": {
+      "image_id": "b2228a8cefc1fd791843125517a586bba466ba844105f8d04f595d438860fd74",
+      "source_hash": "5128d7c09eb231c60000000000001281"
+    },
+    "begin_text_fold": {
+      "image_id": "963f74664ae1b04dc088b6c0c9530e655895e07221e6972146d03aaeccd57b81",
+      "source_hash": "5128d7c09eb231c60000000000001281"
+    },
+    "empty_vocab_match": {
+      "image_id": "f5b07da36f743c37011142dec1a4f67bd1c06f9da4288ad203605e48c217e235",
+      "source_hash": "5128d7c09eb231c60000000000001281"
+    },
+    "fold_text_chunk": {
+      "image_id": "e113775ebf924a4febfe93ac820ddc2f426684be75d3514e2a1b1d8626ae786e",
+      "source_hash": "5128d7c09eb231c60000000000001281"
+    },
+    "open_bound_prompt": {
+      "image_id": "b1e1192c36b14e50a548c1038be5e5c5913e10d407aa4fc4f626756a01d83892",
+      "source_hash": "5128d7c09eb231c60000000000001281"
+    },
+    "plan_scan": {
+      "image_id": "7bbe8502a40b89f055a9b11950d4dcc6aa070faf87cb57adef0fc38f68bfff02",
+      "source_hash": "5128d7c09eb231c60000000000001281"
+    },
+    "scan_prompt_chunk": {
+      "image_id": "dd1b0e5ed380deba33921bad7a7eafb1317ebab614cb854b2e2d0df556124cda",
+      "source_hash": "5128d7c09eb231c60000000000001281"
+    },
+    "scan_vocab_chunk": {
+      "image_id": "261b4e528ceade6e5314f63dac468c051af997339b30065cb4a315382178a400",
+      "source_hash": "5128d7c09eb231c60000000000001281"
+    },
+    "vocab_bucket_index": {
+      "image_id": "461afc53f983466abd3af8ca6673473b0b1214cc9f181bcc8838d47f6bd4b0af",
+      "source_hash": "5128d7c09eb231c60000000000001281"
+    }
+  },
+  "toolchain": {
+    "risc0": "risc0-zkvm-3.0.6",
+    "build_mode": "local"
+  }
+}

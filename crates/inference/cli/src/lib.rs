@@ -80,14 +80,14 @@ enum Commands {
     ReplayProfile(ReplayProfileArgs),
     /// Run the pinned three-path end-to-end parity suite.
     TestParity,
-    /// Compare a teacher-forced chain with the autoregressive chain for the
-    /// same prompt and output, position by position.
+    /// Compare a chain run with direct generation of the same prompt and
+    /// output, position by position.
     #[command(hide = true)]
     CompareTeacherForced {
         #[arg(long = "teacher-forced")]
         teacher_forced: PathBuf,
         #[arg(long)]
-        autoregressive: PathBuf,
+        direct: PathBuf,
     },
     #[command(hide = true)]
     ParityWorker {
@@ -159,7 +159,7 @@ struct ModelImportArgs {
     /// Do not overwrite the stage-local manual input fixtures.
     #[arg(long)]
     no_stage_fixtures: bool,
-    /// Largest teacher-forced range, in prompt tokens or claimed ids.
+    /// Largest range, in prompt tokens or claimed ids.
     #[arg(long = "range-size", default_value_t = model_import::DEFAULT_RANGE_SIZE)]
     range_size: u32,
 }
@@ -176,7 +176,7 @@ struct InferArgs {
 struct ReplayProfileArgs {
     #[arg(long, default_value = inference_artifacts::INFERENCE_RUN_SPEC_TOML)]
     run: PathBuf,
-    /// Exact expanded stage name, e.g. prefill_range_l13 or prompt_merge_b1.
+    /// Exact expanded stage name, e.g. range_p0_l13 or prompt_merge_p0_b1.
     #[arg(long)]
     stage: String,
     /// Number of distinct tiles selected by their slowest native invocation.
@@ -198,7 +198,7 @@ struct ClaimBuildArgs {
     #[arg(long, default_value = inference_artifacts::INFERENCE_RUN_SPEC_TOML)]
     run: PathBuf,
 
-    /// Debug: claim these comma-separated output ids in a teacher-forced claim
+    /// Debug: claim these comma-separated output ids
     /// instead of discovering them, to build claims that should be refuted.
     #[arg(long = "claimed-ids", value_delimiter = ',', hide = true)]
     claimed_ids: Option<Vec<u32>>,
@@ -327,9 +327,9 @@ fn execute(cli: Cli) -> Result<ExitCode> {
         }
         Some(Commands::CompareTeacherForced {
             teacher_forced,
-            autoregressive,
+            direct,
         }) => {
-            let comparison = parity::compare_teacher_forced(&teacher_forced, &autoregressive)?;
+            let comparison = parity::compare_teacher_forced(&teacher_forced, &direct)?;
             println!("{}", serde_json::to_string_pretty(&comparison)?);
             Ok(ExitCode::SUCCESS)
         }
@@ -567,6 +567,13 @@ fn print_infer_result(result: &staged_infer::InferenceResult, run_spec_path: Opt
         }
     }
     println!("stop reason: {}", result.stop_reason);
+    println!("output text sha256: {}", result.output_text_sha256);
+    println!("input text sha256: {}", result.input_text_sha256);
+    println!("model id: {}", result.model_id);
+    println!(
+        "faults: prompt {}, check {}, output {}; claim mismatches: {}",
+        result.prompt_fault, result.check_fault, result.output_fault, result.claim_mismatches
+    );
     println!("generated text:");
     println!("{}", result.generated_text);
 }
@@ -1198,8 +1205,7 @@ mod tests {
             generated_token_ids_sha256: String::from("sha"),
             generated_text: String::from("Ciao"),
             stop_reason: String::from("eos"),
-            claim_mismatches: 0,
-            first_claim_mismatch_position: 0,
+            ..Default::default()
         };
 
         let trace = render_token_trace(&result, &decoder);

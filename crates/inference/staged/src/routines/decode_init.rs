@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use anyhow::Result;
-use decode_select_token::input::DecodeEdge;
+use sequence_check::input::DecodeEdge;
 
 use crate::artifact_io::{with_main_sequence_scope, with_stage_sequence_scope};
 use crate::cache::CachedInputs;

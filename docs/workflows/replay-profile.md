@@ -76,6 +76,41 @@ The older feature-gated standalone iris replay-profile command remains a
 trace-backed debugging workflow. Its retained traces can be large; use challenge
 profile for bounded native-guided profiling.
 
+## Teacher-forced stage costs (2026-11-05)
+
+Gemma 4 E2B Q8, one claim of 47 prompt tokens and 16 claimed tokens, 151 stages.
+Each row is that stage's trace and the heaviest tile call `challenge profile`
+measured in the guest. These are the selected calls, not a guaranteed maximum.
+
+| stage | trace steps | heaviest measured tile | user cycles |
+| --- | --- | --- | --- |
+| `prompt_bind` | 2,871 | `append_atom_pieces` | 94,146 |
+| `prompt_seed_p0` | 151,131 | `apply_ranked_merge` | 3,168,971 |
+| `prompt_merge_p0_b0` | 97,454 | `finish_ranked_step` | 63,695 |
+| `prompt_prepare_p0` | 1,146 | `finish_tokens` | 66,174 |
+| `embed_p0` | 297 | `append_activation_row` | 5,685,372 |
+| `embed_c0` | 112 | `count_row_chunk` | 9,182,832 |
+| `aux_p0_l0` | 904 | `mac_weight_page` | 6,774,657 |
+| `range_p0_l0` | 13,469 | `mac_q8_weight_page` | 9,626,604 |
+| `range_c0_l0` | 4,636 | `mac_q8_weight_page` | 9,626,649 |
+| `check_c0` | 131,245 | `score_head_page` | 2,537,947 |
+| `output_finalize` | 58 | `copy_output_token_ids` | 220,701 |
+
+The whole chain ran through authenticated Raster with 549 s of stage time, and
+`chain audit --execution` reproduced every committed output. `embed_c0` and
+`output_finalize` used a window of 2 for this measurement, because they are too short
+for the challenge's 128.
+
+Tokenizing dominates long prompts. At 666 prompt tokens, one 512-token range size and
+8 claimed tokens the chain has 268 stages, and replays took:
+
+| stage | trace steps | replay |
+| --- | --- | --- |
+| `prompt_seed_p0` | 1,607,830 | 91 s |
+| `prompt_merge_p0_b0` | 1,556,799 | 86 s |
+| `prompt_prepare_p0` | 12,675 | 18 s |
+| `check_c0` | 65,637 | 29 s |
+
 ## Local acceptance (2026-10-31)
 
 The eight-iteration recursive fixture reproduced both original output and

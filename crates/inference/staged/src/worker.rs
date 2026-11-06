@@ -316,7 +316,7 @@ mod tests {
         let children: Vec<_> = pool.workers.iter().map(|w| Arc::clone(&w.child)).collect();
         let result = pool.run(vec![WorkerJob {
             id: 0,
-            name: "prefill_prepare_aux_l0".into(),
+            name: "aux_p0_l0".into(),
             kind: StageKind::PrefillPrepareAux { layer: 0 },
             input: "missing".into(),
             input_manifest: "missing".into(),

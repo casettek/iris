@@ -19,7 +19,7 @@ use std::{path::Path, sync::Arc};
 
 pub struct Inputs {
     pub prompt: PromptTokenization,
-    /// Embedded after the prompt; empty in the autoregressive chain.
+    /// Embedded after the prompt; empty for a prompt range.
     pub claimed: ClaimedOutput,
     /// Where this range starts: right after the previous range's rows.
     pub start_position: u32,
@@ -95,6 +95,7 @@ pub fn run_direct(inputs: &Inputs) -> Result<ActivationSequence> {
         Weights::Eager(embedding) => run_input_embedding_direct(InputEmbeddingDirectInputs {
             prompt: &PromptTokenization {
                 token_ids: List::from(inputs.token_ids().collect::<Vec<_>>()),
+                ..Default::default()
             },
             embedding,
         })?,

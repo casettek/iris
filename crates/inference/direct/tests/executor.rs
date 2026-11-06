@@ -12,23 +12,14 @@ use inference_artifacts::{
     write_json, DirectInferBundle, DirectInferShape, InferenceRunSpec, ModelManifest,
     INFERENCE_RUN_SPEC_TOML, MODEL_ARTIFACTS_DIR, MODEL_MANIFEST_JSON,
 };
-use inference_kernels::kernels::decode_select_token::{
-    run_decode_select_token_direct, DecodeSelectTokenDirectInputs,
-};
 use inference_kernels::tensor::{dot_bits, matvec_from_source, Matrix, MatrixSource};
-use input_embedding::input::EmbeddingTable;
-use output_finalize::input::{DecoderTable, DecoderToken};
-use prefill_finalize::input::{FinalHead, FinalHeadParams};
+use sequence_check::input::FinalHeadParams;
 use prefill_range::input::{
     pack_i32s, unpack_i32s, ActivationRow, ActivationSequence, LayerParams, PleLayerInputs, PleRow,
     TransformerLayer,
 };
-use prompt_prepare::input::{
-    vocab_bucket_of, BpePieces, MergeBucket, PromptTokenizer, TokenEntry, VocabBucket,
-};
 use raster::{Bytes, List};
 use sha2::{Digest, Sha256};
-use staged_infer::{UncheckpointedInferenceConfig, UncheckpointedInferenceExecutor};
 
 const ONE: i32 = 1 << 16;
 /// Hidden width of the fixtures: one `Q8_0` block, the narrowest int8 row.
@@ -184,11 +175,7 @@ fn final_head_logits_feed_shared_decode_select_tie_break() {
         inference_kernels::kernels::decode_init::DecodeInitDirectInputs,
     )
     .unwrap();
-    let edge = run_decode_select_token_direct(DecodeSelectTokenDirectInputs {
-        logits: &logits,
-        prior: &prior,
-    })
-    .unwrap();
+    let edge = direct_infer::generation::select_next_token(&logits, &prior).unwrap();
 
     assert_eq!(logits.decode_position, 1);
     assert_eq!(logits.logits.len(), 3);
@@ -421,7 +408,10 @@ fn direct_executor_runs_from_direct_manifest_without_raster_toml() {
     write_json(
         &manifest_path,
         &ModelManifest {
-            version: 2,
+            version: inference_artifacts::MODEL_MANIFEST_VERSION,
+            model_id: inference_artifacts::model_id_of(&[]),
+            model_commitments: Vec::new(),
+            range_size: 512,
             bundle: DirectInferBundle {
                 model_detwgt_path: PathBuf::from("../../model.detwgt"),
                 model_detwgt_sha256: sha256_file(&detwgt),
@@ -524,16 +514,8 @@ fn direct_executor_stops_at_eos_and_reports_only_selected_tokens() {
             .boundaries
             .iter()
             .any(|b| b.stage == format!("decode_select_t{}", last + 1)));
-        if eos_id == 2 {
-            write_staged_fixture(&dir, &[eos_id]);
-            let staged = UncheckpointedInferenceExecutor
-                .run(UncheckpointedInferenceConfig {
-                    base_dir: dir.clone(),
-                    manifest_path: dir.join("Raster.toml"),
-                })
-                .unwrap();
-            assert_eq!(report.report.result, staged);
-        }
+        // Stopping at EOS short of the budget is within the run's rules.
+        assert_eq!(report.report.result.output_fault, 0);
         fs::remove_dir_all(dir).unwrap();
     }
 }
@@ -554,32 +536,15 @@ fn direct_executor_keeps_a_maximum_budget_when_no_eos_is_selected() {
     assert_eq!(report.input_token_count, Some(4));
     assert_eq!(report.result.generated_token_count, 3);
     assert_eq!(report.result.stop_reason, "max_new_tokens");
-    fs::remove_dir_all(dir).unwrap();
-}
-
-#[test]
-fn direct_executor_matches_uncheckpointed_staged_result() {
-    let dir = temp_dir("parity");
-    fs::create_dir_all(&dir).unwrap();
-    let run_spec_path = write_direct_fixture(&dir);
-    write_staged_fixture(&dir, &[]);
-
-    let direct = DirectInferenceExecutor
-        .run(DirectInferenceConfig {
-            base_dir: dir.clone(),
-            run_spec_path,
-        })
-        .unwrap();
-    let staged = UncheckpointedInferenceExecutor
-        .run(UncheckpointedInferenceConfig {
-            base_dir: dir.clone(),
-            manifest_path: dir.join("Raster.toml"),
-        })
-        .unwrap();
-
-    assert_eq!(direct, staged);
-    assert_eq!(direct.generated_token_ids, vec![2]);
-
+    // The record names the run, as the chain's final record does.
+    assert_eq!(
+        report.result.input_text_sha256,
+        format!("{:x}", Sha256::digest(b"hhhh"))
+    );
+    assert_eq!(report.result.max_new_tokens, 3);
+    assert_eq!(report.result.prompt_tokens, 4);
+    assert!(report.result.prompt_complete);
+    assert_eq!(report.result.output_fault, 0);
     fs::remove_dir_all(dir).unwrap();
 }
 
@@ -706,7 +671,10 @@ fn write_tiny_model_detwgt(path: &Path) {
 
 fn tiny_direct_manifest(detwgt: &Path, config: &Path, tokenizer: &Path) -> ModelManifest {
     ModelManifest {
-        version: 2,
+        version: inference_artifacts::MODEL_MANIFEST_VERSION,
+        model_id: inference_artifacts::model_id_of(&[]),
+        model_commitments: Vec::new(),
+        range_size: 512,
         bundle: DirectInferBundle {
             model_detwgt_path: PathBuf::from("../../model.detwgt"),
             model_detwgt_sha256: sha256_file(detwgt),
@@ -750,7 +718,6 @@ fn write_run_spec(dir: &Path, manifest_path: &Path, prompt: &str, tokens: u32) -
         prompt_file: None,
         raw_prompt: true,
         tokens,
-        chain: Default::default(),
     };
     fs::write(
         &path,
@@ -763,161 +730,6 @@ fn write_run_spec(dir: &Path, manifest_path: &Path, prompt: &str, tokens: u32) -
     )
     .unwrap();
     path
-}
-
-fn write_staged_fixture(dir: &Path, eos_ids: &[u32]) {
-    let tokenizer = tiny_prompt_tokenizer();
-    let pieces = BpePieces {
-        pieces: List::from(vec![prompt_prepare::input::BpePiece {
-            text: "h".into(),
-            segment: 0,
-        }]),
-    };
-    let embedding = EmbeddingTable {
-        hidden_size: W as u32,
-        embedding_scale: ONE,
-        values: q8_paged(&one_hot_rows(&[None, Some(0), Some(1)])),
-    };
-    let head = FinalHead {
-        params: FinalHeadParams {
-            hidden_size: W as u32,
-            norm_eps: 0,
-            softcap: 0,
-            norm_weights: pack_i32_page(&[ONE; W]),
-        },
-        projection: q8_paged(&one_hot_rows(&[None, None, Some(0)])),
-    };
-    let decoder = DecoderTable {
-        tokens: List::from(vec![
-            DecoderToken {
-                token: String::from("<pad>"),
-                special: false,
-                terminal: eos_ids.contains(&0),
-            },
-            DecoderToken {
-                token: String::from("hello"),
-                special: false,
-                terminal: eos_ids.contains(&1),
-            },
-            DecoderToken {
-                token: String::from("Hi"),
-                special: false,
-                terminal: eos_ids.contains(&2),
-            },
-        ]),
-    };
-
-    let tokenizer_commitment =
-        write_staged_external(dir, "raster-stages/prompt-prepare", "tokenizer", &tokenizer);
-    let pieces_commitment = write_staged_external(
-        dir,
-        "raster-stages/prompt-prepare",
-        "initial_pieces",
-        &pieces,
-    );
-    let embedding_commitment = write_staged_external(
-        dir,
-        "raster-stages/input-embedding",
-        "embedding",
-        &embedding,
-    );
-    let no_claim_commitment = write_staged_external(
-        dir,
-        "raster-stages/input-embedding",
-        "no_claim",
-        &input_embedding::input::ClaimedOutput::default(),
-    );
-    let head_commitment =
-        write_staged_external(dir, "raster-stages/prefill-finalize", "head", &head);
-    let decoder_commitment =
-        write_staged_external(dir, "raster-stages/output-finalize", "decoder", &decoder);
-
-    fs::write(
-        dir.join("Raster.toml"),
-        format!(
-            r#"[chain]
-name = "direct-parity"
-version = "0.1.0"
-
-[[chain.stage]]
-name = "range_origin"
-project = "raster-stages/range-origin"
-
-[[chain.stage]]
-name = "prompt_prepare"
-project = "raster-stages/prompt-prepare"
-inputs.tokenizer = {{ external = {{ path = "raster-stages/prompt-prepare/tokenizer.rastered", index_path = "raster-stages/prompt-prepare/tokenizer.rindex", commitment = "{tokenizer_commitment}" }} }}
-inputs.merged_pieces = {{ external = {{ path = "raster-stages/prompt-prepare/initial_pieces.rastered", index_path = "raster-stages/prompt-prepare/initial_pieces.rindex", commitment = "{pieces_commitment}" }} }}
-
-[[chain.stage]]
-name = "input_embedding"
-project = "raster-stages/input-embedding"
-inputs.prompt = {{ from = "prompt_prepare" }}
-inputs.claimed = {{ external = {{ path = "raster-stages/input-embedding/no_claim.rastered", index_path = "raster-stages/input-embedding/no_claim.rindex", commitment = "{no_claim_commitment}" }} }}
-inputs.previous = {{ from = "range_origin" }}
-inputs.embedding = {{ external = {{ path = "raster-stages/input-embedding/embedding.rastered", index_path = "raster-stages/input-embedding/embedding.rindex", commitment = "{embedding_commitment}" }} }}
-
-[[chain.stage]]
-name = "prefill_finalize"
-project = "raster-stages/prefill-finalize"
-inputs.activations = {{ from = "input_embedding" }}
-inputs.head = {{ external = {{ path = "raster-stages/prefill-finalize/head.rastered", index_path = "raster-stages/prefill-finalize/head.rindex", commitment = "{head_commitment}" }} }}
-
-[[chain.stage]]
-name = "decode_init"
-project = "raster-stages/decode-init"
-
-[[chain.stage]]
-name = "decode_select_token"
-project = "raster-stages/decode-select-token"
-inputs.logits = {{ from = "prefill_finalize" }}
-inputs.prior = {{ from = "decode_init" }}
-
-[[chain.stage]]
-name = "output_finalize"
-project = "raster-stages/output-finalize"
-inputs.edge = {{ from = "decode_select_token" }}
-inputs.decoder = {{ external = {{ path = "raster-stages/output-finalize/decoder.rastered", index_path = "raster-stages/output-finalize/decoder.rindex", commitment = "{decoder_commitment}" }} }}
-"#
-        ),
-    )
-    .unwrap();
-}
-
-fn write_staged_external<T: serde::Serialize>(
-    base: &Path,
-    stage_dir: &str,
-    name: &str,
-    value: &T,
-) -> String {
-    let dir = base.join(stage_dir);
-    fs::create_dir_all(&dir).unwrap();
-    raster::write_raster_files(
-        value,
-        &dir.join(format!("{name}.rastered")),
-        &dir.join(format!("{name}.rindex")),
-    )
-    .unwrap()
-}
-
-fn tiny_prompt_tokenizer() -> PromptTokenizer {
-    PromptTokenizer {
-        vocab_bucket_count: 1,
-        merge_bucket_count: 1,
-        vocab_buckets: List::from(vec![VocabBucket {
-            entries: List::from(
-                [("<pad>", 0), ("h", 1), ("Hi", 2)]
-                    .into_iter()
-                    .map(|(token, id)| TokenEntry {
-                        token: token.to_string(),
-                        id,
-                    })
-                    .filter(|entry| vocab_bucket_of(&entry.token, 1) == 0)
-                    .collect::<Vec<_>>(),
-            ),
-        }]),
-        merge_buckets: List::from(vec![MergeBucket { rules: List::new() }]),
-    }
 }
 
 fn tiny_tokenizer_json() -> &'static str {

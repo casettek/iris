@@ -10,37 +10,16 @@ just claim inference.toml
 
 Flow:
 
-1. The CLI loads the run spec and its model manifest, then verifies the weight, config, tokenizer, and model-specific template hashes once before preparing the run. Missing template provenance is an error; claims never fall back to the root `Raster.toml`.
-2. Prompt pieces and `prepared_run.json` are written under `target/iris/runs/<run>/`.
-3. A run-specific `Raster.toml` is generated in the same run directory with the requested prompt artifact and token count.
-4. `staged-infer` reads the run manifest and expands the chain stages.
-5. Each stage synthesizes `input.json` and `input_manifest.json`, runs the host implementation, and writes Raster-compatible output artifacts.
-6. `inference-artifacts` scans the completed chain directory and writes the claim files.
+1. The CLI loads the run spec and its model manifest, then verifies the weight, config, tokenizer, and model-specific template hashes once before preparing the run. Missing template provenance is an error.
+2. Direct inference discovers the output ids. They must fill `tokens` unless the last one is EOS.
+3. The prompt's pieces are cut into ranges of at most the model's range size in tokens, at boundaries no merge can cross, and the ids into ranges of the same size. The tokenizer batch count is set for the range needing the most merges.
+4. The original text (`text`), the run's configuration (`config`), where each range ends (`cut_{j}`) and each claimed range (`claimed_{k}`) are written as externals under `target/iris/runs/<run>/prompt/`, and a run-specific `Raster.toml` beside it commits to them. The configuration holds the model id, `raw_prompt`, `tokens` and the range size. The model id comes from the model manifest, which recomputes it from its commitments by role when it is loaded.
+5. `staged-infer` reads the run manifest and expands the [chain](../internals/raster-chain.md).
+6. Each stage synthesizes `input.json` and `input_manifest.json`, runs the host implementation, and writes Raster-compatible output artifacts.
+7. Claim build applies the rule a challenger will. If the final record's committed verdict counts any claimed id that is not the greedy selection, claim build fails: direct and teacher-forced inference are not in parity, and the claim would refute itself.
+8. `inference-artifacts` scans the completed chain directory and writes the claim files.
 
-## Teacher-forced claims
-
-Add `chain = "teacher-forced"` to the run spec to build the claim over the
-[teacher-forced chain](../internals/raster-chain.md#teacher-forced-chain):
-
-```toml
-model_manifest = "runtime/model-artifacts/gemma-4-E2B-detwgt/manifest.json"
-prompt = "say ciao"
-tokens = 3
-chain = "teacher-forced"
-```
-
-Preparation first runs direct inference to discover the output ids. They must
-fill `tokens` unless the last one is EOS. The prompt's pieces are cut into ranges
-of at most the model's range size in tokens, at boundaries no merge can cross,
-and the ids into ranges of the same size. The tokenizer batch count is set for
-the range needing the most merges. Each range is written as its own external (`pieces_{j}`, `claimed_{k}`)
-under the run's `prompt/` directory, and the frozen run manifest commits to them.
-`prepared_run.json` records `chain` but no copy of the ids: the claim's output is
-the chain's final `output_finalize` record. The staged pass then runs the
-model-specific `Raster.teacher-forced.toml`, and claim build applies the rule a
-challenger will. If the final record's committed verdict counts any claimed id
-that is not the greedy selection, claim build fails: direct and teacher-forced
-inference are not in parity, and the claim would refute itself.
+`prepared_run.json` holds no copy of the ids: the claim's output is the chain's final `output_finalize` record, which also holds the input text's SHA-256, the model id and the output text's SHA-256.
 
 The hidden debug flag `--claimed-ids 1,2,3` claims the given ids instead of
 discovering them. A rejection is then a warning, and the claim is written anyway.
@@ -75,7 +54,7 @@ The helper writes a corrupted hash list plus a local `*.corruption.json` manifes
 ```bash
 cargo run --release -p iris-cli -- claim corrupt \
   --checkpoints target/staged-infer/runs/.../checkpoints.txt \
-  --stage decode_select_t42
+  --stage range_p0_l3
 ```
 
 The claim path must preserve per-stage artifacts even if the host execution becomes faster internally. Those files are the surface the challenge path verifies.
@@ -103,8 +82,6 @@ or OS file caches. Admission is stable first-fit: full caches bypass new entries
 instead of evicting every layer during a cyclic scan. A small budget therefore
 retains only a subset of weights. Existing entry-count cache settings belong to
 the legacy uncheckpointed helper and do not override this run-owned byte budget.
-The unique prefill embedding stage bypasses retention: its embedding type differs
-from decode's, so retaining that one-use value cannot produce a cache hit.
 
 `staged-performance.json` records the allocation, auxiliary process starts,
 per-stage load/kernel/encode-write timings, cumulative cache counters, and a
@@ -123,16 +100,15 @@ from unauthenticated native checkpoint generation.
 ## Validation and benchmarking
 
 `cargo test -p staged-infer -p inference-kernels -p iris-cli` includes a two-layer,
-three-decode-iteration fixture that compares every checkpoint across cache
+three-claimed-range fixture that compares every checkpoint across cache
 budgets, worker counts, and the diagnostic backend. To compare the same fixture
 against actual authenticated Raster stage execution:
 
 ```bash
-cargo build -p input-embedding -p prefill-prepare-aux -p prefill-range \
-  -p prefill-finalize -p decode-init -p decode-select-token -p decode-embed \
-  -p output-finalize --bins
+cargo build -p range-origin -p decode-init -p input-embedding -p prefill-prepare-aux \
+  -p prefill-range -p sequence-check -p output-finalize --bins
 STAGED_INFER_REPLAY_BIN_DIR="$PWD/target/debug" cargo test -p staged-infer \
-  --test worker_parity repeated_decode_matches_authenticated_raster_stage_execution -- --ignored
+  --test worker_parity repeated_ranges_match_authenticated_raster_stage_execution -- --ignored
 ```
 
 Use an actual pre-change release binary for performance comparisons; comparing

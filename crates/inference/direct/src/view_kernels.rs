@@ -34,7 +34,7 @@ pub fn run_input_embedding_view(
 
 pub fn run_decode_embed_view(
     model: &DirectInferenceModel,
-    edge: &decode_select_token::input::DecodeEdge,
+    edge: &sequence_check::input::DecodeEdge,
 ) -> Result<ActivationSequence> {
     if !edge.has_selected {
         bail!("decode-embed received the empty decode edge with no selected token");
@@ -138,7 +138,7 @@ pub fn run_prefill_range_view(
 pub fn score_prefill_logits_view(
     activations: &ActivationSequence,
     head: &DirectFinalHead<'_>,
-) -> Result<decode_select_token::input::PrefillLogits> {
+) -> Result<crate::generation::PrefillLogits> {
     let position = activations.rows.iter().last().ok_or_else(|| {
         anyhow::anyhow!("prefill produced no activation rows; there is no final position to score")
     })?;
@@ -151,18 +151,18 @@ pub fn score_prefill_logits_view(
         );
     }
     let norm = unpack(&head.params.norm_weights)?;
-    prefill_finalize::input::rms_norm(&mut values, &norm, head.params.norm_eps)
+    sequence_check::input::rms_norm(&mut values, &norm, head.params.norm_eps)
         .map_err(anyhow::Error::msg)?;
     let mut logits = Vec::with_capacity(head.projection.rows());
     for token_id in 0..head.projection.rows() {
         let value = head.projection.row_dot(token_id, &values)?;
-        let value = prefill_finalize::input::softcap(value, head.params.softcap);
-        logits.push(decode_select_token::input::LogitEntry {
+        let value = sequence_check::input::softcap(value, head.params.softcap);
+        logits.push(crate::generation::LogitEntry {
             token_id: token_id as u32,
             value,
         });
     }
-    Ok(decode_select_token::input::PrefillLogits {
+    Ok(crate::generation::PrefillLogits {
         decode_position: activations.start_position + activations.rows.len() as u32,
         logits: List::from(logits),
         errors: List::new(),

@@ -239,7 +239,7 @@ mod tests {
             aux_worker: None,
             command: None,
             compare_stage: None,
-            run_stage: Some(PathBuf::from("prefill_range_l3")),
+            run_stage: Some(PathBuf::from("range_p0_l3")),
             input: None,
             input_manifest: None,
         })
@@ -252,7 +252,7 @@ mod tests {
     fn comparison_command_is_unauthenticated_and_isolated() {
         let command = comparison_command(
             Path::new("/tmp/staged-infer"),
-            Path::new("/tmp/staged-runs/run/prefill_range_l3"),
+            Path::new("/tmp/staged-runs/run/range_p0_l3"),
             Path::new("/tmp/input.json"),
             Path::new("/tmp/input_manifest.json"),
         );
@@ -281,7 +281,7 @@ mod tests {
     fn missing_execution_times_do_not_override_parity() {
         let report = staged_infer::parity::ParityReport {
             version: 3,
-            stage: String::from("prefill_range_l3"),
+            stage: String::from("range_p0_l3"),
             routine: String::from("prefill_range"),
             instance: Some(3),
             authority: staged_infer::parity::ParityAuthority::NonAuthoritative,

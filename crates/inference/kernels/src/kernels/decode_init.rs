@@ -1,6 +1,6 @@
 use anyhow::Result;
-use decode_select_token::input::DecodeEdge;
 use raster::List;
+use sequence_check::input::DecodeEdge;
 
 pub struct DecodeInitDirectInputs;
 
@@ -12,6 +12,8 @@ pub fn run_decode_init_direct(_inputs: DecodeInitDirectInputs) -> Result<DecodeE
         value: 0,
         claim_mismatches: 0,
         first_claim_mismatch_position: 0,
+        check_fault: 0,
+        check_fault_position: 0,
         generated_token_ids: List::new(),
     })
 }

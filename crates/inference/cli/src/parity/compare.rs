@@ -13,23 +13,6 @@ pub(super) struct Boundary {
     pub value: Value,
 }
 
-pub(super) fn staged_names(layers: u32, tokens: u32, tokenizer_repeats: u32) -> Vec<String> {
-    let mut names = vec!["range_origin".into(), "prompt_merge_seed".into()];
-    names.extend((0..tokenizer_repeats).map(|b| format!("prompt_merge_b{b}")));
-    names.extend(["prompt_prepare".into(), "input_embedding".into()]);
-    names.extend((0..layers).map(|l| format!("prefill_prepare_aux_l{l}")));
-    names.extend((0..layers).map(|l| format!("prefill_range_l{l}")));
-    names.extend(["prefill_finalize".into(), "decode_init".into()]);
-    for t in 0..tokens {
-        names.extend([format!("decode_select_t{t}"), format!("decode_embed_t{t}")]);
-        names.extend((0..layers).map(|l| format!("decode_aux_t{t}_l{l}")));
-        names.extend((0..layers).map(|l| format!("decode_range_t{t}_l{l}")));
-        names.push(format!("decode_finalize_t{t}"));
-    }
-    names.push("output_finalize".into());
-    names
-}
-
 /// The shape of a ranged teacher-forced chain.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct RangedShape {
@@ -57,9 +40,13 @@ impl RangedShape {
 /// embedded, every claimed range embedded, each layer across all ranges, then
 /// each claimed range checked.
 pub(super) fn teacher_forced_names(shape: RangedShape) -> Vec<String> {
-    let mut names = vec![String::from("range_origin"), String::from("decode_init")];
+    let mut names = vec![
+        String::from("range_origin"),
+        String::from("decode_init"),
+        String::from("prompt_bind"),
+    ];
     for j in 0..shape.prompt_ranges {
-        names.push(format!("prompt_merge_seed_p{j}"));
+        names.push(format!("prompt_seed_p{j}"));
         names.extend((0..shape.batches).map(|b| format!("prompt_merge_p{j}_b{b}")));
         names.extend([format!("prompt_prepare_p{j}"), format!("embed_p{j}")]);
     }
@@ -181,7 +168,7 @@ fn decode_boundary(bytes: Vec<u8>, index: &[u8], recorded: &str) -> Result<Bound
     })
 }
 
-pub(super) fn value_json(value: &RasterValue) -> Result<Value> {
+pub(crate) fn value_json(value: &RasterValue) -> Result<Value> {
     Ok(match value {
         RasterValue::Unit => Value::Null,
         RasterValue::Bool(v) => json!(v),
@@ -241,6 +228,8 @@ pub(super) fn value_json(value: &RasterValue) -> Result<Value> {
 
 pub(super) fn validate_errors(stage: &str, value: &Value) -> Result<()> {
     if stage != "prompt_prepare"
+        && stage != "prompt_bind"
+        && !stage.starts_with("prompt_seed_")
         && !stage.starts_with("prompt_merge_")
         && stage != "decode_init"
         && stage != "output_finalize"
@@ -385,10 +374,10 @@ mod tests {
 
     #[test]
     fn missing_duplicate_and_unexpected_boundaries_fail() {
-        let names = staged_names(4, 8, 0);
-        assert_eq!(names.len(), 103);
+        let names = direct_infer::diagnostics::boundary_names(4, 8);
+        assert_eq!(names.len(), 91);
         check_inventory(&names, &names).unwrap();
-        assert!(check_inventory(&names, &names[..100]).is_err());
+        assert!(check_inventory(&names, &names[..90]).is_err());
         let mut duplicate = names.clone();
         duplicate.push(names[0].clone());
         assert!(check_inventory(&names, &duplicate)
@@ -398,13 +387,7 @@ mod tests {
         let mut extra = names.clone();
         extra.push("unexpected".into());
         assert!(check_inventory(&names, &extra).is_err());
-        let direct = direct_infer::diagnostics::boundary_names(4, 8);
-        assert_eq!(
-            names.iter().filter(|name| !direct.contains(name)).count(),
-            12
-        );
-        assert!(!direct.contains(&"decode_finalize_t7".into()));
-        assert!(check_inventory(&direct, &direct[..direct.len() - 1]).is_err());
+        assert!(!names.contains(&"decode_finalize_t7".into()));
     }
 
     #[test]
@@ -416,9 +399,9 @@ mod tests {
             claimed_ranges: 2,
         };
         let names = teacher_forced_names(shape);
-        // origin + init, 3 × (seed + 1 batch + prepare + embed + 8 layer
+        // origin + init + bind, 3 × (seed + 1 batch + prepare + embed + 8 layer
         // stages), 2 × (embed + 8 layer stages + check), output.
-        assert_eq!(names.len(), 2 + 3 * 12 + 2 * 10 + 1);
+        assert_eq!(names.len(), 3 + 3 * 12 + 2 * 10 + 1);
         assert_eq!(RangedShape::from_names(&names), shape);
         assert_eq!(names.last().map(String::as_str), Some("output_finalize"));
         assert!(!names.iter().any(|name| name.starts_with("decode_") && name != "decode_init"));

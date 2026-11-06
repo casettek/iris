@@ -1,5 +1,305 @@
 {
-  "version": 2,
+  "version": 4,
+  "model_id": "821204991faed2f412e0ec365798da90b8f77f57ad35a472d719a3c58895ef6d",
+  "model_commitments": [
+    {
+      "role": "tokenizer",
+      "commitment": "ea8210c242fd02811cc8dc27a77daaf532bb451aae53ba433d6f8b53311ede71"
+    },
+    {
+      "role": "decoder",
+      "commitment": "773216bd0d4ee8b1493848972835a4a00693c1e0e206853c6f1e4c4f576e3360"
+    },
+    {
+      "role": "embedding",
+      "commitment": "51b0dc3926f8d2f4937fb3ab5a8db77f9d009d9fd1361bf03eccd448a09c0bc1"
+    },
+    {
+      "role": "head",
+      "commitment": "de3eb4cfb172f17814a26b080f78ce85a2861c51e144e95f76614bdc3971eba1"
+    },
+    {
+      "role": "aux_layer_0",
+      "commitment": "9ae64794ef6c7952112bf9284418add832e966738fd3f3781a5ba4649ee8eb70"
+    },
+    {
+      "role": "aux_layer_1",
+      "commitment": "eb567d8f6147cdf1433555b762cadae1ee4702793d96eb810733c7995c08e430"
+    },
+    {
+      "role": "aux_layer_2",
+      "commitment": "65c82135853e50a35ea1c9e041f2d5b4972a36b5f46df5c2c7c2cedad7321131"
+    },
+    {
+      "role": "aux_layer_3",
+      "commitment": "7d69aea753c567f2ce71a284b5d8b48648cbab53991acc6131c40c669c8ea853"
+    },
+    {
+      "role": "aux_layer_4",
+      "commitment": "41b38c4e4fd52559dd68a08a4022e184a82cfaadabda38634619295b6b0b770e"
+    },
+    {
+      "role": "aux_layer_5",
+      "commitment": "ae2a0a7dac533d1412d070fbb34ff91ae97a1a326a4788b632b6cc4917883dbd"
+    },
+    {
+      "role": "aux_layer_6",
+      "commitment": "310c0b66d19e619bfa24363207ec4191b1a7ee10c7a56be5a59546a8d5a1c9e4"
+    },
+    {
+      "role": "aux_layer_7",
+      "commitment": "15f7e8543c9499da6e51e67eb4ba33caa1e0e87db64789026e96601398baf484"
+    },
+    {
+      "role": "aux_layer_8",
+      "commitment": "19fb72182c8f4c805989b6a0bb82ab7deb9e96a43555c3316c06a4f0145cf786"
+    },
+    {
+      "role": "aux_layer_9",
+      "commitment": "6082e630e2b254cfa06f68bbab772488958013259befe146b247c878ffea6b09"
+    },
+    {
+      "role": "aux_layer_10",
+      "commitment": "eee913cbb70d3a3d949fdb2327331b6326ff7a0f520c5e797f3a84a1a7ed8670"
+    },
+    {
+      "role": "aux_layer_11",
+      "commitment": "059122fd1689c23c9d3d05fd866c539bf7a814974e7b2db16b5f289eac35605c"
+    },
+    {
+      "role": "aux_layer_12",
+      "commitment": "a5dce616dc81cb8c4c9b92ef90f761213040496d7cfa38492d40a16624d74419"
+    },
+    {
+      "role": "aux_layer_13",
+      "commitment": "91aef2da94f92d90fbe7c7dd05695d10ea988bd89b524d762a9ae63441888dae"
+    },
+    {
+      "role": "aux_layer_14",
+      "commitment": "c03b04a937ebe2ab597d2e04ae587c38b2e6386c480339a6c02f2b5b683c94d3"
+    },
+    {
+      "role": "aux_layer_15",
+      "commitment": "7d0a477844626524f1299c5f6bc5cf210d5ccda824e3ddc52930f90f209b0257"
+    },
+    {
+      "role": "aux_layer_16",
+      "commitment": "19060977300ac27b9652b45088cef7d8311727fa9acb9509ca051caf96aeb188"
+    },
+    {
+      "role": "aux_layer_17",
+      "commitment": "3f429db6aec22c2ac2ef773d08f43ce76c0d5bb16f2488f37b83b6ffee8c9554"
+    },
+    {
+      "role": "aux_layer_18",
+      "commitment": "a78f7e2fb307babd6b35233a0927504b900a349752c8baf63976127e1215309e"
+    },
+    {
+      "role": "aux_layer_19",
+      "commitment": "a4c926a65aeb6ac182ea553d4840ec2fc8df4a6d573367af1704fe5d430cf4b9"
+    },
+    {
+      "role": "aux_layer_20",
+      "commitment": "1d8f032e146ad55fea647632daa20f7278c10d17b116a36cc965c48f4e703a52"
+    },
+    {
+      "role": "aux_layer_21",
+      "commitment": "ffc9af20b71112d71bbd8754765c2775dcda7a9ebd3d80a30b9a6cd616cf3fb7"
+    },
+    {
+      "role": "aux_layer_22",
+      "commitment": "bba607da588d3b76ad58a3e8571945486441be9df18af6b44e1e1eefda94c616"
+    },
+    {
+      "role": "aux_layer_23",
+      "commitment": "f6e6ca85861df689dcbce82076a7d9920bb993343052815e004397e87264ba0f"
+    },
+    {
+      "role": "aux_layer_24",
+      "commitment": "23b39569523609bed93285d20345f45b04d1d2d41c54d1a2443f6ed3d9962704"
+    },
+    {
+      "role": "aux_layer_25",
+      "commitment": "f797571a37d5386094c51c7ce0e651c3753b54fdb08a601bfc93b95ae242ffda"
+    },
+    {
+      "role": "aux_layer_26",
+      "commitment": "7f701a94ac09666ff2069f871f7a64989509bd169208f6e130f56d65d437b2ec"
+    },
+    {
+      "role": "aux_layer_27",
+      "commitment": "c139eca1d5b148ab5c58dd22c897ae99e9ca11886fce996bd08b3091c4a5890e"
+    },
+    {
+      "role": "aux_layer_28",
+      "commitment": "a7029062e95e07f97d2d7a78fa67e968a0bf3955df3806ff1c2f2d8e8cfc6354"
+    },
+    {
+      "role": "aux_layer_29",
+      "commitment": "024dee971d5c63af383a493c0409a1048ed686a6c7ab50bf2cf3fd6a815ee956"
+    },
+    {
+      "role": "aux_layer_30",
+      "commitment": "8bfdf23986063881c04162fcfe573155dddb9c8c9ce100d9a39f9ec2869f4662"
+    },
+    {
+      "role": "aux_layer_31",
+      "commitment": "039b64d51f1261f735ce6cd51b26525d0c69dc9efb9a14318670b5cc1be9b46e"
+    },
+    {
+      "role": "aux_layer_32",
+      "commitment": "60c9cabbee205eddbc0053763150a59dc100a111b661c2d5b53a7b0a4f6681dc"
+    },
+    {
+      "role": "aux_layer_33",
+      "commitment": "43353c79c4600a8cc61a469327cf5e6882325d83e2058a4b029e86590f9af013"
+    },
+    {
+      "role": "aux_layer_34",
+      "commitment": "b068921f16ab07b37364d42094e77bab1f3fe06e21a9035fc0d434c67282289b"
+    },
+    {
+      "role": "transformer_layer_0",
+      "commitment": "40907377049b5c8565a759d2fd08bdbb520604a0e8da08c5019391fbc10e81a5"
+    },
+    {
+      "role": "transformer_layer_1",
+      "commitment": "d30151fbe156643d753c0da9f0f8aa31e5068204338ea533e3fcdb7034d37c64"
+    },
+    {
+      "role": "transformer_layer_2",
+      "commitment": "d3634098d5481dc7b7051aa5cc383143de86980bced67855f3a4f36a385ab51b"
+    },
+    {
+      "role": "transformer_layer_3",
+      "commitment": "60fbab32edb13dfba1657059c94f87574a4bad66aa85482808a02ff04c5caab9"
+    },
+    {
+      "role": "transformer_layer_4",
+      "commitment": "23f096bc5e58958ffbf66182097151e8f7298a2132192a09da646578406569e4"
+    },
+    {
+      "role": "transformer_layer_5",
+      "commitment": "32376e213d75529680c0abc38286b23331de5fabd0983b0844733a2e31353494"
+    },
+    {
+      "role": "transformer_layer_6",
+      "commitment": "7a348d7c321d8caf466e332e7ee44405cc9863e2ff17a380fb42174eef2aea21"
+    },
+    {
+      "role": "transformer_layer_7",
+      "commitment": "a4b581ab36dd83a2ad9e318b87318f37a045cc63a793d73e9f244038371dc97c"
+    },
+    {
+      "role": "transformer_layer_8",
+      "commitment": "13a0a2c888ebf16e3ae21799da708dcaecddeafcb542728561ee89bde0541955"
+    },
+    {
+      "role": "transformer_layer_9",
+      "commitment": "a40603334c6390d1d024bff50868c8c1b261d2758424b2c44db6cc0ebe91e7e9"
+    },
+    {
+      "role": "transformer_layer_10",
+      "commitment": "5a807a54fd12a1a6a72850657d4c0407c53e74500a4f7e6a9cdf9ad358daea2b"
+    },
+    {
+      "role": "transformer_layer_11",
+      "commitment": "89c651db9290ee8e1f49322699f522b86528a2c4e5f43e69869c3b7066a2cb67"
+    },
+    {
+      "role": "transformer_layer_12",
+      "commitment": "572e2bbf39b2f539e7aa8ea56624b41f8ae0490235a57a73d3470e235759357a"
+    },
+    {
+      "role": "transformer_layer_13",
+      "commitment": "893d64a72f581bd422d3cc8016625be9498851baeae426ad6fcad7b479c5243b"
+    },
+    {
+      "role": "transformer_layer_14",
+      "commitment": "71c3384127c0a24a4863737ca456c8a39c0f99de0bc3d4e1abfe78e79084592d"
+    },
+    {
+      "role": "transformer_layer_15",
+      "commitment": "87e0882050f03942dad82593e1cb764c2fd41c88008dd7143ca804c5fac83f95"
+    },
+    {
+      "role": "transformer_layer_16",
+      "commitment": "5bf6f55e387e504faa3e9c70cc8e70409e0b75e10df1d5461ebc418d1589c983"
+    },
+    {
+      "role": "transformer_layer_17",
+      "commitment": "c62b3f076cf91f679ced4b05a311139c39f2f64b21d32c4636f542102817289c"
+    },
+    {
+      "role": "transformer_layer_18",
+      "commitment": "6440b2fe63045dbf29f9adffafbfe34718eb72162f2cae5d6a3571fb9babb080"
+    },
+    {
+      "role": "transformer_layer_19",
+      "commitment": "9f7bee9f43c8c638b48bfbc44c56b4750f3278ef2c1421bdb3bb780f2695c08d"
+    },
+    {
+      "role": "transformer_layer_20",
+      "commitment": "63499c79aa344943954db127c4c615308767c6e1da28d7f9e0265c8a9eb385ac"
+    },
+    {
+      "role": "transformer_layer_21",
+      "commitment": "ce222b1628d490fef3870e97adb1d606e5c1e358712413e11ada66b3c44c2b81"
+    },
+    {
+      "role": "transformer_layer_22",
+      "commitment": "ad61b48535b499a50cf5163b288c1e75acfb8bd2034163a38cf4fb1530e67ef1"
+    },
+    {
+      "role": "transformer_layer_23",
+      "commitment": "12b89f3388268210781498fc17a50c156c7537cd59e386cbdf8845b3453f7f27"
+    },
+    {
+      "role": "transformer_layer_24",
+      "commitment": "07b63b3e6f0575416a45229e95b62e27bc7983fe707e0281498a71471a7fbefa"
+    },
+    {
+      "role": "transformer_layer_25",
+      "commitment": "7aa0c519d89d042e38b2f9f053875f46bdeb04db1aee47e0439603ef923a4ddb"
+    },
+    {
+      "role": "transformer_layer_26",
+      "commitment": "a2ee661f0fb64d5537225c5f123f6c2a051fc1970e5ddff80ea92347f2bf29b4"
+    },
+    {
+      "role": "transformer_layer_27",
+      "commitment": "0b560692054e7063ec128dfc124c9496711e5e4a35b638ef113b0dae1d2a4dad"
+    },
+    {
+      "role": "transformer_layer_28",
+      "commitment": "654e66f0402dac4f132e079137096ae51d4c578761eb85d1cb92a3dec5397c04"
+    },
+    {
+      "role": "transformer_layer_29",
+      "commitment": "7c80385d949538623cdce15bef701ddba1909298d2ef4be28baf4192170c6fe4"
+    },
+    {
+      "role": "transformer_layer_30",
+      "commitment": "e075156d41b61d36e5e70610f619cf68a9537d23cbb4d5e45a0a1d68e00e099c"
+    },
+    {
+      "role": "transformer_layer_31",
+      "commitment": "e021f643187a15a446d7848bd435ed37b67b4c3e885a65e1f8d27c3350695a2f"
+    },
+    {
+      "role": "transformer_layer_32",
+      "commitment": "3a2f351aadacdff937a0252e744f50cfdf2220bff40bd73767832819d8bff2a7"
+    },
+    {
+      "role": "transformer_layer_33",
+      "commitment": "3c09d6047119aee8cc5ba4c0937d2783ca04aca35f72bdf28ec6b1cb48b819b6"
+    },
+    {
+      "role": "transformer_layer_34",
+      "commitment": "fc824aeda3cd05392de65776461185fc5e795896bf734a44394fa66f64fcbb7b"
+    }
+  ],
+  "range_size": 512,
   "bundle": {
     "model_detwgt_path": "/home/amcas/Development/models/gemma-4-E2B-q8/model.detwgt",
     "model_detwgt_sha256": "04c775637db0f609eaec0dcc316a2eb5ee9b7807de06f7843e4c51481666c883",
@@ -72,9 +372,6 @@
   ],
   "provenance": {
     "raster_manifest_path": "Raster.toml",
-    "raster_manifest_sha256": "2b53b32b5efec53846a11c1178547a50e9c61e5dfb9f4fcfc3353386bfb16fec",
-    "teacher_forced_manifest_path": "Raster.teacher-forced.toml",
-    "teacher_forced_manifest_sha256": "796f8b51bf64e098e18a1d73f7271c34fa8ac92b725fdd5f1f80b646784210e4",
-    "teacher_forced_range_size": 512
+    "raster_manifest_sha256": "0290599f024cb7aa701a9820651fb8918ab3d0f681bbf1047a308260a141c2f5"
   }
 }

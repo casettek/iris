@@ -19,10 +19,16 @@ fn embed_prompt_token(
     values: Bytes<195_840>,
     hidden_size: u32,
     page_size: u64,
+    table_bytes: u64,
     embedding_scale: i32,
 ) -> RecurSequenceOutput<ActivationSequence> {
     let token_id = call!(begin_row_lookup, input);
-    let byte_off = call!(embedding_byte_offset, token_id.clone(), hidden_size.clone());
+    let byte_off = call!(
+        embedding_byte_offset,
+        token_id.clone(),
+        hidden_size.clone(),
+        table_bytes
+    );
     let page_idx = call!(page_of, byte_off.clone(), page_size);
     let page = select!(BytesPage, values[page_idx]);
     call!(
@@ -40,15 +46,14 @@ fn embed_prompt_token(
 ///
 /// `prompt` is this range's chain-tokenized prompt ids (empty for a range of
 /// claimed output); `claimed` is this range's claimed output ids (empty for a
-/// prompt range and in the autoregressive chain); `previous` is the previous
-/// range's embedding, or `range-origin` for the first; `embedding` is a
-/// committed external.
+/// prompt range); `previous` is the previous range's embedding, or
+/// `range-origin` for the first; `embedding` is a committed external.
 ///
 /// The claimed ids are embedded after the prompt's by a second push-only
 /// site deriving from the first, so the rows are `prompt ‖ claimed` in order.
 #[sequence]
 fn main(
-    prompt: PromptTokenization,
+    prompt: PromptState,
     claimed: ClaimedOutput,
     previous: ActivationSequence,
     embedding: EmbeddingTable,
@@ -69,6 +74,7 @@ fn main(
     let claimed_ids = select!(List<u32>, claimed.token_ids);
     let hidden_size = select!(u32, embedding.clone().hidden_size);
     let page_size = select!(u64, embedding.clone().values.page_size);
+    let table_bytes = select!(u64, embedding.clone().values.byte_len);
     let embedding_scale = select!(i32, embedding.clone().embedding_scale);
     let values = select!(Bytes<195_840>, embedding.values);
 
@@ -81,6 +87,7 @@ fn main(
             values.clone(),
             hidden_size.clone(),
             page_size.clone(),
+            table_bytes.clone(),
             embedding_scale.clone()
         )
     );
@@ -88,7 +95,7 @@ fn main(
         sequence = embed_prompt_token,
         input = claimed_ids,
         output = prompt_rows,
-        args = (values, hidden_size, page_size, embedding_scale)
+        args = (values, hidden_size, page_size, table_bytes, embedding_scale)
     );
     raster::println!("embedding pass → {:?}", embedded);
 

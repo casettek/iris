@@ -41,7 +41,7 @@ fn find_best(
 }
 
 #[sequence]
-fn merge_once(pieces: List<BpePiece>, buckets: List<MergeBucket>, count: u32) -> BpePieces {
+fn merge_once(pieces: List<BpePiece>, buckets: List<MergeBucket>, count: u32) -> MergeRound {
     let best = call_seq!(find_best, pieces.clone(), buckets, count);
     call_recur!(
         tile = apply_ranked_merge,
@@ -54,7 +54,7 @@ fn merge_once(pieces: List<BpePiece>, buckets: List<MergeBucket>, count: u32) ->
 
 /// Eight merge rounds, each its own global best-pair scan and application.
 #[sequence]
-fn merge_eight(pieces: List<BpePiece>, buckets: List<MergeBucket>, count: u32) -> BpePieces {
+fn merge_eight(pieces: List<BpePiece>, buckets: List<MergeBucket>, count: u32) -> MergeRound {
     let round1 = call_seq!(merge_once, pieces, buckets.clone(), count.clone());
     let pieces1 = select!(List<BpePiece>, round1.pieces);
     let round2 = call_seq!(merge_once, pieces1, buckets.clone(), count.clone());
@@ -79,9 +79,10 @@ fn merge_eight(pieces: List<BpePiece>, buckets: List<MergeBucket>, count: u32) -
 /// and a batch can afford many rounds. The count MUST match
 /// `run_prep::MERGES_PER_STAGE` and the native kernel's `MERGES_PER_BATCH`.
 #[sequence]
-fn main(tokenizer: PromptTokenizer, initial_pieces: BpePieces) -> BpePieces {
+fn main(tokenizer: PromptTokenizer, initial_pieces: PromptState) -> PromptState {
     let count = select!(u32, tokenizer.clone().merge_bucket_count);
     let buckets = select!(List<MergeBucket>, tokenizer.merge_buckets);
+    let context = select!(PromptContext, initial_pieces.clone().context);
     let pieces0 = select!(List<BpePiece>, initial_pieces.pieces);
     let batch1 = call_seq!(merge_eight, pieces0, buckets.clone(), count.clone());
     let pieces1 = select!(List<BpePiece>, batch1.pieces);
@@ -97,5 +98,15 @@ fn main(tokenizer: PromptTokenizer, initial_pieces: BpePieces) -> BpePieces {
     let pieces6 = select!(List<BpePiece>, batch6.pieces);
     let batch7 = call_seq!(merge_eight, pieces6, buckets.clone(), count.clone());
     let pieces7 = select!(List<BpePiece>, batch7.pieces);
-    call_seq!(merge_eight, pieces7, buckets, count)
+    let batch8 = call_seq!(merge_eight, pieces7, buckets, count);
+    let merged = select!(List<BpePiece>, batch8.pieces);
+
+    let opened = call!(open_pieces, context);
+    call_recur!(
+        tile = carry_pieces,
+        input = merged,
+        chunk = 256,
+        output = opened,
+        args = ()
+    )
 }

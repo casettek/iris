@@ -11,22 +11,28 @@
 //!   DecodeEdge {
 //!     last selection,
 //!     claim_mismatches    = earlier ranges' + #{k : selected_k ≠ claimed_k},
+//!     check_fault         = the earliest range's fault, else this range's,
 //!     generated_token_ids = earlier ranges' ‖ every selection,
 //!   }
 //! ```
 //!
-//! The scores and the tie-break are `prefill-finalize` followed by
-//! `decode-select-token`, fused so the vocabulary-wide logit list is never
-//! built: each head page folds straight into a running argmax, in page order,
-//! so a strictly greater score replaces the incumbent exactly as it would
-//! scanning the materialized list.
+//! The scores and the tie-break are direct generation's logits and greedy
+//! selection, fused so the vocabulary-wide logit list is never built: each head
+//! page folds straight into a running argmax, in page order, so a strictly
+//! greater score replaces the incumbent exactly as it would scanning the
+//! materialized list.
 //!
 //! The stage re-derives the greedy continuation rather than asserting the
 //! claimed one, and commits the comparison as the edge's claim verdict. An
-//! honest claim's output is byte-identical to the autoregressive chain's final
-//! decode edge. A claim whose tokens are not the greedy continuation, run
+//! honest claim's output is byte-identical to direct generation's final edge. A
+//! claim whose tokens are not the greedy continuation, run
 //! honestly, publishes a non-zero verdict; one that publishes a clean verdict
 //! anyway has doctored this stage, and a challenge replays it here.
+//!
+//! A check that cannot stand behind the edge finishes all the same and
+//! publishes `check_fault`: a position with no predicting row, a range with no
+//! tokens or too many, or a range that does not continue the sequence. The
+//! range limit and the prompt's token count come from the prompt context.
 //!
 //! `#![no_std]` so the same tiles compile into RISC0 replay guests.
 
@@ -38,6 +44,7 @@ use alloc::string::String;
 use raster::prelude::*;
 
 pub mod input;
+pub mod prompt;
 
 use input::*;
 
@@ -65,37 +72,31 @@ pub fn validate_final_head(params: FinalHeadParams) -> Result<FinalHeadParams> {
     Ok(params)
 }
 
-/// The previous range's row-count fold: nothing counted.
-#[tile(kind = iter, description = "Open the previous range's row count")]
-pub fn begin_token_count() -> TokenCount {
-    TokenCount { count: 0 }
+/// The previous range's tail fold: no row seen yet.
+#[tile(kind = iter, description = "Open the previous range's tail")]
+pub fn begin_previous_tail() -> PreviousTail {
+    PreviousTail { last: empty_row() }
 }
 
-/// Counts one chunk of the previous range's rows.
-#[tile(kind = recur, description = "Count a chunk of the previous range's rows")]
-pub fn count_row_chunk(
+/// Keeps the last row of one chunk of the previous range.
+#[tile(kind = recur, description = "Keep the last row of a chunk of the previous range")]
+pub fn keep_last_row(
     input: RecurInput<Block<ActivationRow>>,
-    state: RecurState<TokenCount>,
-) -> RecurState<TokenCount> {
+    state: RecurState<PreviousTail>,
+) -> RecurState<PreviousTail> {
     let mut state = state;
-    state.count += input.into_value().len() as u32;
+    if let Some(row) = input.into_value().into_iter().last() {
+        state.last = row;
+    }
     state
 }
 
-/// Index of the previous range's last row, which predicts this range's first
-/// claimed token.
-#[tile(kind = iter, description = "Index of the previous range's last row")]
-pub fn last_row_index(previous_rows: TokenCount) -> Result<u32> {
-    previous_rows.count.checked_sub(1).ok_or_else(|| {
-        String::from("teacher-forced check requires a non-empty range before the claimed tokens")
-    })
-}
-
-/// Opens the predicting rows with the previous range's last row.
+/// Opens the predicting rows with the previous range's last row, which
+/// predicts this range's first claimed token.
 #[tile(kind = iter, description = "Open the predicting rows at the range boundary")]
-pub fn begin_predicting_rows(boundary: ActivationRow) -> Draft<PredictingRows> {
+pub fn begin_predicting_rows(tail: PreviousTail) -> Draft<PredictingRows> {
     let mut output = Draft::<PredictingRows>::new();
-    output.rows().push(boundary);
+    output.rows().push(tail.last);
     output
 }
 
@@ -198,8 +199,7 @@ fn record_argmax_error(state: &mut ArgmaxState, error: String) {
 /// Scores one page of the vocabulary and folds it into the running argmax.
 ///
 /// Rows are visited in token-id order and only a strictly greater score
-/// replaces the incumbent, so the first maximum keeps the slot — the
-/// `decode-select-token` tie-break over the same scores.
+/// replaces the incumbent, so the first maximum keeps the slot.
 #[tile(
     kind = recur,
     description = "Score one page of the vocabulary into the argmax",
@@ -274,17 +274,19 @@ pub fn record_selection(
 ) -> Draft<CheckedPositions> {
     let mut output = output;
     if best.error_count > 0 {
-        output.errors().push(alloc::format!(
-            "position {}: {} vocabulary row(s) failed to score; first: {}",
-            step.decode_position,
-            best.error_count,
-            best.first_error
-        ));
+        output.errors().push(PositionError {
+            decode_position: step.decode_position,
+            message: alloc::format!(
+                "{} vocabulary row(s) failed to score; first: {}",
+                best.error_count,
+                best.first_error
+            ),
+        });
     } else if !best.has_value {
-        output.errors().push(alloc::format!(
-            "position {}: the head scored no token",
-            step.decode_position
-        ));
+        output.errors().push(PositionError {
+            decode_position: step.decode_position,
+            message: String::from("the head scored no token"),
+        });
     } else {
         output.selections().push(PositionSelection {
             decode_position: step.decode_position,
@@ -310,66 +312,81 @@ pub fn summarise_selections(
 ) -> RecurState<SelectionSummary> {
     let mut state = state;
     for selection in input.into_value() {
-        if selection.token_id != selection.claimed_token_id {
-            if state.mismatches == 0 {
-                state.first_mismatch_position = selection.decode_position;
-            }
-            state.mismatches += 1;
-        }
-        state.count += 1;
-        state.has_selected = true;
-        state.decode_position = selection.decode_position;
-        state.token_id = selection.token_id;
-        state.value = selection.value;
+        observe_selection(&mut state, &selection);
     }
     state
+}
+
+/// Folds one selection into the summary. Called from [`summarise_selections`]
+/// and from the native kernel, so both publish the same scalars.
+pub fn observe_selection(state: &mut SelectionSummary, selection: &PositionSelection) {
+    if selection.token_id != selection.claimed_token_id {
+        if state.mismatches == 0 {
+            state.first_mismatch_position = selection.decode_position;
+        }
+        state.mismatches += 1;
+    }
+    state.count += 1;
+    state.has_selected = true;
+    state.decode_position = selection.decode_position;
+    state.token_id = selection.token_id;
+    state.value = selection.value;
 }
 
 /// The failure fold's opening state: nothing counted.
 #[tile(kind = iter, description = "Open the failure summary with nothing counted")]
 pub fn begin_error_summary() -> ErrorSummary {
-    ErrorSummary {
-        count: 0,
-        first: String::new(),
-    }
+    ErrorSummary::default()
 }
 
 /// Folds the recorded failures into a count plus the first message.
 #[tile(kind = recur, description = "Summarise the positions this check could not score")]
 pub fn summarise_errors(
-    input: RecurInput<String>,
+    input: RecurInput<PositionError>,
     state: RecurState<ErrorSummary>,
 ) -> RecurState<ErrorSummary> {
     let mut state = state;
-    let message = input.into_value();
+    let error = input.into_value();
     if state.count == 0 {
-        state.first = message;
+        state.first_position = error.decode_position;
+        state.first = error.message;
     }
     state.count += 1;
     state
 }
 
-/// Fails the program when a position went unscored or nothing was claimed.
+/// Gathers the scalars this check's fault is established from.
+#[tile(kind = iter, description = "Gather what this check's fault depends on")]
+pub fn begin_check_frame(
+    start_position: u32,
+    prior_has_selected: bool,
+    prior_decode_position: u32,
+    prior_fault: u32,
+    prior_fault_position: u32,
+    range_size: u32,
+    prompt_tokens: u32,
+) -> CheckFrame {
+    CheckFrame {
+        start_position,
+        range_size,
+        prompt_tokens,
+        prior_has_selected,
+        prior_decode_position,
+        prior_fault,
+        prior_fault_position,
+    }
+}
+
+/// Establishes what this check publishes as its fault.
 ///
-/// A disagreement with the claim is not a failure: it is published in the
-/// output's claim verdict, which is what makes it disputable. An aborting
-/// stage has no output to hash or replay.
-#[tile(kind = iter, description = "Reject an incomplete teacher-forced check")]
-pub fn finish_check(
+/// Neither a fault nor a disagreement with the claim stops the stage: an
+/// aborting stage has no output to hash or replay, so both are published.
+#[tile(kind = iter, description = "Establish the fault this check publishes")]
+pub fn find_check_fault(
     summary: SelectionSummary,
-    error_count: u32,
-    first_error: String,
-) -> Result<SelectionSummary> {
-    if error_count != 0 {
-        return Err(alloc::format!(
-            "{error_count} generated position(s) failed to score; first: {first_error}"
-        ));
-    }
-    if !summary.has_selected {
-        return Err(String::from(
-            "teacher-forced check requires at least one claimed output token",
-        ));
-    }
+    errors: ErrorSummary,
+    frame: CheckFrame,
+) -> CheckFault {
     if summary.mismatches != 0 {
         raster::println!(
             "sequence check: {} of {} claimed token(s) are not the greedy selection; first at position {}",
@@ -378,7 +395,58 @@ pub fn finish_check(
             summary.first_mismatch_position
         );
     }
-    Ok(summary)
+    if errors.count != 0 {
+        raster::println!(
+            "sequence check: {} generated position(s) could not be scored; first at position {}: {}",
+            errors.count,
+            errors.first_position,
+            errors.first
+        );
+    }
+    check_fault_of(&summary, &errors, &frame)
+}
+
+/// The fault [`find_check_fault`] publishes. An earlier range's fault stands;
+/// otherwise this range's first, in the order the range is checked. Every
+/// position is either selected or recorded as an error, so together they count
+/// the claimed tokens.
+pub fn check_fault_of(
+    summary: &SelectionSummary,
+    errors: &ErrorSummary,
+    frame: &CheckFrame,
+) -> CheckFault {
+    let at_start = |fault| CheckFault {
+        fault,
+        position: frame.start_position,
+    };
+    if frame.prior_fault != CHECK_FAULT_NONE {
+        return CheckFault {
+            fault: frame.prior_fault,
+            position: frame.prior_fault_position,
+        };
+    }
+    let claimed = summary.count.saturating_add(errors.count);
+    if claimed == 0 {
+        return at_start(CHECK_FAULT_NO_CLAIMED_TOKENS);
+    }
+    if claimed > frame.range_size {
+        return at_start(CHECK_FAULT_RANGE_TOO_LARGE);
+    }
+    let expected_start = if frame.prior_has_selected {
+        frame.prior_decode_position.saturating_add(1)
+    } else {
+        frame.prompt_tokens
+    };
+    if frame.start_position != expected_start {
+        return at_start(CHECK_FAULT_DISCONTINUOUS);
+    }
+    if errors.count != 0 {
+        return CheckFault {
+            fault: CHECK_FAULT_UNSCORED,
+            position: errors.first_position,
+        };
+    }
+    CheckFault::default()
 }
 
 /// Opens the output edge with the last selection's scalars and the claim
@@ -392,6 +460,7 @@ pub fn begin_decode_edge(
     summary: SelectionSummary,
     prior_mismatches: u32,
     prior_first_mismatch_position: u32,
+    fault: CheckFault,
 ) -> Draft<DecodeEdge> {
     let mut output = Draft::<DecodeEdge>::new();
     output.has_selected().set(summary.has_selected);
@@ -410,6 +479,8 @@ pub fn begin_decode_edge(
         } else {
             summary.first_mismatch_position
         });
+    output.check_fault().set(fault.fault);
+    output.check_fault_position().set(fault.position);
     output
 }
 

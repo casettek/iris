@@ -12,6 +12,7 @@ profiling = ["raster/profiling"]
 [dependencies]
 raster = { path = "../../../raster/crates/raster", default-features = false }
 serde = { version = "1.0", default-features = false, features = ["derive", "alloc"] }
+sha2 = { version = "0.10", default-features = false, features = ["compress"] }
 
 [[bin]]
 name = "prompt-merge"

@@ -71,20 +71,11 @@ macro_rules! embedding {
     };
 }
 embedding!(input_embedding::input::EmbeddingTable);
-embedding!(decode_embed::input::EmbeddingTable);
 
 impl RetainedWeightBytes for prefill_prepare_aux::input::PleLayer {
     fn retained_weight_bytes(&self) -> usize {
         std::mem::size_of::<Self>()
             + region(&self.embeddings)
-            + region(&self.projection)
-            + self.params.norm_weights.allocated_bytes()
-    }
-}
-
-impl RetainedWeightBytes for prefill_finalize::input::FinalHead {
-    fn retained_weight_bytes(&self) -> usize {
-        std::mem::size_of::<Self>()
             + region(&self.projection)
             + self.params.norm_weights.allocated_bytes()
     }

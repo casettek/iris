@@ -24,8 +24,9 @@ pub use claim::{
     ClaimEndpoint, CLAIM_BUNDLE_JSON,
 };
 pub use direct::{
+    model_id_of, ModelCommitment, MODEL_MANIFEST_VERSION,
     file_sha256, verify_file_sha256, DirectInferBundle, DirectInferProvenance, DirectInferShape,
-    ModelManifest, MODEL_ARTIFACTS_DIR, MODEL_MANIFEST_JSON, TEACHER_FORCED_TEMPLATE_TOML,
+    ModelManifest, MODEL_ARTIFACTS_DIR, MODEL_MANIFEST_JSON,
 };
 pub use inference::{
     InferAuxWaveTiming, InferStageTiming, InferenceResult, InferenceRunReport, InferenceTimings,
@@ -33,7 +34,7 @@ pub use inference::{
 pub use io::{read_json, write_json};
 pub use manifest::resolve_raster_manifest_paths;
 pub use run::{
-    read_run_spec, ChainKind, InferenceRunSpec, PreparedPiece, PreparedPrompt, PreparedRun,
+    read_run_spec, InferenceRunSpec, PreparedPiece, PreparedPrompt, PreparedRun,
     INFERENCE_RUN_SPEC_TOML, PREPARED_RUN_JSON, PREPARED_RUN_VERSION,
 };
 
@@ -248,9 +249,80 @@ mod tests {
     }
 
     #[test]
+    fn the_model_id_covers_every_role_and_commitment_in_order() {
+        let entry = |role: &str, commitment: &str| ModelCommitment {
+            role: role.to_string(),
+            commitment: commitment.to_string(),
+        };
+        let id = model_id_of(&[entry("embedding", "a"), entry("head", "b")]);
+        assert_eq!(id, model_id_of(&[entry("embedding", "a"), entry("head", "b")]));
+        for other in [
+            vec![entry("embedding", "x"), entry("head", "b")],
+            vec![entry("head", "a"), entry("embedding", "b")],
+            vec![entry("head", "b"), entry("embedding", "a")],
+            vec![entry("embedding", "a")],
+            vec![entry("embeddinga", ""), entry("head", "b")],
+        ] {
+            assert_ne!(id, model_id_of(&other), "{other:?}");
+        }
+    }
+
+    #[test]
+    fn a_model_id_that_does_not_match_its_commitments_is_refused() {
+        let dir = std::env::temp_dir().join(format!(
+            "iris-model-id-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        for file in ["model.detwgt", "config.json", "tokenizer.json"] {
+            std::fs::write(dir.join(file), file).unwrap();
+        }
+        let hash = |file: &str| file_sha256(&dir.join(file)).unwrap();
+        let commitments = vec![ModelCommitment {
+            role: String::from("embedding"),
+            commitment: String::from("abc"),
+        }];
+        let mut value = serde_json::json!({
+            "version": MODEL_MANIFEST_VERSION,
+            "model_id": model_id_of(&commitments),
+            "model_commitments": commitments,
+            "bundle": {
+                "model_detwgt_path": "model.detwgt", "model_detwgt_sha256": hash("model.detwgt"),
+                "config_path": "config.json", "config_sha256": hash("config.json"),
+                "tokenizer_path": "tokenizer.json", "tokenizer_sha256": hash("tokenizer.json"),
+            },
+            "shape": {
+                "hidden_size": 2, "num_hidden_layers": 0, "num_attention_heads": 1,
+                "num_key_value_heads": 1, "head_dim": 2, "global_head_dim": 2,
+                "vocab_size": 1, "hidden_size_per_layer_input": 1, "sliding_window": 0,
+                "layer_types": [], "num_kv_shared_layers": 0, "norm_eps": 0,
+                "rope_base_sliding": 0, "rope_base_full": 0, "full_partial_rotary_factor_q16": 0,
+                "embedding_scale": 0, "ple_embedding_scale": 0, "ple_projection_scalar": 0,
+                "ple_input_scale": 0, "final_logit_softcap": 0
+            },
+            "eos_token_ids": [],
+            "range_size": 4,
+        });
+        let path = dir.join("manifest.json");
+        write_json(&path, &value).unwrap();
+        ModelManifest::load_verified(&path).unwrap();
+        value["model_commitments"][0]["commitment"] = serde_json::json!("other");
+        write_json(&path, &value).unwrap();
+        assert!(ModelManifest::load_verified(&path)
+            .unwrap_err()
+            .to_string()
+            .contains("model id does not match"));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
     fn model_manifest_round_trips_without_run_prompt() {
         let manifest = ModelManifest {
-            version: 2,
+            version: MODEL_MANIFEST_VERSION,
+            model_id: model_id_of(&[]),
+            model_commitments: Vec::new(),
+            range_size: 512,
             bundle: DirectInferBundle {
                 model_detwgt_path: PathBuf::from("../model.detwgt"),
                 model_detwgt_sha256: String::from("model-sha"),
@@ -285,9 +357,6 @@ mod tests {
             provenance: Some(DirectInferProvenance {
                 raster_manifest_path: PathBuf::from("../Raster.toml"),
                 raster_manifest_sha256: String::from("raster-sha"),
-                teacher_forced_manifest_path: Some(PathBuf::from("../Raster.teacher-forced.toml")),
-                teacher_forced_manifest_sha256: Some(String::from("teacher-forced-sha")),
-                teacher_forced_range_size: Some(512),
             }),
         };
 
@@ -306,7 +375,6 @@ mod tests {
             prompt_file: Some(PathBuf::from("prompt.txt")),
             raw_prompt: false,
             tokens: 1,
-            chain: Default::default(),
         };
         assert!(both
             .validate()
@@ -320,7 +388,6 @@ mod tests {
             prompt_file: None,
             raw_prompt: false,
             tokens: 1,
-            chain: Default::default(),
         };
         assert!(neither
             .validate()
@@ -330,12 +397,30 @@ mod tests {
     }
 
     #[test]
+    fn a_run_spec_cannot_ask_for_the_removed_chain() {
+        let base = temp_dir("run-spec-chain");
+        fs::create_dir_all(&base).unwrap();
+        let path = base.join("inference.toml");
+        let spec = "model_manifest = \"m.json\"\nprompt = \"hi\"\n";
+        fs::write(&path, spec).unwrap();
+        assert_eq!(read_run_spec(&path).unwrap().prompt.as_deref(), Some("hi"));
+        fs::write(&path, format!("{spec}chain = \"teacher-forced\"\n")).unwrap();
+        assert!(read_run_spec(&path).is_ok());
+        fs::write(&path, format!("{spec}chain = \"autoregressive\"\n")).unwrap();
+        let error = read_run_spec(&path).unwrap_err().to_string();
+        assert!(error.contains("teacher-forced is the only staged chain"), "{error}");
+        fs::remove_dir_all(base).unwrap();
+    }
+
+    #[test]
     fn prepared_run_metadata_round_trips_as_json() {
         let prepared = PreparedRun {
             version: PREPARED_RUN_VERSION,
             run_spec_path: PathBuf::from("inference.toml"),
             model_manifest_path: PathBuf::from("model-artifacts/manifest.json"),
             model_manifest_sha256: String::from("model-sha"),
+            model_id: String::from("model-id"),
+            raw_prompt: false,
             prompt: PreparedPrompt {
                 resolved_prompt: String::from("hello"),
                 rendered_prompt: String::from("hello"),
@@ -348,7 +433,6 @@ mod tests {
             tokens: 2,
             run_manifest_path: Some(PathBuf::from("target/runs/run/Raster.toml")),
             run_manifest_sha256: Some(String::from("run-sha")),
-            chain: Default::default(),
         };
 
         assert_eq!(

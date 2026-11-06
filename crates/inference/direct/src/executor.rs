@@ -72,11 +72,7 @@ impl DirectInferenceExecutor {
 
         let prompt_started = Instant::now();
         let prepared_prompt = model.prepare_prompt(run_spec_dir, &run_spec)?;
-        trace.configure(
-            model.shape().num_hidden_layers,
-            run_spec.tokens,
-            run_prep::tokenizer_repeat_count(prepared_prompt.initial_pieces.len())?,
-        )?;
+        trace.configure(model.shape().num_hidden_layers, run_spec.tokens);
         let prompt = model.prompt_inputs(&prepared_prompt)?;
         trace.record("prompt_prepare", &prompt)?;
         timings.push(phase_timing("prompt_prepare", prompt_started.elapsed()));
@@ -104,12 +100,7 @@ impl DirectInferenceExecutor {
         )?;
         trace.record("decode_init", &edge)?;
         for token_idx in 0..run_spec.tokens {
-            edge = inference_kernels::kernels::decode_select_token::run_decode_select_token_direct(
-                inference_kernels::kernels::decode_select_token::DecodeSelectTokenDirectInputs {
-                    logits: &logits,
-                    prior: &edge,
-                },
-            )?;
+            edge = crate::generation::select_next_token(&logits, &edge)?;
             trace.record(&format!("decode_select_t{token_idx}"), &edge)?;
             if prepared_prompt.eos_token_ids.contains(&edge.token_id) {
                 // Keep EOS in the result, but never run another decode pass.
@@ -143,6 +134,8 @@ impl DirectInferenceExecutor {
             value: edge.value,
             claim_mismatches: edge.claim_mismatches,
             first_claim_mismatch_position: edge.first_claim_mismatch_position,
+            check_fault: edge.check_fault,
+            check_fault_position: edge.check_fault_position,
             generated_token_ids: edge.generated_token_ids.clone(),
         };
         let decoder = model.decoder_table()?;
@@ -150,6 +143,22 @@ impl DirectInferenceExecutor {
             inference_kernels::kernels::output_finalize::OutputFinalizeDirectInputs {
                 edge: &output_edge,
                 decoder: &decoder,
+                // The record the chain publishes for this run: a direct result
+                // and an honest claim's final record are the same bytes.
+                context: &output_finalize::prompt::PromptContext {
+                    input_text_sha256: output_finalize::sha256_hex(
+                        prepared_prompt.resolved_prompt.as_bytes(),
+                    ),
+                    model_id: model.manifest().model_id.clone(),
+                    raw_prompt: run_spec.raw_prompt,
+                    max_new_tokens: run_spec.tokens,
+                    range_size: model.manifest().range_size,
+                    next_piece: prepared_prompt.initial_pieces.len() as u64,
+                    prompt_tokens: prompt.token_ids.len() as u32,
+                    complete: true,
+                    fault: 0,
+                    fault_position: 0,
+                },
             },
         )?;
         trace.record("output_finalize", &output)?;
@@ -161,6 +170,19 @@ impl DirectInferenceExecutor {
             stop_reason: output.stop_reason,
             claim_mismatches: output.claim_mismatches,
             first_claim_mismatch_position: output.first_claim_mismatch_position,
+            check_fault: output.check_fault,
+            check_fault_position: output.check_fault_position,
+            output_text_sha256: output.output_text_sha256,
+            output_fault: output.output_fault,
+            input_text_sha256: output.input_text_sha256,
+            model_id: output.model_id,
+            raw_prompt: output.raw_prompt,
+            max_new_tokens: output.max_new_tokens,
+            range_size: output.range_size,
+            prompt_tokens: output.prompt_tokens,
+            prompt_complete: output.prompt_complete,
+            prompt_fault: output.prompt_fault,
+            prompt_fault_position: output.prompt_fault_position,
         };
         timings.push(phase_timing("output_finalize", finalize_started.elapsed()));
 
@@ -187,7 +209,7 @@ fn run_layers_and_logits(
     trace: &mut DirectTrace,
 ) -> Result<(
     Vec<prefill_range::input::ActivationSequence>,
-    decode_select_token::input::PrefillLogits,
+    crate::generation::PrefillLogits,
 )> {
     let ple_source = seed.clone();
     let mut current = seed;

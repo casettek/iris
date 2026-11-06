@@ -58,4 +58,4 @@ cargo raster chain run --no-auth --show-output
 cargo raster show target/raster/chains-no-auth/latest/output_finalize/output.bin
 ```
 
-`target/`, `*.rastered`, and `*.rindex` are generated artifacts. The root `Raster.toml` is the canonical chain manifest; alternate generated manifests live under `manifests/`.
+`target/`, `*.rastered`, and `*.rindex` are generated artifacts. A chain manifest comes from `model import` (the template) and `claim build` (filled in for one run, under `target/iris/runs/<run>/`); run the commands above from that directory or pass it as the manifest.

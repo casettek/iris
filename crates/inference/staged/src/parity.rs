@@ -565,14 +565,14 @@ mod tests {
 
     #[test]
     fn accepts_complete_no_auth_stage_without_chain_commitment() {
-        let stage = TestStage::no_auth("prefill_range_l3");
+        let stage = TestStage::no_auth("range_p0_l3");
 
         validate_stage_artifacts(&stage.stage_dir).unwrap();
     }
 
     #[test]
     fn rejects_authenticated_artifacts_in_no_auth_stage() {
-        let stage = TestStage::no_auth("prefill_range_l3");
+        let stage = TestStage::no_auth("range_p0_l3");
         fs::write(stage.run_dir.join("chain-commitment"), []).unwrap();
         fs::write(stage.stage_dir.join("trace.bin"), []).unwrap();
         fs::write(stage.stage_dir.join("commit.bin"), []).unwrap();

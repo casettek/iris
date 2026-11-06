@@ -1,7 +1,10 @@
-use anyhow::{bail, ensure, Result};
+use anyhow::{ensure, Result};
 use prompt_prepare::input::{
-    merge_bucket_of, vocab_bucket_of, BpePiece, BpePieces, MergeCandidate, PromptTokenization,
-    PromptTokenizer,
+    apply_atom, begin_scan_state, begin_slice_state, begin_text_fold_state, boundary_bucket_of,
+    boundary_query_of, finish_slice_context, finish_token_context, fold_text, merge_bucket_of,
+    observe_piece, open_prompt_context, scan_chunk_into, scan_plan_of, vocab_bucket_of,
+    BoundaryHit, BpePiece, BpePieces, MergeCandidate, PromptContext, PromptState,
+    PromptText, PromptTokenization, PromptTokenizer, RangeCut, RunConfig, SplitState,
 };
 use raster::List;
 
@@ -49,6 +52,17 @@ fn apply(pieces: &mut Vec<BpePiece>, best: MergeCandidate) {
     pieces.remove(left + 1);
 }
 
+fn merge_batch(pieces: &mut Vec<BpePiece>, tokenizer: &PromptTokenizer) -> Result<()> {
+    for _ in 0..MERGES_PER_BATCH {
+        let best = best_merge(pieces, tokenizer)?;
+        if !best.matched {
+            break;
+        }
+        apply(pieces, best);
+    }
+    Ok(())
+}
+
 pub fn run_merge_batch(inputs: PromptPrepareDirectInputs<'_>) -> Result<BpePieces> {
     let mut pieces = inputs
         .initial_pieces
@@ -56,18 +70,104 @@ pub fn run_merge_batch(inputs: PromptPrepareDirectInputs<'_>) -> Result<BpePiece
         .iter()
         .cloned()
         .collect::<Vec<_>>();
-    for _ in 0..MERGES_PER_BATCH {
-        let best = best_merge(&pieces, inputs.tokenizer)?;
-        if !best.matched {
-            break;
-        }
-        apply(&mut pieces, best);
-    }
+    merge_batch(&mut pieces, inputs.tokenizer)?;
     Ok(BpePieces {
         pieces: List::from(pieces),
+        token_ids: List::new(),
+        context: inputs.initial_pieces.context.clone(),
     })
 }
 
+fn in_vocabulary(tokenizer: &PromptTokenizer, piece: &str) -> Result<bool> {
+    ensure!(
+        tokenizer.vocab_bucket_count > 0
+            && tokenizer.vocab_bucket_count as usize == tokenizer.vocab_buckets.len(),
+        "invalid vocabulary bucket count"
+    );
+    let index = vocab_bucket_of(piece, tokenizer.vocab_bucket_count) as usize;
+    Ok(tokenizer.vocab_buckets[index]
+        .entries
+        .iter()
+        .any(|entry| entry.token == piece))
+}
+
+/// `prompt-bind`: hashes the original text, renders it, and splits it.
+pub fn run_prompt_bind(
+    tokenizer: &PromptTokenizer,
+    text: &PromptText,
+    config: &RunConfig,
+) -> Result<PromptState> {
+    let profile = &tokenizer.profile;
+    let fold = text
+        .chunks
+        .iter()
+        .fold(begin_text_fold_state(), |fold, chunk| fold_text(fold, chunk));
+    let plan = scan_plan_of(&fold, config, profile);
+    let mut scan = begin_scan_state(&plan);
+    let mut atoms = Vec::new();
+    for chunk in text.chunks.iter() {
+        scan = scan_chunk_into(scan, chunk, &plan, profile, &mut |atom| atoms.push(atom));
+    }
+    let mut pieces = Vec::new();
+    let mut split = SplitState::default();
+    for atom in &atoms {
+        let known = in_vocabulary(tokenizer, &atom.text)?;
+        split = apply_atom(&split, atom, known, profile, &mut |piece| pieces.push(piece));
+    }
+    Ok(PromptState {
+        pieces: List::from(pieces),
+        token_ids: List::new(),
+        context: open_prompt_context(&fold, config),
+    })
+}
+
+/// `prompt-seed`: cuts one range out of the prompt's pieces, checks the cut,
+/// and runs the range's first merge batch.
+pub fn run_prompt_seed(
+    tokenizer: &PromptTokenizer,
+    bound: &PromptState,
+    previous: &PromptContext,
+    cut: &RangeCut,
+) -> Result<PromptState> {
+    let mut slice = begin_slice_state(previous, cut.end);
+    for piece in bound.pieces.iter() {
+        observe_piece(&mut slice, piece);
+    }
+    let query = boundary_query_of(&slice);
+    ensure!(
+        tokenizer.boundary_bucket_count > 0
+            && tokenizer.boundary_bucket_count as usize == tokenizer.boundary_buckets.len(),
+        "invalid boundary bucket count"
+    );
+    let index =
+        boundary_bucket_of(query.left, query.right, tokenizer.boundary_bucket_count) as usize;
+    let crossing = BoundaryHit {
+        found: query.active
+            && tokenizer.boundary_buckets[index]
+                .pairs
+                .iter()
+                .any(|pair| pair.left == query.left && pair.right == query.right),
+    };
+    let context = finish_slice_context(previous, &slice, &crossing);
+
+    let mut pieces = bound
+        .pieces
+        .iter()
+        .enumerate()
+        .filter(|(index, _)| (*index as u64) >= slice.start && (*index as u64) < slice.end)
+        .map(|(_, piece)| piece.clone())
+        .collect::<Vec<_>>();
+    merge_batch(&mut pieces, tokenizer)?;
+    Ok(PromptState {
+        pieces: List::from(pieces),
+        token_ids: List::new(),
+        context,
+    })
+}
+
+/// `prompt-prepare`: resolves the merged pieces to ids and records the range's
+/// outcome in the context. Pieces that could still merge are recorded rather
+/// than raised, so the stage finishes with an output to compare and replay.
 pub fn finalize_prompt(inputs: PromptPrepareDirectInputs<'_>) -> Result<PromptTokenization> {
     let pieces = inputs
         .initial_pieces
@@ -76,13 +176,8 @@ pub fn finalize_prompt(inputs: PromptPrepareDirectInputs<'_>) -> Result<PromptTo
         .cloned()
         .collect::<Vec<_>>();
     let best = best_merge(&pieces, inputs.tokenizer)?;
-    if best.matched {
-        bail!(
-            "tokenization budget exhausted: eligible merge at position {} (rank {})",
-            best.left,
-            best.rank
-        );
-    }
+    let context =
+        finish_token_context(&inputs.initial_pieces.context, &best, pieces.len() as u64);
     ensure!(
         inputs.tokenizer.vocab_bucket_count > 0
             && inputs.tokenizer.vocab_bucket_count as usize == inputs.tokenizer.vocab_buckets.len(),
@@ -106,7 +201,9 @@ pub fn finalize_prompt(inputs: PromptPrepareDirectInputs<'_>) -> Result<PromptTo
         })
         .collect::<Result<Vec<_>>>()?;
     Ok(PromptTokenization {
+        pieces: List::new(),
         token_ids: List::from(token_ids),
+        context,
     })
 }
 
@@ -136,6 +233,8 @@ pub fn run_prompt_prepare_direct(
         tokenizer: inputs.tokenizer,
         initial_pieces: &BpePieces {
             pieces: pieces.into(),
+            token_ids: List::new(),
+            context: inputs.initial_pieces.context.clone(),
         },
     })
 }

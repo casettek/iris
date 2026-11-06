@@ -257,7 +257,7 @@ pub fn import_model(args: ImportConfig) -> Result<ImportResult, Box<dyn Error>> 
         let shape = Shape::from_config(text)?;
         // A direct-only refresh cannot attest that existing Raster externals
         // were generated from this bundle. Only a full import binds a template.
-        direct_manifest::write_model_manifest(&args, &eos_ids, &shape, text, None, None)?;
+        direct_manifest::write_model_manifest(&args, &eos_ids, &shape, text, None, &[])?;
         return Ok(ImportResult {
             manifest_path: None,
             manifest_text: None,
@@ -269,7 +269,7 @@ pub fn import_model(args: ImportConfig) -> Result<ImportResult, Box<dyn Error>> 
         let mut stages = Vec::new();
         let decoder_commitment = write_tokenizer(&tokenizer, &eos_ids, &layout, &mut stages)?;
         println!();
-        println!("# ---- replaces tokenizer and decoder externals in the root Raster.toml ----");
+        println!("# ---- tokenizer and decoder externals ----");
         for stage in &stages {
             println!();
             print!("{stage}");
@@ -307,7 +307,7 @@ pub fn import_model(args: ImportConfig) -> Result<ImportResult, Box<dyn Error>> 
         let mut stages = Vec::new();
         write_ple_layers(&weights, &shape, &layout, &mut stages)?;
         println!();
-        println!("# ---- replaces the prefill_prepare_aux_* stages in the root Raster.toml ----");
+        println!("# ---- PLE layer externals ----");
         for stage in &stages {
             println!();
             print!("{stage}");
@@ -325,7 +325,7 @@ pub fn import_model(args: ImportConfig) -> Result<ImportResult, Box<dyn Error>> 
         let mut stages = Vec::new();
         write_embedding(&weights, &shape, &layout, &mut stages)?;
         println!();
-        println!("# ---- replaces the input_embedding stage in the root Raster.toml ----");
+        println!("# ---- embedding external ----");
         for stage in &stages {
             println!();
             print!("{stage}");
@@ -343,7 +343,7 @@ pub fn import_model(args: ImportConfig) -> Result<ImportResult, Box<dyn Error>> 
         let mut stages = Vec::new();
         write_transformer_layers(&weights, &shape, &layout, &mut stages)?;
         println!();
-        println!("# ---- replaces the prefill_range_* stages in the root Raster.toml ----");
+        println!("# ---- transformer layer externals ----");
         for stage in &stages {
             println!();
             print!("{stage}");
@@ -374,24 +374,10 @@ pub fn import_model(args: ImportConfig) -> Result<ImportResult, Box<dyn Error>> 
     write_transformer_layers(&weights, &shape, &layout, &mut stages)?;
     write_head(&weights, &shape, text, &layout, &mut stages)?;
 
-    let mut manifest = String::from("[chain]\nname = \"iris\"\nversion = \"0.1.0\"\n");
-    manifest.push_str(&indexed_model_inputs(&shape, &layout, &stages)?);
-    for stage in &stages {
-        manifest.push('\n');
-        manifest.push_str(stage);
-    }
-    manifest.push_str(&generation_stages(
-        &shape,
-        &layout,
-        &decoder_commitment,
-        0,
-        &stages,
-    )?);
     let stage_count = stages.len();
-    let (template_path, template) = save_model_template(&args, &manifest)?;
-    let (teacher_forced_path, teacher_forced) = save_teacher_forced_template(
+    let (template_path, template) = save_model_template(
         &args,
-        &teacher_forced_manifest(&shape, &layout, &decoder_commitment, &stages)?,
+        &chain_template(&shape, &layout, &decoder_commitment, &stages)?,
     )?;
     direct_manifest::write_model_manifest(
         &args,
@@ -399,7 +385,7 @@ pub fn import_model(args: ImportConfig) -> Result<ImportResult, Box<dyn Error>> 
         &shape,
         text,
         Some((&template_path, &template)),
-        Some((&teacher_forced_path, &teacher_forced, args.range_size)),
+        &model_commitments(&shape, &decoder_commitment, &stages)?,
     )?;
     Ok(ImportResult {
         manifest_path: Some(template_path),
@@ -434,30 +420,56 @@ fn save_model_template(
     Ok((path, template))
 }
 
-/// The teacher-forced template is saved beside the autoregressive one and is
-/// never copied to `--manifest`: manual Raster commands keep the root template.
-fn save_teacher_forced_template(
-    args: &ImportConfig,
-    manifest: &str,
-) -> Result<(PathBuf, String), Box<dyn Error>> {
-    let template =
-        inference_artifacts::resolve_raster_manifest_paths(manifest, &std::env::current_dir()?)
-            .map_err(|error| -> Box<dyn Error> { error.to_string().into() })?;
-    let path = args
-        .artifact_dir()
-        .join(inference_artifacts::TEACHER_FORCED_TEMPLATE_TOML);
-    fs::create_dir_all(args.artifact_dir())?;
-    fs::write(&path, &template)?;
-    println!("wrote {}", path.display());
-    Ok((path, template))
+/// Every committed model input by role, in the order the model id hashes them.
+///
+/// These are the commitments a stage's `input_manifest.json` binds, so a claim
+/// that ran other weights can be held to the model it names by comparing them.
+fn model_commitments(
+    shape: &Shape,
+    decoder_commitment: &str,
+    stages: &[String],
+) -> Result<Vec<inference_artifacts::ModelCommitment>, Box<dyn Error>> {
+    let entry = |role: String, commitment: String| inference_artifacts::ModelCommitment {
+        role,
+        commitment,
+    };
+    let mut entries = vec![
+        entry(
+            String::from("tokenizer"),
+            stage_external_commitment(stages, "prompt_prepare", "tokenizer")?,
+        ),
+        entry(String::from("decoder"), decoder_commitment.to_string()),
+        entry(
+            String::from("embedding"),
+            stage_external_commitment(stages, "input_embedding", "embedding")?,
+        ),
+        entry(
+            String::from("head"),
+            stage_external_commitment(stages, "final_head", "head")?,
+        ),
+    ];
+    for layer in 0..shape.layers {
+        entries.push(entry(
+            format!("aux_layer_{layer}"),
+            stage_external_commitment(stages, &format!("prefill_prepare_aux_l{layer}"), "layer")?,
+        ));
+    }
+    for layer in 0..shape.layers {
+        entries.push(entry(
+            format!("transformer_layer_{layer}"),
+            stage_external_commitment(stages, &format!("prefill_range_l{layer}"), "layer")?,
+        ));
+    }
+    Ok(entries)
 }
 
-/// The teacher-forced chain, cut into ranges of at most `range_size`
+/// The chain template: one pass over `prompt ‖ claimed output`, cut into ranges of at most `range_size`
 /// positions so no stage's cost grows with the prompt.
 ///
-/// Run preparation cuts the prompt into ranges of at most `range_size` tokens
-/// at boundaries no merge can cross, and the claimed ids into ranges of the
-/// same size. Every prompt
+/// `prompt_bind` hashes the committed original text and splits it. Run
+/// preparation chooses where to cut those pieces into ranges of at most
+/// `range_size` tokens, and `prompt_seed_p{j}` checks each cut as it takes its
+/// range. The claimed ids are cut into ranges of the same size. Every prompt
 /// range is tokenized and embedded, every claimed range embedded; then each
 /// layer runs across all ranges in order (`range_p{j}_l{l}`, then
 /// `range_c{k}_l{l}`), and `check_c{k}` re-derives the greedy selection for
@@ -465,11 +477,12 @@ fn save_teacher_forced_template(
 /// its inherited K/V cache from its own previous range, exactly as a decode
 /// step does.
 ///
-/// Counts, the last prompt range's index, the tokenizer batch count and the
-/// per-range externals are filled in by run preparation. A range's merge
-/// count depends on its text, not only its token count, and `prompt_prepare`
-/// refuses pieces that could still merge, so too few batches cannot pass.
-fn teacher_forced_manifest(
+/// Counts, the last prompt range's index, the tokenizer batch count, the text,
+/// the configuration and the per-range externals are filled in by run
+/// preparation. A wrong cut or too few batches does not stop a stage: it is
+/// recorded in the prompt context, which the last range's `prompt_prepare`
+/// publishes for the whole prompt.
+fn chain_template(
     shape: &Shape,
     layout: &ArtifactLayout,
     decoder_commitment: &str,
@@ -478,7 +491,7 @@ fn teacher_forced_manifest(
     let tokenizer = stage_external_commitment(prefill_stages, "prompt_prepare", "tokenizer")?;
     let embedding = stage_external_commitment(prefill_stages, "input_embedding", "embedding")?;
     let no_claim = stage_external_commitment(prefill_stages, "input_embedding", "claimed")?;
-    let head = stage_external_commitment(prefill_stages, "prefill_finalize", "head")?;
+    let head = stage_external_commitment(prefill_stages, "final_head", "head")?;
     let no_prompt = no_prompt_commitment(layout)?;
     let tokenizer_line = external_line(
         "tokenizer",
@@ -514,7 +527,7 @@ fn teacher_forced_manifest(
     donors.dedup();
     if donors.len() > 2 {
         return Err(format!(
-            "teacher-forced ranges support at most two donor candidates, model declares {}",
+            "ranges support at most two donor candidates, model declares {}",
             donors.len()
         )
         .into());
@@ -522,21 +535,44 @@ fn teacher_forced_manifest(
 
     let mut out = String::from("[chain]\nname = \"iris\"\nversion = \"0.1.0\"\n");
     out.push_str(&indexed_model_inputs(shape, layout, prefill_stages)?);
-    out.push_str(&range_input("prompt_pieces", "pieces", "j"));
+    out.push_str(&range_input("prompt_cuts", "cut", "j"));
     out.push_str(&range_input("claimed_ids", "claimed", "k"));
     out.push_str(
         "\n[[chain.stage]]\nname = \"range_origin\"\nproject = \"raster-stages/range-origin\"\n\
          \n[[chain.stage]]\nname = \"decode_init\"\nproject = \"raster-stages/decode-init\"\n",
     );
 
+    // Bind the text and the configuration, and split the text into pieces.
+    let run_external = |param: &str| {
+        external_line(
+            param,
+            layout,
+            RUN_PLACEHOLDER_DIR,
+            param,
+            INITIAL_PIECES_PLACEHOLDER_COMMITMENT,
+        )
+    };
+    out.push_str(&format!(
+        "\n[[chain.stage]]\n\
+         name = \"prompt_bind\"\n\
+         project = \"raster-stages/prompt-bind\"\n\
+         {tokenizer_line}\
+         {}\
+         {}",
+        run_external("text"),
+        run_external("config"),
+    ));
+
     // Tokenize and embed every range first.
     out.push_str("\n[[chain.repeat]]\nname = \"prompt\"\nindex = \"j\"\ncount = 0\n");
     out.push_str(&format!(
         "\n  [[chain.repeat.stage]]\n\
-         name = \"prompt_merge_seed_p{{j}}\"\n\
-         project = \"raster-stages/prompt-merge\"\n\
+         name = \"prompt_seed_p{{j}}\"\n\
+         project = \"raster-stages/prompt-seed\"\n\
          {tokenizer_line}\
-         inputs.initial_pieces = {{ input = \"prompt_pieces_{{j}}\" }}\n"
+         inputs.bound = {{ from = \"prompt_bind\" }}\n\
+         inputs.previous = {{ from = \"prompt_prepare_p{{j-1}}\", first = \"prompt_bind\" }}\n\
+         inputs.cut = {{ input = \"prompt_cuts_{{j}}\" }}\n"
     ));
     out.push_str(&format!(
         "\n  [[chain.repeat.stage]]\n\
@@ -544,7 +580,7 @@ fn teacher_forced_manifest(
          index = \"b\"\n\
          count = 0\n\
          project = \"raster-stages/prompt-merge\"\n\
-         inputs.initial_pieces = {{ from = \"prompt_merge_p{{j}}_b{{b-1}}\", first = \"prompt_merge_seed_p{{j}}\" }}\n\
+         inputs.initial_pieces = {{ from = \"prompt_merge_p{{j}}_b{{b-1}}\", first = \"prompt_seed_p{{j}}\" }}\n\
          {tokenizer_line}"
     ));
     out.push_str(&format!(
@@ -655,14 +691,16 @@ fn teacher_forced_manifest(
          inputs.previous = {{ from = \"range_c{{k-1}}_l{last_layer}\", first = \"range_p{LAST_PROMPT_RANGE}_l{last_layer}\" }}\n\
          inputs.claimed = {{ input = \"claimed_ids_{{k}}\" }}\n\
          inputs.prior = {{ from = \"check_c{{k-1}}\", first = \"decode_init\" }}\n\
+         inputs.prompt = {{ from = \"prompt_prepare_p{LAST_PROMPT_RANGE}\" }}\n\
          {}",
-        external_line("head", layout, "raster-stages/prefill-finalize", "head", &head),
+        external_line("head", layout, "raster-stages/sequence-check", "head", &head),
     ));
     out.push_str(&format!(
         "\n[[chain.stage]]\n\
          name = \"output_finalize\"\n\
          project = \"raster-stages/output-finalize\"\n\
          inputs.edge = {{ from = \"claimed.edge\" }}\n\
+         inputs.prompt = {{ from = \"prompt_prepare_p{LAST_PROMPT_RANGE}\" }}\n\
          {}",
         external_line(
             "decoder",
@@ -759,139 +797,6 @@ fn indexed_model_inputs(
             &transformer
         )
     ))
-}
-
-/// Emits exactly `tokens` select+transition iterations as one static repeat.
-/// Expansion still produces one auditable chain stage per program invocation.
-fn generation_stages(
-    shape: &Shape,
-    layout: &ArtifactLayout,
-    decoder_commitment: &str,
-    tokens: u32,
-    prefill_stages: &[String],
-) -> Result<String, Box<dyn Error>> {
-    let embedding = stage_external_commitment(prefill_stages, "input_embedding", "embedding")?;
-    let head = stage_external_commitment(prefill_stages, "prefill_finalize", "head")?;
-    let first_shared = shape.layers.saturating_sub(shape.num_kv_shared_layers);
-    let mut donors = (0..shape.layers)
-        .map(|layer| shape.kv_donor_layer(layer))
-        .filter(|donor| *donor >= 0)
-        .collect::<Vec<_>>();
-    donors.sort_unstable();
-    donors.dedup();
-    if donors.len() > 2 {
-        return Err(format!(
-            "decode repeat supports at most two donor candidates, model declares {}",
-            donors.len()
-        )
-        .into());
-    }
-    let donor_a = donors.first().copied();
-    let donor_b = donors.get(1).copied();
-
-    let mut out = String::from(
-        "\n[[chain.stage]]\nname = \"decode_init\"\nproject = \"raster-stages/decode-init\"\n\
-         \n[[chain.repeat]]\nname = \"decode\"\nindex = \"t\"\n",
-    );
-    out.push_str(&format!("count = {tokens}\n"));
-    out.push_str(
-        "\n  [chain.repeat.exports.edge]\n\
-         stage = \"decode_select_t{t}\"\n\
-         entry = \"decode_init\"\n\
-         \n  [chain.repeat.exports.logits]\n\
-         stage = \"decode_finalize_t{t}\"\n\
-         entry = \"prefill_finalize\"\n\
-         \n  [[chain.repeat.stage]]\n\
-         name = \"decode_select_t{t}\"\n\
-         project = \"raster-stages/decode-select-token\"\n\
-         inputs.logits = { from = \"decode_finalize_t{t-1}\", first = \"prefill_finalize\" }\n\
-         inputs.prior = { from = \"decode_select_t{t-1}\", first = \"decode_init\" }\n\
-         \n  [[chain.repeat.stage]]\n\
-         name = \"decode_embed_t{t}\"\n\
-         project = \"raster-stages/decode-embed\"\n\
-         inputs.selected = { from = \"decode_select_t{t}\" }\n",
-    );
-    out.push_str(&format!(
-        "  inputs.embedding = {{ external = {{ path = {:?}, index_path = {:?}, commitment = \"{embedding}\" }} }}\n",
-        path_string(&layout.external_path("raster-stages/input-embedding", "embedding", "rastered")),
-        path_string(&layout.external_path("raster-stages/input-embedding", "embedding", "rindex")),
-    ));
-    out.push_str(&format!(
-        "\n  [[chain.repeat.stage]]\n\
-         name = \"decode_aux_t{{t}}_l{{l}}\"\n\
-         index = \"l\"\n\
-         count = {}\n\
-         project = \"raster-stages/prefill-prepare-aux\"\n\
-         inputs.embedded = {{ from = \"decode_embed_t{{t}}\" }}\n\
-         inputs.layer = {{ input = \"aux_layer_{{l}}\" }}\n",
-        shape.layers
-    ));
-
-    if first_shared > 0 {
-        out.push_str(&format!(
-            "\n  [[chain.repeat.stage]]\n\
-             name = \"decode_range_t{{t}}_l{{l}}\"\n\
-             index = \"l\"\n\
-             start = 0\n\
-             count = {first_shared}\n\
-             project = \"raster-stages/prefill-range\"\n\
-             inputs.activations = {{ from = \"decode_range_t{{t}}_l{{l-1}}\", first = \"decode_embed_t{{t}}\" }}\n\
-             inputs.prior_kv = {{ from = \"decode_range_t{{t-1}}_l{{l}}\", first = \"prefill_range_l{{l}}\" }}\n\
-             inputs.donor_a_kv = {{ from = \"input_embedding\" }}\n\
-             inputs.donor_b_kv = {{ from = \"input_embedding\" }}\n\
-             inputs.ple = {{ from = \"decode_aux_t{{t}}_l{{l}}\" }}\n\
-             inputs.layer = {{ input = \"transformer_layer_{{l}}\" }}\n"
-        ));
-    }
-
-    if shape.num_kv_shared_layers > 0 {
-        let donor_a_from = donor_a
-            .map(|layer| format!("decode_range_t{{t}}_l{layer}"))
-            .unwrap_or_else(|| String::from("input_embedding"));
-        let donor_b_from = donor_b
-            .map(|layer| format!("decode_range_t{{t}}_l{layer}"))
-            .unwrap_or_else(|| String::from("input_embedding"));
-        out.push_str(&format!(
-            "\n  [[chain.repeat.stage]]\n\
-             name = \"decode_range_t{{t}}_l{{l}}\"\n\
-             index = \"l\"\n\
-             start = {first_shared}\n\
-             count = {}\n\
-             project = \"raster-stages/prefill-range\"\n\
-             inputs.activations = {{ from = \"decode_range_t{{t}}_l{{l-1}}\", first = \"decode_range_t{{t}}_l{}\" }}\n\
-             inputs.prior_kv = {{ from = \"decode_range_t{{t-1}}_l{{l}}\", first = \"prefill_range_l{{l}}\" }}\n\
-             inputs.donor_a_kv = {{ from = \"{donor_a_from}\" }}\n\
-             inputs.donor_b_kv = {{ from = \"{donor_b_from}\" }}\n\
-             inputs.ple = {{ from = \"decode_aux_t{{t}}_l{{l}}\" }}\n\
-             inputs.layer = {{ input = \"transformer_layer_{{l}}\" }}\n",
-            shape.num_kv_shared_layers,
-            first_shared.saturating_sub(1)
-        ));
-    }
-
-    out.push_str(&format!(
-        "\n  [[chain.repeat.stage]]\n\
-         name = \"decode_finalize_t{{t}}\"\n\
-         project = \"raster-stages/prefill-finalize\"\n\
-         inputs.activations = {{ from = \"decode_range_t{{t}}_l{}\" }}\n\
-         inputs.head = {{ external = {{ path = {:?}, index_path = {:?}, commitment = \"{head}\" }} }}\n\
-         \n[[chain.stage]]\n\
-         name = \"output_finalize\"\n\
-         project = \"raster-stages/output-finalize\"\n\
-         inputs.edge = {{ from = \"decode.edge\" }}\n\
-         {}",
-        shape.layers - 1,
-        path_string(&layout.external_path("raster-stages/prefill-finalize", "head", "rastered")),
-        path_string(&layout.external_path("raster-stages/prefill-finalize", "head", "rindex")),
-        external_line(
-            "decoder",
-            layout,
-            "raster-stages/output-finalize",
-            "decoder",
-            decoder_commitment
-        )
-    ));
-    Ok(out)
 }
 
 /// Q16.16 bits of an `f32`, through the local deterministic conversion so the
@@ -1254,8 +1159,8 @@ fn write_embedding(
         "raster-stages/input-embedding",
         "embedding",
     )?;
-    // The autoregressive chain embeds only the prompt. The teacher-forced
-    // template replaces this binding with the run's claimed ids.
+    // A prompt range embeds only the prompt. A claimed range binds the run's
+    // claimed ids here instead.
     let no_claim = write_external(
         &ClaimedOutput::default(),
         layout,
@@ -1610,23 +1515,16 @@ fn write_head(
             projection: mapped_weights::q8_rows(weights, projection, 0, shape.vocab)?,
         },
         layout,
-        "raster-stages/prefill-finalize",
+        "raster-stages/sequence-check",
         "head",
     )?;
 
     stages.push(format!(
-        concat!(
-            "[[chain.stage]]\n",
-            "name = \"prefill_finalize\"\n",
-            "project = \"raster-stages/prefill-finalize\"\n",
-            "inputs.activations = {{ from = \"prefill_range_l{last}\" }}\n",
-            "{line}"
-        ),
-        last = shape.layers - 1,
-        line = external_line(
+        "[[chain.stage]]\nname = \"final_head\"\nproject = \"raster-stages/sequence-check\"\n{}",
+        external_line(
             "head",
             layout,
-            "raster-stages/prefill-finalize",
+            "raster-stages/sequence-check",
             "head",
             &commitment
         )
@@ -1794,7 +1692,7 @@ mod tests {
                 &shape,
                 &text,
                 Some((&path, &template)),
-                None,
+                &[],
             )
             .unwrap();
             let model = inference_artifacts::ModelManifest::load_verified(&model_path).unwrap();

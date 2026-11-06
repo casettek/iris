@@ -14,3 +14,5 @@ raster = { path = "../../../raster/crates/raster", default-features = false }
 serde = { version = "1.0", default-features = false, features = ["derive", "alloc"] }
 # Canonical fixed-point kernels, vendored verbatim from the reference.
 det-num = { path = "../../crates/det-num" }
+# The shared prompt source hashes with the guest-accelerated compression function.
+sha2 = { version = "0.10", default-features = false, features = ["compress"] }

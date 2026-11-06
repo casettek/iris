@@ -25,7 +25,11 @@ pub fn run_input_embedding_direct(
     let mut rows = Vec::with_capacity(inputs.prompt.token_ids.len());
 
     for token_id in inputs.prompt.token_ids.iter().copied() {
-        let byte_off = token_id as u64 * (hidden_size as u64 / 32 * 34);
+        let byte_off = input_embedding::row_byte_offset(
+            token_id,
+            hidden_size,
+            inputs.embedding.values.byte_len(),
+        );
         let page_idx = if page_size == 0 {
             0
         } else {

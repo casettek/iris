@@ -6,6 +6,8 @@ The stable contract types and filenames live in `crates/inference/artifacts`.
 
 `runtime/model-artifacts/<model-id>/manifest.json` records reusable model setup:
 
+- The model's commitments by role and `model_id`, their hash.
+- `range_size`, the largest range a run cuts its prompt or output into.
 - Model, config, and tokenizer paths plus SHA-256 hashes.
 - Model shape and fixed-point scaling parameters.
 - EOS token ids.
@@ -16,11 +18,10 @@ The same model-scoped directory owns the imported Raster externals under
 under `raster-stages/*`; chain manifests bind those programs to explicit
 external `path` / `index_path` entries in the model artifact directory.
 
-Prompt-specific inputs are not model artifacts. `initial_pieces` is generated
-from each run's prompt under `target/iris/runs/<run-id>/prompt/`,
-and prompt-free chain templates use a `target/iris/run-prompt-placeholder/`
-binding that run preparation replaces. The standalone prompt-prepare fixture
-can point at `runtime/prompt-fixtures/default/` for local stage smoke tests.
+Run-specific inputs are not model artifacts. The original text, the configuration,
+each range's cut and each claimed range are written under
+`target/iris/runs/<run-id>/prompt/`, and prompt-free chain templates use a
+`target/iris/run-prompt-placeholder/` binding that run preparation replaces.
 
 `inference.toml` records run-time inputs:
 
@@ -29,7 +30,13 @@ can point at `runtime/prompt-fixtures/default/` for local stage smoke tests.
 - `raw_prompt`
 - `tokens`
 
-`prepared_run.json` freezes the resolved prompt, rendered prompt, initial pieces, EOS ids, model manifest hash, generated run manifest path/hash, and token count for claim/challenge reproducibility.
+A spec may still say `chain = "teacher-forced"`. Any other `chain` is an error,
+because teacher-forced is the only staged chain.
+
+`model_manifest` must name a version 4 manifest. Older manifests are refused with
+an instruction to re-import.
+
+`prepared_run.json` (version 4) freezes the resolved prompt, rendered prompt, initial pieces, EOS ids, model manifest hash, generated run manifest path/hash, and token count for claim/challenge reproducibility.
 
 ## Checkpoints
 

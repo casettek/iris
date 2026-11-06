@@ -2063,54 +2063,38 @@ mod tests {
             .to_path_buf()
     }
 
-    fn real_manifest_with_repeats(decode: u32, tokenize: u32) -> Manifest {
-        let text = fs::read_to_string(repo_root().join("Raster.toml")).unwrap();
-        let mut doc: RasterTomlDoc = toml::from_str(&text).unwrap();
-        for repeat in &mut doc.chain.repeats {
-            let repeat = repeat.get_mut();
-            repeat.count = match repeat.name.as_str() {
-                "decode" => decode,
-                "tokenize" => tokenize,
-                _ => panic!("unexpected top-level repeat"),
-            };
-        }
-        Manifest {
-            chain: expand_chain_table(doc.chain).unwrap(),
-        }
+    fn fixture_manifest() -> Manifest {
+        read_manifest(&repo_root().join("crates/inference/staged/testdata/chain.toml")).unwrap()
     }
 
     #[test]
-    fn real_manifest_dispatches_one_reference_and_remaining_stages_native() {
-        let manifest = real_manifest_with_repeats(2, 2);
+    fn fixture_dispatches_one_reference_and_remaining_stages_native() {
+        let manifest = fixture_manifest();
         let mut direct = 0usize;
         let mut reference = 0usize;
 
         for stage in &manifest.chain.stage {
-            match dispatch_for_stage(stage, Some("prefill_range_l13")).unwrap() {
+            match dispatch_for_stage(stage, Some("range_p1_l2")).unwrap() {
                 StageDispatch::StagedNative => direct += 1,
                 StageDispatch::RasterReference => reference += 1,
             }
         }
 
-        assert_eq!(manifest.chain.stage.len(), 224);
-        assert_eq!(direct, 223);
+        assert_eq!(manifest.chain.stage.len(), 50);
+        assert_eq!(direct, 49);
         assert_eq!(reference, 1);
     }
 
     #[test]
     fn stage_prefix_resolves_exact_expanded_instance_and_bounds_aux_waves() {
-        let manifest = real_manifest_with_repeats(2, 2);
-        for name in [
-            "prompt_merge_b1",
-            "prefill_range_l13",
-            "prefill_prepare_aux_l5",
-        ] {
+        let manifest = fixture_manifest();
+        for name in ["prompt_merge_p1_b1", "range_p1_l2", "aux_c0_l0"] {
             let mut stages = manifest.chain.stage.clone();
             let selected = stages.iter().position(|s| s.name == name).unwrap();
             truncate_through_stage(&mut stages, name).unwrap();
             assert_eq!(stages.len(), selected + 1);
             assert_eq!(stages.last().unwrap().name, name);
-            if name == "prefill_prepare_aux_l5" {
+            if name == "aux_c0_l0" {
                 let first = stages
                     .iter()
                     .position(is_prefill_prepare_aux_stage)
@@ -2120,15 +2104,15 @@ mod tests {
         }
         let mut stages = manifest.chain.stage;
         assert!(truncate_through_stage(&mut stages, "prefill-range").is_err());
-        assert!(truncate_through_stage(&mut stages, "prompt_merge_b99").is_err());
+        assert!(truncate_through_stage(&mut stages, "prompt_merge_p9_b9").is_err());
         stages.push(stages[0].clone());
-        assert!(truncate_through_stage(&mut stages, "prompt_merge_seed").is_err());
+        assert!(truncate_through_stage(&mut stages, "range_origin").is_err());
     }
 
     #[test]
     fn prefix_timing_report_contains_only_executed_stages() {
-        let mut manifest = real_manifest_with_repeats(2, 2);
-        truncate_through_stage(&mut manifest.chain.stage, "prompt_merge_b1").unwrap();
+        let mut manifest = fixture_manifest();
+        truncate_through_stage(&mut manifest.chain.stage, "prompt_merge_p0_b1").unwrap();
         let base = test_base_dir();
         fs::create_dir_all(&base).unwrap();
         let times = vec![Some(Duration::from_nanos(7)); manifest.chain.stage.len()];
@@ -2150,74 +2134,109 @@ mod tests {
             .collect();
         assert_eq!(
             names,
-            ["prompt_merge_seed", "prompt_merge_b0", "prompt_merge_b1"]
+            [
+                "range_origin",
+                "decode_init",
+                "prompt_bind",
+                "prompt_seed_p0",
+                "prompt_merge_p0_b0",
+                "prompt_merge_p0_b1"
+            ]
         );
-        assert_eq!(doc["total_exec_duration_ns"], 21);
+        assert_eq!(doc["total_exec_duration_ns"], 42);
         fs::remove_dir_all(base).unwrap();
     }
 
     #[test]
-    fn real_manifest_dispatches_every_stage_native_without_reference() {
-        let manifest = real_manifest_with_repeats(2, 2);
-        let mut direct = 0usize;
-        let mut reference = 0usize;
-
+    fn fixture_dispatches_every_stage_native_without_reference() {
+        let manifest = fixture_manifest();
         for stage in &manifest.chain.stage {
-            match dispatch_for_stage(stage, None).unwrap() {
-                StageDispatch::StagedNative => direct += 1,
-                StageDispatch::RasterReference => reference += 1,
-            }
+            assert!(matches!(
+                dispatch_for_stage(stage, None).unwrap(),
+                StageDispatch::StagedNative
+            ));
         }
-
-        assert_eq!(manifest.chain.stage.len(), 224);
-        assert_eq!(direct, 224);
-        assert_eq!(reference, 0);
     }
 
     #[test]
-    fn real_manifest_expands_decode_repeat_and_export() {
-        let manifest = real_manifest_with_repeats(2, 3);
+    fn fixture_expands_ranges_and_the_claimed_export() {
+        let manifest = fixture_manifest();
         let index = build_stage_index(&manifest.chain.stage).unwrap();
 
-        assert!(index.contains_key("prompt_merge_b2"));
-        assert!(!index.contains_key("prompt_merge_b3"));
-        let prepare = &manifest.chain.stage[index["prompt_prepare"]];
+        assert!(index.contains_key("prompt_merge_p1_b1"));
+        assert!(!index.contains_key("prompt_merge_p1_b2"));
+        let prepare = &manifest.chain.stage[index["prompt_prepare_p1"]];
         assert_eq!(
             prepare.inputs["merged_pieces"],
-            InputBinding::From("prompt_merge_b2".into())
+            InputBinding::From("prompt_merge_p1_b1".into())
         );
 
-        assert!(index.contains_key("decode_select_t0"));
-        assert!(index.contains_key("decode_embed_t1"));
-        assert!(index.contains_key("decode_range_t1_l34"));
+        assert!(index.contains_key("embed_c1"));
+        assert!(index.contains_key("aux_c1_l3"));
+        assert!(index.contains_key("range_c1_l3"));
+        let range = &manifest.chain.stage[index["range_c1_l0"]];
+        assert_eq!(
+            range.inputs["prior_kv"],
+            InputBinding::From("range_c0_l0".into())
+        );
+        let first = &manifest.chain.stage[index["range_c0_l0"]];
+        assert_eq!(
+            first.inputs["prior_kv"],
+            InputBinding::From("range_p1_l0".into())
+        );
 
         let output = manifest.chain.stage.last().unwrap();
         assert_eq!(output.name, "output_finalize");
         assert_eq!(
             output.inputs.get("edge"),
-            Some(&InputBinding::From(String::from("decode_select_t1")))
+            Some(&InputBinding::From(String::from("check_c1")))
         );
     }
 
     #[test]
-    fn prefill_only_manifest_resolves_zero_count_decode_export() {
-        let manifest_path = repo_root().join("runtime/manifests/Raster.prefill-only.toml");
-        let manifest = read_manifest(&manifest_path).unwrap();
+    fn a_repeat_with_no_iterations_exports_its_entry() {
+        let base = test_base_dir();
+        fs::create_dir_all(&base).unwrap();
+        let path = base.join("Raster.toml");
+        fs::write(
+            &path,
+            r#"[chain]
+name = "empty-repeat"
+
+[[chain.stage]]
+name = "decode_init"
+project = "decode-init"
+
+[[chain.repeat]]
+name = "claimed"
+index = "k"
+count = 0
+
+  [chain.repeat.exports.edge]
+stage = "check_c{k}"
+entry = "decode_init"
+
+  [[chain.repeat.stage]]
+name = "check_c{k}"
+project = "sequence-check"
+
+[[chain.stage]]
+name = "output_finalize"
+project = "output-finalize"
+inputs.edge = { from = "claimed.edge" }
+"#,
+        )
+        .unwrap();
+        let manifest = read_manifest(&path).unwrap();
         let index = build_stage_index(&manifest.chain.stage).unwrap();
 
-        assert!(!index.contains_key("decode_select_t0"));
-        assert!(!index.contains_key("prompt_merge_b0"));
-        let prepare = &manifest.chain.stage[index["prompt_prepare"]];
-        assert_eq!(
-            prepare.inputs["merged_pieces"],
-            InputBinding::From("prompt_merge_seed".into())
-        );
+        assert!(!index.contains_key("check_c0"));
         let output = manifest.chain.stage.last().unwrap();
-        assert_eq!(output.name, "output_finalize");
         assert_eq!(
             output.inputs.get("edge"),
             Some(&InputBinding::From(String::from("decode_init")))
         );
+        fs::remove_dir_all(base).unwrap();
     }
 
     #[test]
@@ -2304,6 +2323,7 @@ mod tests {
             vec![0xaa, 0xbb],
             CachedStageValue::PromptTokenization(prompt_prepare::input::PromptTokenization {
                 token_ids: raster::List::from(vec![1, 2]),
+                ..Default::default()
             }),
         );
 
@@ -2314,41 +2334,52 @@ mod tests {
     }
 
     #[test]
-    fn real_manifest_identifies_prefill_prepare_aux_wave() {
-        let manifest_path = repo_root().join("Raster.toml");
-        let manifest = read_manifest(&manifest_path).unwrap();
+    fn fixture_identifies_prefill_prepare_aux_wave() {
+        let manifest = fixture_manifest();
+        let first = manifest
+            .chain
+            .stage
+            .iter()
+            .position(is_prefill_prepare_aux_stage)
+            .unwrap();
 
-        let range = aux_wave_range(&manifest.chain.stage, 3).unwrap();
+        let range = aux_wave_range(&manifest.chain.stage, first).unwrap();
 
-        assert_eq!(range, 3..38);
+        // Each layer's PLE runs over every range, then its transformer does.
+        assert_eq!(range, first..first + 4);
         assert!(aux_wave_range(&manifest.chain.stage, 0).is_none());
-        assert!(aux_wave_range(&manifest.chain.stage, 38).is_none());
+        assert!(aux_wave_range(&manifest.chain.stage, first + 4).is_none());
         for stage in &manifest.chain.stage[range] {
             assert!(is_prefill_prepare_aux_stage(stage));
-            assert_eq!(
-                stage.inputs.get("embedded"),
-                Some(&InputBinding::From(String::from("input_embedding")))
-            );
         }
+        assert_eq!(
+            manifest.chain.stage[first].inputs.get("embedded"),
+            Some(&InputBinding::From(String::from("embed_p0")))
+        );
     }
 
     #[test]
     fn raster_reference_inside_aux_wave_dispatches_once() {
-        let manifest_path = repo_root().join("Raster.toml");
-        let manifest = read_manifest(&manifest_path).unwrap();
-        let range = aux_wave_range(&manifest.chain.stage, 3).unwrap();
+        let manifest = fixture_manifest();
+        let first = manifest
+            .chain
+            .stage
+            .iter()
+            .position(is_prefill_prepare_aux_stage)
+            .unwrap();
+        let range = aux_wave_range(&manifest.chain.stage, first).unwrap();
         let mut direct = 0usize;
         let mut reference = Vec::new();
 
         for stage in &manifest.chain.stage[range] {
-            match dispatch_for_stage(stage, Some("prefill_prepare_aux_l5")).unwrap() {
+            match dispatch_for_stage(stage, Some("aux_p1_l0")).unwrap() {
                 StageDispatch::StagedNative => direct += 1,
                 StageDispatch::RasterReference => reference.push(stage.name.as_str()),
             }
         }
 
-        assert_eq!(direct, 34);
-        assert_eq!(reference, ["prefill_prepare_aux_l5"]);
+        assert_eq!(direct, 3);
+        assert_eq!(reference, ["aux_p1_l0"]);
     }
 
     #[test]

@@ -14,9 +14,12 @@ use staged_infer::{
 use inference_artifacts::{
     build_checkpoint_trace, checkpoint_hashes, read_challenge_bundle, read_checkpoint_hashes,
     read_checkpoint_trace, read_claim_bundle, verify_file_sha256, write_challenge_artifacts,
-    write_checkpoint_trace_artifact, ChainKind, ChallengeBundle, ChallengeSourcePath, Checkpoint,
-    CheckpointTrace, Divergence, DivergenceReason, PreparedRun, ReplayPackage,
+    write_checkpoint_trace_artifact, ChallengeBundle, ChallengeSourcePath, Checkpoint,
+    CheckpointTrace, Divergence, DivergenceReason, InferenceRunSpec, PreparedRun, ReplayPackage,
 };
+use raster_runtime::{read_raster_artifact_from_bytes, ReadLimits};
+
+use crate::parity::compare::value_json;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ChallengeInput {
@@ -49,8 +52,7 @@ pub enum ChallengeBuildOutcome {
         recomputed_trace_path: PathBuf,
         recomputed_chain_dir: PathBuf,
     },
-    /// Teacher-forced only: every checkpoint matched, but the checked greedy
-    /// selections are not the ids the claim posted.
+    /// Every checkpoint matched, but the claim's own final record refutes it.
     ClaimedOutputRejected {
         reason: String,
         claimed_reference_path: PathBuf,
@@ -72,7 +74,7 @@ pub fn build_challenge(options: ChallengeBuildOptions) -> Result<ChallengeBuildR
     let checkpoint_trace_started = Instant::now();
     challenge_progress("checkpoint-trace", None, None)?;
     let claimed_input = load_claimed_input(&options.input)?;
-    let manifest_path = challenge_manifest_path(&options, &claimed_input)?;
+    let (manifest_path, prepared_run) = challenge_run(&options, &claimed_input)?;
     let executor = CheckpointedInferenceExecutor;
     let (recomputed_chain_dir, recomputed_trace, divergence, final_result) = match &claimed_input
         .checkpoints
@@ -120,22 +122,20 @@ pub fn build_challenge(options: ChallengeBuildOptions) -> Result<ChallengeBuildR
     let checkpoint_trace_duration = checkpoint_trace_started.elapsed();
 
     let Some(divergence) = divergence else {
-        // Every checkpoint agrees, so there is no stage to dispute. A
-        // teacher-forced claim can still be refuted by its own final record:
-        // honest execution over non-greedy ids commits a non-zero verdict.
-        if let Some(reason) = claimed_output_rejection(
-            claimed_input.prepared_run.as_ref(),
-            &manifest_path,
-            final_result.as_ref(),
-        )? {
-            return Ok(ChallengeBuildResult {
-                outcome: ChallengeBuildOutcome::ClaimedOutputRejected {
-                    reason,
-                    claimed_reference_path: claimed_input.reference_path().to_path_buf(),
-                    recomputed_trace_path,
-                    recomputed_chain_dir,
-                },
-            });
+        // Every checkpoint agrees, so there is no stage to dispute. A claim can
+        // still be refuted by its own final record: honest execution over
+        // non-greedy ids commits a non-zero verdict. A bare trace claims nothing.
+        if prepared_run.is_some() {
+            if let Some(reason) = claimed_output_rejection(final_result.as_ref())? {
+                return Ok(ChallengeBuildResult {
+                    outcome: ChallengeBuildOutcome::ClaimedOutputRejected {
+                        reason,
+                        claimed_reference_path: claimed_input.reference_path().to_path_buf(),
+                        recomputed_trace_path,
+                        recomputed_chain_dir,
+                    },
+                });
+            }
         }
         return Ok(ChallengeBuildResult {
             outcome: ChallengeBuildOutcome::NoDivergence {
@@ -238,32 +238,16 @@ fn challenge_progress(
     Ok(())
 }
 
-fn challenge_manifest_path(
+/// The manifest a challenger recomputes, and the run a clean recomputation
+/// judges the claim by.
+fn challenge_run(
     options: &ChallengeBuildOptions,
     claimed: &ClaimedInput,
-) -> Result<PathBuf> {
+) -> Result<(PathBuf, Option<PreparedRun>)> {
     let run_spec_path = resolve_bundle_path(&options.base_dir, &options.run_spec_path);
     if let Some(prepared) = &claimed.prepared_run {
-        let run_spec = inference_artifacts::read_run_spec(&run_spec_path)?;
-        let run_spec_dir = run_spec_path
-            .parent()
-            .context("run spec has no parent directory")?;
-        let selected_model_path = resolve_bundle_path(run_spec_dir, &run_spec.model_manifest);
-        // The run spec chooses the model; the claim retains its frozen prompt
-        // and token count. Compare identities before touching the large bundle.
-        inference_artifacts::verify_file_sha256(
-            &selected_model_path,
-            &prepared.model_manifest_sha256,
-            "model selected by --run does not match the claim: model manifest",
-        )?;
-        let model =
-            inference_artifacts::ModelManifest::load_verified(&prepared.model_manifest_path)?;
-        model.verified_chain_template(&prepared.model_manifest_path, prepared.chain)?;
-        // load_claimed_input already checked the frozen run manifest's hash.
-        return prepared
-            .run_manifest_path
-            .clone()
-            .context("prepared run has no run_manifest_path");
+        let rebuilt = rebuild_teacher_forced_run(options, prepared)?;
+        return Ok((rebuilt.manifest_path, Some(rebuilt.prepared_run)));
     }
 
     // A bare trace has no frozen metadata. Prepare it from the selected run
@@ -275,7 +259,97 @@ fn challenge_manifest_path(
         staged_backend: options.staged_backend,
         claimed_token_ids: None,
     })?;
-    Ok(prepared.manifest_path)
+    Ok((prepared.manifest_path, None))
+}
+
+/// Prepares the claim's prompt, token budget and claimed ids from the model the
+/// challenger's `--run` selects, using the challenger's own template.
+///
+/// Recomputing the claimer's manifest would rerun the claimer's model and agree
+/// with it. Preparing this run instead means a claim that used other weights, a
+/// different cut or a different configuration differs at a stage's committed
+/// inputs, which is a divergence to replay. Nothing from the claim beyond those
+/// three things reaches the run, and none of them can stop the challenge.
+fn rebuild_teacher_forced_run(
+    options: &ChallengeBuildOptions,
+    frozen: &PreparedRun,
+) -> Result<crate::claim::PreparedClaimRun> {
+    let run_spec_path = resolve_bundle_path(&options.base_dir, &options.run_spec_path);
+    let selected = inference_artifacts::read_run_spec(&run_spec_path)?;
+    let frozen_manifest = frozen
+        .run_manifest_path
+        .as_ref()
+        .context("prepared run has no run_manifest_path")?;
+    let run_spec = InferenceRunSpec {
+        model_manifest: selected.model_manifest,
+        prompt: Some(frozen.prompt.resolved_prompt.clone()),
+        prompt_file: None,
+        raw_prompt: frozen.raw_prompt,
+        tokens: frozen.tokens,
+    };
+    let rebuilt = crate::claim::prepare_challenge_run(
+        &crate::claim::ClaimBuildOptions {
+            base_dir: options.base_dir.clone(),
+            run_spec_path,
+            current_exe: options.current_exe.clone(),
+            staged_backend: options.staged_backend,
+            claimed_token_ids: Some(frozen_claimed_ids(frozen_manifest)?),
+        },
+        &run_spec,
+    )?;
+    if rebuilt.prepared_run.model_id != frozen.model_id {
+        eprintln!(
+            "warning: the claim names model {}, but --run selects model {}; a divergence here means the claim did not run the selected model",
+            frozen.model_id, rebuilt.prepared_run.model_id
+        );
+    }
+    Ok(rebuilt)
+}
+
+/// The claimed ids a frozen run manifest binds, checked against its commitments.
+fn frozen_claimed_ids(manifest_path: &Path) -> Result<Vec<u32>> {
+    let manifest: toml::Value = toml::from_str(
+        &fs::read_to_string(manifest_path)
+            .with_context(|| format!("failed to read {}", manifest_path.display()))?,
+    )
+    .with_context(|| format!("failed to parse {}", manifest_path.display()))?;
+    let input = &manifest["chain"]["input"]["claimed_ids"];
+    let path_of = |key: &str, index: usize| -> Result<PathBuf> {
+        let pattern = input
+            .get(key)
+            .and_then(toml::Value::as_str)
+            .with_context(|| format!("frozen run manifest has no claimed_ids {key}"))?;
+        Ok(PathBuf::from(pattern.replace("{k}", &index.to_string())))
+    };
+    let mut ids = Vec::new();
+    for (index, commitment) in bound_commitments(manifest_path, "claimed_ids")?
+        .iter()
+        .enumerate()
+    {
+        let path = path_of("path", index)?;
+        let bytes =
+            fs::read(&path).with_context(|| format!("failed to read {}", path.display()))?;
+        let index_path = path_of("index_path", index)?;
+        let raster_index = fs::read(&index_path)
+            .with_context(|| format!("failed to read {}", index_path.display()))?;
+        let artifact =
+            read_raster_artifact_from_bytes(&bytes, &raster_index, &ReadLimits::unbounded())?;
+        if !artifact.roots_agree() || &artifact.structural_root != commitment {
+            bail!(
+                "{} is not the claimed range the frozen run manifest commits to",
+                path.display()
+            );
+        }
+        let range = value_json(&artifact.value)?;
+        let range_ids = range["token_ids"]
+            .as_array()
+            .context("claimed range has no token ids")?;
+        for id in range_ids {
+            let id = id.as_u64().context("claimed id is not an integer")?;
+            ids.push(u32::try_from(id).context("claimed id exceeds u32")?);
+        }
+    }
+    Ok(ids)
 }
 
 pub fn locate_divergence(
@@ -523,6 +597,8 @@ fn read_prepared_run(path: &Path) -> Result<PreparedRun> {
     serde_json::from_value(value).context("incompatible frozen ranked-BPE pieces")
 }
 
+/// A claim is recomputed from the challenger's own model, so the claimer's model
+/// files are neither needed nor trusted here.
 fn verify_prepared_run(prepared: &PreparedRun) -> Result<()> {
     if prepared.version != inference_artifacts::PREPARED_RUN_VERSION {
         bail!(
@@ -530,11 +606,6 @@ fn verify_prepared_run(prepared: &PreparedRun) -> Result<()> {
             prepared.version
         );
     }
-    verify_file_sha256(
-        &prepared.model_manifest_path,
-        &prepared.model_manifest_sha256,
-        "frozen model manifest",
-    )?;
     let manifest_path = prepared
         .run_manifest_path
         .as_ref()
@@ -543,72 +614,7 @@ fn verify_prepared_run(prepared: &PreparedRun) -> Result<()> {
         .run_manifest_sha256
         .as_ref()
         .ok_or_else(|| anyhow::anyhow!("prepared run has no run_manifest_sha256"))?;
-    verify_file_sha256(manifest_path, manifest_sha256, "frozen run manifest")?;
-    verify_prompt_ranges(prepared, manifest_path)
-}
-
-/// The frozen prompt pieces must be the split of the frozen rendered prompt,
-/// and a teacher-forced run's prompt ranges and tokenizer batch count the ones
-/// run preparation derives from them. All are deterministic in public data;
-/// recomputing them here keeps a claimer from choosing a different
-/// tokenization's inputs, or too few batches for `prompt_prepare` to finish.
-fn verify_prompt_ranges(prepared: &PreparedRun, manifest_path: &Path) -> Result<()> {
-    let model = inference_artifacts::ModelManifest::load_verified(&prepared.model_manifest_path)?;
-    let model_dir = prepared
-        .model_manifest_path
-        .parent()
-        .context("model manifest has no parent directory")?;
-    let tokenizer: serde_json::Value = inference_artifacts::read_json(&resolve_bundle_path(
-        model_dir,
-        &model.bundle.tokenizer_path,
-    ))?;
-    let pieces = run_prep::split_prompt(&prepared.prompt.rendered_prompt, &tokenizer)?;
-    if pieces != prepared.prompt.initial_pieces {
-        bail!("frozen prompt pieces are not the split of the frozen rendered prompt");
-    }
-    if prepared.chain != ChainKind::TeacherForced {
-        return Ok(());
-    }
-    let range_size = model.teacher_forced_range_size()? as usize;
-    let ranges = run_prep::prompt_ranges(
-        &pieces,
-        range_size,
-        &run_prep::vocabulary_pairs(&tokenizer)?,
-        &run_prep::prompt_tokenizer(&tokenizer)?,
-    )?;
-    let expected = run_prep::prompt_range_commitments(&ranges)?;
-    if bound_commitments(manifest_path, "prompt_pieces")? != expected {
-        bail!("frozen run manifest's prompt ranges are not the safe cuts of the frozen prompt in ranges of {range_size} tokens");
-    }
-    let repeats = run_prep::range_tokenizer_repeat_count(&ranges)?;
-    if tokenizer_batch_count(manifest_path)? != i64::from(repeats) {
-        bail!("frozen run manifest does not run {repeats} tokenizer batches per prompt range");
-    }
-    Ok(())
-}
-
-/// The count of the `prompt` repeat's tokenizer batch fan.
-fn tokenizer_batch_count(manifest_path: &Path) -> Result<i64> {
-    let manifest: toml::Value = toml::from_str(
-        &fs::read_to_string(manifest_path)
-            .with_context(|| format!("failed to read {}", manifest_path.display()))?,
-    )
-    .with_context(|| format!("failed to parse {}", manifest_path.display()))?;
-    manifest["chain"]["repeat"]
-        .as_array()
-        .and_then(|repeats| {
-            repeats
-                .iter()
-                .find(|repeat| repeat["name"].as_str() == Some("prompt"))
-        })
-        .and_then(|prompt| prompt["stage"].as_array())
-        .and_then(|stages| {
-            stages
-                .iter()
-                .find(|stage| stage.get("index").and_then(|index| index.as_str()) == Some("b"))
-        })
-        .and_then(|fan| fan["count"].as_integer())
-        .context("frozen run manifest has no tokenizer batch fan")
+    verify_file_sha256(manifest_path, manifest_sha256, "frozen run manifest")
 }
 
 /// The commitments an indexed `[chain.input.<name>]` table binds, in order.
@@ -630,52 +636,58 @@ fn bound_commitments(manifest_path: &Path, name: &str) -> Result<Vec<String>> {
 /// Why a claim whose every checkpoint matched is still rejected, if it is.
 ///
 /// With no divergent stage to dispute, a claim stands or falls on its own
-/// final record. Every rule here reads only that record and the frozen run
-/// manifest: the claim posts no output of its own to compare against.
+/// final record, in the order the chain established it: the prompt's
+/// preparation, then the checks, the verdict, and the output's budget and EOS
+/// rules. Every rule here reads only that record: a contract reading the same
+/// committed output reaches the same answer.
 ///
-/// The first rule is the verdict `sequence_check` commits. Honest execution
-/// over non-greedy claimed ids publishes a non-zero count; a claimer who
-/// wanted a clean count instead had to doctor a check stage, which diverges
+/// Honest execution over non-greedy claimed ids publishes a non-zero verdict; a
+/// claimer who wanted a clean one instead had to doctor a stage, which diverges
 /// and is replayed rather than reaching this point.
-///
-/// With a clean verdict the final ids are exactly the claimed ids the chain
-/// consumed, so the remaining rules apply to them: the token budget, and the
-/// cut into ranges of the model's range size. The cut bounds each check's
-/// replay cost; it is a shape rule, not what makes the output correct.
 pub(crate) fn claimed_output_rejection(
-    prepared: Option<&PreparedRun>,
-    manifest_path: &Path,
     final_result: Option<&inference_artifacts::InferenceResult>,
 ) -> Result<Option<String>> {
-    let Some(prepared) = prepared.filter(|prepared| prepared.chain == ChainKind::TeacherForced)
-    else {
-        return Ok(None);
-    };
-    let result = final_result.context(
-        "teacher-forced recomputation produced no final output to check the claim against",
-    )?;
+    let result =
+        final_result.context("recomputation produced no final output to check the claim against")?;
+    Ok(final_record_rejection(result))
+}
+
+fn final_record_rejection(result: &inference_artifacts::InferenceResult) -> Option<String> {
+    if result.prompt_fault != 0 {
+        return Some(format!(
+            "the prompt was not prepared correctly: {} (fault {}, at position {})",
+            run_prep::fault_description(result.prompt_fault),
+            result.prompt_fault,
+            result.prompt_fault_position
+        ));
+    }
+    if !result.prompt_complete {
+        return Some(String::from(
+            "the prompt was not prepared correctly: its ranges do not cover the whole prompt",
+        ));
+    }
+    if result.check_fault != 0 {
+        return Some(format!(
+            "the claimed output was not checked: {} (fault {}, at sequence position {})",
+            run_prep::check_fault_description(result.check_fault),
+            result.check_fault,
+            result.check_fault_position
+        ));
+    }
     if result.claim_mismatches > 0 {
-        return Ok(Some(format!(
+        return Some(format!(
             "claimed output is not the greedy continuation: the committed verdict counts {} claimed token(s) that differ from the greedy selection, the first at sequence position {}",
             result.claim_mismatches, result.first_claim_mismatch_position
-        )));
+        ));
     }
-    let ids = &result.generated_token_ids;
-    if let Err(error) =
-        run_prep::validate_claimed_length(ids, prepared.tokens, &prepared.prompt.eos_token_ids)
-    {
-        return Ok(Some(format!("{error:#}")));
+    if result.output_fault != 0 {
+        return Some(format!(
+            "the claimed output breaks the run's rules: {} (fault {})",
+            run_prep::output_fault_description(result.output_fault),
+            result.output_fault
+        ));
     }
-    let model = inference_artifacts::ModelManifest::load_verified(&prepared.model_manifest_path)?;
-    let range_size = model.teacher_forced_range_size()? as usize;
-    if bound_commitments(manifest_path, "claimed_ids")?
-        != run_prep::claimed_range_commitments(ids, range_size)?
-    {
-        return Ok(Some(format!(
-            "frozen run manifest does not bind the output ids in ranges of {range_size}"
-        )));
-    }
-    Ok(None)
+    None
 }
 
 fn resolve_bundle_path(base: &Path, path: &Path) -> PathBuf {
@@ -847,87 +859,6 @@ mod tests {
     }
 
     #[test]
-    fn challenge_checks_selected_and_frozen_model_before_execution() {
-        use crate::test_support::{model_fixture, run_spec};
-        use inference_artifacts::{file_sha256, read_json};
-        let base = temp_dir("model-selection");
-        let model_path = model_fixture(&base, "model-a");
-        model_fixture(&base, "model-b");
-        let run_spec_path = run_spec(&base, "model-a");
-        let prepared = crate::claim::prepare_claim_run(&crate::claim::ClaimBuildOptions {
-            base_dir: base.clone(),
-            run_spec_path: run_spec_path.clone(),
-            current_exe: PathBuf::from("unused"),
-            staged_backend: StagedExecutionBackend::InProcess,
-            claimed_token_ids: None,
-        })
-        .unwrap();
-        let context_path = prepared
-            .manifest_path
-            .parent()
-            .unwrap()
-            .join(inference_artifacts::PREPARED_RUN_JSON);
-        let frozen: PreparedRun = read_json(&context_path).unwrap();
-        let claimed = ClaimedInput {
-            checkpoints: ClaimedCheckpoints::Trace {
-                path: base.join("trace.json"),
-                trace: trace(Vec::new()),
-            },
-            prepared_run: Some(frozen.clone()),
-        };
-        let options = ChallengeBuildOptions {
-            base_dir: base.clone(),
-            run_spec_path: run_spec_path.clone(),
-            current_exe: PathBuf::from("unused"),
-            staged_backend: StagedExecutionBackend::InProcess,
-            input: ChallengeInput::Trace(base.join("trace.json")),
-        };
-        verify_prepared_run(&frozen).unwrap();
-        assert_eq!(
-            challenge_manifest_path(&options, &claimed).unwrap(),
-            prepared.manifest_path
-        );
-
-        // Current prompt/token edits must not change the claim's frozen run.
-        let spec = fs::read_to_string(&run_spec_path)
-            .unwrap()
-            .replace("tokens = 3", "tokens = 8")
-            .replace("prompt = \"h\"", "prompt = \"changed\"");
-        fs::write(&run_spec_path, spec).unwrap();
-        assert_eq!(
-            challenge_manifest_path(&options, &claimed).unwrap(),
-            prepared.manifest_path
-        );
-        assert_eq!(
-            file_sha256(&prepared.manifest_path).unwrap(),
-            frozen.run_manifest_sha256.unwrap()
-        );
-
-        run_spec(&base, "model-b");
-        assert!(challenge_manifest_path(&options, &claimed)
-            .unwrap_err()
-            .to_string()
-            .contains("does not match the claim"));
-        run_spec(&base, "model-a");
-        for (file, label) in [
-            ("model.detwgt", "model weights"),
-            ("config.json", "model config"),
-            ("tokenizer.json", "model tokenizer"),
-            ("Raster.toml", "Raster template"),
-        ] {
-            let path = model_path.parent().unwrap().join(file);
-            let original = fs::read(&path).unwrap();
-            fs::write(&path, "replaced").unwrap();
-            assert!(challenge_manifest_path(&options, &claimed)
-                .unwrap_err()
-                .to_string()
-                .contains(&format!("{label} hash mismatch")));
-            fs::write(path, original).unwrap();
-        }
-        fs::remove_dir_all(base).unwrap();
-    }
-
-    #[test]
     fn bare_trace_prepares_the_run_spec_model() {
         let base = temp_dir("trace-model");
         crate::test_support::model_fixture(&base, "selected");
@@ -946,10 +877,10 @@ mod tests {
             },
             prepared_run: None,
         };
-        let manifest = challenge_manifest_path(&options, &claimed).unwrap();
-        assert!(fs::read_to_string(manifest)
-            .unwrap()
-            .contains("name = \"selected\""));
+        // A bare trace has no claimed ids, so it discovers them from the run
+        // spec's model; this fixture has no weights to discover them with.
+        let error = challenge_run(&options, &claimed).err().unwrap();
+        assert!(format!("{error:#}").contains("direct inference"), "{error:#}");
         fs::remove_dir_all(base).unwrap();
     }
 
@@ -1132,6 +1063,8 @@ mod tests {
             run_spec_path: base.join("inference.toml"),
             model_manifest_path: model_manifest.clone(),
             model_manifest_sha256: format!("{:x}", sha2::Sha256::digest(b"model")),
+            model_id: String::from("model-id"),
+            raw_prompt: false,
             prompt: inference_artifacts::PreparedPrompt {
                 resolved_prompt: String::from("hello"),
                 rendered_prompt: String::from("hello"),
@@ -1144,7 +1077,6 @@ mod tests {
             tokens: 1,
             run_manifest_path: Some(run_manifest),
             run_manifest_sha256: Some(String::from("wrong")),
-            chain: Default::default(),
         };
 
         let error = verify_prepared_run(&prepared).unwrap_err();
@@ -1154,69 +1086,213 @@ mod tests {
     }
 
     #[test]
-    fn teacher_forced_claim_is_judged_by_its_committed_verdict() {
-        let prepared = |chain| PreparedRun {
-            version: inference_artifacts::PREPARED_RUN_VERSION,
-            run_spec_path: PathBuf::from("inference.toml"),
-            model_manifest_path: PathBuf::from("unread/manifest.json"),
-            model_manifest_sha256: String::from("unread"),
-            prompt: inference_artifacts::PreparedPrompt {
-                resolved_prompt: String::from("hello"),
-                rendered_prompt: String::from("hello"),
-                initial_pieces: Vec::new(),
-                eos_token_ids: vec![1],
+    fn a_claim_is_judged_by_its_final_record() {
+        let clean = inference_artifacts::InferenceResult {
+            prompt_complete: true,
+            ..Default::default()
+        };
+        let rejection = |result: inference_artifacts::InferenceResult| {
+            claimed_output_rejection(Some(&result)).unwrap()
+        };
+
+        assert_eq!(rejection(clean.clone()), None);
+
+        for (result, expected) in [
+            (
+                inference_artifacts::InferenceResult {
+                    prompt_fault: 4,
+                    prompt_fault_position: 7,
+                    ..clean.clone()
+                },
+                "a merge could cross",
+            ),
+            (
+                inference_artifacts::InferenceResult {
+                    prompt_complete: false,
+                    ..clean.clone()
+                },
+                "do not cover",
+            ),
+            (
+                inference_artifacts::InferenceResult {
+                    check_fault: 1,
+                    check_fault_position: 9,
+                    ..clean.clone()
+                },
+                "could not be scored",
+            ),
+            (
+                inference_artifacts::InferenceResult {
+                    claim_mismatches: 2,
+                    first_claim_mismatch_position: 9,
+                    ..clean.clone()
+                },
+                "counts 2 claimed token(s)",
+            ),
+            (
+                inference_artifacts::InferenceResult {
+                    output_fault: 3,
+                    ..clean.clone()
+                },
+                "without reaching EOS",
+            ),
+        ] {
+            let reason = rejection(result).expect("the record is not clean");
+            assert!(reason.contains(expected), "{reason}");
+        }
+
+        // A claim must have a final record to be judged by.
+        assert!(claimed_output_rejection(None).is_err());
+    }
+
+    fn teacher_forced_claim(base: &Path, model: &str, ids: Vec<u32>) -> PreparedRun {
+        let prepared = crate::claim::prepare_claim_run(&crate::claim::ClaimBuildOptions {
+            base_dir: base.to_path_buf(),
+            run_spec_path: crate::test_support::run_spec(base, model),
+            current_exe: PathBuf::from("unused"),
+            staged_backend: StagedExecutionBackend::InProcess,
+            claimed_token_ids: Some(ids),
+        })
+        .unwrap();
+        prepared.prepared_run
+    }
+
+    fn bound_external(manifest: &Path, stage: &str, parameter: &str) -> String {
+        let manifest: toml::Value =
+            toml::from_str(&fs::read_to_string(manifest).unwrap()).unwrap();
+        manifest["chain"]["stage"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|entry| entry["name"].as_str() == Some(stage))
+            .and_then(|entry| {
+                entry["inputs"][parameter]["external"]["commitment"]
+                    .as_str()
+                    .map(str::to_string)
+            })
+            .unwrap()
+    }
+
+    #[test]
+    fn a_challenger_rebuilds_a_claim_from_its_own_model_and_finds_the_input_that_differs() {
+        use crate::test_support::{model_fixture, run_spec};
+        let base = temp_dir("rebuild-other-model");
+        model_fixture(&base, "claimers-model");
+        let selected = model_fixture(&base, "challengers-model");
+        let frozen = teacher_forced_claim(&base, "claimers-model", vec![0, 0, 0]);
+        let frozen_manifest = frozen.run_manifest_path.clone().unwrap();
+        verify_prepared_run(&frozen).unwrap();
+
+        let run_spec_path = run_spec(&base, "challengers-model");
+        let claimed = ClaimedInput {
+            checkpoints: ClaimedCheckpoints::Trace {
+                path: base.join("trace.json"),
+                trace: trace(Vec::new()),
             },
-            tokens: 3,
-            run_manifest_path: None,
-            run_manifest_sha256: None,
-            chain,
+            prepared_run: Some(frozen.clone()),
         };
-        let result = |ids: Vec<u32>, claim_mismatches, first_claim_mismatch_position| {
-            inference_artifacts::InferenceResult {
-                generated_token_count: ids.len() as u32,
-                generated_token_ids: ids,
-                generated_token_ids_sha256: String::from("sha"),
-                generated_text: String::new(),
-                stop_reason: String::from("max_new_tokens"),
-                claim_mismatches,
-                first_claim_mismatch_position,
-            }
+        let options = ChallengeBuildOptions {
+            base_dir: base.clone(),
+            run_spec_path,
+            current_exe: PathBuf::from("unused"),
+            staged_backend: StagedExecutionBackend::InProcess,
+            input: ChallengeInput::Trace(base.join("trace.json")),
         };
-        let manifest = Path::new("unread/Raster.toml");
-        let teacher_forced = prepared(ChainKind::TeacherForced);
+        // The claimer's model files are not needed to challenge the claim.
+        fs::remove_dir_all(base.join("models/claimers-model")).unwrap();
+        verify_prepared_run(&frozen).unwrap();
 
-        // The committed verdict rejects the claim before anything is read
-        // from disk.
-        let reason = claimed_output_rejection(
-            Some(&teacher_forced),
-            manifest,
-            Some(&result(vec![5, 6, 7], 2, 9)),
-        )
-        .unwrap()
-        .unwrap();
-        assert!(reason.contains("counts 2 claimed token(s)"), "{reason}");
-        assert!(reason.contains("sequence position 9"), "{reason}");
-
-        // A clean verdict over a truncated output still breaks the budget.
-        let reason = claimed_output_rejection(
-            Some(&teacher_forced),
-            manifest,
-            Some(&result(vec![5, 6], 0, 0)),
-        )
-        .unwrap()
-        .unwrap();
-        assert!(reason.contains("does not end at EOS"), "{reason}");
-
-        // A teacher-forced claim must have a final record to be judged by.
-        assert!(claimed_output_rejection(Some(&teacher_forced), manifest, None).is_err());
-
-        // Autoregressive claims and bare traces carry no claimed ids.
-        let autoregressive = prepared(ChainKind::Autoregressive);
+        let (manifest, rebuilt) = challenge_run(&options, &claimed).unwrap();
+        let rebuilt = rebuilt.unwrap();
+        assert_ne!(manifest, frozen_manifest);
+        assert!(fs::read_to_string(&manifest)
+            .unwrap()
+            .contains("name = \"challengers-model\""));
         assert_eq!(
-            claimed_output_rejection(Some(&autoregressive), manifest, None).unwrap(),
-            None
+            fs::canonicalize(&rebuilt.model_manifest_path).unwrap(),
+            fs::canonicalize(&selected).unwrap()
         );
-        assert_eq!(claimed_output_rejection(None, manifest, None).unwrap(), None);
+        assert_ne!(rebuilt.model_id, frozen.model_id);
+
+        // Same text, so the first stage's text agrees; its configuration names
+        // a different model, so `prompt_bind`'s committed inputs differ.
+        assert_eq!(
+            bound_external(&manifest, "prompt_bind", "text"),
+            bound_external(&frozen_manifest, "prompt_bind", "text")
+        );
+        assert_ne!(
+            bound_external(&manifest, "prompt_bind", "config"),
+            bound_external(&frozen_manifest, "prompt_bind", "config")
+        );
+        // The claim's ids and its prompt carried over.
+        assert_eq!(rebuilt.prompt.resolved_prompt, frozen.prompt.resolved_prompt);
+        assert_eq!(rebuilt.tokens, frozen.tokens);
+        assert_eq!(
+            bound_commitments(&manifest, "claimed_ids").unwrap(),
+            bound_commitments(&frozen_manifest, "claimed_ids").unwrap()
+        );
+        fs::remove_dir_all(base).unwrap();
+    }
+
+    #[test]
+    fn a_challenger_on_the_same_model_rebuilds_the_same_committed_inputs() {
+        let base = temp_dir("rebuild-same-model");
+        crate::test_support::model_fixture(&base, "model");
+        let frozen = teacher_forced_claim(&base, "model", vec![0, 0, 0]);
+        let frozen_manifest = frozen.run_manifest_path.clone().unwrap();
+        let options = ChallengeBuildOptions {
+            base_dir: base.clone(),
+            run_spec_path: crate::test_support::run_spec(&base, "model"),
+            current_exe: PathBuf::from("unused"),
+            staged_backend: StagedExecutionBackend::InProcess,
+            input: ChallengeInput::Trace(base.join("trace.json")),
+        };
+        let claimed = ClaimedInput {
+            checkpoints: ClaimedCheckpoints::Trace {
+                path: base.join("trace.json"),
+                trace: trace(Vec::new()),
+            },
+            prepared_run: Some(frozen),
+        };
+        // The run spec's own prompt plays no part.
+        let spec = fs::read_to_string(&options.run_spec_path)
+            .unwrap()
+            .replace("prompt = \"h\"", "prompt = \"hh\"");
+        fs::write(&options.run_spec_path, spec).unwrap();
+        let (manifest, _) = challenge_run(&options, &claimed).unwrap();
+        for parameter in ["text", "config"] {
+            assert_eq!(
+                bound_external(&manifest, "prompt_bind", parameter),
+                bound_external(&frozen_manifest, "prompt_bind", parameter),
+            );
+        }
+        for input in ["prompt_cuts", "claimed_ids"] {
+            assert_eq!(
+                bound_commitments(&manifest, input).unwrap(),
+                bound_commitments(&frozen_manifest, input).unwrap(),
+            );
+        }
+        fs::remove_dir_all(base).unwrap();
+    }
+
+    #[test]
+    fn a_tampered_claimed_range_is_not_read_as_the_claim() {
+        let base = temp_dir("tampered-claimed");
+        crate::test_support::model_fixture(&base, "model");
+        let frozen = teacher_forced_claim(&base, "model", vec![0, 0, 0]);
+        let manifest = frozen.run_manifest_path.unwrap();
+        assert_eq!(frozen_claimed_ids(&manifest).unwrap(), [0, 0, 0]);
+        let claimed = manifest.parent().unwrap().join("prompt/claimed_0.rastered");
+        let other = manifest.parent().unwrap().join("other");
+        let file =
+            run_prep::write_claimed_ranges(&[0, 0, 1], 4, &other).unwrap().remove(0);
+        fs::copy(&file.path, &claimed).unwrap();
+        fs::copy(&file.index_path, claimed.with_extension("rindex")).unwrap();
+        assert!(frozen_claimed_ids(&manifest)
+            .unwrap_err()
+            .to_string()
+            .contains("is not the claimed range"));
+        fs::remove_dir_all(base).unwrap();
     }
 
     fn trace(checkpoints: Vec<Checkpoint>) -> CheckpointTrace {

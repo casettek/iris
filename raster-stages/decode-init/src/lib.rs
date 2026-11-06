@@ -11,7 +11,7 @@ pub mod input;
 use input::*;
 
 /// Sets every scalar field on the empty edge. The token list stays empty until
-/// the first `decode-select-token` stage appends to it.
+/// the first `sequence-check` stage appends to it.
 #[tile(kind = iter, description = "Initialize an empty decode transcript")]
 pub fn initialize_decode_edge() -> Draft<DecodeEdge> {
     let mut output = Draft::<DecodeEdge>::new();
@@ -23,5 +23,7 @@ pub fn initialize_decode_edge() -> Draft<DecodeEdge> {
     // the verdict the first teacher-forced check accumulates onto.
     output.claim_mismatches().set(0);
     output.first_claim_mismatch_position().set(0);
+    output.check_fault().set(0);
+    output.check_fault_position().set(0);
     output
 }

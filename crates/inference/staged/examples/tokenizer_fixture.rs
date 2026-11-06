@@ -46,6 +46,7 @@ fn main() -> Result<()> {
             })
             .collect::<Vec<_>>()
             .into(),
+        ..Default::default()
     };
     let tok = raster::write_raster_files(
         &table,

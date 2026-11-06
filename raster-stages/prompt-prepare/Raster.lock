@@ -1,54 +1,58 @@
 {
   "format": 1,
-  "program_commitment": "29b42ba15b05a9a8b26d9b7d31b6fe99a943e9767c8f438525f0619033d51cf8",
+  "program_commitment": "1135ba00437cb182047535f39f42c6e8eee183ebadffbb75ec7a5ee708609c5a",
   "tiles": {
     "append_token_id": {
-      "image_id": "34f7c35a6f4d6132ca440bddd564df61b21ccbd7a437c49354703c3e51d82bc8",
-      "source_hash": "e392756a41a4d0850000000000000dd9"
-    },
-    "assert_merges_converged": {
-      "image_id": "832d21e02ce6f2caabdc824569801dc5f51d64fa7881712b56f9b28983f90351",
-      "source_hash": "e392756a41a4d0850000000000000dd9"
+      "image_id": "9d0a94e7665aa61adee5212ac26f0aedc9833c2e255daecb47f1add692667cc6",
+      "source_hash": "78696580d50351220000000000000fb6"
     },
     "begin_ranked_step": {
-      "image_id": "6ede225c57af1baf7f09cd8ddb4bf887bc2104ba7d33440bd00079df91d0b692",
-      "source_hash": "e392756a41a4d0850000000000000dd9"
+      "image_id": "4cfd4024cbef0b77661cff550709484f7c888ae7a476c54c977853483671b9d6",
+      "source_hash": "78696580d50351220000000000000fb6"
     },
     "begin_vocab_lookup": {
-      "image_id": "b5c0b6530d404cbedf411fe4b099c75ae67dcdd040b046a54a1a7d2f070ab50e",
-      "source_hash": "e392756a41a4d0850000000000000dd9"
+      "image_id": "afe45f9976f0a234ed66ba95ecc2594abd436fe85bfb9ec731af495d4d3bc493",
+      "source_hash": "78696580d50351220000000000000fb6"
     },
     "empty_merge_match": {
-      "image_id": "a2185a362fae433c53ebfa3313bc3f0e52ace842229b4b17edc16499c7875809",
-      "source_hash": "e392756a41a4d0850000000000000dd9"
+      "image_id": "736c5e2897d022c16e444a2f0005cc483d22fbb08b971186c43b39b003ed0ca5",
+      "source_hash": "78696580d50351220000000000000fb6"
     },
     "empty_merge_scan": {
-      "image_id": "4dfdc50fe47e53e02575f048a00ffd17063f1e169a955ec5faee0cfc7c25c760",
-      "source_hash": "e392756a41a4d0850000000000000dd9"
+      "image_id": "4517ffe1493059e5718c0fcc101547524cfd48b9ead9d20a57cf4da6705bb197",
+      "source_hash": "78696580d50351220000000000000fb6"
     },
     "empty_vocab_match": {
-      "image_id": "10d1fd07ce86c06831dee00cafd743d8814eedc5ce22915d3095e6f410d0e72d",
-      "source_hash": "e392756a41a4d0850000000000000dd9"
+      "image_id": "d20e02223f23272cd74c656405c753923174126733f6c1f4eb6dfac46352d512",
+      "source_hash": "78696580d50351220000000000000fb6"
     },
     "finish_ranked_step": {
-      "image_id": "ce657aa674bb7d4d14fd50b826a488bd693f760efc594d3432e98474652fb1bb",
-      "source_hash": "e392756a41a4d0850000000000000dd9"
+      "image_id": "102cd3da81b4d414813c12a3200fa40f546240cce874fbb7c671dfc3bb1fe858",
+      "source_hash": "78696580d50351220000000000000fb6"
+    },
+    "finish_tokens": {
+      "image_id": "f7eb0ba8eaf06c511f39a5b8b92919c8b25d123bc495a677ff5585d1a3c5a621",
+      "source_hash": "78696580d50351220000000000000fb6"
     },
     "merge_bucket_index": {
-      "image_id": "0ad9beb8ac4466b289a98c11687a918982c72040e1c1c73e8de40b53624f5125",
-      "source_hash": "e392756a41a4d0850000000000000dd9"
+      "image_id": "81ecbd2facd3af4f8f15df6f84e042343a3135df5d7211820d341d4418cde4e7",
+      "source_hash": "78696580d50351220000000000000fb6"
+    },
+    "open_tokens": {
+      "image_id": "c7cb913fcec5327e0ca6414cb46fb245ea1cb641970b96e97a24c56e43e7d766",
+      "source_hash": "78696580d50351220000000000000fb6"
     },
     "scan_merge_rules": {
-      "image_id": "e2d0558f43f4ffc278b1749fad66d0054c1a156184cd5b461bbc8ff74a123db3",
-      "source_hash": "e392756a41a4d0850000000000000dd9"
+      "image_id": "7e1df3d6650a807ace5f1ff54723126f11e24004378703ff50071281d7bc0351",
+      "source_hash": "78696580d50351220000000000000fb6"
     },
     "scan_vocab_chunk": {
-      "image_id": "ce5e8f8e158a6a730e4271df52995c65e8a8cfe69e00f69469b6be0ccc95792b",
-      "source_hash": "e392756a41a4d0850000000000000dd9"
+      "image_id": "97a9508e831c02eddbf6131df8313fb24cdf018a78f116598e475388d9a03e92",
+      "source_hash": "78696580d50351220000000000000fb6"
     },
     "vocab_bucket_index": {
-      "image_id": "5a6dda26f4e39120be071280cbc4602decf30662324eed604e9f909f7a40076b",
-      "source_hash": "e392756a41a4d0850000000000000dd9"
+      "image_id": "4d7ef63d1cd1fe4879b93ccf6f51d87524cb91e1bb62d40857ab1e69b9b3ca3c",
+      "source_hash": "78696580d50351220000000000000fb6"
     }
   },
   "toolchain": {

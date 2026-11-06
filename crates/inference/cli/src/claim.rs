@@ -13,8 +13,8 @@ use staged_infer::{
 use inference_artifacts::{
     file_sha256 as sha256_file, read_checkpoint_hashes, read_checkpoint_trace, read_json,
     read_run_spec, write_checkpoint_hashes, write_claim_artifacts_with_prepared_run, write_json,
-    ChainKind, InferenceResult, ModelManifest, PreparedRun, CHECKPOINT_TRACE_JSON,
-    PREPARED_RUN_JSON,
+    InferenceResult, InferenceRunSpec, ModelManifest, PreparedRun,
+    CHECKPOINT_TRACE_JSON, PREPARED_RUN_JSON,
 };
 use serde::Serialize;
 use sha2::{Digest, Sha256};
@@ -25,19 +25,19 @@ pub struct ClaimBuildOptions {
     pub run_spec_path: PathBuf,
     pub current_exe: PathBuf,
     pub staged_backend: StagedExecutionBackend,
-    /// Debug-only: post these output ids in a teacher-forced claim instead of
-    /// discovering them with direct inference. Used to build claims whose
-    /// tokens are not the greedy continuation.
+    /// Debug-only: post these output ids instead of discovering them with direct
+    /// inference. Used to build claims whose tokens are not the greedy
+    /// continuation.
     pub claimed_token_ids: Option<Vec<u32>>,
 }
 
 pub(crate) struct PreparedClaimRun {
     pub(crate) prepared_run: PreparedRun,
     pub(crate) manifest_path: PathBuf,
-    /// The ids written into a teacher-forced run's `claimed_ids` externals.
-    /// Kept for the claimer's own tooling only: the claim posts no copy of
-    /// them, because its output is the chain's final record.
-    pub(crate) claimed_token_ids: Option<Vec<u32>>,
+    /// The ids written into the run's `claimed_ids` externals. Kept for the
+    /// claimer's own tooling only: the claim posts no copy of them, because its
+    /// output is the chain's final record.
+    pub(crate) claimed_token_ids: Vec<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -101,21 +101,15 @@ pub fn build_claim(options: ClaimBuildOptions) -> Result<ClaimBuildResult> {
     })?;
     // A claimer applies the rule a challenger will: the claim is judged by
     // its own final record.
-    if prepared.prepared_run.chain == ChainKind::TeacherForced {
-        if let Some(reason) = crate::challenge::claimed_output_rejection(
-            Some(&prepared.prepared_run),
-            &prepared.manifest_path,
-            checkpointed.final_result.as_ref(),
-        )? {
-            if options.claimed_token_ids.is_none() {
-                // The ids came from direct decode, so the two paths are not
-                // bit-identical: an honest claimer would convict itself.
-                anyhow::bail!("{reason}; direct and teacher-forced inference are not in parity");
-            }
-            eprintln!(
-                "warning: {reason}; writing the claim anyway because --claimed-ids was given"
-            );
+    if let Some(reason) =
+        crate::challenge::claimed_output_rejection(checkpointed.final_result.as_ref())?
+    {
+        if options.claimed_token_ids.is_none() {
+            // The ids came from direct decode, so the two paths are not
+            // bit-identical: an honest claimer would convict itself.
+            anyhow::bail!("{reason}; direct and teacher-forced inference are not in parity");
         }
+        eprintln!("warning: {reason}; writing the claim anyway because --claimed-ids was given");
     }
     write_claim_result(
         checkpointed,
@@ -225,90 +219,92 @@ impl ClaimBuildOptions {
 pub(crate) fn prepare_claim_run(options: &ClaimBuildOptions) -> Result<PreparedClaimRun> {
     let run_spec_path = absolute(&options.base_dir, &options.run_spec_path);
     let run_spec = read_run_spec(&run_spec_path)?;
+    prepare_run(options, run_spec_path, &run_spec, true)
+}
+
+/// Prepares a run from a spec a claim already fixed, as a challenger does.
+///
+/// The ids are not held to the run's token budget here. A claim that breaks the
+/// budget still has a chain to recompute, and is rejected on its final record.
+pub(crate) fn prepare_challenge_run(
+    options: &ClaimBuildOptions,
+    run_spec: &InferenceRunSpec,
+) -> Result<PreparedClaimRun> {
+    let run_spec_path = absolute(&options.base_dir, &options.run_spec_path);
+    prepare_run(options, run_spec_path, run_spec, false)
+}
+
+fn prepare_run(
+    options: &ClaimBuildOptions,
+    run_spec_path: PathBuf,
+    run_spec: &InferenceRunSpec,
+    check_claimed_length: bool,
+) -> Result<PreparedClaimRun> {
     let run_spec_dir = run_spec_path
         .parent()
         .ok_or_else(|| anyhow::anyhow!("run spec has no parent directory"))?;
     let model_manifest_path = absolute(run_spec_dir, &run_spec.model_manifest);
     let model_manifest = ModelManifest::load_verified(&model_manifest_path)?;
     let (template_path, template) =
-        model_manifest.verified_chain_template(&model_manifest_path, run_spec.chain)?;
+        model_manifest.verified_raster_template(&model_manifest_path)?;
     let model_manifest_dir = model_manifest_path
         .parent()
         .ok_or_else(|| anyhow::anyhow!("model manifest has no parent directory"))?;
     let tokenizer_path = absolute(model_manifest_dir, &model_manifest.bundle.tokenizer_path);
     let tokenizer: serde_json::Value = read_json(&tokenizer_path)?;
-    let prompt = run_prep::prepare_prompt(&tokenizer, run_spec_dir, &run_spec, &model_manifest)?;
+    let prompt = run_prep::prepare_prompt(&tokenizer, run_spec_dir, run_spec, &model_manifest)?;
 
     let run_dir = options
         .base_dir
         .join("target")
         .join("iris")
         .join("runs")
-        .join(run_id(
-            &run_spec_path,
-            &prompt.rendered_prompt,
-            run_spec.tokens,
-            run_spec.chain,
-        ));
+        .join(run_id(&run_spec_path, &prompt.rendered_prompt, run_spec.tokens));
     let prompt_dir = run_dir.join("prompt");
-    let (pieces_path, pieces_index_path, pieces_commitment) =
-        run_prep::write_initial_pieces(&prompt, &prompt_dir)?;
-    let claimed = match run_spec.chain {
-        ChainKind::Autoregressive => {
-            if options.claimed_token_ids.is_some() {
-                anyhow::bail!("--claimed-ids requires a run spec with chain = \"teacher-forced\"");
-            }
-            None
-        }
-        ChainKind::TeacherForced => {
-            let ids = match &options.claimed_token_ids {
-                Some(ids) => ids.clone(),
-                // Discovery is the only autoregression left: the claim posts
-                // what direct decode produced and the chain checks it.
-                None => {
-                    DirectInferenceExecutor
-                        .run(DirectInferenceConfig {
-                            base_dir: options.base_dir.clone(),
-                            run_spec_path: run_spec_path.clone(),
-                        })
-                        .context("direct inference to discover the claimed output failed")?
-                        .generated_token_ids
-                }
-            };
-            run_prep::validate_claimed_length(&ids, run_spec.tokens, &prompt.eos_token_ids)?;
-            let range_size = model_manifest.teacher_forced_range_size()? as usize;
-            let ranges = run_prep::prompt_ranges(
-                &prompt.initial_pieces,
-                range_size,
-                &run_prep::vocabulary_pairs(&tokenizer)?,
-                &run_prep::prompt_tokenizer(&tokenizer)?,
-            )?;
-            let prompt_files = run_prep::write_prompt_ranges(&ranges, &prompt_dir)?;
-            let claimed_files = run_prep::write_claimed_ranges(&ids, range_size, &prompt_dir)?;
-            let merge_repeats = run_prep::range_tokenizer_repeat_count(&ranges)?;
-            Some((ids, prompt_files, claimed_files, merge_repeats))
+    let ids = match &options.claimed_token_ids {
+        Some(ids) => ids.clone(),
+        // Discovery is the only autoregression left: the claim posts what
+        // direct decode produced and the chain checks it.
+        None => {
+            DirectInferenceExecutor
+                .run(DirectInferenceConfig {
+                    base_dir: options.base_dir.clone(),
+                    run_spec_path: run_spec_path.clone(),
+                })
+                .context("direct inference to discover the claimed output failed")?
+                .generated_token_ids
         }
     };
-
+    if check_claimed_length {
+        run_prep::validate_claimed_length(&ids, run_spec.tokens, &prompt.eos_token_ids)?;
+    }
+    let range_size = model_manifest.range_size;
+    let ranges = run_prep::prompt_ranges(
+        &prompt.initial_pieces,
+        range_size as usize,
+        &run_prep::vocabulary_pairs(&tokenizer)?,
+        &run_prep::prompt_tokenizer(&tokenizer)?,
+    )?;
     let template_dir = template_path
         .parent()
         .ok_or_else(|| anyhow::anyhow!("manifest template has no parent directory"))?;
-    let run_manifest = match &claimed {
-        Some((_, prompt_files, claimed_files, merge_repeats)) => render_ranged_manifest(
-            &template,
-            template_dir,
-            prompt_files,
-            claimed_files,
-            *merge_repeats,
+    let run_manifest = render_ranged_manifest(
+        &template,
+        template_dir,
+        &run_prep::write_prompt_text(&prompt.resolved_prompt, &prompt_dir)?,
+        &run_prep::write_run_config(
+            &run_prep::RunConfig {
+                model_id: model_manifest.model_id.clone(),
+                raw_prompt: run_spec.raw_prompt,
+                max_new_tokens: run_spec.tokens,
+                range_size,
+            },
+            &prompt_dir,
         )?,
-        None => render_run_manifest(
-            &template,
-            template_dir,
-            &RunExternal::new(&pieces_path, &pieces_index_path, &pieces_commitment),
-            run_spec.tokens,
-            run_prep::tokenizer_repeat_count(prompt.initial_pieces.len())?,
-        )?,
-    };
+        &run_prep::write_range_cuts(&ranges, &prompt_dir)?,
+        &run_prep::write_claimed_ranges(&ids, range_size as usize, &prompt_dir)?,
+        run_prep::range_tokenizer_repeat_count(&ranges)?,
+    )?;
     let manifest_path = run_dir.join("Raster.toml");
     fs::create_dir_all(&run_dir)
         .with_context(|| format!("failed to create {}", run_dir.display()))?;
@@ -320,44 +316,47 @@ pub(crate) fn prepare_claim_run(options: &ClaimBuildOptions) -> Result<PreparedC
         run_spec_path,
         model_manifest_path: model_manifest_path.clone(),
         model_manifest_sha256: sha256_file(&model_manifest_path)?,
+        model_id: model_manifest.model_id.clone(),
         prompt,
+        raw_prompt: run_spec.raw_prompt,
         tokens: run_spec.tokens,
         run_manifest_path: Some(manifest_path.clone()),
         run_manifest_sha256: Some(run_manifest_sha256),
-        chain: run_spec.chain,
     };
     write_json(&run_dir.join(PREPARED_RUN_JSON), &prepared_run)?;
 
     Ok(PreparedClaimRun {
         prepared_run,
         manifest_path,
-        claimed_token_ids: claimed.map(|(ids, ..)| ids),
+        claimed_token_ids: ids,
     })
 }
 
 /// Where model templates point run-specific externals until a run fills them.
 const RUN_PLACEHOLDER_DIR: &str = "target/iris/run-prompt-placeholder/";
 
-/// Marks where the teacher-forced template names the last prompt range.
+/// Marks where the template names the last prompt range.
 const LAST_PROMPT_RANGE: &str = "@LAST_PROMPT_RANGE@";
 
-/// Marks where the teacher-forced template names each range's last tokenizer
-/// batch.
+/// Marks where the template names each range's last tokenizer batch.
 const LAST_MERGE_BATCH: &str = "@LAST_MERGE_BATCH@";
 
-/// Fills the teacher-forced template for one run: the range counts, the last
-/// prompt range's index, the tokenizer batches after each range's seed, and
-/// each range's committed pieces or claimed ids.
+/// Fills the template for one run: the original text and the
+/// configuration, the range counts, the last prompt range's index, the
+/// tokenizer batches after each range's seed, and each range's committed cut or
+/// claimed ids.
 pub(crate) fn render_ranged_manifest(
     template: &str,
     template_dir: &Path,
+    text: &run_prep::RunFile,
+    config: &run_prep::RunFile,
     prompt: &[run_prep::RunFile],
     claimed: &[run_prep::RunFile],
     merge_repeats: u32,
 ) -> Result<String> {
     anyhow::ensure!(
         !prompt.is_empty() && !claimed.is_empty(),
-        "a teacher-forced run needs at least one prompt range and one claimed range"
+        "a run needs at least one prompt range and one claimed range"
     );
     anyhow::ensure!(
         merge_repeats > 0,
@@ -370,8 +369,9 @@ pub(crate) fn render_ranged_manifest(
     let mut name = String::new();
     let mut fan_index = String::new();
     // Prompt repeats, claimed repeats, prompt externals, claimed externals,
-    // per-layer prompt fans, per-layer claimed fans, tokenizer batch fans.
-    let mut replaced = [0_usize; 7];
+    // per-layer prompt fans, per-layer claimed fans, tokenizer batch fans,
+    // text bindings, configuration bindings.
+    let mut replaced = [0_usize; 9];
     let mut out = Vec::new();
     for line in template.lines() {
         let trimmed = line.trim();
@@ -394,8 +394,24 @@ pub(crate) fn render_ranged_manifest(
                 .context("invalid repeat index")?
                 .to_string();
         }
+        if table == "[[chain.stage]]" && name == "prompt_bind" {
+            let binding = if trimmed.starts_with("inputs.text =") {
+                Some(("text", text, 7))
+            } else if trimmed.starts_with("inputs.config =") {
+                Some(("config", config, 8))
+            } else {
+                None
+            };
+            if let Some((param, file, slot)) = binding {
+                replaced[slot] += 1;
+                out.push(
+                    RunExternal::new(&file.path, &file.index_path, &file.commitment).binding(param),
+                );
+                continue;
+            }
+        }
         let files = match table.as_str() {
-            "[chain.input.prompt_pieces]" => Some((prompt, 2)),
+            "[chain.input.prompt_cuts]" => Some((prompt, 2)),
             "[chain.input.claimed_ids]" => Some((claimed, 3)),
             _ => None,
         };
@@ -404,13 +420,13 @@ pub(crate) fn render_ranged_manifest(
                 .into_iter()
                 .find(|key| trimmed.starts_with(&format!("{key} =")))
             {
-                // Keep the indexed file name (`pieces_{j}.rastered`), move it
+                // Keep the indexed file name (`cut_{j}.rastered`), move it
                 // from the placeholder directory to this run's.
                 let value: toml::Value = toml::from_str(trimmed)?;
                 let placeholder = value[key].as_str().context("invalid input path")?;
                 anyhow::ensure!(
                     placeholder.contains(RUN_PLACEHOLDER_DIR),
-                    "teacher-forced input path {placeholder} is not a run placeholder"
+                    "input path {placeholder} is not a run placeholder"
                 );
                 let file_name = Path::new(placeholder)
                     .file_name()
@@ -438,7 +454,7 @@ pub(crate) fn render_ranged_manifest(
                 "claimed_embed" | "claimed" => Some((1, claimed.len())),
                 // Layer blocks keep their model-fixed counts.
                 "layers" | "shared_layers" => None,
-                other => anyhow::bail!("unexpected repeat `{other}` in teacher-forced template"),
+                other => anyhow::bail!("unexpected repeat `{other}` in chain template"),
             };
             if let Some((slot, count)) = range_count {
                 replaced[slot] += 1;
@@ -469,8 +485,9 @@ pub(crate) fn render_ranged_manifest(
         || replaced[4] == 0
         || replaced[4] != replaced[5]
         || replaced[6] != 1
+        || replaced[7..] != [1, 1]
     {
-        anyhow::bail!("incompatible teacher-forced template: expected [prompt repeats, claimed repeats, prompt commitments, claimed commitments] = [1, 2, 1, 1], matching per-layer range fans and one tokenizer batch fan; found {replaced:?}");
+        anyhow::bail!("incompatible chain template: expected [prompt repeats, claimed repeats, prompt commitments, claimed commitments] = [1, 2, 1, 1], matching per-layer range fans, one tokenizer batch fan and one text and one configuration binding; found {replaced:?}");
     }
     out.push(String::new());
     Ok(out.join("\n"))
@@ -493,68 +510,12 @@ impl<'a> RunExternal<'a> {
         }
     }
 
-    fn binding(&self, param: &str) -> String {
+    pub(crate) fn binding(&self, param: &str) -> String {
         format!(
             "inputs.{param} = {{ external = {{ path = {:?}, index_path = {:?}, commitment = {:?} }} }}",
             self.path, self.index_path, self.commitment,
         )
     }
-}
-
-/// Fills the autoregressive template for one run: the prompt's pieces, the
-/// decode count, and the tokenizer repeat count.
-pub(crate) fn render_run_manifest(
-    template: &str,
-    template_dir: &Path,
-    pieces: &RunExternal<'_>,
-    tokens: u32,
-    tokenizer_repeats: u32,
-) -> Result<String> {
-    let pieces_line = pieces.binding("initial_pieces");
-    let template = inference_artifacts::resolve_raster_manifest_paths(template, template_dir)?;
-    let mut table = "";
-    let mut name = String::new();
-    // Seed binding, decode count, tokenize count.
-    let mut replaced = [0_usize; 3];
-    let mut out = Vec::new();
-    for line in template.lines() {
-        let trimmed = line.trim();
-        if trimmed.starts_with('[') {
-            table = match trimmed {
-                "[[chain.repeat]]" => "repeat",
-                "[[chain.stage]]" => "stage",
-                _ => "",
-            };
-            name.clear();
-        }
-        if trimmed.starts_with("name =") {
-            let value: toml::Value = toml::from_str(trimmed)?;
-            name = value["name"]
-                .as_str()
-                .context("invalid stage/repeat name")?
-                .to_string();
-        }
-        if table == "stage"
-            && name == "prompt_merge_seed"
-            && trimmed.starts_with("inputs.initial_pieces =")
-        {
-            replaced[0] += 1;
-            out.push(pieces_line.clone());
-        } else if table == "repeat" && trimmed.starts_with("count =") && name == "tokenize" {
-            replaced[2] += 1;
-            out.push(format!("count = {tokenizer_repeats}"));
-        } else if table == "repeat" && trimmed.starts_with("count =") && name == "decode" {
-            replaced[1] += 1;
-            out.push(format!("count = {tokens}"));
-        } else {
-            out.push(line.to_string());
-        }
-    }
-    if replaced != [1, 1, 1] {
-        anyhow::bail!("incompatible manifest template: expected one seed prompt binding and named decode/tokenize counts; found {replaced:?}");
-    }
-    out.push(String::new());
-    Ok(out.join("\n"))
 }
 
 fn absolute(base: &Path, path: &Path) -> PathBuf {
@@ -642,17 +603,16 @@ fn default_corrupted_hashes_path(source: &Path) -> PathBuf {
     source.with_file_name("checkpoints.corrupt.txt")
 }
 
-fn run_id(run_spec_path: &Path, rendered_prompt: &str, tokens: u32, chain: ChainKind) -> String {
+fn run_id(run_spec_path: &Path, rendered_prompt: &str, tokens: u32) -> String {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_nanos();
     let digest = Sha256::digest(format!(
-        "{}\0{}\0{}\0{:?}\0{}",
+        "{}\0{}\0{}\0{}",
         run_spec_path.display(),
         rendered_prompt,
         tokens,
-        chain,
         nanos
     ));
     hex::encode(digest)[..16].to_string()
@@ -701,13 +661,13 @@ mod tests {
             run_spec_path: run_spec(&base, "model-b"),
             current_exe: PathBuf::from("unused"),
             staged_backend: StagedExecutionBackend::InProcess,
-            claimed_token_ids: None,
+            claimed_token_ids: Some(vec![0, 0, 0]),
         };
         let prepared = prepare_claim_run(&options).unwrap();
         let rendered = fs::read_to_string(&prepared.manifest_path).unwrap();
         assert!(rendered.contains("name = \"model-b\""));
-        assert!(rendered.contains("count = 3"));
         assert!(!rendered.contains("model-a"));
+        assert_eq!(prepared.claimed_token_ids, [0, 0, 0]);
         assert_eq!(
             fs::canonicalize(&prepared.prepared_run.model_manifest_path).unwrap(),
             fs::canonicalize(&model_path).unwrap()
@@ -767,6 +727,8 @@ mod tests {
                 run_spec_path: base.join("inference.toml"),
                 model_manifest_path: base.join("model-artifacts/manifest.json"),
                 model_manifest_sha256: String::from("model-sha"),
+                model_id: String::from("model-id"),
+                raw_prompt: false,
                 prompt: inference_artifacts::PreparedPrompt {
                     resolved_prompt: String::from("hello"),
                     rendered_prompt: String::from("hello"),
@@ -779,7 +741,6 @@ mod tests {
                 tokens: 1,
                 run_manifest_path: Some(manifest_path.clone()),
                 run_manifest_sha256: Some(String::from("run-sha")),
-                chain: Default::default(),
             },
         )
         .unwrap();
@@ -876,80 +837,14 @@ mod tests {
     }
 
     #[test]
-    fn run_manifest_replaces_prompt_artifact_and_decode_count() {
-        let template = r#"[chain]
-name = "test"
-
-[chain.input.weights]
-index = "l"
-path = "runtime/weights/layer{l}.rastered"
-index_path = "runtime/weights/layer{l}.rindex"
-commitments = ["abc"]
-
-[[chain.stage]]
-name = "prompt_merge_seed"
-project = "raster-stages/prompt-prepare"
-inputs.tokenizer = { external = { path = "tokenizer.rastered", index_path = "tokenizer.rindex", commitment = "tok" } }
-inputs.initial_pieces = { external = { path = "old.rastered", index_path = "old.rindex", commitment = "old" } }
-
-[[chain.repeat]]
-name = "tokenize"
-index = "b"
-count = 99
-[[chain.repeat.stage]]
-name = "prompt_merge_b{b}"
-project = "raster-stages/prompt-merge"
-inputs.initial_pieces = { from = "prompt_merge_b{b-1}", first = "prompt_merge_seed" }
-
-[[chain.repeat]]
-name = "decode"
-index = "t"
-count = 1
-
-  [[chain.repeat.stage]]
-name = "decode_select_t{t}"
-project = "raster-stages/decode-select-token"
-"#;
-
-        let pieces = RunExternal::new(
-            Path::new("/tmp/run/prompt/initial_pieces.rastered"),
-            Path::new("/tmp/run/prompt/initial_pieces.rindex"),
-            "abc",
-        );
-        let manifest = render_run_manifest(
-            template,
-            Path::new("/repo"),
-            &pieces,
-            7,
-            0,
-        )
-        .unwrap();
-
-        assert!(manifest.contains("path = \"/tmp/run/prompt/initial_pieces.rastered\""));
-        assert!(manifest.contains("commitment = \"abc\""));
-        assert!(manifest.contains("count = 7"));
-        assert!(manifest.contains("count = 0"));
-        assert!(!manifest.contains("count = 99"));
-        assert!(manifest.contains("project = \"/repo/raster-stages/prompt-prepare\""));
-        assert!(manifest.contains("project = \"/repo/raster-stages/decode-select-token\""));
-        assert!(manifest.contains("path = \"/repo/tokenizer.rastered\""));
-        assert!(manifest.contains("index_path = \"/repo/tokenizer.rindex\""));
-        assert!(manifest.contains("path = \"/repo/runtime/weights/layer{l}.rastered\""));
-        assert!(manifest.contains("index_path = \"/repo/runtime/weights/layer{l}.rindex\""));
-        assert!(!manifest.contains("old.rastered"));
-        assert_eq!(manifest.matches("inputs.initial_pieces =").count(), 2);
-
-    }
-
-    #[test]
     fn ranged_manifest_fills_counts_inputs_and_last_prompt_range() {
         let template = r#"[chain]
 name = "iris"
 
-[chain.input.prompt_pieces]
+[chain.input.prompt_cuts]
 index = "j"
-path = "/repo/target/iris/run-prompt-placeholder/pieces_{j}.rastered"
-index_path = "/repo/target/iris/run-prompt-placeholder/pieces_{j}.rindex"
+path = "/repo/target/iris/run-prompt-placeholder/cut_{j}.rastered"
+index_path = "/repo/target/iris/run-prompt-placeholder/cut_{j}.rindex"
 commitments = []
 
 [chain.input.claimed_ids]
@@ -957,6 +852,11 @@ index = "k"
 path = "/repo/target/iris/run-prompt-placeholder/claimed_{k}.rastered"
 index_path = "/repo/target/iris/run-prompt-placeholder/claimed_{k}.rindex"
 commitments = []
+
+[[chain.stage]]
+name = "prompt_bind"
+inputs.text = { external = { path = "/repo/target/iris/run-prompt-placeholder/text.rastered", index_path = "/repo/target/iris/run-prompt-placeholder/text.rindex", commitment = "0" } }
+inputs.config = { external = { path = "/repo/target/iris/run-prompt-placeholder/config.rastered", index_path = "/repo/target/iris/run-prompt-placeholder/config.rindex", commitment = "0" } }
 
 [[chain.repeat]]
 name = "prompt"
@@ -1007,22 +907,34 @@ count = 0
             index_path: PathBuf::from(format!("/tmp/run/prompt/{name}.rindex")),
             commitment: commitment.into(),
         };
-        let prompt = [file("pieces_0", "a0"), file("pieces_1", "a1"), file("pieces_2", "a2")];
+        let text = file("text", "t0");
+        let config = file("config", "g0");
+        let prompt = [file("cut_0", "a0"), file("cut_1", "a1"), file("cut_2", "a2")];
         let claimed = [file("claimed_0", "c0")];
-        let manifest =
-            render_ranged_manifest(template, Path::new("/repo"), &prompt, &claimed, 5).unwrap();
+        let render = |claimed: &[run_prep::RunFile], merge_repeats| {
+            render_ranged_manifest(
+                template,
+                Path::new("/repo"),
+                &text,
+                &config,
+                &prompt,
+                claimed,
+                merge_repeats,
+            )
+        };
+        let manifest = render(&claimed, 5).unwrap();
         let parsed: toml::Value = toml::from_str(&manifest).unwrap();
         let inputs = &parsed["chain"]["input"];
         assert_eq!(
-            inputs["prompt_pieces"]["path"].as_str(),
-            Some("/tmp/run/prompt/pieces_{j}.rastered")
+            inputs["prompt_cuts"]["path"].as_str(),
+            Some("/tmp/run/prompt/cut_{j}.rastered")
         );
         assert_eq!(
             inputs["claimed_ids"]["index_path"].as_str(),
             Some("/tmp/run/prompt/claimed_{k}.rindex")
         );
         assert_eq!(
-            inputs["prompt_pieces"]["commitments"],
+            inputs["prompt_cuts"]["commitments"],
             toml::Value::try_from(["a0", "a1", "a2"]).unwrap()
         );
         assert_eq!(
@@ -1042,11 +954,11 @@ count = 0
         assert_eq!(count(&fans[1]), Some(1));
         assert_eq!(count(&repeats[3]), Some(1));
         assert!(manifest.contains(r#"first = "embed_p2""#));
+        assert!(manifest.contains(r#"commitment = "t0""#));
+        assert!(manifest.contains(r#"commitment = "g0""#));
         assert!(!manifest.contains("run-prompt-placeholder"));
-        assert!(render_ranged_manifest(template, Path::new("/repo"), &prompt, &[], 5).is_err());
-        assert!(
-            render_ranged_manifest(template, Path::new("/repo"), &prompt, &claimed, 0).is_err()
-        );
+        assert!(render(&[], 5).is_err());
+        assert!(render(&claimed, 0).is_err());
     }
 
     fn write_stage(base: &PathBuf, stage: &str, commitment: &str, output: &[u8]) {

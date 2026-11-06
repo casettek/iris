@@ -84,9 +84,9 @@ pub fn finish_ranked_step(step: RankedStep, hit: MergeMatch) -> MergeScan {
 #[tile(kind = recur)]
 pub fn apply_ranked_merge(
     input: RecurInput<Block<BpePiece>>,
-    output: RecurOutput<BpePieces>,
+    output: RecurOutput<MergeRound>,
     best: MergeCandidate,
-) -> RecurOutput<BpePieces> {
+) -> RecurOutput<MergeRound> {
     let mut output = output;
     let start = input
         .index()
@@ -106,6 +106,27 @@ pub fn apply_ranked_merge(
         {
             output.pieces().push(piece);
         }
+    }
+    output
+}
+
+/// Opens the stage's output with the range's context, carried unchanged.
+#[tile(kind = iter, description = "Open the merged range with its context")]
+pub fn open_pieces(context: PromptContext) -> Draft<PromptState> {
+    let mut output = Draft::<PromptState>::new();
+    output.context().set(context);
+    output
+}
+
+/// Copies the last merge round's pieces into the stage's output.
+#[tile(kind = recur, description = "Carry merged pieces into the output")]
+pub fn carry_pieces(
+    input: RecurInput<Block<BpePiece>>,
+    output: RecurOutput<PromptState>,
+) -> RecurOutput<PromptState> {
+    let mut output = output;
+    for piece in input.into_value().iter() {
+        output.pieces().push(piece.clone());
     }
     output
 }

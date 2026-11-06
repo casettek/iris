@@ -3,6 +3,7 @@
 use raster::prelude::*;
 
 use output_finalize::input::*;
+use output_finalize::prompt::{PromptContext, PromptState};
 use output_finalize::*;
 
 /// Resolves one generated token by its authorized ID and advances the bounded
@@ -18,8 +19,10 @@ fn decode_generated_token(
     call!(consume_decoder_token, state, token_id, token)
 }
 
+/// `prompt` is the last prompt range's output: its context is what the final
+/// output says the chain consumed, and under which configuration.
 #[sequence]
-fn main(edge: DecodeEdge, decoder: DecoderTable) -> Result<GeneratedOutput> {
+fn main(edge: DecodeEdge, decoder: DecoderTable, prompt: PromptState) -> GeneratedOutput {
     let has_selected = select!(bool, edge.clone().has_selected);
     let ids = select!(List<u32>, edge.clone().generated_token_ids);
     let ids_for_decode = clone!(ids);
@@ -33,16 +36,21 @@ fn main(edge: DecodeEdge, decoder: DecoderTable) -> Result<GeneratedOutput> {
         args = (tokens,)
     );
     let state = call!(finish_finalize_state, state);
-    let count = select!(u32, state.clone().count);
-    call!(validate_decode_edge, has_selected, count)?;
 
     let claim_mismatches = select!(u32, edge.clone().claim_mismatches);
-    let first_claim_mismatch = select!(u32, edge.first_claim_mismatch_position);
+    let first_claim_mismatch = select!(u32, edge.clone().first_claim_mismatch_position);
+    let check_fault = select!(u32, edge.clone().check_fault);
+    let check_fault_position = select!(u32, edge.check_fault_position);
+    let context = select!(PromptContext, prompt.context);
     let draft = call!(
         begin_generated_output,
         state,
+        has_selected,
         claim_mismatches,
-        first_claim_mismatch
+        first_claim_mismatch,
+        check_fault,
+        check_fault_position,
+        context
     );
     let output = call_recur!(
         tile = copy_output_token_ids,
@@ -52,5 +60,5 @@ fn main(edge: DecodeEdge, decoder: DecoderTable) -> Result<GeneratedOutput> {
         args = ()
     );
     raster::println!("generated output → {:?}", output);
-    Ok(output)
+    output
 }

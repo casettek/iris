@@ -236,15 +236,24 @@ fn saturation_and_negative_fixed_point_values_match_eager() {
 }
 
 #[test]
-fn bad_tokens_cross_page_rows_and_projection_geometry_fail() {
+fn an_unknown_token_reads_the_first_row_and_matches_eager() {
     let mut f = Fixture::new(4, 32);
-    f.load(None).unwrap();
-    f.embedded.rows = List::from(vec![ActivationRow {
-        token_id: u32::MAX,
+    let row = |token_id| ActivationRow {
+        token_id,
         values: pack_i32s(&[ONE, ONE]),
-    }]);
+    };
+    let past_the_end = (f.layer.embeddings.byte_len() / row_bytes(32) as u64) as u32;
+    f.embedded.rows = List::from(vec![row(0), row(past_the_end), row(u32::MAX)]);
     f.write(false);
-    assert!(f.load(None).is_err());
+    let selected = f.load(None).unwrap();
+    f.assert_parity(&selected);
+    let output = run(&f.embedded, &selected).unwrap();
+    assert_eq!(output.rows[1], output.rows[0]);
+    assert_eq!(output.rows[2], output.rows[0]);
+}
+
+#[test]
+fn cross_page_rows_and_projection_geometry_fail() {
     // 238-byte rows do not divide a page: this row starts in page 0 and ends in 1.
     let mut f = Fixture::new(4, 224);
     f.embedded.rows = List::from(vec![ActivationRow {

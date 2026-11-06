@@ -27,8 +27,7 @@ Inputs:
 
 Outputs:
 
-- `runtime/model-artifacts/<model-id>/Raster.toml`, a prompt-free chain template saved on every full import. Its path and SHA-256 are recorded in the model manifest.
-- `runtime/model-artifacts/<model-id>/Raster.teacher-forced.toml`, the [teacher-forced](../internals/raster-chain.md#teacher-forced-chain) template over the same externals, recorded beside it with its range size. `--range-size <positions>` (default 512) sets the largest range, in prompt tokens or claimed ids. It is recorded with the template and verified by challengers, so it is a per-model setting, not a per-claim one. `--manifest` never copies it. Manifests from older imports have no teacher-forced provenance; reimport before building teacher-forced claims.
+- `runtime/model-artifacts/<model-id>/Raster.toml`, the prompt-free [chain](../internals/raster-chain.md) template, saved on every full import. Its path and SHA-256 are recorded in the model manifest. `--range-size <positions>` (default 512) sets the largest range, in prompt tokens or claimed ids. It is recorded in the manifest and a run's configuration, so it is a per-model setting, not a per-claim one.
 - Reusable Raster externals under `runtime/model-artifacts/<model-id>/raster/*`, written as `.rastered` and `.rindex` pairs with manifest commitments.
 - `runtime/model-artifacts/<model-id>/manifest.json`, the prompt-free model manifest consumed by run specs.
 
@@ -52,23 +51,23 @@ and vocabulary match `config.json`. It then writes `model.detwgt`:
 - `rope_freqs` is skipped, because RoPE comes from `config.json`.
 - Any tensor without a mapping fails the conversion.
 
-The block tensors must already be `Q8_0`.
+The block tensors must already be `Q8_0`. `model import` refuses a bundle whose
+embedding or head tensors are Q16.16, so a model must be converted first.
 
 By default, `<model-id>` is the sanitized model bundle directory name. Pass `--model-id <id>` to choose it explicitly, or `--artifact-root <dir>` to place model-scoped artifact directories somewhere other than `runtime/model-artifacts`.
 
-Pass `--manifest <path>` to also save a template copy (for example, the root `Raster.toml` for manual Raster commands). Claims always use the model-specific template, so importing another model or overwriting that copy cannot change an existing model’s selection. Saved templates resolve stage and external paths against the importing workspace.
+Pass `--manifest <path>` to also save a template copy for manual Raster commands. Claims always use the model-specific template, so importing another model or overwriting that copy cannot change an existing model’s selection. Saved templates resolve stage and external paths against the importing workspace.
 
-`infer`, `claim build`, and `challenge build` select their model through `--run inference.toml`. They verify the bundle’s recorded weight, config, and tokenizer hashes once before execution. Claims and challenges also require the recorded template hash to match. Missing provenance or changed files require a full import; there is no fallback to the root template.
+`infer`, `claim build`, and `challenge build` select their model through `--run inference.toml`. They verify the bundle’s recorded weight, config, and tokenizer hashes once before execution. Claims and challenges also require the recorded template hash to match. Missing provenance or changed files require a full import.
 
-`initial_pieces` is deliberately not imported with the model. It is generated
-from each prompt during run preparation and written under that run's `prompt/`
-directory.
+A full import records `model_commitments`, every committed model input by role,
+and `model_id`, the hash of that list, in the model manifest (version 4). Paths are
+not part of it, so moving an import does not change the id. Manifests from older
+imports are refused: re-import them.
 
-Tokenization now uses `prompt_merge_seed`, the fixed repeat named `tokenize`,
-and final `prompt_prepare`. Run preparation derives the tokenizer repeat count
-from its frozen `{text, segment}` pieces independently of the requested decode
-count. Re-import older model templates before creating ranked-BPE claims;
-single-stage tokenizer templates and legacy frozen prepared runs are rejected.
+The prompt is deliberately not imported with the model. Its text, cuts and the
+claimed ids are written under each run's `prompt/` directory during run preparation.
+Legacy frozen prepared runs are rejected.
 
 Useful partial modes:
 

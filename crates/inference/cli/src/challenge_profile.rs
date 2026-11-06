@@ -221,7 +221,10 @@ pub fn run(args: ProfileArgs) -> Result<PathBuf> {
             .as_ref()
             .context("missing frozen run")?,
     ))?;
-    ensure!(prepared.version == 2, "unsupported frozen run version");
+    ensure!(
+        prepared.version == inference_artifacts::PREPARED_RUN_VERSION,
+        "unsupported frozen run version"
+    );
     let manifest = prepared
         .run_manifest_path
         .as_ref()

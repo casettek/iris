@@ -1,7 +1,7 @@
 # Issue: `short-stage-fraud-window` — a stage whose trace fits in one fraud window cannot be disputed
 
-Status: open for `decode_init`; resolved for the teacher-forced chain. Observed
-2026-11-03 while validating the teacher-forced chain on `parity-gemma`.
+Status: open, deferred to its own project on 2026-11-05. Until then a stage too short
+for the window is not used for challenges.
 
 ## The gap
 
@@ -15,35 +15,41 @@ window. `CommitmentFile::finish` returns
 The authenticated replay panics, so no challenge can be built for that stage. A
 claimer can lie about such a stage without being caught.
 
-Observed failures, each a corrupted checkpoint hash for an otherwise honest claim:
-
-| chain | stage | why the trace is short |
-| --- | --- | --- |
-| autoregressive | `decode_init` | one tile, no input |
-| teacher-forced (first draft) | `sequence_join` | two sweeps in 64-id chunks: one chunk each for the 15 + 8 ids tested |
-| teacher-forced, `parity-gemma` only | `sequence_check` | 8 positions × 2 head pages; on Gemma 4 E2B each position sweeps 8,192 pages |
-
 ## Scope
 
-A stage's trace grows with the tokens it handles. An audit on Gemma 4 E2B with a
-3-token "say ciao" claim found `input_embedding` and `output_finalize` (both chains),
-plus `decode_init`, `decode_embed_t*` and `decode_aux_t*_l*` (autoregressive),
-under the window. Every other stage replayed. Production claims are far larger,
-so this only affects toy-sized inputs and is not a target. Revisit only if small
-claims become a use case.
+Measured on Gemma 4 E2B Q8 on 2026-11-05, in the teacher-forced chain:
 
-## Rule
+| stage | trace steps | at or under 128 |
+| --- | --- | --- |
+| `range_origin` | 3 | every claim |
+| `decode_init` | 3 | every claim |
+| `output_finalize` | 19 at 3 output tokens, 58 at 16 | under about 40 output tokens |
+| `embed_c{k}` | 34 at 3 tokens in the range, 112 at 16 | under about 19 tokens in the range |
+| `embed_p{j}` | 93 at 13 tokens in the range, 297 at 47 | under about 19 tokens in the range |
+| `aux_c{k}_l{l}` | 68 at 3 tokens in the range, 315 at 16 | under about 7 tokens in the range |
 
-Raster is not changed for this. A stage too short to dispute belongs inside a
-bigger stage.
+The token limits are fitted to those two points. A range's last stages shrink with its
+token count, so a short final range can stay under the window on a long claim. Every
+other stage replayed at the smallest real claim tried, 13 prompt tokens and 3 output
+tokens. On the 512-token `parity-gemma` vocabulary and its 6-token ranges, the
+`embed_*`, `aux_*`, `check_*` and `output_finalize` stages are all short.
 
-- The join now lives inside `input-embedding`, which embeds the prompt and then the
-  claimed ids. The autoregressive chain binds an empty committed claim to the same
-  program.
-- `sequence_check` is short only on the 512-token test vocabulary. It is a sweep
-  over the head per generated token, so on any real model it is one of the longest
-  stages.
-- `decode_init` remains. It cannot become a committed constant, because a
-  `[[chain.repeat]]` `first =` fallback must name a stage. Removing it means
-  writing decode step 0 out of the repeat, with an empty committed edge as its
-  `prior`.
+The two constant stages are short at any size, so a claim whose first false
+checkpoint is `range_origin` or `decode_init` cannot be challenged. `output_finalize`
+holds the output commitment, so on a small claim that commitment cannot be challenged
+either.
+
+## A direction that was tried
+
+Raster derives `bits_per_item = ceil(128 / window_size)`, and its closed
+`fraud-window-trace-ends` issue treats sizing the window as a proof-size choice, so a
+smaller window should not weaken detection. Retrying a too-short replay at
+`--fraud-proof-window-size 2` needed no Raster or stage change: every stage above then
+replayed and matched its native checkpoint on the real model, and `challenge profile`
+accepted the result. It was not carried through a fault proof, and was removed so that
+this can be designed as a whole.
+
+The earlier rule was that a stage too short to dispute belongs inside a bigger stage.
+That is how `sequence_join` was folded into `input-embedding`. `decode_init` cannot
+become a committed constant as things stand, because a `[[chain.repeat]]` `first =`
+fallback must name a stage.

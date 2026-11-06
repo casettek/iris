@@ -97,8 +97,7 @@ proving fails. Worker recovery marks interrupted attempts failed; it does not
 silently repeat proving. No blockchain transaction is submitted.
 
 Run `pnpm validate:fault` in iris-backend for the real small profile ("Say ciao.",
-one token, `prefill-finalize`) through receipt verification, without a database
-or worker queue. `pnpm validate:challenge` continues to stop before proving.
+one token) through receipt verification, without a database or worker queue. `pnpm validate:challenge` continues to stop before proving.
 
 Successful attempts include `raster_audit.json`, whose zero-based `detected_step`
 and half-open `window_start`/`window_end` identify the proof window. Its

@@ -9,11 +9,13 @@ use crate::{
 };
 use anyhow::Result;
 use inference_kernels::kernels::sequence_check::{
-    check_positions, decode_edge, first_mismatch, run_sequence_check_direct, CheckHeadParams,
-    SequenceCheckDirectInputs,
+    check_frame, check_positions, decode_edge, run_sequence_check_direct, scorable,
+    CheckHeadParams, SequenceCheckDirectInputs,
 };
-use prefill_finalize::input::unpack_i32s;
-use sequence_check::input::{ActivationSequence, ClaimedOutput, DecodeEdge, FinalHead};
+use sequence_check::input::{
+    unpack_i32s, ActivationSequence, ClaimedOutput, DecodeEdge, FinalHead,
+};
+use sequence_check::prompt::{PromptContext, PromptState};
 use std::{path::Path, sync::Arc};
 
 pub struct Inputs {
@@ -21,6 +23,8 @@ pub struct Inputs {
     pub previous: ActivationSequence,
     pub claimed: ClaimedOutput,
     pub prior: DecodeEdge,
+    /// The last prompt range's context: the range limit and the prompt's length.
+    pub context: PromptContext,
     head: Weights,
 }
 enum Weights {
@@ -35,12 +39,14 @@ impl Inputs {
         claimed: ClaimedOutput,
         prior: DecodeEdge,
         head: Arc<FinalHead>,
+        context: PromptContext,
     ) -> Self {
         Self {
             activations,
             previous,
             claimed,
             prior,
+            context,
             head: Weights::Eager(head),
         }
     }
@@ -89,6 +95,7 @@ pub fn run_direct(inputs: &Inputs) -> Result<DecodeEdge> {
             claimed: &inputs.claimed,
             prior: &inputs.prior,
             head,
+            context: &inputs.context,
         })?,
         Weights::Paged(head) => run_paged(inputs, head)?,
     };
@@ -108,17 +115,20 @@ fn run_paged(inputs: &Inputs, head: &PagedHead) -> Result<DecodeEdge> {
             norm_weights: &norm_weights,
         },
     )?;
-    let normalized = positions
-        .iter()
-        .map(|position| position.normalized.as_slice())
-        .collect::<Vec<_>>();
-    let selections = head::select_positions(&normalized, head)?;
-    if let Some(position) = first_mismatch(&positions, &selections) {
+    let selections = head::select_positions(&scorable(&positions), head)?;
+    let edge = decode_edge(
+        &positions,
+        &selections,
+        &inputs.prior,
+        &check_frame(&inputs.activations, &inputs.prior, &inputs.context),
+    )?;
+    if edge.claim_mismatches > inputs.prior.claim_mismatches {
         println!(
-            "sequence check: claimed token at position {position} is not the greedy selection"
+            "sequence check: {} claimed token(s) are not the greedy selection; first at position {}",
+            edge.claim_mismatches, edge.first_claim_mismatch_position
         );
     }
-    decode_edge(&positions, &selections, &inputs.prior)
+    Ok(edge)
 }
 fn load_inputs_from_initialized_runtime(
     cached_inputs: &CachedInputs,
@@ -133,6 +143,7 @@ fn load_inputs_from_initialized_runtime(
         raster::entry_argument_spec::<ClaimedOutput>("claimed"),
         raster::entry_argument_spec::<DecodeEdge>("prior"),
         raster::entry_argument_spec::<FinalHead>("head"),
+        raster::entry_argument_spec::<PromptState>("prompt"),
     ])?;
     let activations = match cached_inputs.get("activations") {
         Some(value) => value.as_check_activation_sequence()?,
@@ -156,6 +167,14 @@ fn load_inputs_from_initialized_runtime(
     let claimed = raster::materialize_auth_return(
         raster::entry_argument_auth_ref::<ClaimedOutput>(binding.reference.clone(), "claimed"),
     );
+    let context = match cached_inputs.get("prompt") {
+        Some(value) => value.as_check_prompt_context()?,
+        None => raster::materialize_auth_return(raster::entry_argument_auth_ref::<PromptState>(
+            binding.reference.clone(),
+            "prompt",
+        ))
+        .context,
+    };
     let head = if raster_inputs(&binding) {
         Weights::Paged(head::load(
             binding,
@@ -181,6 +200,7 @@ fn load_inputs_from_initialized_runtime(
         previous,
         claimed,
         prior,
+        context,
         head,
     })
 }

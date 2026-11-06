@@ -6,15 +6,42 @@ use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::ChainKind;
-
 pub const MODEL_ARTIFACTS_DIR: &str = "runtime/model-artifacts";
 pub const MODEL_MANIFEST_JSON: &str = "manifest.json";
-pub const TEACHER_FORCED_TEMPLATE_TOML: &str = "Raster.teacher-forced.toml";
+
+pub const MODEL_MANIFEST_VERSION: u32 = 4;
+
+/// One committed model input, named by the role it plays in the chain.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ModelCommitment {
+    pub role: String,
+    pub commitment: String,
+}
+
+/// The model's identifier: a hash of its commitments by role, in order.
+///
+/// A stage cannot read its inputs' commitments, so the chain carries this as a
+/// claimed value. Anyone can check it: recompute it from the roles, and compare
+/// a stage's `input_manifest.json` entry against the role it binds. It holds no
+/// paths, so moving an import does not change it.
+pub fn model_id_of(commitments: &[ModelCommitment]) -> String {
+    let mut hasher = Sha256::new();
+    for entry in commitments {
+        hasher.update(entry.role.as_bytes());
+        hasher.update([0]);
+        hasher.update(entry.commitment.as_bytes());
+        hasher.update([b'\n']);
+    }
+    format!("{:x}", hasher.finalize())
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ModelManifest {
     pub version: u32,
+    pub model_id: String,
+    pub model_commitments: Vec<ModelCommitment>,
+    /// Largest range the chain cuts a prompt or an output into, in tokens.
+    pub range_size: u32,
     pub bundle: DirectInferBundle,
     pub shape: DirectInferShape,
     pub eos_token_ids: Vec<u32>,
@@ -27,8 +54,14 @@ impl ModelManifest {
     /// Callers retain this manifest; tensor and stage loaders do no extra hashing.
     pub fn load_verified(path: &Path) -> Result<Self> {
         let manifest: Self = crate::read_json(path)?;
-        if manifest.version != 2 {
-            bail!("unsupported model manifest v{}", manifest.version);
+        if manifest.version != MODEL_MANIFEST_VERSION {
+            bail!(
+                "unsupported model manifest v{}, expected v{MODEL_MANIFEST_VERSION}; rerun a full `iris model import --model <bundle-dir>`",
+                manifest.version
+            );
+        }
+        if manifest.model_id != model_id_of(&manifest.model_commitments) {
+            bail!("model id does not match the manifest's model commitments");
         }
         let dir = path
             .parent()
@@ -57,49 +90,17 @@ impl ModelManifest {
 
     /// Claims and challenges must use the template tied to this model import.
     pub fn verified_raster_template(&self, manifest_path: &Path) -> Result<(PathBuf, String)> {
-        self.verified_chain_template(manifest_path, ChainKind::Autoregressive)
-    }
-
-    /// The teacher-forced range size the model's template was built for.
-    pub fn teacher_forced_range_size(&self) -> Result<u32> {
-        self.provenance
-            .as_ref()
-            .and_then(|provenance| provenance.teacher_forced_range_size)
-            .context(
-                "model manifest has no teacher-forced range size; rerun a full `iris model import --model <bundle-dir>`",
-            )
-    }
-
-    /// The import-bound template for one chain shape.
-    pub fn verified_chain_template(
-        &self,
-        manifest_path: &Path,
-        chain: ChainKind,
-    ) -> Result<(PathBuf, String)> {
         let provenance = self.provenance.as_ref().context(
             "model manifest has no Raster template provenance; run a full `iris model import --model <bundle-dir>` before building claims or challenges",
         )?;
-        let (template_path, expected) = match chain {
-            ChainKind::Autoregressive => (
-                &provenance.raster_manifest_path,
-                &provenance.raster_manifest_sha256,
-            ),
-            ChainKind::TeacherForced => provenance
-                .teacher_forced_manifest_path
-                .as_ref()
-                .zip(provenance.teacher_forced_manifest_sha256.as_ref())
-                .context(
-                    "model manifest has no teacher-forced Raster template; rerun a full `iris model import --model <bundle-dir>`",
-                )?,
-        };
         let dir = manifest_path
             .parent()
             .context("model manifest has no parent directory")?;
-        let path = dir.join(template_path);
+        let path = dir.join(&provenance.raster_manifest_path);
         let template = std::fs::read_to_string(&path)
             .with_context(|| format!("failed to read Raster template {}", path.display()))?;
         let actual = format!("{:x}", Sha256::digest(template.as_bytes()));
-        if &actual != expected {
+        if actual != provenance.raster_manifest_sha256 {
             bail!(
                 "Raster template hash mismatch for {}; rerun a full model import",
                 path.display()
@@ -176,12 +177,4 @@ pub struct DirectInferShape {
 pub struct DirectInferProvenance {
     pub raster_manifest_path: PathBuf,
     pub raster_manifest_sha256: String,
-    /// Absent for imports made before the teacher-forced chain existed.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub teacher_forced_manifest_path: Option<PathBuf>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub teacher_forced_manifest_sha256: Option<String>,
-    /// Largest teacher-forced range, in prompt pieces or claimed ids.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub teacher_forced_range_size: Option<u32>,
 }

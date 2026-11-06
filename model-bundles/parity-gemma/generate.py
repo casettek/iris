@@ -186,7 +186,7 @@ def build():
     for name, prompt, raw, tokens in [
         ("short", "Hi, é!", True, 1),
         ("near-window", "abcdefghijklmn?!", True, 8),
-        ("over-window", "Hi,  café! 🙂\nRaster?", False, 8),
+        ("over-window", "Hi,  cafés! 🙂\nRaster?", False, 8),
     ]:
         cases.append({"name": name, "prompt": prompt, "raw_prompt": raw,
                       "tokens": tokens, "input_token_ids": token_ids(prompt, raw)})

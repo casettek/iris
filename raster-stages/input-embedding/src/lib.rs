@@ -2,8 +2,12 @@
 //!
 //! Gathers one embedding row per prompt token id. The table is a paged byte
 //! region of `Q8_0` rows, addressed by `token_id · hidden_size / 32 · 34` and
-//! dequantized on the way out; an out-of-range id aborts (a list has no
-//! non-membership proof).
+//! dequantized on the way out.
+//!
+//! Indexing a page past the end of the region would abort with no output, and a
+//! claim chooses its own ids. So an id outside the table reads the first row and
+//! keeps its own id: the stage finishes, and `sequence-check` rejects the claim,
+//! because no id outside the head's vocabulary can be the greedy selection.
 //!
 //! `#![no_std]` so the same tiles compile into RISC0 replay guests.
 
@@ -17,6 +21,7 @@ use det_num::Act;
 use raster::prelude::*;
 
 pub mod input;
+pub mod prompt;
 
 use input::*;
 
@@ -26,11 +31,22 @@ pub fn begin_row_lookup(token_id: u32) -> u32 {
     token_id
 }
 
-/// `token_id · hidden_size / 32 · 34` — the byte offset of that `Q8_0` row in
-/// the table.
+/// The byte offset of the `Q8_0` row this id reads.
 #[tile(kind = iter, description = "Byte offset of an embedding row")]
-pub fn embedding_byte_offset(token_id: u32, hidden_size: u32) -> u64 {
-    token_id as u64 * (hidden_size as u64 / 32 * 34)
+pub fn embedding_byte_offset(token_id: u32, hidden_size: u32, table_bytes: u64) -> u64 {
+    row_byte_offset(token_id, hidden_size, table_bytes)
+}
+
+/// `token_id · hidden_size / 32 · 34`, or the first row for an id whose row is
+/// not in the table. Called from [`embedding_byte_offset`] and the native paths.
+pub fn row_byte_offset(token_id: u32, hidden_size: u32, table_bytes: u64) -> u64 {
+    let stride = hidden_size as u64 / 32 * 34;
+    let offset = token_id as u64 * stride;
+    if offset + stride <= table_bytes {
+        offset
+    } else {
+        0
+    }
 }
 
 /// Page index containing a byte offset.

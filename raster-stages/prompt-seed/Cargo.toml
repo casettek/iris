@@ -1,8 +1,8 @@
 [package]
-name = "prefill-finalize"
+name = "prompt-seed"
 version = "0.1.0"
 edition = "2021"
-default-run = "prefill-finalize"
+default-run = "prompt-seed"
 
 [features]
 default = ["std"]
@@ -12,8 +12,9 @@ profiling = ["raster/profiling"]
 [dependencies]
 raster = { path = "../../../raster/crates/raster", default-features = false }
 serde = { version = "1.0", default-features = false, features = ["derive", "alloc"] }
-# Canonical fixed-point kernels, vendored verbatim from the reference.
-det-num = { path = "../../crates/det-num" }
+sha2 = { version = "0.10", default-features = false, features = ["compress"] }
 
-[dev-dependencies]
-raster-runtime = { path = "../../../raster/crates/raster-runtime" }
+[[bin]]
+name = "prompt-seed"
+path = "src/main.rs"
+required-features = ["std"]

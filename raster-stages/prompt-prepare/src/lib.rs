@@ -81,17 +81,22 @@ pub fn finish_ranked_step(step: RankedStep, hit: MergeMatch) -> MergeScan {
     }
 }
 
-#[tile(kind = iter)]
-pub fn assert_merges_converged(best: MergeCandidate) -> Result<u32> {
-    if best.matched {
-        Err(alloc::format!(
-            "tokenization budget exhausted: eligible merge at position {} (rank {})",
-            best.left,
-            best.rank
-        ))
-    } else {
-        Ok(0)
-    }
+/// The context once the range has been counted and checked for finished merges.
+///
+/// Pieces that could still merge are recorded rather than raised: the stage
+/// must finish so it has an output to compare and replay, and such pieces are
+/// all vocabulary tokens, so it can.
+#[tile(kind = iter, description = "Record the range's tokens in the context")]
+pub fn finish_tokens(context: PromptContext, best: MergeCandidate, tokens: u64) -> PromptContext {
+    finish_token_context(&context, &best, tokens)
+}
+
+/// Opens the stage's output with the range's context.
+#[tile(kind = iter, description = "Open the range's tokens with its context")]
+pub fn open_tokens(context: PromptContext) -> Draft<PromptState> {
+    let mut output = Draft::<PromptState>::new();
+    output.context().set(context);
+    output
 }
 
 #[tile(kind = iter)]
@@ -127,9 +132,9 @@ pub fn scan_vocab_chunk(
 
 #[tile(kind = iter)]
 pub fn append_token_id(
-    output: Draft<PromptTokenization>,
+    output: Draft<PromptState>,
     hit: VocabMatch,
-) -> Draft<PromptTokenization> {
+) -> Draft<PromptState> {
     assert!(
         hit.found,
         "prepared or merged piece is absent from vocabulary"

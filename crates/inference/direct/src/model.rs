@@ -20,7 +20,7 @@ pub struct DirectInferenceModel {
     detwgt: MmapDetwgt,
     ple_params: Vec<prefill_prepare_aux::input::PleLayerParams>,
     layer_params: Vec<prefill_range::input::LayerParams>,
-    final_head_params: prefill_finalize::input::FinalHeadParams,
+    final_head_params: sequence_check::input::FinalHeadParams,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -138,7 +138,7 @@ pub struct DirectTransformerLayer<'a> {
 }
 
 pub struct DirectFinalHead<'a> {
-    pub params: prefill_finalize::input::FinalHeadParams,
+    pub params: sequence_check::input::FinalHeadParams,
     pub projection: DirectQ8View<'a>,
 }
 
@@ -232,6 +232,7 @@ impl DirectInferenceModel {
                     })
                     .collect::<Vec<_>>(),
             ),
+            ..Default::default()
         };
         inference_kernels::kernels::prompt_prepare::run_prompt_prepare_direct(
             inference_kernels::kernels::prompt_prepare::PromptPrepareDirectInputs {
@@ -458,7 +459,7 @@ impl DirectInferenceModel {
         })
     }
 
-    pub fn final_head(&self) -> Result<prefill_finalize::input::FinalHead> {
+    pub fn final_head(&self) -> Result<sequence_check::input::FinalHead> {
         let shape = self.shape();
         let tied = self
             .config_text
@@ -470,8 +471,8 @@ impl DirectInferenceModel {
         } else {
             "model.language_model.lm_head.weight"
         };
-        Ok(prefill_finalize::input::FinalHead {
-            params: prefill_finalize::input::FinalHeadParams {
+        Ok(sequence_check::input::FinalHead {
+            params: sequence_check::input::FinalHeadParams {
                 hidden_size: shape.hidden_size,
                 norm_eps: shape.norm_eps,
                 softcap: shape.final_logit_softcap,
@@ -507,6 +508,10 @@ impl DirectInferenceModel {
 
     pub fn decoder_table(&self) -> Result<output_finalize::input::DecoderTable> {
         run_prep::decoder_table(&self.tokenizer, &self.manifest.eos_token_ids)
+    }
+
+    pub fn manifest(&self) -> &ModelManifest {
+        &self.manifest
     }
 
     pub fn shape(&self) -> &DirectInferShape {
@@ -656,8 +661,8 @@ fn build_layer_params(
 fn build_final_head_params(
     shape: &DirectInferShape,
     detwgt: &MmapDetwgt,
-) -> Result<prefill_finalize::input::FinalHeadParams> {
-    Ok(prefill_finalize::input::FinalHeadParams {
+) -> Result<sequence_check::input::FinalHeadParams> {
+    Ok(sequence_check::input::FinalHeadParams {
         hidden_size: shape.hidden_size,
         norm_eps: shape.norm_eps,
         softcap: shape.final_logit_softcap,

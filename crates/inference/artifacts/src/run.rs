@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 
 pub const INFERENCE_RUN_SPEC_TOML: &str = "inference.toml";
 pub const PREPARED_RUN_JSON: &str = "prepared_run.json";
-pub const PREPARED_RUN_VERSION: u32 = 2;
+pub const PREPARED_RUN_VERSION: u32 = 4;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct InferenceRunSpec {
@@ -19,28 +19,6 @@ pub struct InferenceRunSpec {
     pub raw_prompt: bool,
     #[serde(default = "default_tokens")]
     pub tokens: u32,
-    #[serde(default, skip_serializing_if = "ChainKind::is_autoregressive")]
-    pub chain: ChainKind,
-}
-
-/// Which chain template a claim is built and challenged over.
-#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "kebab-case")]
-pub enum ChainKind {
-    /// Prefill, then one decode iteration of stages per generated token.
-    #[default]
-    Autoregressive,
-    /// One pass over `prompt ‖ claimed output`, then a greedy check of every
-    /// generated position. The claimed ids are the frozen run manifest's
-    /// `claimed_ids` externals; the claim's output is the chain's final
-    /// record, whose committed verdict says whether they were greedy.
-    TeacherForced,
-}
-
-impl ChainKind {
-    pub fn is_autoregressive(&self) -> bool {
-        *self == Self::Autoregressive
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -49,14 +27,15 @@ pub struct PreparedRun {
     pub run_spec_path: PathBuf,
     pub model_manifest_path: PathBuf,
     pub model_manifest_sha256: String,
+    /// The identifier of the model the run names.
+    pub model_id: String,
     pub prompt: PreparedPrompt,
+    pub raw_prompt: bool,
     pub tokens: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub run_manifest_path: Option<PathBuf>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub run_manifest_sha256: Option<String>,
-    #[serde(default, skip_serializing_if = "ChainKind::is_autoregressive")]
-    pub chain: ChainKind,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -80,8 +59,24 @@ pub fn read_run_spec(path: &Path) -> Result<InferenceRunSpec> {
         .with_context(|| format!("failed to read run spec {}", path.display()))?;
     let spec: InferenceRunSpec = toml::from_str(&text)
         .with_context(|| format!("failed to parse run spec {}", path.display()))?;
+    reject_removed_chain(&text, path)?;
     spec.validate()?;
     Ok(spec)
+}
+
+/// Specs may still say `chain = "teacher-forced"`, the only staged chain left.
+/// Asking for any other must not silently run this one.
+fn reject_removed_chain(text: &str, path: &Path) -> Result<()> {
+    let table: toml::Table = toml::from_str(text)
+        .with_context(|| format!("failed to parse run spec {}", path.display()))?;
+    match table.get("chain").map(toml::Value::as_str) {
+        None | Some(Some("teacher-forced")) => Ok(()),
+        Some(chain) => anyhow::bail!(
+            "run spec {} asks for chain {}, but teacher-forced is the only staged chain; remove `chain`, or use `iris infer` for direct generation",
+            path.display(),
+            chain.unwrap_or("<not a string>")
+        ),
+    }
 }
 
 impl InferenceRunSpec {

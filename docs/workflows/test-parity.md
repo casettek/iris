@@ -9,13 +9,10 @@ cargo run --release --locked -p iris-cli -- test-parity
 ```
 
 The command runs the pinned synthetic Gemma model through the complete Raster
-chain (`--no-auth`), checkpointed native-staged inference, and native-direct
-inference. Each execution owns its intermediate outputs and runtime state.
+chain (`--no-auth`), the checkpointed native-staged chain, and native-direct
+generation. Each execution owns its intermediate outputs and runtime state.
 All three fixed cases run every time. There are no numerical tolerances.
 
-The staged inventories include `prompt_merge_seed` and every scheduled
-`prompt_merge_b{b}` checkpoint. Direct execution compares final `prompt_prepare`
-and downstream boundaries without inventing intermediate tokenizer checkpoints.
 Independent exact-ID tokenizer fixtures and authenticated tokenizer-chain checks
 are described in [ranked BPE](../proposals/ranked-bpe-tokenizer.md).
 
@@ -34,14 +31,42 @@ Elapsed time is informational; there is no timing threshold or CI integration.
 
 ## What must agree
 
+The gate imports with `--range-size 6` (six tokens per range), so every case's
+prompt and output split into several ranges, including ranges inside and past the
+16-token sliding window. Preparation discovers each output with direct decode, and
+the chain then checks it.
+
 - Raster/native-staged: every expected checkpoint's canonical output bytes and
   structural commitment, with recorded payload/index roots checked independently.
-- Native-staged/direct: tokenized input IDs, every complete fixed-point logit
-  vector used for selection, selected-token history, and every final result field.
-- Direct's corresponding activation, PLE, embedding, and KV boundaries also match.
+- Direct's own coverage: pinned input IDs, every complete fixed-point logit vector
+  used for selection, argmax selection, selected-token history, active PLE, cache
+  growth/eviction, and position advancement.
+- The chain and direct: the prompt ranges' token ids concatenate to direct's
+  tokenization; `output_finalize` is byte-identical to direct's record; the last
+  range's check is byte-identical to direct's last `decode_select_t*`.
+- Position by position, stitching each layer's ranges together: every
+  `embed_*`, `aux_*_l*` and `range_*_l*` row at position `i` equals direct's
+  prefill row (`i < prompt_len`) or decode step `i - prompt_len`'s single row, and
+  every range starts where the previous one ended. Every K/V entry a range publishes,
+  inherited or its own, equals direct's entry at the same position. Direct runs no
+  pass for its last token, so the chain's row for it has no reference. Nothing is
+  scored from that row, and it still matches between Raster and native-staged.
+- Layers 2 and 3 of every range borrow layers 0 and 1 of the same range.
+- The last prompt context: no fault, complete, and holding the prompt's SHA-256, the
+  model id and the prompt's token count.
+- The final record: its context is the last prompt context's, its
+  `output_text_sha256` is the SHA-256 of its own text, its faults and verdict are
+  clean, and the native result artifact and direct's result are exactly this record.
+- Over wrong cuts, on the templated case: the prompt stages finish through both
+  Raster and native-staged, agree byte for byte, and record the expected fault.
+  This includes cuts out of order and a range left out.
+- Over a 3 KiB text of single-byte atoms: `prompt_bind` finishes through both and
+  agrees byte for byte. Raster limits what a tile may write per text chunk and
+  native does not, so only this run shows that the chunk size fits.
+- Over empty prompt ranges, non-greedy claimed ids, claimed ids outside the
+  vocabulary and an output short of its budget, on the templated case: the whole chain finishes through both Raster and
+  native-staged, agrees byte for byte, and the final record names the failure.
 - Missing, duplicate, unexpected, malformed, or error-bearing outputs fail.
-  Pinned input IDs, argmax selection, generation counts, donor bindings, cache
-  growth/eviction, and position advancement are checked separately from parity.
 
 Raster's ordered stage inventory comes from its public `chain-commitment` file;
 this metadata does not imply authenticated execution. Native-staged and older
@@ -50,39 +75,43 @@ is not required from the current Raster CLI. A malformed commitment fails instea
 of falling back to timing metadata, and the recorded stage order must still match
 the independently expected chain.
 
-Staged execution has an extra decode pass after selecting its last token. That
-pass must exist and match between Raster and native-staged. Direct intentionally
-stops before it. Its required boundary inventory is explicit and independent of
-the order in which PLE work is scheduled.
+`iris compare-teacher-forced --teacher-forced <chain-dir> --direct <parity-worker --direct output>`
+(hidden) runs the same position-by-position comparison on any chain, reading one
+layer at a time.
 
-## Teacher-forced leg
+Batched prefill over `N` rows and single-row decode must be bit-identical, or an
+honest claimer would convict itself.
 
-Each case also runs the [teacher-forced chain](../internals/raster-chain.md#teacher-forced-chain)
-over `prompt ‖ direct output`, through Raster (`--no-auth`) and native-staged, under
-`<case>/teacher-forced/`. The gate imports with `--range-size 6` (six tokens per range), so every case's
-prompt and output split into several ranges, including ranges inside and past the
-16-token sliding window. It must agree:
+## Challenge leg
 
-- Raster/native-staged: every teacher-forced checkpoint, byte for byte.
-- With the autoregressive native-staged chain: the prompt ranges' token ids
-  concatenate to the pinned tokenization; `output_finalize` identical; the last
-  range's check identical to the last `decode_select_t*`.
-- Position by position, stitching each layer's ranges together: every
-  `embed_*`, `aux_*_l*` and `range_*_l*` row at position `i` equals the
-  autoregressive prefill row (`i < prompt_len`) or decode step
-  `i - prompt_len`'s single row, and every range starts where the previous one
-  ended. Every K/V entry a range publishes, inherited or its own, equals the
-  autoregressive entry at the same position.
+On the templated case the gate then runs `challenge build`, the command a
+challenger runs, under `<case>/challenges/`:
 
-`iris compare-teacher-forced --teacher-forced <chain-dir> --autoregressive <chain-dir>`
-(hidden) runs the same position-by-position comparison on any pair of chains,
-reading one layer at a time. At production sizes, compare only against direct
-inference: `claim build` already refuses a claim whose checked ids differ from
-direct decode.
+- An honest claim reports no divergence, and a claim over non-greedy ids reports
+  no divergence and is rejected on its final record.
+- A falsified checkpoint in each stage family long enough to challenge is found at
+  that stage and replays through authenticated Raster.
+- An honest claim from another model, the pinned bundle with one weight changed in
+  every tensor and two vocabulary ids exchanged, is found at `prompt_bind` and
+  replays. The challenger never reads that model.
+- A claim of the honest run whose checkpoints came from elsewhere must first differ
+  at the stage named: other text or configuration (`prompt_bind`), other cuts
+  (`prompt_seed_p0`), other ids (`embed_c0`), that model's tokenizer at each prompt
+  stage, its embedding, PLE, weights, head and decoder at the first stage reading
+  each, PLE layers exchanged, and stages wired to the wrong predecessor.
 
-This is the parity gate the teacher-forced design depends on. Batched prefill over
-`N` rows and single-row decode must be bit-identical, or an honest claimer would
-convict itself.
+A stage [too short for the replay window](../issues/short-stage-fraud-window.md)
+cannot be challenged yet, so for those the leg checks only that recomputation finds
+it. Each case's result in `report.json` says whether it `replayed`.
+
+Two wirings stop a layer stage through both Raster and native-staged, because
+positions no longer line up with the cache: restarting positions at a later range,
+and dropping a range's cache. The claimer has no output to post, and only a manifest
+the claimer rewired reaches this. The same holds for transformer layers exchanged,
+whose caches differ by attention type and donor.
+
+This leg needs `cargo raster` on the path, because `challenge build` calls it. Fault
+proving is not part of the gate.
 
 ## Results and failures
 
@@ -95,15 +124,12 @@ Build/import logs are at the run root. Files are retained on success and failure
 The command exits nonzero on any failed build, execution, coverage assertion, or
 comparison. Numerical differences identify the execution pair, case, semantic
 stage, first differing value where available, and byte offset. Execution failures
-identify the corresponding log. Tests never rewrite the root manifest, manual
-stage fixtures, existing model imports, or `Raster.lock` files.
+identify the corresponding log. Tests never rewrite manual stage fixtures, existing
+model imports, or `Raster.lock` files.
 
 Normal `infer` remains free of diagnostic serialization. Library users can opt
 into `DirectInferenceExecutor::run_with_diagnostics` to receive canonical boundary
 bytes, indexes, and commitments alongside the ordinary inference report.
-`DIRECT_INFER_COMPARE_TRACE=<checkpoint_trace.json>` now fails on mismatches,
-duplicate/missing reference entries, and incomplete comparisons. It expects a
-complete production staged trace for the same model and token count.
 
 ## Model Bundle Maintenance
 
@@ -137,7 +163,7 @@ equivalence are separate from this local command.
 
 ## Selective PLE loading in staged inference
 
-Staged `prefill_prepare_aux_l*` and `decode_aux_t*_l*` default to selective PLE
+Staged `aux_*_l*` stages default to selective PLE
 loading. They verify the parameters, projection, and embedding metadata against
 the declared Raster input commitment, retain those small static values within
 the existing weight-cache budget, and read each required embedding page once per
@@ -181,11 +207,11 @@ cargo test --release --locked -p staged-infer --test worker_parity -- --test-thr
 With `STAGED_INFER_REPLAY_BIN_DIR` pointing at the built stage binaries, also run
 `ple::tests::multi_page_matches_authenticated_raster_stage` with
 `--lib -- --ignored --exact`, and the existing
-`repeated_decode_matches_authenticated_raster_stage_execution` test with
+`repeated_ranges_match_authenticated_raster_stage_execution` test with
 `--test worker_parity -- --ignored --exact`. They cover authenticated multi-page
-and saturation cases, and repeated-decode worker execution, respectively.
+and saturation cases, and repeated-range worker execution, respectively.
 
-For a full small-model gate, build `iris-cli`, `staged-infer`, and all ten Raster
+For a full small-model gate, build `iris-cli`, `staged-infer`, and all Raster
 stage binaries in release mode into the same directory, with `RISC0_SKIP_BUILD=1`
 for this host-only test. Then run (use the configured Python executable on Windows):
 
@@ -199,7 +225,7 @@ and runs all three cases through eager PLE execution, selective PLE execution wi
 zero/constrained/sufficient cache budgets and one/two workers, and the unchanged
 Raster binaries with **authentication enabled**. Each execution consumes its own
 preceding outputs. The test compares every output/index/manifest byte and every
-checkpoint hash, including the last declared decode pass. The report records
+checkpoint hash. The report records
 binary hashes, elapsed times, and sampled process-tree memory. Timing has no pass
 threshold: this model's PLE table fits in one page, so the separate multi-page
 benchmark measures the loading reduction. This is native authenticated execution,
@@ -209,9 +235,9 @@ not a zkVM proof-generation test.
 ## Selective main embeddings and paged output head
 
 These are the standard staged implementations for Raster inputs, not modes to
-opt into. `input_embedding` and `decode_embed` cache verified dimensions, scale,
+opt into. `embed_*` stages cache verified dimensions, scale,
 and page metadata, then gather each needed page once per invocation.
-`prefill_finalize` and `decode_finalize_*` authenticate the complete projection
+`check_*` stages authenticate the complete projection
 page count and score every vocabulary row in batches of at most 32 pages. The
 head never creates a complete owned matrix. Only parameters and metadata enter
 the existing run-owned cache; selected/streamed pages are invocation-local.
@@ -229,7 +255,7 @@ only PLE. The diagnostic performance report records `embedding_loading=selective
 and `head_loading=paged`. Head page loading and verification occur inside its
 kernel-duration interval; focused benchmarks report those costs separately.
 Canonical outputs, indexes, manifests, post-write verification, and checkpoint
-hashes are unchanged. Eager constructors on the three affected routine `Inputs`
+hashes are unchanged. Eager constructors on the affected routine `Inputs`
 types support comparisons from already-materialized test values.
 
 Preserve release builds before editing and after embedding-only implementation.
@@ -246,7 +272,7 @@ python crates/inference/staged/tests/paged_weights_parity.py `
 The output directory must be new. All three cases run through the three builds,
 plus updated zero/constrained cache budgets and serial execution. Each chain
 consumes its own prior outputs. The unchanged authenticated Raster binaries then
-execute the complete declared sequence, including its final decode pass. The
+execute the complete declared sequence. The
 harness compares output/index/input-manifest/output-manifest bytes, commitments,
 and checkpoint hashes, and checks that the Raster binaries themselves did not
 change. Its report includes wall times and sampled memory; the small-model
@@ -287,5 +313,5 @@ Remove-Item Env:RASTER_PARALLELISM -ErrorAction SilentlyContinue
 Use fresh output directories on repeats and reverse build order to assess OS
 cache effects. Each `result.json` identifies its `chain_dir`. Compare every
 entry of `checkpoint_trace.json` and `checkpoints.txt`, not just final text or
-EOS, and inspect `staged-performance.json` for embedding/finalization timings
+EOS, and inspect `staged-performance.json` for embedding/check timings
 and sampled process-tree memory. Then repeat the original full-length run.

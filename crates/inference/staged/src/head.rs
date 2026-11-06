@@ -1,4 +1,4 @@
-//! Finalization over verified Raster pages, without an owned full-head matrix.
+//! Scoring over verified Raster pages, without an owned full-head matrix.
 use crate::{
     cache::{MaterializationCache, MaterializationCacheKey},
     verified_weights::{fields, PageRegion, VerifiedSelections},
@@ -6,16 +6,11 @@ use crate::{
 use anyhow::{ensure, Context, Result};
 use inference_kernels::kernels::sequence_check::{score_row, Argmax, Selection};
 use inference_kernels::weight_budget::RetainedWeightBytes;
-use prefill_finalize::input::{
-    rms_norm, softcap, unpack_i32s, ActivationSequence, FinalHeadParams, LogitEntry, PrefillLogits,
-};
-use raster::{BytesPage, List};
+use raster::BytesPage;
 use raster_runtime::EntryArgumentsBinding;
 use rayon::prelude::*;
-use std::{
-    sync::Arc,
-    time::{Duration, Instant},
-};
+use sequence_check::input::FinalHeadParams;
+use std::sync::Arc;
 
 pub(crate) const BATCH_PAGES: usize = 32;
 pub(crate) struct StaticHead {
@@ -78,13 +73,12 @@ pub(crate) fn load(
     Ok(PagedHead { metadata, source })
 }
 
+/// What one sweep of the head read.
 #[derive(Default, Debug)]
 pub(crate) struct RunStats {
     pub pages: u64,
     pub peak_batch_pages: usize,
     pub peak_batch_payload_bytes: usize,
-    pub load_verify: Duration,
-    pub arithmetic: Duration,
 }
 
 impl PagedHead {
@@ -98,8 +92,16 @@ impl PagedHead {
 /// Each page is read and verified once and scored against all positions.
 /// Every position folds its pages in page order and its rows in token-id
 /// order, keeping only strictly greater scores, so each selection is the one
-/// `prefill-finalize` followed by `decode-select-token` makes for that row.
+/// direct generation makes for that row.
 pub(crate) fn select_positions(positions: &[&[i32]], head: &PagedHead) -> Result<Vec<Selection>> {
+    select_positions_measured(positions, head).map(|(selections, _)| selections)
+}
+
+pub(crate) fn select_positions_measured(
+    positions: &[&[i32]],
+    head: &PagedHead,
+) -> Result<(Vec<Selection>, RunStats)> {
+    let mut stats = RunStats::default();
     let params = &head.metadata.params;
     let hidden = params.hidden_size as usize;
     let stride = det_num::q8::row_bytes(hidden).context("head width is not whole Q8_0 blocks")?;
@@ -133,6 +135,11 @@ pub(crate) fn select_positions(positions: &[&[i32]], head: &PagedHead) -> Result
                 Ok(((page.offset() / stride as u64) as u32, page))
             })
             .collect::<Result<Vec<_>>>()?;
+        stats.pages += pages.len() as u64;
+        stats.peak_batch_pages = stats.peak_batch_pages.max(pages.len());
+        stats.peak_batch_payload_bytes = stats
+            .peak_batch_payload_bytes
+            .max(pages.iter().map(|(_, page)| BytesPage::len(page)).sum());
         let fold = |(position, best): (&&[i32], &mut Argmax)| -> Result<()> {
             for (first_id, page) in &pages {
                 for (local, row) in page.as_slice().chunks_exact(stride).enumerate() {
@@ -154,109 +161,12 @@ pub(crate) fn select_positions(positions: &[&[i32]], head: &PagedHead) -> Result
         }
         next = end;
     }
-    argmax
+    let selections = argmax
         .into_iter()
         .map(|best| {
             best.finish()
                 .ok_or_else(|| anyhow::anyhow!("the head scored no token"))
         })
-        .collect()
-}
-
-pub(crate) fn run(activations: &ActivationSequence, head: &PagedHead) -> Result<PrefillLogits> {
-    run_measured(activations, head).map(|(output, _)| output)
-}
-
-pub(crate) fn run_measured(
-    activations: &ActivationSequence,
-    head: &PagedHead,
-) -> Result<(PrefillLogits, RunStats)> {
-    let mut stats = RunStats::default();
-    let started = Instant::now();
-    let params = &head.metadata.params;
-    let position = activations
-        .rows
-        .iter()
-        .last()
-        .context("prefill produced no activation rows; there is no final position to score")?;
-    let mut normalized = unpack_i32s(&position.values).map_err(anyhow::Error::msg)?;
-    ensure!(
-        normalized.len() == params.hidden_size as usize,
-        "final position width mismatch"
-    );
-    rms_norm(
-        &mut normalized,
-        &unpack_i32s(&params.norm_weights).map_err(anyhow::Error::msg)?,
-        params.norm_eps,
-    )
-    .map_err(anyhow::Error::msg)?;
-    stats.arithmetic += started.elapsed();
-    let parallel = std::env::var("RASTER_PARALLELISM")
-        .map(|v| !v.eq_ignore_ascii_case("off"))
-        .unwrap_or(true);
-    let region = &head.metadata.region;
-    let mut logits = Vec::new();
-    let mut next = 0;
-    while next < region.page_count {
-        let started = Instant::now();
-        let end = next
-            .saturating_add(BATCH_PAGES as u64)
-            .min(region.page_count);
-        let pages = (next..end)
-            .map(|index| region.page(&head.source, &["head", "projection"], index))
-            .collect::<Result<Vec<_>>>()?;
-        stats.pages += pages.len() as u64;
-        stats.peak_batch_pages = stats.peak_batch_pages.max(pages.len());
-        stats.peak_batch_payload_bytes = stats
-            .peak_batch_payload_bytes
-            .max(pages.iter().map(BytesPage::len).sum());
-        stats.load_verify += started.elapsed();
-        let started = Instant::now();
-        let score = |page: &BytesPage| -> Result<Vec<LogitEntry>> {
-            let stride = det_num::q8::row_bytes(params.hidden_size as usize)
-                .context("head width is not whole Q8_0 blocks")?;
-            ensure!(
-                page.len() % stride == 0,
-                "projection page is not a whole number of hidden-width rows"
-            );
-            ensure!(
-                page.offset() % stride as u64 == 0,
-                "projection page offset is not row-aligned"
-            );
-            let first_id = (page.offset() / stride as u64) as u32;
-            page.as_slice()
-                .chunks_exact(stride)
-                .enumerate()
-                .map(|(local, row)| {
-                    let value =
-                        det_num::q8::dot_row(&normalized, row).map_err(anyhow::Error::msg)?;
-                    Ok(LogitEntry {
-                        token_id: first_id + local as u32,
-                        value: softcap(value, params.softcap),
-                    })
-                })
-                .collect()
-        };
-        // Indexed parallel collection preserves page order; each row's
-        // `Q8_0` dot product is exact until its one rounding.
-        let scored = if parallel && rayon::current_num_threads() > 1 {
-            pages.par_iter().map(score).collect::<Result<Vec<_>>>()?
-        } else {
-            pages.iter().map(score).collect::<Result<Vec<_>>>()?
-        };
-        for page in scored {
-            logits.extend(page);
-        }
-        stats.arithmetic += started.elapsed();
-        next = end;
-        // `pages` and decoded matrices die here, before the next batch is read.
-    }
-    Ok((
-        PrefillLogits {
-            decode_position: activations.start_position + activations.rows.len() as u32,
-            logits: List::from(logits),
-            errors: List::new(),
-        },
-        stats,
-    ))
+        .collect::<Result<Vec<_>>>()?;
+    Ok((selections, stats))
 }

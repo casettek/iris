@@ -17,25 +17,78 @@ pub(crate) fn model_fixture(base: &Path, name: &str) -> PathBuf {
     .unwrap();
     fs::write(dir.join("Raster.toml"), format!(r#"[chain]
 name = "{name}"
+
+[chain.input.prompt_cuts]
+index = "j"
+path = "target/iris/run-prompt-placeholder/cut_{{j}}.rastered"
+index_path = "target/iris/run-prompt-placeholder/cut_{{j}}.rindex"
+commitments = []
+
+[chain.input.claimed_ids]
+index = "k"
+path = "target/iris/run-prompt-placeholder/claimed_{{k}}.rastered"
+index_path = "target/iris/run-prompt-placeholder/claimed_{{k}}.rindex"
+commitments = []
+
 [[chain.stage]]
-name = "prompt_merge_seed"
-project = "raster-stages/prompt-merge"
-inputs.tokenizer = {{ external = {{ path = "tokenizer.rastered", index_path = "tokenizer.rindex", commitment = "tok" }} }}
-inputs.initial_pieces = {{ external = {{ path = "pieces.rastered", index_path = "pieces.rindex", commitment = "pieces" }} }}
+name = "prompt_bind"
+project = "raster-stages/prompt-bind"
+inputs.text = {{ external = {{ path = "target/iris/run-prompt-placeholder/text.rastered", index_path = "target/iris/run-prompt-placeholder/text.rindex", commitment = "0" }} }}
+inputs.config = {{ external = {{ path = "target/iris/run-prompt-placeholder/config.rastered", index_path = "target/iris/run-prompt-placeholder/config.rindex", commitment = "0" }} }}
+
 [[chain.repeat]]
-name = "tokenize"
+name = "prompt"
+index = "j"
+count = 0
+
+  [[chain.repeat.stage]]
+name = "prompt_merge_p{{j}}_b{{b}}"
 index = "b"
 count = 0
-[[chain.stage]]
-name = "prompt_prepare"
+project = "raster-stages/prompt-merge"
+
+  [[chain.repeat.stage]]
+name = "prompt_prepare_p{{j}}"
 project = "raster-stages/prompt-prepare"
+inputs.merged_pieces = {{ from = "prompt_merge_p{{j}}_b@LAST_MERGE_BATCH@" }}
+
 [[chain.repeat]]
-name = "decode"
-index = "t"
+name = "claimed_embed"
+index = "k"
+count = 0
+
+[[chain.repeat]]
+name = "layers"
+index = "l"
+start = 0
+count = 1
+
+  [[chain.repeat.stage]]
+name = "range_p{{j}}_l{{l}}"
+index = "j"
+count = 0
+project = "raster-stages/prefill-range"
+
+  [[chain.repeat.stage]]
+name = "range_c{{k}}_l{{l}}"
+index = "k"
+count = 0
+project = "raster-stages/prefill-range"
+
+[[chain.repeat]]
+name = "claimed"
+index = "k"
 count = 0
 "#)).unwrap();
+    let commitments = [inference_artifacts::ModelCommitment {
+        role: String::from("embedding"),
+        commitment: name.to_string(),
+    }];
     let manifest: ModelManifest = serde_json::from_value(json!({
-        "version": 2,
+        "version": inference_artifacts::MODEL_MANIFEST_VERSION,
+        "model_id": inference_artifacts::model_id_of(&commitments),
+        "model_commitments": commitments,
+        "range_size": 4,
         "bundle": {
             "model_detwgt_path": "model.detwgt", "model_detwgt_sha256": file_sha256(&dir.join("model.detwgt")).unwrap(),
             "config_path": "config.json", "config_sha256": file_sha256(&dir.join("config.json")).unwrap(),
@@ -51,7 +104,10 @@ count = 0
             "ple_input_scale": 0, "final_logit_softcap": 0
         },
         "eos_token_ids": [],
-        "provenance": { "raster_manifest_path": "Raster.toml", "raster_manifest_sha256": file_sha256(&dir.join("Raster.toml")).unwrap() }
+        "provenance": {
+            "raster_manifest_path": "Raster.toml",
+            "raster_manifest_sha256": file_sha256(&dir.join("Raster.toml")).unwrap()
+        }
     })).unwrap();
     let path = dir.join("manifest.json");
     write_json(&path, &manifest).unwrap();

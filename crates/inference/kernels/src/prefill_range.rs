@@ -90,11 +90,18 @@ pub fn run_prefill_range_direct_with_weight_cache(
     };
     let input_rows = activation_rows(inputs.activations, params.hidden_size as usize)?;
 
+    // A range with no rows attends to nothing but still carries the cache, as
+    // the stage's push-only K/V site does: the next range's keys come through it.
     if input_rows.rows() == 0 {
         return Ok(ActivationSequence {
             rows: List::new(),
             errors: List::new(),
-            kv: List::new(),
+            kv: List::from(output_kv(
+                inputs.prior_kv.kv.as_slice(),
+                &[],
+                inputs.activations.start_position,
+                params.sliding_window,
+            )),
             start_position: inputs.activations.start_position,
         });
     }

@@ -10,17 +10,16 @@ fn root() -> std::path::PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..")
 }
 fn pieces(text: &str, tokenizer: &Value) -> BpePieces {
-    BpePieces {
-        pieces: run_prep::split_prompt(text, tokenizer)
+    BpePieces::of_pieces(
+        run_prep::split_prompt(text, tokenizer)
             .unwrap()
             .into_iter()
             .map(|p| BpePiece {
                 text: p.text,
                 segment: p.segment,
             })
-            .collect::<Vec<_>>()
-            .into(),
-    }
+            .collect(),
+    )
 }
 
 fn check_reference(tokenizer_path: &Path, corpus_path: &Path) {
@@ -129,7 +128,7 @@ fn production_reference_ids() {
 }
 
 #[test]
-fn batch_boundaries_and_budget_rejection() {
+fn batch_boundaries_and_recorded_budget_fault() {
     let batch = run_prep::MERGES_PER_STAGE;
     for merges_needed in [0, 1, batch - 1, batch, batch + 1, 2 * batch - 1, 2 * batch, 2 * batch + 1] {
         // Distinct single-character pieces, more than the ASCII letters.
@@ -153,11 +152,12 @@ fn batch_boundaries_and_budget_rejection() {
         let before = best_merge(merged.pieces.as_slice(), &table).unwrap();
         if merges_needed > 0 {
             assert!(before.matched);
-            assert!(finalize_prompt(PromptPrepareDirectInputs {
+            let early = finalize_prompt(PromptPrepareDirectInputs {
                 tokenizer: &table,
-                initial_pieces: &merged
+                initial_pieces: &merged,
             })
-            .is_err());
+            .unwrap();
+            assert_eq!(early.context.fault, prompt_prepare::input::FAULT_MERGES_INCOMPLETE);
         }
         let batches = run_prep::tokenizer_repeat_count(merged.pieces.len()).unwrap() + 1;
         for index in 0..batches {
@@ -205,6 +205,7 @@ fn special_segments_forbid_otherwise_eligible_merges() {
             },
         ]
         .into(),
+        ..Default::default()
     };
     assert!(!best_merge(input.pieces.as_slice(), &table).unwrap().matched);
     assert_eq!(

@@ -1,8 +1,11 @@
-use anyhow::{bail, ensure, Result};
+use anyhow::{ensure, Result};
 use raster::List;
 use sequence_check::input::{
-    rms_norm, softcap, unpack_i32s, ActivationSequence, ClaimedOutput, DecodeEdge, FinalHead,
+    empty_row, rms_norm, softcap, unpack_i32s, ActivationRow, ActivationSequence, CheckFrame,
+    ClaimedOutput, DecodeEdge, ErrorSummary, FinalHead, PositionSelection, SelectionSummary,
 };
+use sequence_check::prompt::PromptContext;
+use sequence_check::{check_fault_of, observe_selection};
 
 use crate::tensor::{MatrixSource, Q8Matrix};
 
@@ -14,11 +17,29 @@ pub struct CheckHeadParams<'a> {
     pub norm_weights: &'a [i32],
 }
 
-/// One generated position: the normalised row that predicts it.
+/// One generated position: the normalised row that predicts it, or `None`
+/// when there is no row to normalise, which the check publishes as a fault.
 pub struct CheckPosition {
     pub decode_position: u32,
     pub claimed_token_id: u32,
-    pub normalized: Vec<i32>,
+    pub normalized: Option<Vec<i32>>,
+}
+
+/// This stage's copy of the prompt context: the stages share its source, not a
+/// Rust type.
+pub fn prompt_context(source: &prompt_prepare::input::PromptContext) -> PromptContext {
+    PromptContext {
+        input_text_sha256: source.input_text_sha256.clone(),
+        model_id: source.model_id.clone(),
+        raw_prompt: source.raw_prompt,
+        max_new_tokens: source.max_new_tokens,
+        range_size: source.range_size,
+        next_piece: source.next_piece,
+        prompt_tokens: source.prompt_tokens,
+        complete: source.complete,
+        fault: source.fault,
+        fault_position: source.fault_position,
+    }
 }
 
 /// The greedy selection at one generated position.
@@ -29,7 +50,7 @@ pub struct Selection {
 }
 
 /// Running first-maximum argmax: only a strictly greater score replaces the
-/// incumbent, so visiting token ids in order reproduces `decode-select-token`.
+/// incumbent, so visiting token ids in order keeps the first maximum.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Argmax(Option<Selection>);
 
@@ -60,19 +81,17 @@ pub fn score_row(normalized: &[i32], row: &[u8], cap: i32) -> Result<i32> {
 /// The predicting rows are the previous range's last row followed by this
 /// range's rows: claimed token `k` sits at `start_position + k` and is
 /// predicted by the row before it. Causal attention means that row has seen
-/// exactly the tokens the autoregressive decode step saw.
+/// exactly the tokens a decode step of direct generation saw.
+///
+/// A previous range with no rows leaves the stage's empty row at the boundary.
 pub fn check_positions(
     activations: &ActivationSequence,
     previous: &ActivationSequence,
     claimed: &ClaimedOutput,
     params: &CheckHeadParams<'_>,
 ) -> Result<Vec<CheckPosition>> {
-    let boundary = previous.rows.iter().last().ok_or_else(|| {
-        anyhow::anyhow!("teacher-forced check requires a non-empty range before the claimed tokens")
-    })?;
-    if claimed.token_ids.is_empty() {
-        bail!("teacher-forced check requires at least one claimed output token");
-    }
+    let empty = empty_row();
+    let boundary = previous.rows.iter().last().unwrap_or(&empty);
     let predicting = std::iter::once(boundary)
         .chain(activations.rows.iter())
         .collect::<Vec<_>>();
@@ -87,77 +106,113 @@ pub fn check_positions(
                     activations.rows.len()
                 )
             })?;
-            let mut normalized = unpack_i32s(&row.values).map_err(anyhow::Error::msg)?;
-            ensure!(
-                normalized.len() == params.hidden_size as usize,
-                "predicting row has {} values, expected hidden_size {}",
-                normalized.len(),
-                params.hidden_size
-            );
-            rms_norm(&mut normalized, params.norm_weights, params.norm_eps)
-                .map_err(anyhow::Error::msg)?;
             Ok(CheckPosition {
                 decode_position: activations.start_position + k as u32,
                 claimed_token_id: *claimed_token_id,
-                normalized,
+                normalized: normalize_row(row, params),
             })
         })
         .collect()
 }
 
+/// `normalize_position`, which records its failure where this returns `None`.
+fn normalize_row(row: &ActivationRow, params: &CheckHeadParams<'_>) -> Option<Vec<i32>> {
+    let mut values = unpack_i32s(&row.values).ok()?;
+    if values.len() != params.hidden_size as usize {
+        return None;
+    }
+    rms_norm(&mut values, params.norm_weights, params.norm_eps).ok()?;
+    Some(values)
+}
+
+/// What this range's check establishes its fault from.
+pub fn check_frame(
+    activations: &ActivationSequence,
+    prior: &DecodeEdge,
+    context: &PromptContext,
+) -> CheckFrame {
+    CheckFrame {
+        start_position: activations.start_position,
+        range_size: context.range_size,
+        prompt_tokens: context.prompt_tokens,
+        prior_has_selected: prior.has_selected,
+        prior_decode_position: prior.decode_position,
+        prior_fault: prior.check_fault,
+        prior_fault_position: prior.check_fault_position,
+    }
+}
+
 /// Publishes the selections in the `DecodeEdge` shape `output-finalize`
-/// consumes, after the earlier ranges' transcript. Disagreement with the
-/// claim is published in the claim verdict, not raised: the earlier ranges'
-/// count plus this range's, keeping the earliest position.
+/// consumes, after the earlier ranges' transcript. `selections` holds one entry
+/// per position that has a normalised row.
+///
+/// Neither a disagreement with the claim nor a fault is raised. The verdict is
+/// the earlier ranges' count plus this range's, keeping the earliest position,
+/// and the fault is the earliest range's.
 pub fn decode_edge(
     positions: &[CheckPosition],
     selections: &[Selection],
     prior: &DecodeEdge,
+    frame: &CheckFrame,
 ) -> Result<DecodeEdge> {
-    ensure!(
-        positions.len() == selections.len(),
-        "{} check positions produced {} selections",
-        positions.len(),
-        selections.len()
-    );
-    let (last_position, last) = positions.last().zip(selections.last()).ok_or_else(|| {
-        anyhow::anyhow!("teacher-forced check requires at least one claimed output token")
-    })?;
-    let mismatches = positions
+    let mut remaining = selections.iter();
+    let mut summary = SelectionSummary::default();
+    let mut errors = ErrorSummary::default();
+    let mut generated_token_ids = prior
+        .generated_token_ids
         .iter()
-        .zip(selections)
-        .filter(|(position, selection)| position.claimed_token_id != selection.token_id)
-        .count() as u32;
-    let first_claim_mismatch_position = if prior.claim_mismatches > 0 {
-        prior.first_claim_mismatch_position
-    } else {
-        first_mismatch(positions, selections).unwrap_or(0)
-    };
+        .copied()
+        .collect::<Vec<_>>();
+    for position in positions {
+        if position.normalized.is_none() {
+            if errors.count == 0 {
+                errors.first_position = position.decode_position;
+            }
+            errors.count += 1;
+            continue;
+        }
+        let selection = remaining
+            .next()
+            .ok_or_else(|| anyhow::anyhow!("a scored check position has no selection"))?;
+        observe_selection(
+            &mut summary,
+            &PositionSelection {
+                decode_position: position.decode_position,
+                token_id: selection.token_id,
+                value: selection.value,
+                claimed_token_id: position.claimed_token_id,
+            },
+        );
+        generated_token_ids.push(selection.token_id);
+    }
+    ensure!(
+        remaining.next().is_none(),
+        "more selections than scored check positions"
+    );
+    let fault = check_fault_of(&summary, &errors, frame);
     Ok(DecodeEdge {
-        has_selected: true,
-        decode_position: last_position.decode_position,
-        token_id: last.token_id,
-        value: last.value,
-        claim_mismatches: prior.claim_mismatches.saturating_add(mismatches),
-        first_claim_mismatch_position,
-        generated_token_ids: List::from(
-            prior
-                .generated_token_ids
-                .iter()
-                .copied()
-                .chain(selections.iter().map(|selection| selection.token_id))
-                .collect::<Vec<_>>(),
-        ),
+        has_selected: summary.has_selected,
+        decode_position: summary.decode_position,
+        token_id: summary.token_id,
+        value: summary.value,
+        claim_mismatches: prior.claim_mismatches.saturating_add(summary.mismatches),
+        first_claim_mismatch_position: if prior.claim_mismatches > 0 {
+            prior.first_claim_mismatch_position
+        } else {
+            summary.first_mismatch_position
+        },
+        check_fault: fault.fault,
+        check_fault_position: fault.position,
+        generated_token_ids: List::from(generated_token_ids),
     })
 }
 
-/// The first generated position whose selection is not the claimed token.
-pub fn first_mismatch(positions: &[CheckPosition], selections: &[Selection]) -> Option<u32> {
+/// The positions that have a normalised row, in order.
+pub fn scorable(positions: &[CheckPosition]) -> Vec<&[i32]> {
     positions
         .iter()
-        .zip(selections)
-        .find(|(position, selection)| position.claimed_token_id != selection.token_id)
-        .map(|(position, _)| position.decode_position)
+        .filter_map(|position| position.normalized.as_deref())
+        .collect()
 }
 
 pub struct SequenceCheckDirectInputs<'a> {
@@ -166,6 +221,7 @@ pub struct SequenceCheckDirectInputs<'a> {
     pub claimed: &'a ClaimedOutput,
     pub prior: &'a DecodeEdge,
     pub head: &'a FinalHead,
+    pub context: &'a PromptContext,
 }
 
 /// Already-materialized comparison path over an owned head.
@@ -205,14 +261,12 @@ pub fn run_sequence_check_direct(inputs: SequenceCheckDirectInputs<'_>) -> Resul
         (byte_len / stride) as usize,
         head.hidden_size as usize,
     )?;
-    let mut argmax = vec![Argmax::default(); positions.len()];
+    let normalized = scorable(&positions);
+    let mut argmax = vec![Argmax::default(); normalized.len()];
     for token_id in 0..projection.rows() {
         let row = projection.row(token_id);
-        for (position, best) in positions.iter().zip(argmax.iter_mut()) {
-            best.observe(
-                token_id as u32,
-                score_row(&position.normalized, row, head.softcap)?,
-            );
+        for (position, best) in normalized.iter().zip(argmax.iter_mut()) {
+            best.observe(token_id as u32, score_row(position, row, head.softcap)?);
         }
     }
     let selections = argmax
@@ -222,5 +276,10 @@ pub fn run_sequence_check_direct(inputs: SequenceCheckDirectInputs<'_>) -> Resul
                 .ok_or_else(|| anyhow::anyhow!("the head scored no token"))
         })
         .collect::<Result<Vec<_>>>()?;
-    decode_edge(&positions, &selections, inputs.prior)
+    decode_edge(
+        &positions,
+        &selections,
+        inputs.prior,
+        &check_frame(inputs.activations, inputs.prior, inputs.context),
+    )
 }

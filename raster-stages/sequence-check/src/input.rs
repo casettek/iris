@@ -3,11 +3,10 @@
 //!
 //! Boundary types are duplicated field-for-field from the stages they link
 //! to — `ActivationSequence` from `prefill-range`, `PromptTokenization` from
-//! `prompt-prepare`, `FinalHead` from `prefill-finalize`, `DecodeEdge` from
-//! `output-finalize` — because the chain binds by structural commitment, not
-//! by Rust type name. The scoring numerics delegate to `det_num` exactly as
-//! `prefill-finalize` does, so a teacher-forced score is bit-identical to the
-//! decode-path score of the same activation row.
+//! `prompt-prepare`, `DecodeEdge` from `decode-init` and `output-finalize` —
+//! because the chain binds by structural commitment, not by Rust type name.
+//! The scoring numerics delegate to `det_num`, so a score is bit-identical to
+//! direct generation's score of the same activation row.
 
 extern crate alloc;
 
@@ -18,8 +17,8 @@ use det_num::{Acc, Act, Wgt};
 use raster::{Bytes, BytesPage, List};
 use serde::{Deserialize, Serialize};
 
-/// Replay-unit page size for the logits projection. MUST match
-/// `prefill-finalize`: both stages read the same committed head external.
+/// Replay-unit page size for the logits projection. MUST match the page size
+/// the importer writes the head external with.
 pub const PAGE_SIZE: u64 = 52_224;
 
 // ---------------------------------------------------------------------------
@@ -61,8 +60,6 @@ pub struct ClaimedOutput {
 }
 
 /// The output head's scalar parameters plus the final-norm vector.
-///
-/// MUST match `FinalHeadParams` in `prefill-finalize`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
 pub struct FinalHeadParams {
     pub hidden_size: u32,
@@ -73,7 +70,7 @@ pub struct FinalHeadParams {
     pub norm_weights: BytesPage,
 }
 
-/// The committed output head. MUST match `FinalHead` in `prefill-finalize`.
+/// The committed output head.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
 pub struct FinalHead {
     pub params: FinalHeadParams,
@@ -85,9 +82,8 @@ pub struct FinalHead {
 /// The stage's authorized output: the greedy selection at every generated
 /// position, in the shape `output-finalize` consumes.
 ///
-/// MUST match `DecodeEdge` in `decode-select-token` and `output-finalize`.
-/// For an honest claim it is byte-identical to the autoregressive chain's
-/// final `decode.edge`.
+/// MUST match `DecodeEdge` in `decode-init` and `output-finalize`. For an honest
+/// claim it is byte-identical to direct generation's final edge.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
 pub struct DecodeEdge {
     pub has_selected: bool,
@@ -96,11 +92,16 @@ pub struct DecodeEdge {
     pub value: i32,
     /// The claim verdict so far: how many claimed tokens, in this range and
     /// every earlier one, are not the greedy selection at their position.
-    /// Zero for an honest claim, as on every autoregressive edge.
+    /// Zero for an honest claim.
     pub claim_mismatches: u32,
     /// Absolute sequence position of the first disagreement, or zero when
     /// there is none.
     pub first_claim_mismatch_position: u32,
+    /// Why the check could not stand behind this edge: one of the
+    /// `CHECK_FAULT_*` codes, the earliest found.
+    pub check_fault: u32,
+    /// Absolute sequence position of that fault, or zero when there is none.
+    pub check_fault_position: u32,
     pub generated_token_ids: List<u32>,
 }
 
@@ -108,10 +109,15 @@ pub struct DecodeEdge {
 // This stage's own types
 // ---------------------------------------------------------------------------
 
-/// Loop-carried count of the previous range's rows.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
-pub struct TokenCount {
-    pub count: u32,
+/// Loop-carried tail of the previous range: its last row so far.
+///
+/// One row, replaced rather than grown, and folded a chunk at a time. Starts as
+/// [`empty_row`], so a previous range with no rows leaves that row in place
+/// and the position it should have predicted is recorded as unscored: indexing
+/// an empty list would abort with no output.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
+pub struct PreviousTail {
+    pub last: ActivationRow,
 }
 
 /// The rows that predict this range's claimed tokens, in order: the previous
@@ -135,7 +141,7 @@ pub struct CheckCursor {
 pub struct CheckStep {
     pub row_index: u32,
     /// Absolute position of the token this row predicts — the
-    /// `decode_position` the autoregressive chain reports for it.
+    /// `decode_position` direct generation reports for it.
     pub decode_position: u32,
     pub claimed_token_id: u32,
     pub start_position: u32,
@@ -169,11 +175,18 @@ pub struct PositionSelection {
     pub claimed_token_id: u32,
 }
 
+/// A generated position that could not be scored, and why.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
+pub struct PositionError {
+    pub decode_position: u32,
+    pub message: String,
+}
+
 /// Every generated position's selection, in order, plus scoring failures.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
 pub struct CheckedPositions {
     pub selections: List<PositionSelection>,
-    pub errors: List<String>,
+    pub errors: List<PositionError>,
 }
 
 /// Loop-carried summary of the selections: the last one, and how many
@@ -189,15 +202,72 @@ pub struct SelectionSummary {
     pub value: i32,
 }
 
-/// Loop-carried summary of failed positions: how many, and the first message.
+/// Loop-carried summary of failed positions: how many, and the first one.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
 pub struct ErrorSummary {
     pub count: u32,
+    pub first_position: u32,
     pub first: String,
 }
 
+/// The fault this check publishes, carried or newly found.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
+pub struct CheckFault {
+    pub fault: u32,
+    pub position: u32,
+}
+
+/// What this range's check establishes its fault from.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
+pub struct CheckFrame {
+    /// Absolute position of this range's first token.
+    pub start_position: u32,
+    /// The run's limit on one range, from the prompt context.
+    pub range_size: u32,
+    /// How many tokens the prompt became, from the prompt context.
+    pub prompt_tokens: u32,
+    pub prior_has_selected: bool,
+    pub prior_decode_position: u32,
+    pub prior_fault: u32,
+    pub prior_fault_position: u32,
+}
+
+/// No check failed.
+pub const CHECK_FAULT_NONE: u32 = 0;
+/// A generated position has no selection: its predicting row is missing or malformed.
+pub const CHECK_FAULT_UNSCORED: u32 = 1;
+/// The range claims no tokens.
+pub const CHECK_FAULT_NO_CLAIMED_TOKENS: u32 = 2;
+/// The range claims more tokens than the run's range size allows.
+pub const CHECK_FAULT_RANGE_TOO_LARGE: u32 = 3;
+/// The range does not start where the prompt or the previous range ended.
+pub const CHECK_FAULT_DISCONTINUOUS: u32 = 4;
+
+/// What a published `check_fault` means.
+pub fn check_fault_description(fault: u32) -> &'static str {
+    match fault {
+        CHECK_FAULT_NONE => "no fault",
+        CHECK_FAULT_UNSCORED => "a generated position could not be scored",
+        CHECK_FAULT_NO_CLAIMED_TOKENS => "a range claims no tokens",
+        CHECK_FAULT_RANGE_TOO_LARGE => "a range claims more tokens than the range size allows",
+        CHECK_FAULT_DISCONTINUOUS => {
+            "a range does not start where the prompt or the previous range ended"
+        }
+        _ => "an unknown fault",
+    }
+}
+
+/// The row a previous range with no rows leaves behind. It has no values, so
+/// normalising it records why the position it should predict went unscored.
+pub fn empty_row() -> ActivationRow {
+    ActivationRow {
+        token_id: 0,
+        values: pack_i32s(&[]),
+    }
+}
+
 // ---------------------------------------------------------------------------
-// Packing and Q16.16 kernels — the `prefill-finalize` contracts
+// Packing and Q16.16 kernels
 // ---------------------------------------------------------------------------
 
 pub fn pack_i32s(values: &[i32]) -> BytesPage {

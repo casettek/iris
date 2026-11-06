@@ -18,9 +18,8 @@ pub const PAGE_SIZE: u64 = 196_608;
 /// `Q8_PAGE_SIZE` / embedding and head `PAGE_SIZE`.
 pub const Q8_PAGE_SIZE: u64 = 195_840;
 
-/// Page size of the head projection: at most 384 rows of a 128-wide head,
-/// under Raster's per-page budget for the logit `prefill-finalize` writes per
-/// row. MUST match `prefill-finalize` and `sequence-check`.
+/// Page size of the head projection: at most 384 rows of a 128-wide head.
+/// MUST match `sequence-check`.
 pub const Q8_HEAD_PAGE_SIZE: u64 = 52_224;
 
 /// Packs Q16.16 values as little-endian i32s.
@@ -43,42 +42,8 @@ pub fn paged_i32s(values: &[i32]) -> raster::runtime::Result<Bytes<196_608>> {
 
 // --- prompt-prepare ---------------------------------------------------------
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
-pub struct TokenEntry {
-    pub token: String,
-    pub id: u32,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
-pub struct BpeMerge {
-    pub rank: u32,
-    pub left: String,
-    pub right: String,
-    pub merged: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
-pub struct VocabBucket {
-    pub entries: List<TokenEntry>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
-pub struct MergeBucket {
-    pub rules: List<BpeMerge>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
-pub struct PromptTokenizer {
-    pub vocab_bucket_count: u32,
-    pub merge_bucket_count: u32,
-    pub vocab_buckets: List<VocabBucket>,
-    pub merge_buckets: List<MergeBucket>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
-pub struct BpePieces {
-    pub pieces: List<prompt_prepare::input::BpePiece>,
-}
+// The prompt stages share one crate, so these are the stages' own types.
+pub use prompt_prepare::input::{PromptTokenization, TokenEntry};
 
 // --- output-finalize -------------------------------------------------------
 
@@ -104,13 +69,7 @@ pub struct EmbeddingTable {
     pub values: Bytes<195_840>,
 }
 
-/// A claimed range's `prompt` input: no prompt ids before its claimed ids.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
-pub struct PromptTokenization {
-    pub token_ids: List<u32>,
-}
-
-/// The autoregressive chain's `claimed` input: no ids after the prompt.
+/// A prompt range's `claimed` input: no ids after the prompt.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
 pub struct ClaimedOutput {
     pub token_ids: List<u32>,
@@ -192,7 +151,7 @@ pub struct TransformerLayer {
     pub ple_layer_projection: Bytes<196_608>,
 }
 
-// --- prefill-finalize -------------------------------------------------------
+// --- sequence-check ---------------------------------------------------------
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
 pub struct FinalHeadParams {

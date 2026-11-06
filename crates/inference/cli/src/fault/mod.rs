@@ -494,11 +494,23 @@ fn challenge_projects(
     value: &toml::Value,
     base: &Path,
 ) -> Result<std::collections::BTreeSet<PathBuf>> {
-    let stages = value
-        .get("chain")
-        .and_then(|v| v.get("stage"))
+    let chain = value.get("chain").context("Raster manifest has no chain")?;
+    let stages_of = |table: &toml::Value| {
+        table
+            .get("stage")
+            .and_then(toml::Value::as_array)
+            .cloned()
+            .unwrap_or_default()
+    };
+    // Most of the chain's stages are inside its repeats.
+    let repeats = chain
+        .get("repeat")
         .and_then(toml::Value::as_array)
-        .context("Raster manifest has no chain stages")?;
+        .cloned()
+        .unwrap_or_default();
+    let stages = stages_of(chain)
+        .into_iter()
+        .chain(repeats.iter().flat_map(stages_of));
     let mut projects = std::collections::BTreeSet::new();
     for stage in stages {
         let project = stage
@@ -550,21 +562,32 @@ mod tests {
     use raster_core::trace::{ExecStep, ExecTarget, StepKind, StepRecord, StorageRoots};
     use raster_core::{merkle::EMPTY_LEAF, trace::Trace};
     #[test]
-    fn challenge_preflight_resolves_and_deduplicates_both_policies() {
+    fn challenge_preflight_resolves_and_deduplicates_every_stage_project() {
         let manifest: toml::Value = toml::from_str(
             r#"
 [[chain.stage]]
-name = "prefill_range_l0"
+name = "range_origin"
+project = "origin"
+[[chain.repeat]]
+name = "layers"
+index = "l"
+count = 2
+[[chain.repeat.stage]]
+name = "range_p{j}_l{l}"
 project = "range"
-[[chain.stage]]
-name = "prefill_range_l1"
+[[chain.repeat.stage]]
+name = "range_c{k}_l{l}"
 project = "range"
-[[chain.stage]]
-name = "prefill_finalize"
-project = "/opt/finalize"
+[[chain.repeat]]
+name = "claimed"
+index = "k"
+count = 1
+[[chain.repeat.stage]]
+name = "check_c{k}"
+project = "/opt/check"
 [[chain.stage]]
 name = "output_finalize"
-project = "unused"
+project = "finalize"
 "#,
         )
         .unwrap();
@@ -572,26 +595,29 @@ project = "unused"
         assert_eq!(
             projects,
             [
+                PathBuf::from("/model/origin"),
                 PathBuf::from("/model/range"),
-                PathBuf::from("/opt/finalize"),
-                PathBuf::from("/model/unused")
+                PathBuf::from("/opt/check"),
+                PathBuf::from("/model/finalize")
             ]
             .into()
         );
-        let missing: toml::Value = toml::from_str(
+        let only_top_level: toml::Value = toml::from_str(
             r#"
 [[chain.stage]]
-name = "prefill_finalize"
+name = "output_finalize"
 project = "finalize"
 "#,
         )
         .unwrap();
         assert_eq!(
-            challenge_projects(&missing, Path::new("/model"))
+            challenge_projects(&only_top_level, Path::new("/model"))
                 .unwrap()
                 .len(),
             1
         );
+        let empty: toml::Value = toml::from_str("[chain]\nname = \"empty\"\n").unwrap();
+        assert!(challenge_projects(&empty, Path::new("/model")).is_err());
     }
 
     fn fixture(len: usize) -> CommitmentFile {

@@ -1,34 +1,42 @@
 {
   "format": 1,
-  "program_commitment": "70542ca79abd7a233408930bdc6c497cefd1536de5f85dd067624f1d4640b94b",
+  "program_commitment": "ca9437e69b7fbeb909190e84c61680ff839fee1132fdb231acfa3582ced016e3",
   "tiles": {
     "apply_ranked_merge": {
-      "image_id": "c1dec903ab755bf0828bc11da8714557ef38b63e1d1e75698ad857850d14e628",
-      "source_hash": "b23834503004e1bc0000000000000be3"
+      "image_id": "97ac40b4a5e4aa223050a4ed36f2b5a39337b41bbbe884dd7c4021c0dc0d850a",
+      "source_hash": "db5c0115343c45c80000000000000ebd"
     },
     "begin_ranked_step": {
-      "image_id": "39fd45b4cc0ccd971512662a4ef3304b1dd520246e1e986dce5f7d7d23f575b9",
-      "source_hash": "b23834503004e1bc0000000000000be3"
+      "image_id": "61f6546b5cfe4c94526cc09c3eba461c4721936f03a536f41044d690f7b8ec64",
+      "source_hash": "db5c0115343c45c80000000000000ebd"
+    },
+    "carry_pieces": {
+      "image_id": "777192d879fda331d3ed84314f0ddadc6519c3a4112fb6e6f1aee82d9b673c7a",
+      "source_hash": "db5c0115343c45c80000000000000ebd"
     },
     "empty_merge_match": {
-      "image_id": "907f0b06c582602feea48dd695a45294930b4b93f6b0a7ccd0b615e2f24b5cbd",
-      "source_hash": "b23834503004e1bc0000000000000be3"
+      "image_id": "4fc53704984ae1d09c6b3258c524d1cb399b3ee0f8c4d32c449850f56fac7606",
+      "source_hash": "db5c0115343c45c80000000000000ebd"
     },
     "empty_merge_scan": {
-      "image_id": "d9bcc059695c9ccef8d15f44cae0451d40015fc64ab24f04ec08d8920df9fd50",
-      "source_hash": "b23834503004e1bc0000000000000be3"
+      "image_id": "f6f2bac1b2b8505f3736b4ec130f044b9ec15f9f3d7c33e20124c414e271add5",
+      "source_hash": "db5c0115343c45c80000000000000ebd"
     },
     "finish_ranked_step": {
-      "image_id": "15d9c6c0e5eed3ac7fa9e01aff584aed2f179e0f1d80a4b4fc0b4bf8f9788447",
-      "source_hash": "b23834503004e1bc0000000000000be3"
+      "image_id": "5f872b130187f294fea567fec3942cd7c94bcae2468656e9887314933ed82416",
+      "source_hash": "db5c0115343c45c80000000000000ebd"
     },
     "merge_bucket_index": {
-      "image_id": "ccb1367d7423ae205a894939f99eca2c239bd889524cb07346ab10e7a8705f39",
-      "source_hash": "b23834503004e1bc0000000000000be3"
+      "image_id": "8fb983bdec1cf313ee6f6eb95b099b1451dc08212a6581a2dcd5428a48f86e9e",
+      "source_hash": "db5c0115343c45c80000000000000ebd"
+    },
+    "open_pieces": {
+      "image_id": "a864c268220a7b66b3060595b4e5d58dc6a22caafceadc2e3497629a77bb2be1",
+      "source_hash": "db5c0115343c45c80000000000000ebd"
     },
     "scan_merge_rules": {
-      "image_id": "f8884094391343493f769216f9c0ad1ab4dcc5f6d51fc412b481460fc73a4b3d",
-      "source_hash": "b23834503004e1bc0000000000000be3"
+      "image_id": "3e0d53879d94447245d70b6be908ad2bdf2b5dd067e9beae80dd2db844d111d9",
+      "source_hash": "db5c0115343c45c80000000000000ebd"
     }
   },
   "toolchain": {

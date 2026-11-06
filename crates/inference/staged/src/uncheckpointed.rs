@@ -164,6 +164,19 @@ pub(crate) fn inference_result_from_generated(output: GeneratedOutput) -> Infere
         stop_reason: output.stop_reason,
         claim_mismatches: output.claim_mismatches,
         first_claim_mismatch_position: output.first_claim_mismatch_position,
+        check_fault: output.check_fault,
+        check_fault_position: output.check_fault_position,
+        output_text_sha256: output.output_text_sha256,
+        output_fault: output.output_fault,
+        input_text_sha256: output.input_text_sha256,
+        model_id: output.model_id,
+        raw_prompt: output.raw_prompt,
+        max_new_tokens: output.max_new_tokens,
+        range_size: output.range_size,
+        prompt_tokens: output.prompt_tokens,
+        prompt_complete: output.prompt_complete,
+        prompt_fault: output.prompt_fault,
+        prompt_fault_position: output.prompt_fault_position,
     }
 }
 
@@ -568,10 +581,10 @@ mod tests {
     #[test]
     fn aux_wave_range_groups_adjacent_prefill_prepare_aux_stages() {
         let stages = vec![
-            stage("input_embedding", "input-embedding"),
-            stage("prefill_prepare_aux_l0", "prefill-prepare-aux"),
-            stage("prefill_prepare_aux_l1", "prefill-prepare-aux"),
-            stage("prefill_range_l0", "prefill-range"),
+            stage("embed_p0", "input-embedding"),
+            stage("aux_p0_l0", "prefill-prepare-aux"),
+            stage("aux_p1_l0", "prefill-prepare-aux"),
+            stage("range_p0_l0", "prefill-range"),
         ];
 
         assert_eq!(aux_wave_range(&stages, 0), None);

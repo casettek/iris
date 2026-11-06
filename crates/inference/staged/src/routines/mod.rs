@@ -8,30 +8,28 @@ use serde::Serialize;
 use crate::artifact_io::{encode_output, write_output, EncodedArtifact};
 use crate::cache::{CachedInputs, CachedStageValue, MaterializationCache};
 
-pub mod decode_embed;
 pub mod decode_init;
-pub mod decode_select_token;
 pub mod input_embedding;
 pub mod output_finalize;
-pub mod prefill_finalize;
 pub mod prefill_prepare_aux;
 pub mod prefill_range;
+pub mod prompt_bind;
 pub mod prompt_merge;
 pub mod prompt_prepare;
+pub mod prompt_seed;
 pub mod range_origin;
 pub mod sequence_check;
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum StageKind {
+    PromptBind,
+    PromptSeed,
     PromptPrepare,
     PromptMerge,
     InputEmbedding,
     PrefillPrepareAux { layer: usize },
     PrefillRange { layer: usize },
-    PrefillFinalize,
     DecodeInit,
-    DecodeSelectToken,
-    DecodeEmbed,
     OutputFinalize,
     SequenceCheck,
     RangeOrigin,
@@ -74,35 +72,22 @@ pub struct DirectTimings {
 impl StageKind {
     pub fn from_stage_spec(project: &str, name: &str) -> Result<Self> {
         match project_basename(project) {
+            "prompt-bind" if name == "prompt_bind" => Ok(Self::PromptBind),
+            "prompt-seed" if name.starts_with("prompt_seed_p") => Ok(Self::PromptSeed),
             "prompt-merge" if is_prompt_merge_name(name) => Ok(Self::PromptMerge),
             "prompt-prepare"
                 if name == "prompt_prepare" || name.starts_with("prompt_prepare_p") =>
             {
                 Ok(Self::PromptPrepare)
             }
-            "input-embedding" if name == "input_embedding" || name.starts_with("embed_") => {
-                Ok(Self::InputEmbedding)
-            }
+            "input-embedding" if name.starts_with("embed_") => Ok(Self::InputEmbedding),
             "prefill-prepare-aux" => Ok(Self::PrefillPrepareAux {
                 layer: parse_trailing_layer_index(name)?,
             }),
             "prefill-range" => Ok(Self::PrefillRange {
                 layer: parse_trailing_layer_index(name)?,
             }),
-            "prefill-finalize"
-                if name == "prefill_finalize" || name.starts_with("decode_finalize_t") =>
-            {
-                Ok(Self::PrefillFinalize)
-            }
             "decode-init" if name == "decode_init" => Ok(Self::DecodeInit),
-            "decode-select-token"
-                if name == "decode_select_token" || name.starts_with("decode_select_t") =>
-            {
-                Ok(Self::DecodeSelectToken)
-            }
-            "decode-embed" if name == "decode_embed" || name.starts_with("decode_embed_t") => {
-                Ok(Self::DecodeEmbed)
-            }
             "output-finalize" if name == "output_finalize" => Ok(Self::OutputFinalize),
             "sequence-check" if name == "sequence_check" || name.starts_with("check_") => {
                 Ok(Self::SequenceCheck)
@@ -122,30 +107,18 @@ impl StageKind {
 
     pub fn from_stage_name(name: &str) -> Result<Self> {
         match name {
+            "prompt_bind" => Ok(Self::PromptBind),
+            _ if name.starts_with("prompt_seed_p") => Ok(Self::PromptSeed),
             "prompt_merge" => Ok(Self::PromptMerge),
             _ if is_prompt_merge_name(name) => Ok(Self::PromptMerge),
             "prompt_prepare" => Ok(Self::PromptPrepare),
             _ if name.starts_with("prompt_prepare_p") => Ok(Self::PromptPrepare),
-            "input_embedding" => Ok(Self::InputEmbedding),
             _ if name.starts_with("embed_") => Ok(Self::InputEmbedding),
-            "prefill_finalize" => Ok(Self::PrefillFinalize),
             "decode_init" => Ok(Self::DecodeInit),
-            "decode_select_token" => Ok(Self::DecodeSelectToken),
-            "decode_embed" => Ok(Self::DecodeEmbed),
             "output_finalize" => Ok(Self::OutputFinalize),
             "sequence_check" => Ok(Self::SequenceCheck),
             _ if name.starts_with("check_") => Ok(Self::SequenceCheck),
             "range_origin" => Ok(Self::RangeOrigin),
-            _ if name.starts_with("decode_select_t") => Ok(Self::DecodeSelectToken),
-            _ if name.starts_with("decode_embed_t") => Ok(Self::DecodeEmbed),
-            _ if name.starts_with("decode_finalize_t") => Ok(Self::PrefillFinalize),
-            _ if name.starts_with("prefill_prepare_aux_l") => Ok(Self::PrefillPrepareAux {
-                layer: parse_layer_index(name, "prefill_prepare_aux_l")?,
-            }),
-            _ if name.starts_with("prefill_range_l") => Ok(Self::PrefillRange {
-                layer: parse_layer_index(name, "prefill_range_l")?,
-            }),
-            // Ranged teacher-forced stages: `aux_p{j}_l{l}`, `range_c{k}_l{l}`.
             _ if name.starts_with("aux_") => Ok(Self::PrefillPrepareAux {
                 layer: parse_trailing_layer_index(name)?,
             }),
@@ -154,27 +127,20 @@ impl StageKind {
                     layer: parse_trailing_layer_index(name)?,
                 })
             }
-            _ if name.starts_with("decode_aux_t") => Ok(Self::PrefillPrepareAux {
-                layer: parse_trailing_layer_index(name)?,
-            }),
-            _ if name.starts_with("decode_range_t") => Ok(Self::PrefillRange {
-                layer: parse_trailing_layer_index(name)?,
-            }),
             _ => bail!("stage `{name}` is not supported by staged-infer"),
         }
     }
 
     pub fn project(&self) -> &'static str {
         match self {
+            Self::PromptBind => "prompt-bind",
+            Self::PromptSeed => "prompt-seed",
             Self::PromptPrepare => "prompt-prepare",
             Self::PromptMerge => "prompt-merge",
             Self::InputEmbedding => "input-embedding",
             Self::PrefillPrepareAux { .. } => "prefill-prepare-aux",
             Self::PrefillRange { .. } => "prefill-range",
-            Self::PrefillFinalize => "prefill-finalize",
             Self::DecodeInit => "decode-init",
-            Self::DecodeSelectToken => "decode-select-token",
-            Self::DecodeEmbed => "decode-embed",
             Self::OutputFinalize => "output-finalize",
             Self::SequenceCheck => "sequence-check",
             Self::RangeOrigin => "range-origin",
@@ -183,15 +149,14 @@ impl StageKind {
 
     pub fn routine(&self) -> &'static str {
         match self {
+            Self::PromptBind => "prompt_bind",
+            Self::PromptSeed => "prompt_seed",
             Self::PromptPrepare => "prompt_prepare",
             Self::PromptMerge => "prompt_merge",
             Self::InputEmbedding => "input_embedding",
             Self::PrefillPrepareAux { .. } => "prefill_prepare_aux",
             Self::PrefillRange { .. } => "prefill_range",
-            Self::PrefillFinalize => "prefill_finalize",
             Self::DecodeInit => "decode_init",
-            Self::DecodeSelectToken => "decode_select_token",
-            Self::DecodeEmbed => "decode_embed",
             Self::OutputFinalize => "output_finalize",
             Self::SequenceCheck => "sequence_check",
             Self::RangeOrigin => "range_origin",
@@ -201,13 +166,12 @@ impl StageKind {
     pub fn instance(&self) -> Option<usize> {
         match self {
             Self::PrefillPrepareAux { layer } | Self::PrefillRange { layer } => Some(*layer),
-            Self::PromptPrepare
+            Self::PromptBind
+            | Self::PromptSeed
+            | Self::PromptPrepare
             | Self::PromptMerge
             | Self::InputEmbedding
-            | Self::PrefillFinalize
             | Self::DecodeInit
-            | Self::DecodeSelectToken
-            | Self::DecodeEmbed
             | Self::OutputFinalize
             | Self::SequenceCheck
             | Self::RangeOrigin => None,
@@ -217,6 +181,16 @@ impl StageKind {
 
 pub fn run_for_compare(kind: &StageKind) -> Result<DirectCompareOutput> {
     match kind {
+        StageKind::PromptBind => compare(
+            prompt_bind::load_inputs_from_args,
+            prompt_bind::run_direct,
+            "prompt_bind",
+        ),
+        StageKind::PromptSeed => compare(
+            prompt_seed::load_inputs_from_args,
+            prompt_seed::run_direct,
+            "prompt_seed",
+        ),
         StageKind::PromptPrepare => compare(
             prompt_prepare::load_inputs_from_args,
             prompt_prepare::run_direct,
@@ -242,25 +216,10 @@ pub fn run_for_compare(kind: &StageKind) -> Result<DirectCompareOutput> {
             prefill_range::run_direct,
             "prefill_range",
         ),
-        StageKind::PrefillFinalize => compare(
-            prefill_finalize::load_inputs_from_args,
-            prefill_finalize::run_direct,
-            "prefill_finalize",
-        ),
         StageKind::DecodeInit => compare(
             decode_init::load_inputs_from_args,
             decode_init::run_direct,
             "decode_init",
-        ),
-        StageKind::DecodeSelectToken => compare(
-            decode_select_token::load_inputs_from_args,
-            decode_select_token::run_direct,
-            "decode_select_token",
-        ),
-        StageKind::DecodeEmbed => compare(
-            decode_embed::load_inputs_from_args,
-            decode_embed::run_direct,
-            "decode_embed",
         ),
         StageKind::OutputFinalize => compare(
             output_finalize::load_inputs_from_args,
@@ -282,6 +241,18 @@ pub fn run_for_compare(kind: &StageKind) -> Result<DirectCompareOutput> {
 
 pub fn run_and_publish(kind: &StageKind) -> Result<DirectPublishOutput> {
     match kind {
+        StageKind::PromptBind => publish(
+            prompt_bind::load_inputs_from_args,
+            prompt_bind::run_direct,
+            "prompt_bind",
+            CachedStageValue::BpePieces,
+        ),
+        StageKind::PromptSeed => publish(
+            prompt_seed::load_inputs_from_args,
+            prompt_seed::run_direct,
+            "prompt_seed",
+            CachedStageValue::BpePieces,
+        ),
         StageKind::PromptPrepare => publish(
             prompt_prepare::load_inputs_from_args,
             prompt_prepare::run_direct,
@@ -312,29 +283,11 @@ pub fn run_and_publish(kind: &StageKind) -> Result<DirectPublishOutput> {
             "prefill_range",
             CachedStageValue::RangeActivations,
         ),
-        StageKind::PrefillFinalize => publish(
-            prefill_finalize::load_inputs_from_args,
-            prefill_finalize::run_direct,
-            "prefill_finalize",
-            CachedStageValue::PrefillLogits,
-        ),
         StageKind::DecodeInit => publish(
             decode_init::load_inputs_from_args,
             decode_init::run_direct,
             "decode_init",
             CachedStageValue::DecodeEdge,
-        ),
-        StageKind::DecodeSelectToken => publish(
-            decode_select_token::load_inputs_from_args,
-            decode_select_token::run_direct,
-            "decode_select_token",
-            CachedStageValue::DecodeEdge,
-        ),
-        StageKind::DecodeEmbed => publish(
-            decode_embed::load_inputs_from_args,
-            decode_embed::run_direct,
-            "decode_embed",
-            CachedStageValue::DecodeActivations,
         ),
         StageKind::OutputFinalize => publish(
             output_finalize::load_inputs_from_args,
@@ -346,7 +299,7 @@ pub fn run_and_publish(kind: &StageKind) -> Result<DirectPublishOutput> {
             sequence_check::load_inputs_from_args,
             sequence_check::run_direct,
             "sequence_check",
-            CachedStageValue::from_checked_edge,
+            CachedStageValue::DecodeEdge,
         ),
         StageKind::RangeOrigin => publish(
             range_origin::load_inputs_from_args,
@@ -380,6 +333,31 @@ pub fn run_and_publish_from_paths_with_caches(
     caches: RoutineRunCaches<'_>,
 ) -> Result<DirectPublishOutput> {
     match kind {
+        StageKind::PromptBind => publish(
+            || {
+                prompt_bind::load_inputs_from_paths_with_cache(
+                    input_path,
+                    input_manifest_path,
+                    caches.materializations,
+                )
+            },
+            prompt_bind::run_direct,
+            "prompt_bind",
+            CachedStageValue::BpePieces,
+        ),
+        StageKind::PromptSeed => publish(
+            || {
+                prompt_seed::load_inputs_from_paths_with_cache(
+                    input_path,
+                    input_manifest_path,
+                    cached_inputs,
+                    caches.materializations,
+                )
+            },
+            prompt_seed::run_direct,
+            "prompt_seed",
+            CachedStageValue::BpePieces,
+        ),
         StageKind::PromptPrepare => publish(
             || {
                 prompt_prepare::load_inputs_from_paths_with_cache(
@@ -447,49 +425,11 @@ pub fn run_and_publish_from_paths_with_caches(
             "prefill_range",
             CachedStageValue::RangeActivations,
         ),
-        StageKind::PrefillFinalize => publish(
-            || {
-                prefill_finalize::load_inputs_from_paths_with_cache(
-                    input_path,
-                    input_manifest_path,
-                    cached_inputs,
-                    caches.materializations,
-                )
-            },
-            prefill_finalize::run_direct,
-            "prefill_finalize",
-            CachedStageValue::PrefillLogits,
-        ),
         StageKind::DecodeInit => publish(
             || decode_init::load_inputs_from_paths(input_path, input_manifest_path, cached_inputs),
             decode_init::run_direct,
             "decode_init",
             CachedStageValue::DecodeEdge,
-        ),
-        StageKind::DecodeSelectToken => publish(
-            || {
-                decode_select_token::load_inputs_from_paths(
-                    input_path,
-                    input_manifest_path,
-                    cached_inputs,
-                )
-            },
-            decode_select_token::run_direct,
-            "decode_select_token",
-            CachedStageValue::DecodeEdge,
-        ),
-        StageKind::DecodeEmbed => publish(
-            || {
-                decode_embed::load_inputs_from_paths_with_cache(
-                    input_path,
-                    input_manifest_path,
-                    cached_inputs,
-                    caches.materializations,
-                )
-            },
-            decode_embed::run_direct,
-            "decode_embed",
-            CachedStageValue::DecodeActivations,
         ),
         StageKind::OutputFinalize => publish(
             || {
@@ -514,7 +454,7 @@ pub fn run_and_publish_from_paths_with_caches(
             },
             sequence_check::run_direct,
             "sequence_check",
-            CachedStageValue::from_checked_edge,
+            CachedStageValue::DecodeEdge,
         ),
         StageKind::RangeOrigin => publish(
             || range_origin::load_inputs_from_paths(input_path, input_manifest_path, cached_inputs),
@@ -548,6 +488,31 @@ pub fn run_cached_from_paths_with_caches(
     caches: RoutineRunCaches<'_>,
 ) -> Result<DirectCachedOutput> {
     match kind {
+        StageKind::PromptBind => cache(
+            || {
+                prompt_bind::load_inputs_from_paths_with_cache(
+                    input_path,
+                    input_manifest_path,
+                    caches.materializations,
+                )
+            },
+            prompt_bind::run_direct,
+            "prompt_bind",
+            CachedStageValue::BpePieces,
+        ),
+        StageKind::PromptSeed => cache(
+            || {
+                prompt_seed::load_inputs_from_paths_with_cache(
+                    input_path,
+                    input_manifest_path,
+                    cached_inputs,
+                    caches.materializations,
+                )
+            },
+            prompt_seed::run_direct,
+            "prompt_seed",
+            CachedStageValue::BpePieces,
+        ),
         StageKind::PromptPrepare => cache(
             || {
                 prompt_prepare::load_inputs_from_paths_with_cache(
@@ -615,49 +580,11 @@ pub fn run_cached_from_paths_with_caches(
             "prefill_range",
             CachedStageValue::RangeActivations,
         ),
-        StageKind::PrefillFinalize => cache(
-            || {
-                prefill_finalize::load_inputs_from_paths_with_cache(
-                    input_path,
-                    input_manifest_path,
-                    cached_inputs,
-                    caches.materializations,
-                )
-            },
-            prefill_finalize::run_direct,
-            "prefill_finalize",
-            CachedStageValue::PrefillLogits,
-        ),
         StageKind::DecodeInit => cache(
             || decode_init::load_inputs_from_paths(input_path, input_manifest_path, cached_inputs),
             decode_init::run_direct,
             "decode_init",
             CachedStageValue::DecodeEdge,
-        ),
-        StageKind::DecodeSelectToken => cache(
-            || {
-                decode_select_token::load_inputs_from_paths(
-                    input_path,
-                    input_manifest_path,
-                    cached_inputs,
-                )
-            },
-            decode_select_token::run_direct,
-            "decode_select_token",
-            CachedStageValue::DecodeEdge,
-        ),
-        StageKind::DecodeEmbed => cache(
-            || {
-                decode_embed::load_inputs_from_paths_with_cache(
-                    input_path,
-                    input_manifest_path,
-                    cached_inputs,
-                    caches.materializations,
-                )
-            },
-            decode_embed::run_direct,
-            "decode_embed",
-            CachedStageValue::DecodeActivations,
         ),
         StageKind::OutputFinalize => cache(
             || {
@@ -682,7 +609,7 @@ pub fn run_cached_from_paths_with_caches(
             },
             sequence_check::run_direct,
             "sequence_check",
-            CachedStageValue::from_checked_edge,
+            CachedStageValue::DecodeEdge,
         ),
         StageKind::RangeOrigin => cache(
             || range_origin::load_inputs_from_paths(input_path, input_manifest_path, cached_inputs),
@@ -798,14 +725,6 @@ where
     })
 }
 
-fn parse_layer_index(name: &str, prefix: &str) -> Result<usize> {
-    let raw = name
-        .strip_prefix(prefix)
-        .expect("caller checked stage name prefix");
-    raw.parse::<usize>()
-        .with_context(|| format!("failed to parse layer index from `{name}`"))
-}
-
 fn parse_trailing_layer_index(name: &str) -> Result<usize> {
     let raw = name
         .rsplit_once("_l")
@@ -837,13 +756,13 @@ mod tests {
     #[test]
     fn stage_kind_accepts_nested_project_paths() {
         assert_eq!(
-            StageKind::from_stage_spec("raster-stages/prefill-range", "prefill_range_l13").unwrap(),
+            StageKind::from_stage_spec("raster-stages/prefill-range", "range_p0_l13").unwrap(),
             StageKind::PrefillRange { layer: 13 }
         );
         assert_eq!(
-            StageKind::from_stage_spec("raster-stages/decode-select-token", "decode_select_t1")
-                .unwrap(),
-            StageKind::DecodeSelectToken
+            StageKind::from_stage_spec("raster-stages/sequence-check", "check_c1").unwrap(),
+            StageKind::SequenceCheck
         );
+        assert!(StageKind::from_stage_spec("raster-stages/decode-embed", "decode_embed_t0").is_err());
     }
 }

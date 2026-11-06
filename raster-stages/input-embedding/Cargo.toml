@@ -12,6 +12,7 @@ profiling = ["raster/profiling"]
 [dependencies]
 raster = { path = "../../../raster/crates/raster", default-features = false }
 serde = { version = "1.0", default-features = false, features = ["derive", "alloc"] }
+sha2 = { version = "0.10", default-features = false, features = ["compress"] }
 # The canonical scale-and-saturate multiply, vendored verbatim from the
 # reference and held to bit-equality by `det-num/tests/equivalence.rs`.
 det-num = { path = "../../crates/det-num" }

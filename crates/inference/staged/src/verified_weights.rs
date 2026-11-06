@@ -149,7 +149,7 @@ pub(crate) fn input_documents_from_args() -> (Option<String>, Option<String>) {
 /// Page size of the `Q8_0` embedding table.
 pub(crate) const Q8_PAGE_SIZE: u64 = 195_840;
 
-/// Page size of the `Q8_0` head projection (see `prefill_finalize::input::PAGE_SIZE`).
+/// Page size of the `Q8_0` head projection (see `sequence_check::input::PAGE_SIZE`).
 pub(crate) const Q8_HEAD_PAGE_SIZE: u64 = 52_224;
 
 #[derive(Clone, Copy)]

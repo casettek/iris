@@ -7,7 +7,7 @@
 - `challenge build`: verifier rerun from a claim trace, divergence detection, and Raster replay of the first divergent stage.
 - `replay-profile`: manual native and zkVM replay measurements for one exact stage instance.
 
-Claims and challenges run over the autoregressive chain by default. A run spec with `chain = "teacher-forced"` instead verifies a known output with one pass per layer over `prompt ‖ output` (see [Raster chain](docs/internals/raster-chain.md#teacher-forced-chain)).
+Claims and challenges run the teacher-forced chain: one pass per layer over `prompt ‖ output`, whose final record commits to the input text, the model and the output text (see [Raster chain](docs/internals/raster-chain.md)). Direct inference is the only autoregressive path; it discovers the output a claim then verifies.
 
 `model import` is the shared setup step. It turns a model bundle into committed Raster externals and a prompt-free model manifest. Each workflow selects the model through `--run inference.toml` and verifies it once before execution. Challenges retain the claim’s frozen prompt and token count.
 
@@ -27,7 +27,7 @@ cargo run --release -p iris-cli -- claim build --run inference.toml
 # Manual replay-cost measurements for one stage (needs Raster's
 # risc0-estimator branch; see docs/workflows/replay-profile.md).
 cargo run --release -p iris-cli --features replay-profile -- replay-profile \
-  --run inference.toml --stage prefill_range_l13 --top-n 3
+  --run inference.toml --stage range_p0_l13 --top-n 3
 
 # Verifier challenge from a prior claim bundle.
 cargo run --release -p iris-cli -- challenge build \
@@ -42,7 +42,7 @@ The same commands are available through `just` recipes:
 just import ../iris/assets/tiny-gemma-dev
 just infer inference.toml
 just claim inference.toml
-just replay-profile prefill_range_l13
+just replay-profile range_p0_l13
 just challenge \
   target/staged-infer/runs/.../claim_bundle.json \
   target/staged-infer/runs/.../checkpoints.txt
@@ -51,7 +51,7 @@ just challenge \
 ## Workflows
 
 - [Native Windows inference](docs/workflows/windows.md): PowerShell build, compatibility patches, and Windows model paths.
-- [Three-path parity](docs/workflows/test-parity.md): run `just test-parity` to compare Raster-staged, native-staged, and native-direct inference on a pinned model and corpus.
+- [Three-path parity](docs/workflows/test-parity.md): run `just test-parity` to compare the chain through Raster and natively with direct inference, and to run the challenge workflow, on a pinned model and corpus.
 - [Model import](docs/workflows/model-import.md): bundle inputs, generated externals, model-specific templates, and model manifests.
 - [Infer](docs/workflows/infer.md): fast deterministic inference through `direct-infer`.
 - [Claim build](docs/workflows/claim-build.md): checkpointed staged inference and claim artifacts.
@@ -72,7 +72,6 @@ just challenge \
 ```text
 Cargo.toml                  # workspace manifest
 justfile                    # workflow and test shortcuts
-Raster.toml                 # optional template copy for manual Raster commands
 inference.toml              # default run spec
 crates/
   model/
@@ -93,4 +92,4 @@ manifests/                  # alternate generated manifests and examples
 docs/                       # workflow, internals, issues, proposals
 ```
 
-`raster-stages/*` are intentionally left outside `crates/`: each directory is a Raster program boundary with its own `Cargo.toml`, `Raster.lock`, no-std tile library, and sequence entry point. Reusable imported model externals live under `runtime/model-artifacts/<model-id>/raster/`, prompt fixtures live under `runtime/prompt-fixtures/`, and generated chain manifests point each stage at the files it needs there. Each full import saves its chain template under `runtime/model-artifacts/<model-id>/Raster.toml`. The root `Raster.toml` can be refreshed with `--manifest Raster.toml` for manual Raster commands; run-spec workflows use the model-specific template.
+`raster-stages/*` are intentionally left outside `crates/`: each directory is a Raster program boundary with its own `Cargo.toml`, `Raster.lock`, no-std tile library, and sequence entry point. Reusable imported model externals live under `runtime/model-artifacts/<model-id>/raster/`, prompt fixtures live under `runtime/prompt-fixtures/`, and generated chain manifests point each stage at the files it needs there. Each full import saves its chain template under `runtime/model-artifacts/<model-id>/Raster.toml`, and run preparation fills it in for each run. Pass `--manifest <path>` to save another copy for manual Raster commands.

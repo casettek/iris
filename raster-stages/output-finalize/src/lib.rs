@@ -11,8 +11,10 @@ use raster::prelude::*;
 use sha2::{Digest, Sha256};
 
 pub mod input;
+pub mod prompt;
 
 use input::*;
+use prompt::PromptContext;
 
 #[tile(kind = iter, description = "Initialize generated output finalization")]
 pub fn begin_finalize_state() -> FinalizeState {
@@ -27,6 +29,7 @@ pub fn initial_finalize_state() -> FinalizeState {
         text: String::new(),
         pending_bytes: BytesPage::__from_parts(0, 0, Vec::new()),
         stopped: false,
+        past_terminal: false,
     }
 }
 
@@ -90,6 +93,7 @@ pub fn advance_finalize_state(
     // ids stay in the transcript and its commitment, but the decoded text ends
     // where the model ended.
     if state.stopped {
+        state.past_terminal = true;
         return state;
     }
     if token.terminal {
@@ -117,36 +121,66 @@ pub fn advance_finalize_state(
 /// used by the reference's `build_output_decode_commitment`.
 #[tile(kind = iter, description = "Finish generated text and token commitment")]
 pub fn finish_finalize_state(state: FinalizeState) -> FinalizeState {
+    finished_state(state)
+}
+
+/// The step [`finish_finalize_state`] is, as a plain function, for the native
+/// kernel.
+pub fn finished_state(state: FinalizeState) -> FinalizeState {
     let mut state = state;
     flush_pending(&mut state);
     state.json.push(']');
     state
 }
 
-#[tile(kind = iter, description = "Validate decode edge transcript state")]
-pub fn validate_decode_edge(has_selected: bool, count: u32) -> Result<u32> {
-    if has_selected != (count > 0) {
-        return Err(alloc::format!(
-            "decode edge selection flag {has_selected} disagrees with generated token count {count}"
-        ));
+/// What the finished transcript breaks, or [`OUTPUT_FAULT_NONE`].
+pub fn output_fault_of(state: &FinalizeState, has_selected: bool, context: &PromptContext) -> u32 {
+    if has_selected != (state.count > 0) {
+        return OUTPUT_FAULT_EDGE_DISAGREES;
     }
-    Ok(count)
+    if state.count == 0 {
+        return OUTPUT_FAULT_NO_TOKENS;
+    }
+    if state.count > context.max_new_tokens {
+        return OUTPUT_FAULT_OVER_BUDGET;
+    }
+    if state.past_terminal {
+        return OUTPUT_FAULT_PAST_EOS;
+    }
+    if state.count < context.max_new_tokens && !state.stopped {
+        return OUTPUT_FAULT_SHORT_WITHOUT_EOS;
+    }
+    OUTPUT_FAULT_NONE
 }
 
-/// Opens the final output: the finished transcript state and the claim
-/// verdict carried from the edge.
+/// Lowercase hex SHA-256 of these exact bytes.
+pub fn sha256_hex(bytes: &[u8]) -> String {
+    alloc::format!("{:x}", Sha256::digest(bytes))
+}
+
+/// Opens the final output: the finished transcript, the commitments to it, the
+/// verdict and fault carried from the edge, and the context the chain ran under.
 #[tile(kind = iter, description = "Open final generated output")]
 pub fn begin_generated_output(
     state: FinalizeState,
+    has_selected: bool,
     claim_mismatches: u32,
     first_claim_mismatch_position: u32,
+    check_fault: u32,
+    check_fault_position: u32,
+    context: PromptContext,
 ) -> Draft<GeneratedOutput> {
     let mut output = Draft::<GeneratedOutput>::new();
-    let digest = Sha256::digest(state.json.as_bytes());
+    output
+        .output_fault()
+        .set(output_fault_of(&state, has_selected, &context));
+    output
+        .output_text_sha256()
+        .set(sha256_hex(state.text.as_bytes()));
     output.generated_token_count().set(state.count);
     output
         .generated_token_ids_sha256()
-        .set(alloc::format!("{digest:x}"));
+        .set(sha256_hex(state.json.as_bytes()));
     output.generated_text().set(state.text);
     output.stop_reason().set(if state.stopped {
         String::from("eos")
@@ -157,6 +191,17 @@ pub fn begin_generated_output(
     output
         .first_claim_mismatch_position()
         .set(first_claim_mismatch_position);
+    output.check_fault().set(check_fault);
+    output.check_fault_position().set(check_fault_position);
+    output.input_text_sha256().set(context.input_text_sha256);
+    output.model_id().set(context.model_id);
+    output.raw_prompt().set(context.raw_prompt);
+    output.max_new_tokens().set(context.max_new_tokens);
+    output.range_size().set(context.range_size);
+    output.prompt_tokens().set(context.prompt_tokens);
+    output.prompt_complete().set(context.complete);
+    output.prompt_fault().set(context.fault);
+    output.prompt_fault_position().set(context.fault_position);
     output
 }
 

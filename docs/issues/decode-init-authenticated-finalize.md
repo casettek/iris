@@ -1,6 +1,10 @@
 # Authenticated decode initialization cannot commit its finalized draft
 
-Status: open; discovered during ranked-BPE full-chain validation on 2026-09-10.
+Status: closed 2026-11-05; discovered during ranked-BPE full-chain validation on
+2026-09-10. It no longer reproduces. Teacher-forced chains on `parity-gemma` (96
+stages) and Gemma 4 E2B Q8 (151 stages) finished authenticated, including `decode_init`,
+and passed `cargo raster chain audit --execution`. The change that resolved it was not
+identified.
 
 The unchanged [decode initialization sequence](../../raster-stages/decode-init/src/main.rs)
 and [initialization tile](../../raster-stages/decode-init/src/lib.rs) initialize an empty decode

@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct InferenceResult {
     pub generated_token_count: u32,
     pub generated_token_ids: Vec<u32>,
@@ -18,6 +18,27 @@ pub struct InferenceResult {
     /// Absolute sequence position of the first disagreement, or zero.
     #[serde(default)]
     pub first_claim_mismatch_position: u32,
+    /// The teacher-forced check's fault and its position, or zero.
+    pub check_fault: u32,
+    pub check_fault_position: u32,
+    /// SHA-256 of the exact UTF-8 bytes of `generated_text`, as `output-finalize`
+    /// computed it. Distinct from `generated_token_ids_sha256`.
+    pub output_text_sha256: String,
+    /// What the transcript breaks (token budget, EOS), or zero.
+    pub output_fault: u32,
+    /// SHA-256 of the exact text the chain consumed.
+    pub input_text_sha256: String,
+    /// The committed model the chain was configured with.
+    pub model_id: String,
+    pub raw_prompt: bool,
+    pub max_new_tokens: u32,
+    pub range_size: u32,
+    pub prompt_tokens: u32,
+    /// The prompt ranges covered the whole prepared prompt, in order.
+    pub prompt_complete: bool,
+    /// What failed in prompt preparation and where, or zero.
+    pub prompt_fault: u32,
+    pub prompt_fault_position: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

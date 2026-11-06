@@ -102,7 +102,8 @@ fn prepare_row(
 
 fn ple_embedding(token_id: u32, layer: &PleLayer, params: &PleLayerParams) -> Result<Vec<i32>> {
     let page_size = layer.embeddings.page_size();
-    let byte_off = token_id as u64 * (params.ple_width as u64 / 32 * 34);
+    let byte_off =
+        prefill_prepare_aux::ple_row_offset(token_id, params.ple_width, layer.embeddings.byte_len());
     let page_idx = if page_size == 0 {
         0
     } else {

@@ -1,7 +1,7 @@
 """Compare preserved baseline, embedding-only, and current builds with authenticated Raster.
 
 The three bin directories must contain iris and staged-infer. The baseline and
-current directories must also contain the ten unchanged Raster stage binaries.
+current directories must also contain the unchanged Raster stage binaries.
 No production eager switch is needed or introduced.
 """
 import argparse
@@ -10,7 +10,7 @@ import os
 from pathlib import Path
 import time
 
-from selective_ple_parity import read, sha, invoke, compare, expected_names, project
+from selective_ple_parity import STAGES, read, sha, invoke, compare, expected_names, project
 
 
 def main():
@@ -28,7 +28,7 @@ def main():
     bundle = root / "model-bundles/parity-gemma"
     env = os.environ.copy()
     for key in ["RASTER_AUTH", "RASTER_TRACE_PATH", "RASTER_TRACE_FORMAT", "RASTER_OUTPUT_DIR",
-                "DIRECT_INFER_COMPARE_TRACE", "RASTER_PARALLELISM"]:
+                "RASTER_PARALLELISM"]:
         env.pop(key, None)
     env.update(RISC0_SKIP_BUILD="1", RAYON_NUM_THREADS="4", STAGED_INFER_PLE_LOADING="selective")
     artifacts = output / "model-artifacts"
@@ -37,8 +37,7 @@ def main():
     model = artifacts / "parity-gemma/manifest.json"
     report = {"cases": [], "unchanged_raster_binaries": {}, "build_sha256": {},
               "timing_note": "Single small-model runs; use repeated multi-page benchmarks for loading comparisons."}
-    for name in ["prompt-prepare", "prompt-merge", "input-embedding", "prefill-prepare-aux", "prefill-range",
-                 "prefill-finalize", "decode-init", "decode-select-token", "decode-embed", "output-finalize"]:
+    for name in STAGES:
         a, b = sha((baseline / f"{name}{suffix}").read_bytes()), sha((current / f"{name}{suffix}").read_bytes())
         assert a == b, f"Raster binary changed: {name}"
         report["unchanged_raster_binaries"][name] = a
@@ -75,7 +74,7 @@ def main():
         source_chain = chains["baseline"]
         trace = read(source_chain / "checkpoint_trace.json")
         names = [entry["stage"] for entry in trace]
-        expected_names(names, case["tokens"])
+        expected_names(names)
         for chain in chains.values():
             assert read(chain / "checkpoint_trace.json") == trace
             hashes = compare(source_chain, chain, names)

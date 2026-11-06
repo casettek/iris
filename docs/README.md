@@ -25,4 +25,4 @@ Start with the workflow docs when you want to run the repo, and the internals do
 - [Ranked BPE tokenizer](proposals/ranked-bpe-tokenizer.md): implemented fixed-count
   staging, input preparation, and replay contract.
 - [Ranked BPE validation](validation/ranked-bpe-2026-09-10.md): reference and parity
-  results, authenticated tokenizer audits, costs, and the remaining full-chain blocker.
+  results, authenticated tokenizer audits and costs.

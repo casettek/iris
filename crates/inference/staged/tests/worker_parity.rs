@@ -116,13 +116,34 @@ impl Fixture {
         )
     }
     fn manifest(&mut self) {
+        let context = input_embedding::prompt::PromptContext {
+            max_new_tokens: 3,
+            range_size: 1,
+            prompt_tokens: 2,
+            complete: true,
+            ..Default::default()
+        };
         let prompt = self.external(
             "prompt",
             &input_embedding::input::PromptTokenization {
                 token_ids: List::from(vec![0, 1]),
+                context,
+                ..Default::default()
             },
         );
-        let claimed = self.external("claimed", &input_embedding::input::ClaimedOutput::default());
+        let no_prompt = self.external(
+            "no_prompt",
+            &input_embedding::input::PromptTokenization::default(),
+        );
+        let no_claim = self.external("no_claim", &input_embedding::input::ClaimedOutput::default());
+        let claimed = [1, 0, 1].map(|id: u32| {
+            self.external(
+                &format!("claimed_{id}"),
+                &input_embedding::input::ClaimedOutput {
+                    token_ids: List::from(vec![id]),
+                },
+            )
+        });
         let embedding = self.external(
             "embedding",
             &input_embedding::input::EmbeddingTable {
@@ -133,8 +154,8 @@ impl Fixture {
         );
         let head = self.external(
             "head",
-            &prefill_finalize::input::FinalHead {
-                params: prefill_finalize::input::FinalHeadParams {
+            &sequence_check::input::FinalHead {
+                params: sequence_check::input::FinalHeadParams {
                     hidden_size: N as u32,
                     norm_eps: 1,
                     softcap: 0,
@@ -205,129 +226,119 @@ impl Fixture {
         let from = |s: &str| format!("{{ from = {} }}", toml::Value::String(s.into()));
         add("range_origin".into(), "range-origin", vec![]);
         add(
-            "input_embedding".into(),
+            "embed_p0".into(),
             "input-embedding",
             vec![
-                ("prompt", prompt),
-                ("claimed", claimed),
+                ("prompt", prompt.clone()),
+                ("claimed", no_claim),
                 ("previous", from("range_origin")),
                 ("embedding", embedding.clone()),
             ],
         );
         for l in 0..2 {
             add(
-                format!("prefill_prepare_aux_l{l}"),
+                format!("aux_p0_l{l}"),
                 "prefill-prepare-aux",
-                vec![
-                    ("embedded", from("input_embedding")),
-                    ("layer", aux[l].clone()),
-                ],
+                vec![("embedded", from("embed_p0")), ("layer", aux[l].clone())],
             );
         }
         for l in 0..2 {
             add(
-                format!("prefill_range_l{l}"),
+                format!("range_p0_l{l}"),
                 "prefill-range",
                 vec![
                     (
                         "activations",
-                        from(if l == 0 {
-                            "input_embedding"
-                        } else {
-                            "prefill_range_l0"
-                        }),
+                        from(if l == 0 { "embed_p0" } else { "range_p0_l0" }),
                     ),
-                    ("prior_kv", from("input_embedding")),
-                    ("donor_a_kv", from("input_embedding")),
-                    ("donor_b_kv", from("input_embedding")),
-                    ("ple", from(&format!("prefill_prepare_aux_l{l}"))),
+                    ("prior_kv", from("range_origin")),
+                    ("donor_a_kv", from("range_origin")),
+                    ("donor_b_kv", from("range_origin")),
+                    ("ple", from(&format!("aux_p0_l{l}"))),
                     ("layer", layers[l].clone()),
                 ],
             );
         }
-        add(
-            "prefill_finalize".into(),
-            "prefill-finalize",
-            vec![
-                ("activations", from("prefill_range_l1")),
-                ("head", head.clone()),
-            ],
-        );
         add("decode_init".into(), "decode-init", vec![]);
         for t in 0..3 {
             add(
-                format!("decode_select_t{t}"),
-                "decode-select-token",
+                format!("embed_c{t}"),
+                "input-embedding",
                 vec![
+                    ("prompt", no_prompt.clone()),
+                    ("claimed", claimed[t].clone()),
                     (
-                        "logits",
+                        "previous",
                         from(&if t == 0 {
-                            "prefill_finalize".into()
+                            "embed_p0".into()
                         } else {
-                            format!("decode_finalize_t{}", t - 1)
+                            format!("embed_c{}", t - 1)
                         }),
                     ),
-                    (
-                        "prior",
-                        from(&if t == 0 {
-                            "decode_init".into()
-                        } else {
-                            format!("decode_select_t{}", t - 1)
-                        }),
-                    ),
-                ],
-            );
-            add(
-                format!("decode_embed_t{t}"),
-                "decode-embed",
-                vec![
-                    ("selected", from(&format!("decode_select_t{t}"))),
                     ("embedding", embedding.clone()),
                 ],
             );
             for l in 0..2 {
                 add(
-                    format!("decode_aux_t{t}_l{l}"),
+                    format!("aux_c{t}_l{l}"),
                     "prefill-prepare-aux",
                     vec![
-                        ("embedded", from(&format!("decode_embed_t{t}"))),
+                        ("embedded", from(&format!("embed_c{t}"))),
                         ("layer", aux[l].clone()),
                     ],
                 );
             }
             for l in 0..2 {
                 add(
-                    format!("decode_range_t{t}_l{l}"),
+                    format!("range_c{t}_l{l}"),
                     "prefill-range",
                     vec![
                         (
                             "activations",
                             from(&if l == 0 {
-                                format!("decode_embed_t{t}")
+                                format!("embed_c{t}")
                             } else {
-                                format!("decode_range_t{t}_l0")
+                                format!("range_c{t}_l0")
                             }),
                         ),
                         (
                             "prior_kv",
                             from(&if t == 0 {
-                                format!("prefill_range_l{l}")
+                                format!("range_p0_l{l}")
                             } else {
-                                format!("decode_range_t{}_l{l}", t - 1)
+                                format!("range_c{}_l{l}", t - 1)
                             }),
                         ),
-                        ("donor_a_kv", from("input_embedding")),
-                        ("donor_b_kv", from("input_embedding")),
-                        ("ple", from(&format!("decode_aux_t{t}_l{l}"))),
+                        ("donor_a_kv", from("range_origin")),
+                        ("donor_b_kv", from("range_origin")),
+                        ("ple", from(&format!("aux_c{t}_l{l}"))),
                         ("layer", layers[l].clone()),
                     ],
                 );
             }
             add(
-                format!("decode_finalize_t{t}"),
-                "prefill-finalize",
+                format!("check_c{t}"),
+                "sequence-check",
                 vec![
-                    ("activations", from(&format!("decode_range_t{t}_l1"))),
+                    ("activations", from(&format!("range_c{t}_l1"))),
+                    (
+                        "previous",
+                        from(&if t == 0 {
+                            "range_p0_l1".into()
+                        } else {
+                            format!("range_c{}_l1", t - 1)
+                        }),
+                    ),
+                    ("claimed", claimed[t].clone()),
+                    (
+                        "prior",
+                        from(&if t == 0 {
+                            "decode_init".into()
+                        } else {
+                            format!("check_c{}", t - 1)
+                        }),
+                    ),
+                    ("prompt", prompt.clone()),
                     ("head", head.clone()),
                 ],
             );
@@ -335,7 +346,11 @@ impl Fixture {
         add(
             "output_finalize".into(),
             "output-finalize",
-            vec![("edge", from("decode_select_t2")), ("decoder", decoder)],
+            vec![
+                ("edge", from("check_c2")),
+                ("decoder", decoder),
+                ("prompt", prompt),
+            ],
         );
         fs::write(self.base.join("Raster.toml"), text).unwrap();
     }
@@ -401,7 +416,7 @@ impl Drop for Fixture {
 }
 
 #[test]
-fn repeated_decode_has_identical_checkpoints_with_worker_and_cache_reuse() {
+fn repeated_ranges_have_identical_checkpoints_with_worker_and_cache_reuse() {
     let mut f = Fixture::new();
     f.manifest();
     let baseline = f.run_mode(0, 1, true, "eager");
@@ -419,7 +434,7 @@ fn repeated_decode_has_identical_checkpoints_with_worker_and_cache_reuse() {
                 .unwrap();
         let starts = perf["auxiliary_process_starts"].as_u64().unwrap();
         assert_eq!(perf["stages"][0]["name"], "range_origin");
-        assert_eq!(perf["stages"][1]["name"], "input_embedding");
+        assert_eq!(perf["stages"][1]["name"], "embed_p0");
         // The initial embedding retains only small verified metadata now.
         let initial_retained = perf["stages"][1]["cache"]["retained_bytes"].as_u64().unwrap();
         assert!(initial_retained <= 16 * 1024);
@@ -447,7 +462,7 @@ fn workers_reject_bad_protocol_and_failed_stage_inputs() {
         format!(
             "{}\n",
             serde_json::json!({"Run":{"version":1,"job":{
-                "id":7,"name":"prefill_prepare_aux_l0","kind":{"PrefillPrepareAux":{"layer":0}},
+                "id":7,"name":"aux_p0_l0","kind":{"PrefillPrepareAux":{"layer":0}},
                 "input":"missing-input.json","input_manifest":"missing-manifest.json","output_dir":"unused-output"
             }}})
         ),
@@ -503,10 +518,10 @@ fn selective_input_failure_does_not_publish_and_unknown_mode_fails_early() {
     assert!(String::from_utf8_lossy(&bad_mode.stderr).contains("must be selective or eager"));
     assert!(!f.base.join("target/staged-infer/runs").exists());
     let run = f.run(0, 1, false);
-    let source = run.join("prefill_prepare_aux_l0");
+    let source = run.join("aux_p0_l0");
     let dest = f
         .base
-        .join("target/staged-infer/runs/rejected/prefill_prepare_aux_l0");
+        .join("target/staged-infer/runs/rejected/aux_p0_l0");
     fs::create_dir_all(&dest).unwrap();
     for file in ["input.json", "input_manifest.json"] {
         fs::copy(source.join(file), dest.join(file)).unwrap();
@@ -547,7 +562,7 @@ fn worker_reuse_preserves_output_isolation_and_reports_failed_writes() {
     let mut f = Fixture::new();
     f.manifest();
     let run = f.run(1 << 20, 2, false);
-    let source = run.join("prefill_prepare_aux_l0");
+    let source = run.join("aux_p0_l0");
     let good = f.base.join("worker-good");
     fs::create_dir_all(&good).unwrap();
     let blocked = f.base.join("worker-blocked");
@@ -562,7 +577,7 @@ fn worker_reuse_preserves_output_isolation_and_reports_failed_writes() {
     let mut input = child.stdin.take().unwrap();
     for (id, dest) in [(1, &good), (2, &blocked)] {
         let request = serde_json::json!({"Run":{"version":1,"job":{
-            "id":id,"name":"prefill_prepare_aux_l0","kind":{"PrefillPrepareAux":{"layer":0}},
+            "id":id,"name":"aux_p0_l0","kind":{"PrefillPrepareAux":{"layer":0}},
             "input":source.join("input.json"),"input_manifest":source.join("input_manifest.json"),"output_dir":dest
         }}});
         writeln!(input, "{request}").unwrap();
@@ -603,7 +618,7 @@ fn early_checkpoint_divergence_stops_and_reaps_workers() {
     let stop = f
         .stages
         .iter()
-        .position(|(name, _)| name == "decode_aux_t1_l0")
+        .position(|(name, _)| name == "aux_c1_l0")
         .unwrap();
     hashes[stop] = "0".repeat(64);
     fs::write(
@@ -658,7 +673,7 @@ fn challenge_cleanup_child() {
         .unwrap();
     assert_eq!(result.divergence.unwrap().checkpoint_index, stop);
     assert_eq!(result.recomputed_trace.checkpoints.len(), stop + 1);
-    assert!(!result.chain_dir.join("decode_range_t1_l0").exists());
+    assert!(!result.chain_dir.join("range_c1_l0").exists());
     let mut system = sysinfo::System::new();
     system.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
     let parent = sysinfo::Pid::from_u32(std::process::id());
@@ -673,7 +688,7 @@ fn challenge_cleanup_child() {
 
 #[test]
 #[ignore = "requires actual Raster stage binaries in STAGED_INFER_REPLAY_BIN_DIR"]
-fn repeated_decode_matches_authenticated_raster_stage_execution() {
+fn repeated_ranges_match_authenticated_raster_stage_execution() {
     let bin = PathBuf::from(
         std::env::var_os("STAGED_INFER_REPLAY_BIN_DIR").expect("build Raster stage binaries first"),
     );

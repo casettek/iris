@@ -13,18 +13,11 @@ use serde::{Deserialize, Serialize};
 pub const PAGE_SIZE: u64 = 195_840;
 
 /// The stage's committed first input, bound by the chain to `prompt_prepare`'s
-/// authorized output.
-///
-/// The field layout MUST match `PromptTokenization` in `prompt-prepare`
-/// field-for-field: the chain links the two stages by the structural
-/// commitment of this value, not by Rust type name.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
-pub struct PromptTokenization {
-    pub token_ids: List<u32>,
-}
+/// authorized output. The stage reads only its `token_ids`.
+pub use crate::prompt::{PromptState, PromptTokenization};
 
 /// A teacher-forced claim's output ids, embedded after the prompt so one pass
-/// covers `prompt ‖ claimed`. The autoregressive chain binds an empty one.
+/// covers `prompt ‖ claimed`. A prompt range binds an empty one.
 ///
 /// MUST match `ClaimedOutput` in `sequence-check`.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]

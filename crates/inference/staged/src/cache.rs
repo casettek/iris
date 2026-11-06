@@ -10,11 +10,8 @@ pub use inference_kernels::MaterializationCacheKey;
 use raster::List;
 use serde::Deserialize;
 
-use decode_embed::input as decode_embed_input;
-use decode_select_token::input as decode_input;
 use input_embedding::input as embedding_input;
 use output_finalize::input as output_input;
-use prefill_finalize::input as finalize_input;
 use prefill_prepare_aux::input as aux_input;
 use prefill_range::input as range_input;
 use prompt_prepare::input as prompt_input;
@@ -28,9 +25,7 @@ pub enum CachedStageValue {
     EmbeddedActivations(embedding_input::ActivationSequence),
     PleLayerInputs(aux_input::PleLayerInputs),
     RangeActivations(range_input::ActivationSequence),
-    PrefillLogits(finalize_input::PrefillLogits),
-    DecodeEdge(decode_input::DecodeEdge),
-    DecodeActivations(decode_embed_input::ActivationSequence),
+    DecodeEdge(check_input::DecodeEdge),
     GeneratedOutput(output_input::GeneratedOutput),
 }
 
@@ -283,11 +278,41 @@ impl CachedStageValue {
         }
     }
 
+    /// Any prompt stage's output: every prompt stage publishes the same type.
+    pub fn as_prompt_state(&self) -> Result<prompt_input::PromptState> {
+        match self {
+            Self::BpePieces(value) | Self::PromptTokenization(value) => Ok(value.clone()),
+            _ => bail!("cached value is not a prompt stage's output"),
+        }
+    }
+
     pub fn as_embedding_prompt(&self) -> Result<embedding_input::PromptTokenization> {
         match self {
+            // The stage reads only the ids, and has its own copy of the type.
             Self::PromptTokenization(value) => Ok(embedding_input::PromptTokenization {
                 token_ids: value.token_ids.clone(),
+                ..Default::default()
             }),
+            _ => bail!("cached value is not a prompt tokenization"),
+        }
+    }
+
+    /// The stage reads only the context, and has its own copy of the type.
+    pub fn as_check_prompt_context(&self) -> Result<sequence_check::prompt::PromptContext> {
+        match self {
+            Self::PromptTokenization(value) => Ok(
+                inference_kernels::kernels::sequence_check::prompt_context(&value.context),
+            ),
+            _ => bail!("cached value is not a prompt tokenization"),
+        }
+    }
+
+    /// The stage reads only the context, and has its own copy of the type.
+    pub fn as_output_prompt_context(&self) -> Result<output_finalize::prompt::PromptContext> {
+        match self {
+            Self::PromptTokenization(value) => Ok(
+                inference_kernels::kernels::output_finalize::prompt_context(&value.context),
+            ),
             _ => bail!("cached value is not a prompt tokenization"),
         }
     }
@@ -295,7 +320,6 @@ impl CachedStageValue {
     pub fn as_aux_activation_sequence(&self) -> Result<aux_input::ActivationSequence> {
         match self {
             Self::EmbeddedActivations(value) => Ok(aux_activation_from_embedding(value)),
-            Self::DecodeActivations(value) => Ok(aux_activation_from_decode_embed(value)),
             Self::RangeActivations(value) => Ok(aux_activation_from_range(value)),
             _ => bail!("cached value is not an activation sequence"),
         }
@@ -304,7 +328,6 @@ impl CachedStageValue {
     pub fn as_range_activation_sequence(&self) -> Result<range_input::ActivationSequence> {
         match self {
             Self::EmbeddedActivations(value) => Ok(range_activation_from_embedding(value)),
-            Self::DecodeActivations(value) => Ok(range_activation_from_decode_embed(value)),
             Self::RangeActivations(value) => Ok(value.clone()),
             _ => bail!("cached value is not an activation sequence"),
         }
@@ -317,36 +340,6 @@ impl CachedStageValue {
         }
     }
 
-    pub fn as_finalize_activation_sequence(&self) -> Result<finalize_input::ActivationSequence> {
-        match self {
-            Self::EmbeddedActivations(value) => Ok(finalize_activation_from_embedding(value)),
-            Self::DecodeActivations(value) => Ok(finalize_activation_from_decode_embed(value)),
-            Self::RangeActivations(value) => Ok(finalize_activation_from_range(value)),
-            _ => bail!("cached value is not an activation sequence"),
-        }
-    }
-
-    pub fn as_decode_logits(&self) -> Result<decode_input::PrefillLogits> {
-        match self {
-            Self::PrefillLogits(value) => Ok(decode_logits_from_finalize(value)),
-            _ => bail!("cached value is not prefill logits"),
-        }
-    }
-
-    pub fn as_decode_edge(&self) -> Result<decode_input::DecodeEdge> {
-        match self {
-            Self::DecodeEdge(value) => Ok(value.clone()),
-            _ => bail!("cached value is not a decode edge"),
-        }
-    }
-
-    pub fn as_decode_embed_edge(&self) -> Result<decode_embed_input::DecodeEdge> {
-        match self {
-            Self::DecodeEdge(value) => Ok(decode_embed_edge_from_decode(value)),
-            _ => bail!("cached value is not a decode edge"),
-        }
-    }
-
     pub fn as_output_edge(&self) -> Result<output_input::DecodeEdge> {
         match self {
             Self::DecodeEdge(value) => Ok(output_edge_from_decode(value)),
@@ -356,15 +349,7 @@ impl CachedStageValue {
 
     pub fn as_check_prior(&self) -> Result<check_input::DecodeEdge> {
         match self {
-            Self::DecodeEdge(value) => Ok(check_input::DecodeEdge {
-                has_selected: value.has_selected,
-                decode_position: value.decode_position,
-                token_id: value.token_id,
-                value: value.value,
-                claim_mismatches: value.claim_mismatches,
-                first_claim_mismatch_position: value.first_claim_mismatch_position,
-                generated_token_ids: value.generated_token_ids.clone(),
-            }),
+            Self::DecodeEdge(value) => Ok(value.clone()),
             _ => bail!("cached value is not a decode edge"),
         }
     }
@@ -397,18 +382,6 @@ impl CachedStageValue {
                 v: row.v.clone(),
             }),
             start_position: value.start_position,
-        })
-    }
-
-    pub fn from_checked_edge(value: check_input::DecodeEdge) -> Self {
-        Self::DecodeEdge(decode_input::DecodeEdge {
-            has_selected: value.has_selected,
-            decode_position: value.decode_position,
-            token_id: value.token_id,
-            value: value.value,
-            claim_mismatches: value.claim_mismatches,
-            first_claim_mismatch_position: value.first_claim_mismatch_position,
-            generated_token_ids: value.generated_token_ids,
         })
     }
 }
@@ -476,24 +449,6 @@ fn aux_activation_from_range(
     }
 }
 
-fn aux_activation_from_decode_embed(
-    source: &decode_embed_input::ActivationSequence,
-) -> aux_input::ActivationSequence {
-    aux_input::ActivationSequence {
-        rows: map_list(&source.rows, |row| aux_input::ActivationRow {
-            token_id: row.token_id,
-            values: row.values.clone(),
-        }),
-        errors: source.errors.clone(),
-        kv: map_list(&source.kv, |row| aux_input::KeyRow {
-            position: row.position,
-            k: row.k.clone(),
-            v: row.v.clone(),
-        }),
-        start_position: source.start_position,
-    }
-}
-
 fn range_activation_from_embedding(
     source: &embedding_input::ActivationSequence,
 ) -> range_input::ActivationSequence {
@@ -512,78 +467,6 @@ fn range_activation_from_embedding(
     }
 }
 
-fn range_activation_from_decode_embed(
-    source: &decode_embed_input::ActivationSequence,
-) -> range_input::ActivationSequence {
-    range_input::ActivationSequence {
-        rows: map_list(&source.rows, |row| range_input::ActivationRow {
-            token_id: row.token_id,
-            values: row.values.clone(),
-        }),
-        errors: source.errors.clone(),
-        kv: map_list(&source.kv, |row| range_input::KeyRow {
-            position: row.position,
-            k: row.k.clone(),
-            v: row.v.clone(),
-        }),
-        start_position: source.start_position,
-    }
-}
-
-fn finalize_activation_from_embedding(
-    source: &embedding_input::ActivationSequence,
-) -> finalize_input::ActivationSequence {
-    finalize_input::ActivationSequence {
-        rows: map_list(&source.rows, |row| finalize_input::ActivationRow {
-            token_id: row.token_id,
-            values: row.values.clone(),
-        }),
-        errors: source.errors.clone(),
-        kv: map_list(&source.kv, |row| finalize_input::KeyRow {
-            position: row.position,
-            k: row.k.clone(),
-            v: row.v.clone(),
-        }),
-        start_position: source.start_position,
-    }
-}
-
-fn finalize_activation_from_decode_embed(
-    source: &decode_embed_input::ActivationSequence,
-) -> finalize_input::ActivationSequence {
-    finalize_input::ActivationSequence {
-        rows: map_list(&source.rows, |row| finalize_input::ActivationRow {
-            token_id: row.token_id,
-            values: row.values.clone(),
-        }),
-        errors: source.errors.clone(),
-        kv: map_list(&source.kv, |row| finalize_input::KeyRow {
-            position: row.position,
-            k: row.k.clone(),
-            v: row.v.clone(),
-        }),
-        start_position: source.start_position,
-    }
-}
-
-fn finalize_activation_from_range(
-    source: &range_input::ActivationSequence,
-) -> finalize_input::ActivationSequence {
-    finalize_input::ActivationSequence {
-        rows: map_list(&source.rows, |row| finalize_input::ActivationRow {
-            token_id: row.token_id,
-            values: row.values.clone(),
-        }),
-        errors: source.errors.clone(),
-        kv: map_list(&source.kv, |row| finalize_input::KeyRow {
-            position: row.position,
-            k: row.k.clone(),
-            v: row.v.clone(),
-        }),
-        start_position: source.start_position,
-    }
-}
-
 fn range_ple_from_aux(source: &aux_input::PleLayerInputs) -> range_input::PleLayerInputs {
     range_input::PleLayerInputs {
         layer_idx: source.layer_idx,
@@ -594,34 +477,7 @@ fn range_ple_from_aux(source: &aux_input::PleLayerInputs) -> range_input::PleLay
     }
 }
 
-fn decode_logits_from_finalize(
-    source: &finalize_input::PrefillLogits,
-) -> decode_input::PrefillLogits {
-    decode_input::PrefillLogits {
-        decode_position: source.decode_position,
-        logits: map_list(&source.logits, |entry| decode_input::LogitEntry {
-            token_id: entry.token_id,
-            value: entry.value,
-        }),
-        errors: source.errors.clone(),
-    }
-}
-
-fn decode_embed_edge_from_decode(
-    source: &decode_input::DecodeEdge,
-) -> decode_embed_input::DecodeEdge {
-    decode_embed_input::DecodeEdge {
-        has_selected: source.has_selected,
-        decode_position: source.decode_position,
-        token_id: source.token_id,
-        value: source.value,
-        claim_mismatches: source.claim_mismatches,
-        first_claim_mismatch_position: source.first_claim_mismatch_position,
-        generated_token_ids: source.generated_token_ids.clone(),
-    }
-}
-
-fn output_edge_from_decode(source: &decode_input::DecodeEdge) -> output_input::DecodeEdge {
+fn output_edge_from_decode(source: &check_input::DecodeEdge) -> output_input::DecodeEdge {
     output_input::DecodeEdge {
         has_selected: source.has_selected,
         decode_position: source.decode_position,
@@ -629,6 +485,8 @@ fn output_edge_from_decode(source: &decode_input::DecodeEdge) -> output_input::D
         value: source.value,
         claim_mismatches: source.claim_mismatches,
         first_claim_mismatch_position: source.first_claim_mismatch_position,
+        check_fault: source.check_fault,
+        check_fault_position: source.check_fault_position,
         generated_token_ids: source.generated_token_ids.clone(),
     }
 }
@@ -793,6 +651,7 @@ mod tests {
             vec![0xde, 0xad],
             CachedStageValue::PromptTokenization(prompt_input::PromptTokenization {
                 token_ids: List::from(vec![1, 2, 3]),
+                ..Default::default()
             }),
         );
 
@@ -809,6 +668,7 @@ mod tests {
             vec![0xde, 0xad],
             CachedStageValue::PromptTokenization(prompt_input::PromptTokenization {
                 token_ids: List::from(vec![1, 2, 3]),
+                ..Default::default()
             }),
         );
 
@@ -822,6 +682,7 @@ mod tests {
     fn cached_prompt_converts_to_embedding_input() {
         let cached = CachedStageValue::PromptTokenization(prompt_input::PromptTokenization {
             token_ids: List::from(vec![7, 8]),
+            ..Default::default()
         });
 
         let prompt = cached.as_embedding_prompt().unwrap();

@@ -117,14 +117,6 @@ impl Fixture {
         )?;
         routines::input_embedding::run_direct(&inputs)
     }
-    fn decode(&self) -> Result<decode_embed::input::ActivationSequence> {
-        let inputs = routines::decode_embed::load_inputs_from_paths(
-            &self.dir.join("input.json"),
-            &self.dir.join("input_manifest.json"),
-            &CachedInputs::new(),
-        )?;
-        routines::decode_embed::run_direct(&inputs)
-    }
     fn compare_raster<T: Serialize>(&self, binary: &str, output: &T, label: &str) {
         let bin = PathBuf::from(
             std::env::var_os("STAGED_INFER_REPLAY_BIN_DIR").expect("build Raster binaries first"),
@@ -201,6 +193,7 @@ fn prompt_fixture(pages: usize, width: u32) -> (Fixture, EmbeddingTable, PromptT
             per_page,
             (table.values.byte_len() / row_bytes(width) - 1) as u32,
         ]),
+        ..Default::default()
     };
     f.write("embedding", &table);
     f.write("prompt", &prompt);
@@ -228,17 +221,6 @@ fn eager_prompt(
     )
     .unwrap()
 }
-fn edge(token_id: u32) -> decode_embed::input::DecodeEdge {
-    decode_embed::input::DecodeEdge {
-        has_selected: true,
-        decode_position: 137,
-        token_id,
-        value: 0,
-        claim_mismatches: 0,
-        first_claim_mismatch_position: 0,
-        generated_token_ids: List::from(vec![token_id]),
-    }
-}
 
 #[test]
 fn embedding_gathers_distinct_pages_and_caches_only_metadata() {
@@ -265,7 +247,7 @@ fn embedding_gathers_distinct_pages_and_caches_only_metadata() {
 }
 
 #[test]
-fn embedding_fixed_point_boundaries_empty_prompt_and_decode_position() {
+fn embedding_fixed_point_boundaries_and_empty_prompt() {
     let (f, mut table, mut prompt) = prompt_fixture(4, 32);
     // Extreme half-precision scales (largest, smallest subnormal, zero, both
     // signs) against extreme bytes: dequantized rows saturate both ways.
@@ -285,41 +267,31 @@ fn embedding_fixed_point_boundaries_empty_prompt_and_decode_position() {
         table.embedding_scale = scale;
         f.write("embedding", &table);
         assert_eq!(f.prompt(None).unwrap(), eager_prompt(&table, &prompt));
-        let selected = edge(prompt.token_ids[4]);
-        f.write("selected", &selected);
-        let actual = f.decode().unwrap();
-        assert_eq!(actual.start_position, 137);
-        let eager_table = decode_embed::input::EmbeddingTable {
-            hidden_size: table.hidden_size,
-            embedding_scale: scale,
-            values: table.values.clone(),
-        };
-        let expected = inference_kernels::kernels::decode_embed::run_decode_embed_direct(
-            inference_kernels::kernels::decode_embed::DecodeEmbedDirectInputs {
-                selected: &selected,
-                embedding: &eager_table,
-            },
-        )
-        .unwrap();
-        assert_eq!(actual, expected);
     }
     prompt.token_ids = List::new();
     f.write("prompt", &prompt);
     assert!(f.prompt(None).unwrap().rows.is_empty());
-    let mut selected = edge(0);
-    selected.has_selected = false;
-    f.write("selected", &selected);
-    assert!(f.decode().is_err());
 }
 
 #[test]
-fn embedding_rejects_missing_rows_cross_page_rows_and_bad_geometry() {
+fn an_unknown_token_reads_the_first_row_and_keeps_its_id() {
+    let (f, table, mut prompt) = prompt_fixture(4, 32);
+    let past_the_end = (table.values.byte_len() / row_bytes(32)) as u32;
+    prompt.token_ids = List::from(vec![0, past_the_end, u32::MAX]);
+    f.write("prompt", &prompt);
+    let expected = eager_prompt(&table, &prompt);
+    assert_eq!(f.prompt(None).unwrap(), expected);
+    assert_eq!(expected.rows[1].token_id, past_the_end);
+    assert_eq!(expected.rows[2].token_id, u32::MAX);
+    assert_eq!(expected.rows[1].values, expected.rows[0].values);
+    assert_eq!(expected.rows[2].values, expected.rows[0].values);
+}
+
+#[test]
+fn embedding_rejects_cross_page_rows_and_bad_geometry() {
     // 238-byte rows do not divide the page, so this row spans two.
     let (f, mut table, mut prompt) = prompt_fixture(4, 224);
     prompt.token_ids = List::from(vec![(PAGE_SIZE / row_bytes(224)) as u32]);
-    f.write("prompt", &prompt);
-    assert!(f.prompt(None).is_err());
-    prompt.token_ids = List::from(vec![u32::MAX]);
     f.write("prompt", &prompt);
     assert!(f.prompt(None).is_err());
     prompt.token_ids = List::from(vec![0]);
@@ -382,11 +354,8 @@ fn embedding_postcard_and_mixed_inputs_keep_compatibility() {
 #[test]
 #[ignore = "requires unchanged Raster stage binaries"]
 fn embedding_multi_page_authenticated_raster_parity() {
-    let (f, mut table, prompt) = prompt_fixture(4, 32);
+    let (f, mut table, _) = prompt_fixture(4, 32);
     f.compare_raster("input-embedding", &f.prompt(None).unwrap(), "prompt-raster");
-    let selected = edge(prompt.token_ids[4]);
-    f.write("selected", &selected);
-    f.compare_raster("decode-embed", &f.decode().unwrap(), "decode-raster");
     for scale in [i32::MIN, i32::MAX] {
         table.embedding_scale = scale;
         f.write("embedding", &table);
@@ -394,11 +363,6 @@ fn embedding_multi_page_authenticated_raster_parity() {
             "input-embedding",
             &f.prompt(None).unwrap(),
             &format!("prompt-scale-{scale}"),
-        );
-        f.compare_raster(
-            "decode-embed",
-            &f.decode().unwrap(),
-            &format!("decode-scale-{scale}"),
         );
     }
     // Raster permits zero-width embedding rows; the eager prompt kernel rejects them.
@@ -452,13 +416,41 @@ fn embedding_loading_benchmark() {
 }
 
 use crate::head::{self, PagedHead, StaticHead, BATCH_PAGES};
-use prefill_finalize::input::{
-    pack_i32s, ActivationRow, ActivationSequence, FinalHead, FinalHeadParams,
+use sequence_check::input::{
+    pack_i32s, ActivationRow, ActivationSequence, ClaimedOutput, DecodeEdge, FinalHead,
+    FinalHeadParams,
 };
+use sequence_check::prompt::{PromptContext, PromptState};
 
+const HEAD_WIDTH: u32 = 256;
+
+/// The row before the claimed range, which predicts its first token.
+fn head_previous(width: u32) -> ActivationSequence {
+    ActivationSequence {
+        rows: List::from(vec![ActivationRow {
+            token_id: 0,
+            values: pack_i32s(&vec![ONE; width as usize]),
+        }]),
+        errors: List::new(),
+        kv: List::new(),
+        start_position: 29,
+    }
+}
+fn head_claimed() -> ClaimedOutput {
+    ClaimedOutput {
+        token_ids: List::from(vec![1, 0]),
+    }
+}
+fn head_context() -> PromptContext {
+    PromptContext {
+        range_size: 4,
+        prompt_tokens: 30,
+        ..Default::default()
+    }
+}
 fn head_fixture(pages: usize) -> (Fixture, FinalHead, ActivationSequence) {
     let f = Fixture::new();
-    let width = 256;
+    let width = HEAD_WIDTH;
     let head = FinalHead {
         params: FinalHeadParams {
             hidden_size: width,
@@ -468,27 +460,31 @@ fn head_fixture(pages: usize) -> (Fixture, FinalHead, ActivationSequence) {
         },
         projection: Bytes::paged(q8_rows(pages, width, HEAD_PAGE_SIZE)).unwrap(),
     };
+    let row = |token_id, values: &[i32]| ActivationRow {
+        token_id,
+        values: pack_i32s(values),
+    };
     let activations = ActivationSequence {
         rows: List::from(vec![
-            ActivationRow {
-                token_id: 0,
-                values: pack_i32s(&vec![ONE; width as usize]),
-            },
-            ActivationRow {
-                token_id: 1,
-                values: pack_i32s(
-                    &(0..width)
-                        .map(|i| (i as i32 - 128) * 731)
-                        .collect::<Vec<_>>(),
-                ),
-            },
+            row(1, &(0..width).map(|i| (i as i32 - 128) * 731).collect::<Vec<_>>()),
+            row(0, &vec![ONE; width as usize]),
         ]),
         errors: List::new(),
         kv: List::new(),
-        start_position: 29,
+        start_position: 30,
     };
     f.write("head", &head);
     f.write("activations", &activations);
+    f.write("previous", &head_previous(width));
+    f.write("claimed", &head_claimed());
+    f.write("prior", &DecodeEdge::default());
+    f.write(
+        "prompt",
+        &PromptState {
+            context: head_context(),
+            ..Default::default()
+        },
+    );
     (f, head, activations)
 }
 impl Fixture {
@@ -504,49 +500,51 @@ impl Fixture {
             head::load(binding, input.to_str(), manifest.to_str(), cache, key)
         })
     }
-    fn finalize(
-        &self,
-        cache: Option<&MaterializationCache>,
-    ) -> Result<prefill_finalize::input::PrefillLogits> {
-        let inputs = routines::prefill_finalize::load_inputs_from_paths_with_cache(
+    /// The whole stage over the paged head.
+    fn check(&self, cache: Option<&MaterializationCache>) -> Result<DecodeEdge> {
+        let inputs = routines::sequence_check::load_inputs_from_paths_with_cache(
             &self.dir.join("input.json"),
             &self.dir.join("input_manifest.json"),
             &CachedInputs::new(),
             cache,
         )?;
-        routines::prefill_finalize::run_direct(&inputs)
+        routines::sequence_check::run_direct(&inputs)
     }
 }
-fn eager_head(
-    head: &FinalHead,
-    activations: &ActivationSequence,
-) -> prefill_finalize::input::PrefillLogits {
-    inference_kernels::kernels::prefill_finalize::run_prefill_finalize_direct(
-        inference_kernels::kernels::prefill_finalize::PrefillFinalizeDirectInputs {
+fn eager_check(head: &FinalHead, activations: &ActivationSequence) -> DecodeEdge {
+    inference_kernels::kernels::sequence_check::run_sequence_check_direct(
+        inference_kernels::kernels::sequence_check::SequenceCheckDirectInputs {
             activations,
+            previous: &head_previous(head.params.hidden_size),
+            claimed: &head_claimed(),
+            prior: &DecodeEdge::default(),
             head,
+            context: &head_context(),
         },
     )
     .unwrap()
 }
 
 #[test]
-fn head_batches_are_bounded_and_all_logits_match_eager() {
+fn head_batches_are_bounded_and_the_check_matches_eager() {
     for pages in [2, 33, 66] {
         let (f, head, activations) = head_fixture(pages);
-        let (actual, stats) = head::run_measured(&activations, &f.head(None).unwrap()).unwrap();
-        assert_eq!(actual, eager_head(&head, &activations));
-        assert_eq!(actual.decode_position, 31);
+        let rows = activations
+            .rows
+            .iter()
+            .map(|row| sequence_check::input::unpack_i32s(&row.values).unwrap())
+            .collect::<Vec<_>>();
+        let positions = rows.iter().map(Vec::as_slice).collect::<Vec<_>>();
+        let (selections, stats) =
+            head::select_positions_measured(&positions, &f.head(None).unwrap()).unwrap();
+        assert_eq!(selections.len(), 2);
         assert_eq!(stats.pages, pages as u64);
         assert_eq!(stats.peak_batch_pages, pages.min(BATCH_PAGES));
         assert!(stats.peak_batch_payload_bytes <= BATCH_PAGES * HEAD_PAGE_SIZE as usize);
-        assert_eq!(
-            actual.logits.len() as u64,
-            head.projection.byte_len() / row_bytes(256)
-        );
-        for (index, logit) in actual.logits.iter().enumerate() {
-            assert_eq!(logit.token_id, index as u32);
-        }
+        let actual = f.check(None).unwrap();
+        assert_eq!(actual, eager_check(&head, &activations));
+        assert_eq!(actual.generated_token_ids.len(), 2);
+        assert_eq!(actual.check_fault, 0);
     }
 }
 
@@ -582,8 +580,8 @@ fn head_saturation_normalization_softcap_and_metadata_cache() {
                 assert!(Arc::ptr_eq(&a.metadata, &b.metadata));
             }
             assert_eq!(
-                f.finalize(Some(&cache)).unwrap(),
-                eager_head(&head, &activations)
+                f.check(Some(&cache)).unwrap(),
+                eager_check(&head, &activations)
             );
         }
         assert!(budget.stats().retained_bytes <= bytes);
@@ -591,20 +589,11 @@ fn head_saturation_normalization_softcap_and_metadata_cache() {
 }
 
 #[test]
-fn head_empty_projection_and_invalid_activations_or_parameters() {
-    let (f, mut head, mut activations) = head_fixture(2);
+fn head_empty_projection_and_invalid_parameters_are_refused() {
+    let (f, mut head, _) = head_fixture(2);
     head.projection = Bytes::paged(Vec::new()).unwrap();
     f.write("head", &head);
-    assert_eq!(f.finalize(None).unwrap(), eager_head(&head, &activations));
-    activations.rows = List::new();
-    f.write("activations", &activations);
-    assert!(f.finalize(None).is_err());
-    activations.rows = List::from(vec![ActivationRow {
-        token_id: 0,
-        values: pack_i32s(&[ONE]),
-    }]);
-    f.write("activations", &activations);
-    assert!(f.finalize(None).is_err());
+    assert!(f.check(None).is_err());
     for variant in 0..4 {
         let mut bad = head.clone();
         match variant {
@@ -616,6 +605,16 @@ fn head_empty_projection_and_invalid_activations_or_parameters() {
         f.write("head", &bad);
         assert!(f.head(None).is_err());
     }
+}
+
+#[test]
+fn a_row_of_the_wrong_width_is_published_as_a_fault() {
+    let (f, head, mut activations) = head_fixture(2);
+    activations.rows[0].values = pack_i32s(&[ONE]);
+    f.write("activations", &activations);
+    let edge = f.check(None).unwrap();
+    assert_eq!(edge, eager_check(&head, &activations));
+    assert_eq!(edge.check_fault, sequence_check::input::CHECK_FAULT_UNSCORED);
 }
 
 #[test]
@@ -637,7 +636,7 @@ fn head_rejects_missing_extra_misaligned_and_partial_rows() {
         }
         bad.projection.pages = List::from(pages);
         f.write("head", &bad);
-        assert!(f.finalize(None).is_err());
+        assert!(f.check(None).is_err());
     }
     // 238-byte rows: 220 of them end 136 bytes into the second page.
     let mut split = head;
@@ -645,19 +644,25 @@ fn head_rejects_missing_extra_misaligned_and_partial_rows() {
     split.params.norm_weights = pack_i32s(&[ONE; 224]);
     split.projection = Bytes::paged(vec![0; 220 * 238]).unwrap();
     let activations = ActivationSequence {
-        rows: List::from(vec![ActivationRow {
-            token_id: 0,
-            values: pack_i32s(&[ONE; 224]),
-        }]),
+        rows: List::from(vec![
+            ActivationRow {
+                token_id: 1,
+                values: pack_i32s(&[ONE; 224]),
+            },
+            ActivationRow {
+                token_id: 0,
+                values: pack_i32s(&[ONE; 224]),
+            },
+        ]),
         errors: List::new(),
         kv: List::new(),
-        start_position: 0,
+        start_position: 30,
     };
     f.write("head", &split);
     f.write("activations", &activations);
-    // Eager concatenation accepts this shape, but Raster rejects the split rows.
-    assert!(!eager_head(&split, &activations).logits.is_empty());
-    assert!(f.finalize(None).is_err());
+    f.write("previous", &head_previous(224));
+    // Raster rejects the rows that cross a page, and so does the paged path.
+    assert!(f.check(None).is_err());
 }
 
 #[test]
@@ -674,41 +679,43 @@ fn head_last_page_corruption_and_cache_identity_are_checked() {
     let mut data = fs::read(&path).unwrap();
     *data.last_mut().unwrap() ^= 0x80;
     fs::write(&path, data).unwrap();
-    assert!(f.finalize(Some(&cache)).is_err());
+    assert!(f.check(Some(&cache)).is_err());
     f.write("head", &head);
     assert_eq!(
-        f.finalize(Some(&cache)).unwrap(),
-        eager_head(&head, &activations)
+        f.check(Some(&cache)).unwrap(),
+        eager_check(&head, &activations)
     );
     f.update(
         "input_manifest.json",
         "head",
         serde_json::json!({"type":"sha256","encoding":"raster","commitment":"00".repeat(32)}),
     );
-    assert!(f.finalize(Some(&cache)).is_err());
+    assert!(f.check(Some(&cache)).is_err());
 }
 
 #[test]
 fn head_postcard_and_mixed_inputs_keep_compatibility() {
     let (f, head, activations) = head_fixture(4);
-    let expected = eager_head(&head, &activations);
+    let expected = eager_check(&head, &activations);
     f.postcard("activations", &activations);
-    assert_eq!(f.finalize(None).unwrap(), expected);
+    assert_eq!(f.check(None).unwrap(), expected);
     f.postcard("head", &head);
-    assert_eq!(f.finalize(None).unwrap(), expected);
+    assert_eq!(f.check(None).unwrap(), expected);
 }
 
 #[test]
 fn paged_head_keeps_its_bound_source_when_another_invocation_starts() {
-    let (first, head, activations) = head_fixture(4);
+    let (first, _, activations) = head_fixture(4);
     let loaded = first.head(None).unwrap();
+    let row = sequence_check::input::unpack_i32s(&activations.rows[0].values).unwrap();
+    let before = head::select_positions(&[row.as_slice()], &loaded).unwrap();
     let (other, mut other_head, _) = head_fixture(2);
     other_head.params.softcap = ONE;
     other.write("head", &other_head);
     let _other_loaded = other.head(None).unwrap();
     assert_eq!(
-        head::run(&activations, &loaded).unwrap(),
-        eager_head(&head, &activations)
+        head::select_positions(&[row.as_slice()], &loaded).unwrap(),
+        before
     );
 }
 
@@ -737,26 +744,33 @@ fn head_multi_page_authenticated_raster_parity() {
             f.write("activations", &activations);
         }
         f.compare_raster(
-            "prefill-finalize",
-            &f.finalize(None).unwrap(),
+            "sequence-check",
+            &f.check(None).unwrap(),
             &format!("head-raster-{boundary}"),
         );
     }
     head.params.hidden_size = 224;
     head.params.norm_weights = pack_i32s(&[ONE; 224]);
     head.projection = Bytes::paged(vec![0; 220 * 238]).unwrap();
-    activations.rows = List::from(vec![ActivationRow {
-        token_id: 0,
-        values: pack_i32s(&[ONE; 224]),
-    }]);
     f.write("head", &head);
+    f.write("previous", &head_previous(224));
+    activations.rows = List::from(vec![
+        ActivationRow {
+            token_id: 1,
+            values: pack_i32s(&[ONE; 224]),
+        },
+        ActivationRow {
+            token_id: 0,
+            values: pack_i32s(&[ONE; 224]),
+        },
+    ]);
     f.write("activations", &activations);
-    assert!(f.finalize(None).is_err());
+    assert!(f.check(None).is_err());
     let bin = PathBuf::from(std::env::var_os("STAGED_INFER_REPLAY_BIN_DIR").unwrap());
     let dest = f.dir.join("raster-rejects-split-rows");
     fs::create_dir(&dest).unwrap();
     let rejected = std::process::Command::new(
-        bin.join(format!("prefill-finalize{}", std::env::consts::EXE_SUFFIX)),
+        bin.join(format!("sequence-check{}", std::env::consts::EXE_SUFFIX)),
     )
     .arg("--input")
     .arg(f.dir.join("input.json"))
@@ -778,39 +792,20 @@ fn head_loading_benchmark() {
     let (f, head, activations) = head_fixture(128);
     let mut eager = 0;
     let mut paged = 0;
-    let mut verify = 0;
-    let mut arithmetic = 0;
     for _ in 0..7 {
         let start = Instant::now();
-        with_stage_sequence_scope(
-            &f.dir.join("input.json"),
-            &f.dir.join("input_manifest.json"),
-            || {
-                let binding = raster::start_program(&[
-                    raster::entry_argument_spec::<ActivationSequence>("activations"),
-                    raster::entry_argument_spec::<FinalHead>("head"),
-                ])?;
-                let weights = raster::materialize_auth_return(raster::entry_argument_auth_ref::<
-                    FinalHead,
-                >(
-                    binding.reference, "head"
-                ));
-                std::hint::black_box(eager_head(&weights, &activations));
-                Ok(())
-            },
-        )
-        .unwrap();
+        std::hint::black_box(eager_check(&head, &activations));
         eager += start.elapsed().as_nanos();
         let start = Instant::now();
-        let loaded = f.head(None).unwrap();
-        let (output, stats) = head::run_measured(&activations, &loaded).unwrap();
-        std::hint::black_box(output);
+        std::hint::black_box(f.check(None).unwrap());
         paged += start.elapsed().as_nanos();
-        verify += stats.load_verify.as_nanos();
-        arithmetic += stats.arithmetic.as_nanos();
     }
-    println!("head projection_bytes={} max_batch_pages={} eager_mean_ms={:.3} paged_mean_ms={:.3} page_verify_mean_ms={:.3} arithmetic_mean_ms={:.3}",
-        head.projection.byte_len(),BATCH_PAGES,eager as f64/7e6,paged as f64/7e6,verify as f64/7e6,arithmetic as f64/7e6);
+    println!(
+        "head projection_bytes={} max_batch_pages={BATCH_PAGES} eager_mean_ms={:.3} paged_mean_ms={:.3}",
+        head.projection.byte_len(),
+        eager as f64 / 7e6,
+        paged as f64 / 7e6
+    );
 }
 
 // Test-only wire mirror for adversarial rindex04 edits. Production never parses
@@ -879,7 +874,7 @@ fn forged_index_list_lengths_cannot_skip_committed_pages() {
         let mut bytes = b"rindex04".to_vec();
         bytes.extend(raster_core::postcard::to_allocvec(&index).unwrap());
         fs::write(path, bytes).unwrap();
-        assert!(f.finalize(None).is_err());
+        assert!(f.check(None).is_err());
     }
 }
 
@@ -936,7 +931,7 @@ impl Fixture {
 fn standalone_publishes_exact_outputs_and_rejects_corruption_before_publication() {
     let (f, _, _) = prompt_fixture(4, 4);
     let expected = f.prompt(None).unwrap();
-    let (result, dest) = f.standalone("input_embedding", "valid");
+    let (result, dest) = f.standalone("embed_p0", "valid");
     assert!(
         result.status.success(),
         "{}",
@@ -950,14 +945,14 @@ fn standalone_publishes_exact_outputs_and_rejects_corruption_before_publication(
     let mut bytes = fs::read(&path).unwrap();
     *bytes.last_mut().unwrap() ^= 1;
     fs::write(path, bytes).unwrap();
-    let (result, dest) = f.standalone("input_embedding", "invalid");
+    let (result, dest) = f.standalone("embed_p0", "invalid");
     assert!(!result.status.success());
     for file in ["output.bin", "output.rindex", "output_manifest.json"] {
         assert!(!dest.join(file).exists());
     }
     let (f, _, _) = head_fixture(34);
-    let expected = f.finalize(None).unwrap();
-    let (result, dest) = f.standalone("prefill_finalize", "valid");
+    let expected = f.check(None).unwrap();
+    let (result, dest) = f.standalone("check_c0", "valid");
     assert!(
         result.status.success(),
         "{}",
@@ -971,7 +966,7 @@ fn standalone_publishes_exact_outputs_and_rejects_corruption_before_publication(
     let mut bytes = fs::read(&path).unwrap();
     *bytes.last_mut().unwrap() ^= 1;
     fs::write(path, bytes).unwrap();
-    let (result, dest) = f.standalone("decode_finalize_t7", "invalid");
+    let (result, dest) = f.standalone("check_c7", "invalid");
     assert!(!result.status.success());
     for file in ["output.bin", "output.rindex", "output_manifest.json"] {
         assert!(!dest.join(file).exists());

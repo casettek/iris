@@ -28,6 +28,10 @@ pub(crate) struct SelectedEmbedding {
 }
 
 impl StaticEmbedding {
+    fn row_offset(&self, token: u32) -> u64 {
+        input_embedding::row_byte_offset(token, self.hidden_size, self.region.byte_len)
+    }
+
     fn load(source: &VerifiedSelections) -> Result<Self> {
         Ok(Self {
             hidden_size: source.select(fields(&["embedding", "hidden_size"]))?,
@@ -56,7 +60,7 @@ pub(crate) fn load(
     };
     let mut pages = BTreeMap::new();
     for token in tokens {
-        let offset = row_offset(token, metadata.hidden_size)?;
+        let offset = metadata.row_offset(token);
         let index = offset / metadata.region.page_size;
         if let std::collections::btree_map::Entry::Vacant(entry) = pages.entry(index) {
             entry.insert(
@@ -72,16 +76,9 @@ pub(crate) fn load(
     Ok(SelectedEmbedding { metadata, pages })
 }
 
-/// The token's `Q8_0` row: `width / 32 · 34` bytes per row.
-fn row_offset(token: u32, width: u32) -> Result<u64> {
-    u64::from(token)
-        .checked_mul(u64::from(width) / 32 * 34)
-        .context("embedding row offset overflow")
-}
-
 impl SelectedEmbedding {
     pub(crate) fn row(&self, token: u32) -> Result<Vec<i32>> {
-        let offset = row_offset(token, self.metadata.hidden_size)?;
+        let offset = self.metadata.row_offset(token);
         let page = self
             .pages
             .get(&(offset / self.metadata.region.page_size))

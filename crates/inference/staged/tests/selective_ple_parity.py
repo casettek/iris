@@ -1,6 +1,6 @@
 """Release parity gate against unchanged authenticated Raster stage binaries.
 
-Requires a built iris, staged-infer, and all ten stage binaries in --bin-dir.
+Requires a built iris, staged-infer, and every stage binary in --bin-dir.
 Writes only to a new --output directory. Uses the pinned parity-gemma bundle.
 """
 import argparse
@@ -11,6 +11,11 @@ from pathlib import Path
 import re
 import subprocess
 import time
+
+
+STAGES = ["prompt-bind", "prompt-seed", "prompt-merge", "prompt-prepare", "range-origin",
+          "decode-init", "input-embedding", "prefill-prepare-aux", "prefill-range",
+          "sequence-check", "output-finalize"]
 
 
 def read(path):
@@ -58,35 +63,33 @@ def invoke(command, cwd, env, log):
 
 
 def project(name):
-    if name.startswith("prompt_merge_"):
-        return "prompt-merge"
-    if name.startswith(("prefill_prepare_aux_l", "decode_aux_t")):
-        return "prefill-prepare-aux"
-    if name.startswith(("prefill_range_l", "decode_range_t")):
-        return "prefill-range"
-    if name.startswith("decode_select_t"):
-        return "decode-select-token"
-    if name.startswith("decode_embed_t"):
-        return "decode-embed"
-    if name.startswith("decode_finalize_t"):
-        return "prefill-finalize"
+    for prefix, program in [("prompt_seed_", "prompt-seed"), ("prompt_merge_", "prompt-merge"),
+                            ("prompt_prepare_", "prompt-prepare"), ("embed_", "input-embedding"),
+                            ("aux_", "prefill-prepare-aux"), ("range_origin", "range-origin"),
+                            ("range_", "prefill-range"), ("check_", "sequence-check")]:
+        if name.startswith(prefix):
+            return program
     return name.replace("_", "-")
 
 
-def expected_names(names, tokens):
-    # Independent inventory for the four-layer bundle, including the final
-    # decode pass after the last selection. Tokenizer merge count is dynamic.
-    merges = [n for n in names if re.fullmatch(r"prompt_merge_b\d+", n)]
-    assert merges == [f"prompt_merge_b{i}" for i in range(len(merges))]
-    expected = ["prompt_merge_seed", *merges, "prompt_prepare", "input_embedding"]
-    expected += [f"prefill_prepare_aux_l{i}" for i in range(4)]
-    expected += [f"prefill_range_l{i}" for i in range(4)]
-    expected += ["prefill_finalize", "decode_init"]
-    for token in range(tokens):
-        expected += [f"decode_select_t{token}", f"decode_embed_t{token}"]
-        expected += [f"decode_aux_t{token}_l{i}" for i in range(4)]
-        expected += [f"decode_range_t{token}_l{i}" for i in range(4)]
-        expected += [f"decode_finalize_t{token}"]
+def expected_names(names):
+    # Independent inventory for the four-layer bundle. The range and tokenizer
+    # batch counts are dynamic.
+    prompt = len([n for n in names if re.fullmatch(r"embed_p\d+", n)])
+    claimed = len([n for n in names if re.fullmatch(r"embed_c\d+", n)])
+    batches = len([n for n in names if re.fullmatch(r"prompt_merge_p0_b\d+", n)])
+    expected = ["range_origin", "decode_init", "prompt_bind"]
+    for j in range(prompt):
+        expected += [f"prompt_seed_p{j}"]
+        expected += [f"prompt_merge_p{j}_b{b}" for b in range(batches)]
+        expected += [f"prompt_prepare_p{j}", f"embed_p{j}"]
+    expected += [f"embed_c{k}" for k in range(claimed)]
+    for layer in range(4):
+        expected += [f"aux_p{j}_l{layer}" for j in range(prompt)]
+        expected += [f"aux_c{k}_l{layer}" for k in range(claimed)]
+        expected += [f"range_p{j}_l{layer}" for j in range(prompt)]
+        expected += [f"range_c{k}_l{layer}" for k in range(claimed)]
+    expected += [f"check_c{k}" for k in range(claimed)]
     expected += ["output_finalize"]
     assert names == expected, "missing, reordered, or unexpected stage"
 
@@ -104,7 +107,7 @@ def main():
     bundle = root / "model-bundles/parity-gemma"
     env = os.environ.copy()
     for key in ["RASTER_AUTH", "RASTER_TRACE_PATH", "RASTER_TRACE_FORMAT", "RASTER_OUTPUT_DIR",
-                "DIRECT_INFER_COMPARE_TRACE", "STAGED_INFER_PLE_LOADING"]:
+                "STAGED_INFER_PLE_LOADING"]:
         env.pop(key, None)
     env.update(RISC0_SKIP_BUILD="1", RAYON_NUM_THREADS="4")
     artifacts = output / "model-artifacts"
@@ -113,9 +116,7 @@ def main():
     model = artifacts / "parity-gemma/manifest.json"
     report = {"authenticated_raster": True, "cases": [], "binary_sha256": {},
               "timing_note": "Informational single runs, eager first; eager/selective use the same cache budget and worker count."}
-    for binary in ["iris", "staged-infer", "prompt-prepare", "prompt-merge", "input-embedding",
-                   "prefill-prepare-aux", "prefill-range", "prefill-finalize", "decode-init",
-                   "decode-select-token", "decode-embed", "output-finalize"]:
+    for binary in ["iris", "staged-infer", *STAGES]:
         report["binary_sha256"][binary] = sha((binaries / f"{binary}{suffix}").read_bytes())
     for case in read(bundle / "cases.json"):
         print(f"Running {case['name']}", flush=True)
@@ -141,7 +142,7 @@ def main():
         baseline = chains["eager"]
         trace = read(baseline / "checkpoint_trace.json")
         names = [entry["stage"] for entry in trace]
-        expected_names(names, case["tokens"])
+        expected_names(names)
         for chain in chains.values():
             assert read(chain / "checkpoint_trace.json") == trace
             hashes = compare(baseline, chain, names)

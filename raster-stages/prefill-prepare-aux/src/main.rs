@@ -20,12 +20,13 @@ fn prepare_ple_row(
     projection_pages: List<BytesPage>,
     params: PleLayerParams,
     page_size: u64,
+    table_bytes: u64,
 ) -> RecurSequenceOutput<PleLayerInputs> {
     let task = call!(begin_ple_task, input);
     let token_id = select!(u32, task.clone().token_id);
     let ple_width = select!(u32, params.clone().ple_width);
     let hidden = select!(u32, params.clone().hidden_size);
-    let byte_off = call!(ple_byte_offset, token_id, ple_width.clone());
+    let byte_off = call!(ple_byte_offset, token_id, ple_width.clone(), table_bytes);
     let page_idx = call!(page_of, byte_off.clone(), page_size);
     let emb_page = select!(BytesPage, embeddings[page_idx]);
     let acc = call!(zero_accum, ple_width);
@@ -54,6 +55,7 @@ fn main(embedded: ActivationSequence, layer: PleLayer) -> Result<PleLayerInputs>
     let declared_params = select!(PleLayerParams, layer.clone().params);
     let params = call!(validate_layer_params, declared_params)?;
     let page_size = select!(u64, layer.clone().embeddings.page_size);
+    let table_bytes = select!(u64, layer.clone().embeddings.byte_len);
     let embeddings = select!(Bytes<195_840>, layer.clone().embeddings);
     let proj_len = select!(u64, layer.clone().projection.byte_len);
     let projection_pages = select!(List<BytesPage>, layer.projection.pages);
@@ -69,7 +71,7 @@ fn main(embedded: ActivationSequence, layer: PleLayer) -> Result<PleLayerInputs>
         sequence = prepare_ple_row,
         input = tokens,
         output = draft,
-        args = (embeddings, projection_pages, params, page_size)
+        args = (embeddings, projection_pages, params, page_size, table_bytes)
     );
     raster::println!("prefill aux pass → {:?}", prepared);
 

@@ -44,7 +44,8 @@ for case in cases:
     raster.mkdir(exist_ok=True)
     assert not any(raster.iterdir()), f'Use a fresh output directory: {raster}'
     started = time.monotonic()
-    run([tool, 'raster', 'chain', 'run', fixture / 'Raster.toml', '--run', raster, '--fraud-proof-window-size', args.window, *([] if args.authenticated else ['--no-auth'])], fixture / 'raster.log')
+    mode = ['--fraud-proof-window-size', args.window] if args.authenticated else ['--no-auth']
+    run([tool, 'raster', 'chain', 'run', fixture / 'Raster.toml', '--run', raster, *mode], fixture / 'raster.log')
     wall = time.monotonic() - started
     run([target / 'release/examples/tokenizer_compare', fixture, raster], fixture / 'compare.log')
     if args.authenticated:
@@ -53,22 +54,35 @@ for case in cases:
     report.update(stage_count=report['repeat_count'] + 2, raster_seconds=wall,
                   raster_bytes=storage(raster), native_bytes=storage(Path(report['native_chain'])),
                   authenticated=args.authenticated, checkpoint_parity='passed')
-    if case == 'after-eight':
-        # Ten pieces require nine successful merges: one batch must fail.
-        insufficient = fixture / 'insufficient'
-        insufficient.mkdir()
-        text = (fixture / 'Raster.toml').read_text()
-        assert text.count('count = 1\n') == 1
-        manifest = insufficient / 'Raster.toml'
-        manifest.write_text(text.replace('count = 1\n', 'count = 0\n'))
-        replay = insufficient / 'raster'
-        replay.mkdir()
-        with (insufficient / 'run.log').open('w') as log:
-            rejected = subprocess.run([str(tool), 'raster', 'chain', 'run', str(manifest), '--run', str(replay), *([] if args.authenticated else ['--no-auth'])], cwd=root, stdout=log, stderr=subprocess.STDOUT)
-        assert rejected.returncode != 0
-        assert 'tokenization budget exhausted' in (insufficient / 'run.log').read_text()
-        assert not (replay / 'prompt_prepare/output.bin').exists()
-        report['insufficient_budget_rejected'] = True
     reports.append(report)
     (out / 'report.json').write_text(json.dumps(reports, indent=2) + '\n')
     print(f'PASS {case}: {report["stage_count"]} checkpoints, Raster {wall:.2f}s, {report["raster_bytes"]} bytes', flush=True)
+
+# A range needing more merge rounds than its batches allow. With the one batch
+# that follows its seed taken away, it must still finish, through Raster and
+# natively, with the same output recording the fault.
+insufficient = out / 'insufficient-merges'
+insufficient.mkdir(exist_ok=True)
+extended = dict(corpus, cases=corpus['cases'] + [
+    {'name': 'past-one-batch', 'text': 'ABCDEFGHIJKLMNOPQR' * 5, 'token_ids': [529] * 5}])
+extended_path = insufficient / 'corpus.json'
+extended_path.write_text(json.dumps(extended, ensure_ascii=False))
+fixture = insufficient / 'fixture'
+fixture.mkdir(exist_ok=True)
+run([target / 'release/examples/tokenizer_fixture', fixture, args.tokenizer.resolve(), extended_path, 'past-one-batch'], insufficient / 'fixture.log')
+manifest = insufficient / 'Raster.toml'
+text = (fixture / 'Raster.toml').read_text()
+assert text.count('count = 1\n') == 1, 'the fixture should need exactly one batch after its seed'
+manifest.write_text(text.replace('count = 1\n', 'count = 0\n'))
+raster = insufficient / 'raster'
+raster.mkdir(exist_ok=True)
+assert not any(raster.iterdir()), f'Use a fresh output directory: {raster}'
+run([tool, 'raster', 'chain', 'run', manifest, '--run', raster, '--no-auth'], insufficient / 'raster.log')
+with (insufficient / 'native.log').open('w') as log:
+    subprocess.run([str(target / 'release/staged-infer'), 'chain', 'run'], cwd=insufficient, stdout=log, stderr=subprocess.STDOUT, check=True)
+native = max((insufficient / 'target/staged-infer/runs').iterdir(), key=lambda p: p.name)
+output = raster / 'prompt_prepare/output.bin'
+assert output.read_bytes() == (native / 'prompt_prepare/output.bin').read_bytes(), 'Raster and native differ'
+shown = subprocess.run([str(tool), 'raster', 'show', str(output)], cwd=root, capture_output=True, text=True, check=True).stdout
+assert 'fault: 6' in shown, 'the stage did not record unfinished merges'
+print('PASS insufficient merges: both finished with the same output, fault 6', flush=True)

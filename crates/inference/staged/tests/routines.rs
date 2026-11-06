@@ -1,7 +1,5 @@
-use decode_select_token::input::{DecodeEdge, LogitEntry, PrefillLogits};
 use input_embedding::input::{EmbeddingTable, PromptTokenization};
 use output_finalize::input::{DecoderTable, DecoderToken};
-use prefill_finalize::input::{FinalHead, FinalHeadParams};
 use prefill_prepare_aux::input::{PleLayer, PleLayerParams};
 use prompt_prepare::input::{BpePieces, MergeBucket, PromptTokenizer, TokenEntry, VocabBucket};
 use raster::{Bytes, List};
@@ -72,50 +70,6 @@ fn assert_same_json<T: Serialize>(left: &T, right: &T) {
 }
 
 #[test]
-fn decode_select_token_keeps_first_token_on_tie() {
-    let inputs = routines::decode_select_token::Inputs {
-        logits: PrefillLogits {
-            decode_position: 9,
-            logits: List::from(vec![
-                LogitEntry {
-                    token_id: 5,
-                    value: 10,
-                },
-                LogitEntry {
-                    token_id: 3,
-                    value: 10,
-                },
-            ]),
-            errors: List::new(),
-        },
-        prior: DecodeEdge {
-            has_selected: true,
-            decode_position: 8,
-            token_id: 11,
-            value: 1,
-            claim_mismatches: 0,
-            first_claim_mismatch_position: 0,
-            generated_token_ids: List::from(vec![11, 12]),
-        },
-    };
-    let output = routines::decode_select_token::run_direct(&inputs).unwrap();
-    let kernel_output = kernels::decode_select_token::run_decode_select_token_direct(
-        kernels::decode_select_token::DecodeSelectTokenDirectInputs {
-            logits: &inputs.logits,
-            prior: &inputs.prior,
-        },
-    )
-    .unwrap();
-
-    assert_same_json(&output, &kernel_output);
-    assert!(output.has_selected);
-    assert_eq!(output.decode_position, 9);
-    assert_eq!(output.token_id, 5);
-    assert_eq!(output.value, 10);
-    assert_eq!(output.generated_token_ids.as_slice(), &[11, 12, 5]);
-}
-
-#[test]
 fn decode_init_outputs_empty_edge() {
     let output = routines::decode_init::run_direct(&routines::decode_init::Inputs).unwrap();
     let kernel_output =
@@ -155,41 +109,6 @@ fn cached_runner_executes_without_writing_output_artifact() {
     fs::remove_dir_all(base).unwrap();
 }
 
-#[test]
-fn decode_embed_uses_selected_decode_position() {
-    let selected = decode_embed::input::DecodeEdge {
-        has_selected: true,
-        decode_position: 9,
-        token_id: 1,
-        value: 10,
-        claim_mismatches: 0,
-        first_claim_mismatch_position: 0,
-        generated_token_ids: List::from(vec![1]),
-    };
-    let embedding: std::sync::Arc<decode_embed::input::EmbeddingTable> =
-        decode_embed::input::EmbeddingTable {
-            hidden_size: W as u32,
-            embedding_scale: ONE,
-            values: q8_paged(&wide_rows(&[&[], &[ONE, 2 * ONE]])),
-        }
-        .into();
-    let inputs = routines::decode_embed::Inputs::eager(selected, embedding.clone());
-    let output = routines::decode_embed::run_direct(&inputs).unwrap();
-    let kernel_output = kernels::decode_embed::run_decode_embed_direct(
-        kernels::decode_embed::DecodeEmbedDirectInputs {
-            selected: &inputs.selected,
-            embedding: &embedding,
-        },
-    )
-    .unwrap();
-
-    assert_same_json(&output, &kernel_output);
-    assert_eq!(output.rows.len(), 1);
-    assert_eq!(output.rows[0].token_id, 1);
-    assert_eq!(output.start_position, 9);
-    assert!(output.errors.is_empty());
-}
-
 fn temp_dir(label: &str) -> std::path::PathBuf {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -211,6 +130,8 @@ fn output_finalize_decodes_generated_ids() {
             value: 10,
             claim_mismatches: 2,
             first_claim_mismatch_position: 1,
+            check_fault: 0,
+            check_fault_position: 0,
             generated_token_ids: List::from(vec![0, 1]),
         },
         decoder: DecoderTable {
@@ -227,12 +148,18 @@ fn output_finalize_decodes_generated_ids() {
                 },
             ]),
         },
+        context: output_finalize::prompt::PromptContext {
+            max_new_tokens: 2,
+            range_size: 4,
+            ..Default::default()
+        },
     };
     let output = routines::output_finalize::run_direct(&inputs).unwrap();
     let kernel_output = kernels::output_finalize::run_output_finalize_direct(
         kernels::output_finalize::OutputFinalizeDirectInputs {
             edge: &inputs.edge,
             decoder: &inputs.decoder,
+            context: &inputs.context,
         },
     )
     .unwrap();
@@ -245,6 +172,133 @@ fn output_finalize_decodes_generated_ids() {
     assert_eq!(output.generated_token_ids.as_slice(), &[0, 1]);
     assert_eq!(output.generated_text, " Hi!");
     assert_eq!(output.stop_reason, "max_new_tokens");
+    assert_eq!(output.output_fault, 0);
+}
+
+/// A decoder with text, an accent split into byte fallback, a special token and
+/// a terminal one, and a run over `ids` with this budget.
+fn finalize(ids: &[u32], max_new_tokens: u32) -> output_finalize::input::GeneratedOutput {
+    let token = |token: &str, special, terminal| DecoderToken {
+        token: token.to_string(),
+        special,
+        terminal,
+    };
+    let inputs = routines::output_finalize::Inputs {
+        edge: output_finalize::input::DecodeEdge {
+            has_selected: !ids.is_empty(),
+            decode_position: 9,
+            token_id: ids.last().copied().unwrap_or(0),
+            generated_token_ids: List::from(ids.to_vec()),
+            ..Default::default()
+        },
+        decoder: DecoderTable {
+            tokens: List::from(vec![
+                token("▁caf", false, false),
+                token("<0xC3>", false, false),
+                token("<0xA9>", false, false),
+                token("<ctl>", true, false),
+                token("<eos>", true, true),
+            ]),
+        },
+        context: output_finalize::prompt::PromptContext {
+            input_text_sha256: String::from("input-hash"),
+            model_id: String::from("model-id"),
+            raw_prompt: true,
+            max_new_tokens,
+            range_size: 4,
+            prompt_tokens: 9,
+            complete: true,
+            fault: 2,
+            fault_position: 7,
+            ..Default::default()
+        },
+    };
+    let output = routines::output_finalize::run_direct(&inputs).unwrap();
+    assert_same_json(
+        &output,
+        &kernels::output_finalize::run_output_finalize_direct(
+            kernels::output_finalize::OutputFinalizeDirectInputs {
+                edge: &inputs.edge,
+                decoder: &inputs.decoder,
+                context: &inputs.context,
+            },
+        )
+        .unwrap(),
+    );
+    output
+}
+
+#[test]
+fn output_finalize_commits_the_exact_text_it_emits() {
+    use sha2::{Digest, Sha256};
+    let output = finalize(&[0, 1, 2, 3, 0, 4], 6);
+    // Byte fallback joins into UTF-8, the marker becomes a space, and the
+    // special token contributes nothing.
+    assert_eq!(output.generated_text, " café caf");
+    assert_eq!(output.stop_reason, "eos");
+    assert_eq!(
+        output.output_text_sha256,
+        format!("{:x}", Sha256::digest(" café caf".as_bytes()))
+    );
+    assert_ne!(output.output_text_sha256, output.generated_token_ids_sha256);
+    assert_eq!(
+        output.generated_token_ids_sha256,
+        format!("{:x}", Sha256::digest(b"[0,1,2,3,0,4]"))
+    );
+
+    // Text after a terminal token is not the answer, so it is not committed.
+    let past = finalize(&[0, 4, 0], 6);
+    assert_eq!(past.generated_text, " caf");
+    assert_eq!(
+        past.output_text_sha256,
+        format!("{:x}", Sha256::digest(" caf".as_bytes()))
+    );
+}
+
+#[test]
+fn output_finalize_reports_what_the_chain_consumed() {
+    let output = finalize(&[0], 1);
+    assert_eq!(output.input_text_sha256, "input-hash");
+    assert_eq!(output.model_id, "model-id");
+    assert!(output.raw_prompt);
+    assert_eq!(output.max_new_tokens, 1);
+    assert_eq!(output.range_size, 4);
+    assert_eq!(output.prompt_tokens, 9);
+    assert!(output.prompt_complete);
+    assert_eq!(output.prompt_fault, 2);
+    assert_eq!(output.prompt_fault_position, 7);
+}
+
+#[test]
+fn output_finalize_publishes_budget_and_eos_faults_instead_of_failing() {
+    use output_finalize::input::*;
+    for (ids, budget, expected) in [
+        (vec![0, 0], 2, OUTPUT_FAULT_NONE),
+        (vec![0, 4], 2, OUTPUT_FAULT_NONE),
+        (vec![0, 4], 8, OUTPUT_FAULT_NONE),
+        (vec![], 2, OUTPUT_FAULT_NO_TOKENS),
+        (vec![0, 0, 0], 2, OUTPUT_FAULT_OVER_BUDGET),
+        (vec![0, 0], 8, OUTPUT_FAULT_SHORT_WITHOUT_EOS),
+        (vec![4, 0], 2, OUTPUT_FAULT_PAST_EOS),
+        // A run that names no budget has none to spare.
+        (vec![0], 0, OUTPUT_FAULT_OVER_BUDGET),
+    ] {
+        assert_eq!(finalize(&ids, budget).output_fault, expected, "{ids:?} of {budget}");
+    }
+
+    // The edge's flag and its transcript disagree: published, not raised.
+    let inputs = routines::output_finalize::Inputs {
+        edge: output_finalize::input::DecodeEdge {
+            has_selected: true,
+            ..Default::default()
+        },
+        decoder: DecoderTable {
+            tokens: List::new(),
+        },
+        context: Default::default(),
+    };
+    let output = routines::output_finalize::run_direct(&inputs).unwrap();
+    assert_eq!(output.output_fault, OUTPUT_FAULT_EDGE_DISAGREES);
 }
 
 #[test]
@@ -260,6 +314,7 @@ fn prompt_prepare_resolves_vocab_bucket() {
                 }]),
             }]),
             merge_buckets: List::from(vec![MergeBucket { rules: List::new() }]),
+            ..Default::default()
         }
         .into(),
         initial_pieces: BpePieces {
@@ -267,6 +322,7 @@ fn prompt_prepare_resolves_vocab_bucket() {
                 text: "hello".to_string(),
                 segment: 0,
             }]),
+            ..Default::default()
         },
     };
     let output = routines::prompt_prepare::run_direct(&inputs).unwrap();
@@ -286,6 +342,7 @@ fn prompt_prepare_resolves_vocab_bucket() {
 fn input_embedding_gathers_and_scales_rows() {
     let prompt = PromptTokenization {
         token_ids: List::from(vec![1]),
+        ..Default::default()
     };
     let embedding: std::sync::Arc<input_embedding::input::EmbeddingTable> = EmbeddingTable {
         hidden_size: W as u32,
@@ -406,7 +463,7 @@ fn prefill_prepare_aux_preserves_prompt_row_order() {
 }
 
 #[test]
-fn sequence_check_matches_finalize_then_select_at_every_position() {
+fn sequence_check_matches_a_greedy_oracle_at_every_position() {
     use sequence_check::input as check;
     let hidden = W;
     let vocab = 16;
@@ -432,51 +489,30 @@ fn sequence_check_matches_finalize_then_select_at_every_position() {
     let prompt_len = 3;
     let rows = 6;
 
-    // The autoregressive path: finalize the single predicting row, select.
-    let finalize_head: std::sync::Arc<FinalHead> = FinalHead {
-        params: FinalHeadParams {
-            hidden_size: hidden as u32,
-            norm_eps: 1 << 10,
-            softcap: 30 * ONE,
-            norm_weights: prefill_finalize::input::pack_i32s(&norm),
-        },
-        projection: projection(),
-    }
-    .into();
-    let mut prior = DecodeEdge::default();
+    // What direct generation does: normalise the predicting row, score the whole
+    // vocabulary, keep the first maximum.
+    let mut prior = check::DecodeEdge::default();
+    let mut greedy = Vec::new();
+    let stride = det_num::q8::row_bytes(hidden).unwrap();
     for row in prompt_len - 1..rows - 1 {
-        let logits =
-            routines::prefill_finalize::run_direct(&routines::prefill_finalize::Inputs::eager(
-                prefill_finalize::input::ActivationSequence {
-                    rows: List::from(vec![prefill_finalize::input::ActivationRow {
-                        token_id: 0,
-                        values: prefill_finalize::input::pack_i32s(&row_values(row)),
-                    }]),
-                    errors: List::new(),
-                    kv: List::new(),
-                    start_position: row as u32,
-                },
-                finalize_head.clone(),
-            ))
-            .unwrap();
-        prior = routines::decode_select_token::run_direct(&routines::decode_select_token::Inputs {
-            logits: decode_select_token::input::PrefillLogits {
-                decode_position: logits.decode_position,
-                logits: List::from(
-                    logits
-                        .logits
-                        .iter()
-                        .map(|entry| LogitEntry {
-                            token_id: entry.token_id,
-                            value: entry.value,
-                        })
-                        .collect::<Vec<_>>(),
-                ),
-                errors: List::new(),
-            },
-            prior,
-        })
-        .unwrap();
+        let mut normalized = row_values(row);
+        check::rms_norm(&mut normalized, &norm, 1 << 10).unwrap();
+        let (mut best_id, mut best) = (0, i32::MIN);
+        for (id, bytes) in projection_bytes.chunks_exact(stride).enumerate() {
+            let value = check::softcap(det_num::q8::dot_row(&normalized, bytes).unwrap(), 30 * ONE);
+            if id == 0 || value > best {
+                (best_id, best) = (id as u32, value);
+            }
+        }
+        greedy.push(best_id);
+        prior = check::DecodeEdge {
+            has_selected: true,
+            decode_position: row as u32 + 1,
+            token_id: best_id,
+            value: best,
+            generated_token_ids: List::from(greedy.clone()),
+            ..Default::default()
+        };
     }
 
     // Claim the greedy ids except one, which the check must not echo.
@@ -516,24 +552,30 @@ fn sequence_check_matches_finalize_then_select_at_every_position() {
     let claimed_range = |ids: &[u32]| check::ClaimedOutput {
         token_ids: List::from(ids.to_vec()),
     };
-    let run_check = |claimed: &[u32]| {
-        let first =
-            routines::sequence_check::run_direct(&routines::sequence_check::Inputs::eager(
-                sequence(3..5),
-                sequence(0..3),
-                claimed_range(&claimed[..2]),
-                check::DecodeEdge::default(),
-                check_head.clone(),
-            ))
-            .unwrap();
-        let edge = routines::sequence_check::run_direct(&routines::sequence_check::Inputs::eager(
-            sequence(5..6),
-            sequence(3..5),
-            claimed_range(&claimed[2..]),
-            first.clone(),
+    let context = sequence_check::prompt::PromptContext {
+        range_size: 4,
+        prompt_tokens: 3,
+        ..Default::default()
+    };
+    let check_range = |activations, previous, claimed: &[u32], prior| {
+        routines::sequence_check::run_direct(&routines::sequence_check::Inputs::eager(
+            activations,
+            previous,
+            claimed_range(claimed),
+            prior,
             check_head.clone(),
+            context.clone(),
         ))
-        .unwrap();
+        .unwrap()
+    };
+    let run_check = |claimed: &[u32]| {
+        let first = check_range(
+            sequence(3..5),
+            sequence(0..3),
+            &claimed[..2],
+            check::DecodeEdge::default(),
+        );
+        let edge = check_range(sequence(5..6), sequence(3..5), &claimed[2..], first.clone());
         (first, edge)
     };
     let (first, edge) = run_check(&claimed);
@@ -558,7 +600,7 @@ fn sequence_check_matches_finalize_then_select_at_every_position() {
     assert_eq!(late_edge.claim_mismatches, 1);
     assert_eq!(late_edge.first_claim_mismatch_position, prompt_len as u32 + 2);
 
-    // An honest claim publishes a clean verdict and the autoregressive edge.
+    // An honest claim publishes a clean verdict and direct generation's edge.
     let honest = prior
         .generated_token_ids
         .iter()
@@ -580,43 +622,42 @@ fn sequence_check_matches_finalize_then_select_at_every_position() {
         edge.generated_token_ids.iter().collect::<Vec<_>>(),
         prior.generated_token_ids.iter().collect::<Vec<_>>()
     );
-}
 
-#[test]
-fn prefill_finalize_scores_projection_rows() {
-    let norm = prefill_finalize::input::pack_i32s(&[ONE; W]);
-    let activations = prefill_finalize::input::ActivationSequence {
-        rows: List::from(vec![prefill_finalize::input::ActivationRow {
-            token_id: 7,
-            values: prefill_finalize::input::pack_i32s(&wide_rows(&[&[ONE]])),
-        }]),
+    // A check that cannot stand behind its edge finishes and says why.
+    let start = check::DecodeEdge::default();
+    let empty = |start_position| check::ActivationSequence {
+        rows: List::new(),
         errors: List::new(),
         kv: List::new(),
-        start_position: 4,
+        start_position,
     };
+    let fault = |edge: &check::DecodeEdge| (edge.check_fault, edge.check_fault_position);
 
-    let head: std::sync::Arc<FinalHead> = FinalHead {
-        params: FinalHeadParams {
-            hidden_size: W as u32,
-            norm_eps: 0,
-            softcap: 0,
-            norm_weights: norm,
-        },
-        projection: q8_paged(&wide_rows(&[&[ONE], &[0, ONE]])),
-    }
-    .into();
-    let inputs = routines::prefill_finalize::Inputs::eager(activations, head.clone());
-    let output = routines::prefill_finalize::run_direct(&inputs).unwrap();
-    let kernel_output = kernels::prefill_finalize::run_prefill_finalize_direct(
-        kernels::prefill_finalize::PrefillFinalizeDirectInputs {
-            activations: &inputs.activations,
-            head: &head,
-        },
-    )
-    .unwrap();
+    // No rows before the range: the first token has nothing to predict it, and
+    // the rest of the range is still scored.
+    let unscored = check_range(sequence(3..5), empty(3), &honest[..2], start.clone());
+    assert_eq!(fault(&unscored), (check::CHECK_FAULT_UNSCORED, 3));
+    assert_eq!(unscored.generated_token_ids.len(), 1);
 
-    assert_same_json(&output, &kernel_output);
-    assert_eq!(output.decode_position, 5);
-    assert_eq!(output.logits.len(), 2);
-    assert!(output.errors.is_empty());
+    let nothing = check_range(empty(3), sequence(0..3), &[], start.clone());
+    assert_eq!(fault(&nothing), (check::CHECK_FAULT_NO_CLAIMED_TOKENS, 3));
+    assert!(!nothing.has_selected);
+
+    let too_large = check_range(sequence(3..8), sequence(0..3), &[0; 5], start.clone());
+    assert_eq!(fault(&too_large), (check::CHECK_FAULT_RANGE_TOO_LARGE, 3));
+
+    let late_start = check_range(sequence(4..6), sequence(0..3), &honest[..2], start.clone());
+    assert_eq!(fault(&late_start), (check::CHECK_FAULT_DISCONTINUOUS, 4));
+
+    let (first, _) = run_check(&honest);
+    let skipped = check_range(sequence(6..7), sequence(3..5), &honest[2..], first);
+    assert_eq!(fault(&skipped), (check::CHECK_FAULT_DISCONTINUOUS, 6));
+
+    // The earliest fault stands, and a verdict is still a verdict: a fault is
+    // not a disagreement with the claim.
+    let carried = check_range(sequence(5..6), sequence(3..5), &honest[2..], unscored);
+    assert_eq!(fault(&carried), (check::CHECK_FAULT_UNSCORED, 3));
+    let (_, wrong) = run_check(&claimed);
+    assert_eq!(fault(&wrong), (check::CHECK_FAULT_NONE, 0));
+    assert_eq!(wrong.claim_mismatches, 1);
 }

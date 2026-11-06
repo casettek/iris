@@ -4,8 +4,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use inference_artifacts::{
-    write_json, DirectInferBundle, DirectInferProvenance, DirectInferShape, ModelManifest,
-    MODEL_MANIFEST_JSON,
+    model_id_of, write_json, DirectInferBundle, DirectInferProvenance, DirectInferShape,
+    ModelCommitment, ModelManifest, MODEL_MANIFEST_JSON, MODEL_MANIFEST_VERSION,
 };
 use sha2::{Digest, Sha256};
 
@@ -17,7 +17,7 @@ pub fn write_model_manifest(
     shape: &Shape,
     text_config: &serde_json::Value,
     raster_manifest: Option<(&Path, &str)>,
-    teacher_forced_manifest: Option<(&Path, &str, u32)>,
+    model_commitments: &[ModelCommitment],
 ) -> Result<PathBuf, Box<dyn Error>> {
     let artifact_dir = args.artifact_dir();
     fs::create_dir_all(&artifact_dir)?;
@@ -27,17 +27,16 @@ pub fn write_model_manifest(
             format!("{:x}", Sha256::digest(text.as_bytes())),
         ))
     };
-    let range_size = teacher_forced_manifest.map(|(_, _, range_size)| range_size);
-    let teacher_forced = teacher_forced_manifest
-        .map(|(path, text, _)| template_provenance((path, text)))
-        .transpose()?;
     let manifest_path = artifact_dir.join(MODEL_MANIFEST_JSON);
     let model_detwgt = args.model_dir.join("model.detwgt");
     let config = args.model_dir.join("config.json");
     let tokenizer_path = args.model_dir.join("tokenizer.json");
 
     let direct = ModelManifest {
-        version: 2,
+        version: MODEL_MANIFEST_VERSION,
+        model_id: model_id_of(model_commitments),
+        model_commitments: model_commitments.to_vec(),
+        range_size: args.range_size,
         bundle: DirectInferBundle {
             model_detwgt_path: manifest_relative_path(&artifact_dir, &model_detwgt)?,
             model_detwgt_sha256: sha256_file(&model_detwgt)?,
@@ -74,16 +73,9 @@ pub fn write_model_manifest(
         },
         eos_token_ids: eos_ids.iter().copied().collect(),
         provenance: raster_manifest.map(template_provenance).transpose()?.map(
-            |(raster_manifest_path, raster_manifest_sha256)| {
-                let (teacher_forced_manifest_path, teacher_forced_manifest_sha256) =
-                    teacher_forced.clone().unzip();
-                DirectInferProvenance {
-                    raster_manifest_path,
-                    raster_manifest_sha256,
-                    teacher_forced_manifest_path,
-                    teacher_forced_manifest_sha256,
-                    teacher_forced_range_size: range_size,
-                }
+            |(raster_manifest_path, raster_manifest_sha256)| DirectInferProvenance {
+                raster_manifest_path,
+                raster_manifest_sha256,
             },
         ),
     };
