@@ -72,9 +72,20 @@ pub fn scan_prompt_chunk(
 ///
 /// Set here so a prompt with no pieces still has a complete output.
 #[tile(kind = iter, description = "Open the bound prompt with its context")]
-pub fn open_bound_prompt(fold: TextFold, config: RunConfig) -> Draft<PromptState> {
+pub fn open_bound_prompt(
+    fold: TextFold,
+    config: RunConfig,
+    descriptor: BytesPage,
+    root: BytesPage,
+) -> Draft<PromptState> {
     let mut output = Draft::<PromptState>::new();
-    output.context().set(open_prompt_context(&fold, &config));
+    let mut context = open_prompt_context(&fold, &config);
+    context.model = model_identity::stream::verify(
+        model_identity::ModelContext::bind(descriptor.as_slice(), &config.model_id),
+        &root,
+        model_identity::Role::Tokenizer,
+    );
+    output.context().set(context);
     output
 }
 
@@ -142,3 +153,6 @@ pub fn append_atom_pieces(
 pub fn advance_split(step: AtomStep, hit: VocabMatch, profile: TokenizerProfile) -> SplitState {
     apply_atom(&step.state, &step.atom, hit.found, &profile, &mut |_| {})
 }
+
+pub mod identity;
+pub use identity::*;

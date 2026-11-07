@@ -18,7 +18,7 @@ fn infer_final_result_matches_checkpointed_claim_path() {
     let base = temp_dir("infer-parity");
     fs::create_dir_all(&base).unwrap();
 
-    let edge = DecodeEdge {
+    let mut edge = DecodeEdge {
         has_selected: true,
         decode_position: 1,
         token_id: 1,
@@ -40,8 +40,33 @@ fn infer_final_result_matches_checkpointed_claim_path() {
             },
         ]),
     };
+    let descriptor = model_identity::ModelDescriptor {
+        version: 1,
+        tokenizer: [1; 32],
+        decoder: raster::core::tree::value_root(&decoder).unwrap(),
+        embedding: [2; 32],
+        head: [3; 32],
+        auxiliary: vec![[4; 32]],
+        transformer: vec![[5; 32]],
+    };
+    let model = model_identity::ModelContext::bind(
+        &descriptor.encode().unwrap(),
+        &hex::encode(descriptor.model_id().unwrap()),
+    );
+    edge.model = model.clone();
+    edge.model.producer = model_identity::context::DECODE;
+    edge.model.completed_layers = edge.model.layers;
+    let witness = output_finalize::decoder_witness(&decoder).unwrap();
+    let descriptor_commitment = write_external(
+        &base,
+        "descriptor",
+        &raster::BytesPage::__from_parts(0, 0, descriptor.encode().unwrap()),
+    );
+    let witness_commitment = write_external(&base, "witness", &witness);
     let prompt = PromptState {
         context: PromptContext {
+            model,
+            model_id: hex::encode(descriptor.model_id().unwrap()),
             max_new_tokens: 1,
             range_size: 1,
             complete: true,
@@ -58,6 +83,8 @@ fn infer_final_result_matches_checkpointed_claim_path() {
         &edge_commitment,
         &decoder_commitment,
         &prompt_commitment,
+        &descriptor_commitment,
+        &witness_commitment,
     );
 
     let infer_report = UncheckpointedInferenceExecutor
@@ -93,6 +120,7 @@ fn infer_final_result_matches_checkpointed_claim_path() {
     assert_eq!(infer_result.generated_text, "Hi");
     assert_eq!(infer_result.stop_reason, "max_new_tokens");
     assert_eq!(infer_result.output_fault, 0);
+    assert_eq!(infer_result.model_fault, 0);
     assert_eq!(
         infer_result.generated_token_ids_sha256,
         format!("{:x}", Sha256::digest(b"[1]"))
@@ -119,6 +147,8 @@ fn write_manifest(
     edge_commitment: &str,
     decoder_commitment: &str,
     prompt_commitment: &str,
+    descriptor_commitment: &str,
+    witness_commitment: &str,
 ) {
     fs::write(
         base.join("Raster.toml"),
@@ -135,6 +165,8 @@ project = "raster-stages/decode-init"
 name = "output_finalize"
 project = "raster-stages/output-finalize"
 inputs.edge = {{ external = {{ path = "edge.rastered", index_path = "edge.rindex", commitment = "{edge_commitment}" }} }}
+inputs.descriptor = {{ external = {{ path = "descriptor.rastered", index_path = "descriptor.rindex", commitment = "{descriptor_commitment}" }} }}
+inputs.witness = {{ external = {{ path = "witness.rastered", index_path = "witness.rindex", commitment = "{witness_commitment}" }} }}
 inputs.decoder = {{ external = {{ path = "decoder.rastered", index_path = "decoder.rindex", commitment = "{decoder_commitment}" }} }}
 inputs.prompt = {{ external = {{ path = "prompt.rastered", index_path = "prompt.rindex", commitment = "{prompt_commitment}" }} }}
 "#

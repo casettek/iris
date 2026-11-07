@@ -647,12 +647,18 @@ fn bound_commitments(manifest_path: &Path, name: &str) -> Result<Vec<String>> {
 pub(crate) fn claimed_output_rejection(
     final_result: Option<&inference_artifacts::InferenceResult>,
 ) -> Result<Option<String>> {
-    let result =
-        final_result.context("recomputation produced no final output to check the claim against")?;
+    let result = final_result
+        .context("recomputation produced no final output to check the claim against")?;
     Ok(final_record_rejection(result))
 }
 
 fn final_record_rejection(result: &inference_artifacts::InferenceResult) -> Option<String> {
+    if result.model_fault != 0 {
+        return Some(format!(
+            "consumed model data failed authentication (fault {})",
+            result.model_fault
+        ));
+    }
     if result.prompt_fault != 0 {
         return Some(format!(
             "the prompt was not prepared correctly: {} (fault {}, at position {})",
@@ -846,8 +852,14 @@ mod tests {
         let base = temp_dir("challenge-trace-cleanup");
         let stage = base.join("stage_a");
         fs::create_dir_all(&stage).unwrap();
-        for name in ["input.json", "input_manifest.json", "output.bin", "output.rindex",
-            "output_manifest.json", "commit.bin"] {
+        for name in [
+            "input.json",
+            "input_manifest.json",
+            "output.bin",
+            "output.rindex",
+            "output_manifest.json",
+            "commit.bin",
+        ] {
             fs::write(stage.join(name), name.as_bytes()).unwrap();
         }
         let package = replay_package("stage_a", &base).unwrap();
@@ -880,7 +892,10 @@ mod tests {
         // A bare trace has no claimed ids, so it discovers them from the run
         // spec's model; this fixture has no weights to discover them with.
         let error = challenge_run(&options, &claimed).err().unwrap();
-        assert!(format!("{error:#}").contains("direct inference"), "{error:#}");
+        assert!(
+            format!("{error:#}").contains("direct inference"),
+            "{error:#}"
+        );
         fs::remove_dir_all(base).unwrap();
     }
 
@@ -1100,6 +1115,13 @@ mod tests {
         for (result, expected) in [
             (
                 inference_artifacts::InferenceResult {
+                    model_fault: 1,
+                    ..clean.clone()
+                },
+                "model data failed authentication",
+            ),
+            (
+                inference_artifacts::InferenceResult {
                     prompt_fault: 4,
                     prompt_fault_position: 7,
                     ..clean.clone()
@@ -1158,8 +1180,7 @@ mod tests {
     }
 
     fn bound_external(manifest: &Path, stage: &str, parameter: &str) -> String {
-        let manifest: toml::Value =
-            toml::from_str(&fs::read_to_string(manifest).unwrap()).unwrap();
+        let manifest: toml::Value = toml::from_str(&fs::read_to_string(manifest).unwrap()).unwrap();
         manifest["chain"]["stage"]
             .as_array()
             .unwrap()
@@ -1225,7 +1246,10 @@ mod tests {
             bound_external(&frozen_manifest, "prompt_bind", "config")
         );
         // The claim's ids and its prompt carried over.
-        assert_eq!(rebuilt.prompt.resolved_prompt, frozen.prompt.resolved_prompt);
+        assert_eq!(
+            rebuilt.prompt.resolved_prompt,
+            frozen.prompt.resolved_prompt
+        );
         assert_eq!(rebuilt.tokens, frozen.tokens);
         assert_eq!(
             bound_commitments(&manifest, "claimed_ids").unwrap(),
@@ -1284,8 +1308,9 @@ mod tests {
         assert_eq!(frozen_claimed_ids(&manifest).unwrap(), [0, 0, 0]);
         let claimed = manifest.parent().unwrap().join("prompt/claimed_0.rastered");
         let other = manifest.parent().unwrap().join("other");
-        let file =
-            run_prep::write_claimed_ranges(&[0, 0, 1], 4, &other).unwrap().remove(0);
+        let file = run_prep::write_claimed_ranges(&[0, 0, 1], 4, &other)
+            .unwrap()
+            .remove(0);
         fs::copy(&file.path, &claimed).unwrap();
         fs::copy(&file.index_path, claimed.with_extension("rindex")).unwrap();
         assert!(frozen_claimed_ids(&manifest)

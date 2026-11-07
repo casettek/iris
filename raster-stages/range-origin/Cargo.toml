@@ -10,5 +10,12 @@ std = ["raster/std"]
 profiling = ["raster/profiling"]
 
 [dependencies]
+model-identity = { path = "../../crates/model/identity", default-features = false }
 raster = { path = "../../../raster/crates/raster", default-features = false }
 serde = { version = "1.0", default-features = false, features = ["derive", "alloc"] }
+
+# Sequences run on the host; only the library is built for proof guests.
+[[bin]]
+name = "range-origin"
+path = "src/main.rs"
+required-features = ["std"]

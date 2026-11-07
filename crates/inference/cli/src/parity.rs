@@ -19,7 +19,9 @@ use sha2::{Digest, Sha256};
 use staged_infer::chain_runner::StagedExecutionBackend;
 
 use crate::claim::{build_claim, prepare_claim_run, ClaimBuildOptions};
-use compare::{check_inventory, compare, read_boundaries, teacher_forced_names, Boundary, RangedShape};
+use compare::{
+    check_inventory, compare, read_boundaries, teacher_forced_names, Boundary, RangedShape,
+};
 
 #[derive(Debug, Deserialize)]
 struct Case {
@@ -349,7 +351,8 @@ fn run_case(
         "an honest prompt recorded a preparation fault: {context}"
     );
     ensure!(
-        context["input_text_sha256"] == json!(format!("{:x}", Sha256::digest(case.prompt.as_bytes())))
+        context["input_text_sha256"]
+            == json!(format!("{:x}", Sha256::digest(case.prompt.as_bytes())))
             && context["model_id"] == json!(model.model_id)
             && context["prompt_tokens"] == json!(case.input_token_ids.len()),
         "the prompt context does not identify the run: {context}"
@@ -389,6 +392,7 @@ fn run_case(
     ensure!(
         record["check_fault"] == json!(0)
             && record["output_fault"] == json!(0)
+            && record["model_fault"] == json!(0)
             && record["claim_mismatches"] == json!(0),
         "an honest claim published a fault: {record}"
     );
@@ -477,7 +481,9 @@ fn run_chain_fault_leg(
         .context("manifest template has no parent directory")?;
     let merge_repeats = run_prep::tokenizer_repeat_count(prompt.initial_pieces.len())? + 1;
 
-    let greedy = claimed.get(..2).context("the pinned case claims too few tokens")?;
+    let greedy = claimed
+        .get(..2)
+        .context("the pinned case claims too few tokens")?;
     let not_greedy = [(greedy[0] + 1) % model.shape.vocab_size as u32, greedy[1]];
     // Just past the tables, and far enough past that its page does not exist.
     let unknown = [model.shape.vocab_size as u32, u32::MAX];
@@ -486,7 +492,15 @@ fn run_chain_fault_leg(
     // Name, cuts, claimed ids, budget, then what the record must say. An empty
     // last range leaves the first claimed token with no predicting row.
     let cases = [
-        ("empty-middle-range", ends(&[1, 1, count]), greedy, 2, true, 0, 0),
+        (
+            "empty-middle-range",
+            ends(&[1, 1, count]),
+            greedy,
+            2,
+            true,
+            0,
+            0,
+        ),
         (
             "empty-last-range",
             ends(&[count, count]),
@@ -496,8 +510,24 @@ fn run_chain_fault_leg(
             run_prep::CHECK_FAULT_UNSCORED,
             positions,
         ),
-        ("not-greedy", canonical.clone(), &not_greedy[..], 2, false, 0, 0),
-        ("unknown-ids", canonical.clone(), &unknown[..], 2, false, 0, 0),
+        (
+            "not-greedy",
+            canonical.clone(),
+            &not_greedy[..],
+            2,
+            false,
+            0,
+            0,
+        ),
+        (
+            "unknown-ids",
+            canonical.clone(),
+            &unknown[..],
+            2,
+            false,
+            0,
+            0,
+        ),
         ("short-of-budget", canonical, greedy, 8, false, 0, 0),
     ];
 
@@ -641,7 +671,12 @@ fn run_prompt_fault_leg(
                 .is_some_and(|edge| pairs.contains(&edge))
     });
     if let Some(left) = unsafe_cut {
-        cases.push(("unsafe", vec![left as u64 + 1, count], FAULT_UNSAFE_CUT, true));
+        cases.push((
+            "unsafe",
+            vec![left as u64 + 1, count],
+            FAULT_UNSAFE_CUT,
+            true,
+        ));
     }
 
     let template = fs::read_to_string(&prepared.manifest_path)?;
@@ -751,8 +786,7 @@ fn run_long_text_case(
     let names = vec![String::from("prompt_bind")];
     let bound = read_boundaries(&raster_dir, &names, false)?;
     let native = read_boundaries(&native_dir, &names, false)?;
-    compare("prompt_bind", &bound["prompt_bind"], &native["prompt_bind"])
-        .context("a long text")?;
+    compare("prompt_bind", &bound["prompt_bind"], &native["prompt_bind"]).context("a long text")?;
     let context = &bound["prompt_bind"].value["context"];
     ensure!(
         context["fault"] == json!(0)
@@ -899,20 +933,32 @@ pub(crate) fn compare_teacher_forced(tf_dir: &Path, direct_dir: &Path) -> Result
         .collect::<Vec<_>>();
     let passes = tokens - 1;
     let mut families = vec![(
-        ranges.iter().map(|r| format!("embed_{r}")).collect::<Vec<_>>(),
+        ranges
+            .iter()
+            .map(|r| format!("embed_{r}"))
+            .collect::<Vec<_>>(),
         String::from("input_embedding"),
-        (0..passes).map(|t| format!("decode_embed_t{t}")).collect::<Vec<_>>(),
+        (0..passes)
+            .map(|t| format!("decode_embed_t{t}"))
+            .collect::<Vec<_>>(),
     )];
     for layer in 0..shape.layers {
         families.push((
             ranges.iter().map(|r| format!("aux_{r}_l{layer}")).collect(),
             format!("prefill_prepare_aux_l{layer}"),
-            (0..passes).map(|t| format!("decode_aux_t{t}_l{layer}")).collect(),
+            (0..passes)
+                .map(|t| format!("decode_aux_t{t}_l{layer}"))
+                .collect(),
         ));
         families.push((
-            ranges.iter().map(|r| format!("range_{r}_l{layer}")).collect(),
+            ranges
+                .iter()
+                .map(|r| format!("range_{r}_l{layer}"))
+                .collect(),
             format!("prefill_range_l{layer}"),
-            (0..passes).map(|t| format!("decode_range_t{t}_l{layer}")).collect(),
+            (0..passes)
+                .map(|t| format!("decode_range_t{t}_l{layer}"))
+                .collect(),
         ));
     }
     let mut rows_compared = 0;
@@ -929,7 +975,9 @@ pub(crate) fn compare_teacher_forced(tf_dir: &Path, direct_dir: &Path) -> Result
             if position < prompt_len {
                 Some((&prefill_boundary, position))
             } else {
-                decode_boundaries.get(position - prompt_len).map(|boundary| (boundary, 0))
+                decode_boundaries
+                    .get(position - prompt_len)
+                    .map(|boundary| (boundary, 0))
             }
         };
         let mut position = 0;

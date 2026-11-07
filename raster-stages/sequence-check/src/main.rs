@@ -65,6 +65,29 @@ fn main(
     head: FinalHead,
     prompt: PromptState,
 ) -> Result<DecodeEdge> {
+    let input_model = select!(ModelContext, activations.clone().model);
+    let previous_model = select!(ModelContext, previous.clone().model);
+    let prompt_model = select!(ModelContext, prompt.clone().context.model);
+    let prior_model = select!(ModelContext, prior.clone().model);
+    let model = call!(
+        head_model_context,
+        input_model,
+        previous_model,
+        prompt_model,
+        prior_model.clone()
+    );
+    let prior_ids = select!(List<u32>, prior.clone().generated_token_ids);
+    let zero = call!(identity_zero_count);
+    let count = call_recur!(
+        tile = identity_count_tokens,
+        input = prior_ids,
+        chunk = 256,
+        state = zero,
+        args = ()
+    );
+    let model = call!(identity_prior_guard, model, prior_model, count);
+    let root = call_seq!(identity_root, head.clone());
+    let model = call!(identity_verify, model, root);
     let params = select!(FinalHeadParams, head.clone().params);
     let params = call!(validate_final_head, params)?;
 
@@ -148,7 +171,8 @@ fn main(
         summary,
         prior_mismatches,
         prior_first_mismatch,
-        fault
+        fault,
+        model
     );
     let prior_ids = select!(List<u32>, prior.generated_token_ids);
     let carried = call_recur!(
@@ -167,4 +191,23 @@ fn main(
     );
     raster::println!("sequence check → {:?}", edge);
     Ok(edge)
+}
+
+#[sequence]
+fn identity_bytes_52_224(value: Bytes<52_224>) -> BytesPage {
+    let len = select!(u64, value.clone().byte_len);
+    let size = select!(u64, value.clone().page_size);
+    let pages = select!(List<BytesPage>, value.pages);
+    let seed = call!(identity_empty);
+    let folded = call_recur!(tile = identity_page, input = pages, state = seed, args = ());
+    let root = call!(identity_finish, folded);
+    call!(identity_bytes, len, size, root)
+}
+#[sequence]
+fn identity_root(value: FinalHead) -> BytesPage {
+    let params = select!(FinalHeadParams, value.clone().params);
+    let params = call!(identity_hash_finalheadparams, params);
+    let projection = select!(Bytes<52_224>, value.clone().projection);
+    let projection = call_seq!(identity_bytes_52_224, projection);
+    call!(identity_component, params, projection)
 }

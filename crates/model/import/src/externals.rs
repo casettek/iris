@@ -47,17 +47,7 @@ pub use prompt_prepare::input::{PromptTokenization, TokenEntry};
 
 // --- output-finalize -------------------------------------------------------
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
-pub struct DecoderToken {
-    pub token: String,
-    pub special: bool,
-    pub terminal: bool,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
-pub struct DecoderTable {
-    pub tokens: List<DecoderToken>,
-}
+pub use output_finalize::input::{DecoderTable, DecoderToken};
 
 // --- input-embedding --------------------------------------------------------
 

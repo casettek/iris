@@ -355,8 +355,10 @@ pub fn run(args: ProfileArgs) -> Result<PathBuf> {
         verify_output(&bundle.stage, &package.stage_dir, &run_dir)?;
         if phase == "native-timing" {
             let timing_report: Value = read_json(&run_dir.join("native-timings.json"))?;
-            ensure!(timing_report["version"] == 1 && timing_report["complete"] == true,
-                "incomplete native timing history");
+            ensure!(
+                timing_report["version"] == 1 && timing_report["complete"] == true,
+                "incomplete native timing history"
+            );
             native_timings = timing_report["calls"].clone();
             ensure!(native_timings.is_array(), "missing native timing history");
             let path = run_dir.join("native-selection.json");

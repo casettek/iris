@@ -20,8 +20,9 @@ use input::*;
 
 /// Seeds the output draft with the layer it belongs to.
 #[tile(kind = iter, description = "Open this layer's prefill-input draft")]
-pub fn begin_ple_layer(layer_idx: u32) -> Draft<PleLayerInputs> {
+pub fn begin_ple_layer(layer_idx: u32, model: ModelContext) -> Draft<PleLayerInputs> {
     let mut output = Draft::<PleLayerInputs>::new();
+    output.model().set(model.auxiliary(layer_idx));
     output.layer_idx().set(layer_idx);
     output
 }
@@ -137,7 +138,9 @@ fn mac_page(
     }
     let weights = unpack_i32s(page)?;
     if weights.len() % row.len() != 0 {
-        return Err(String::from("weight page does not contain whole output rows"));
+        return Err(String::from(
+            "weight page does not contain whole output rows",
+        ));
     }
     let stride = in_width as u64 * 4;
     if page.offset() % stride != 0 {
@@ -309,3 +312,6 @@ pub fn validate_layer_params(params: PleLayerParams) -> Result<PleLayerParams> {
     }
     Ok(params)
 }
+
+pub mod identity;
+pub use identity::*;

@@ -5,8 +5,9 @@ pub mod direct;
 pub mod inference;
 pub mod io;
 pub mod manifest;
-pub mod run;
+pub mod model_identity;
 pub mod replay_profile;
+pub mod run;
 
 pub use challenge::{
     read_challenge_bundle, write_challenge_artifacts, ChallengeBundle, ChallengeSourcePath,
@@ -24,9 +25,9 @@ pub use claim::{
     ClaimEndpoint, CLAIM_BUNDLE_JSON,
 };
 pub use direct::{
-    model_id_of, ModelCommitment, MODEL_MANIFEST_VERSION,
-    file_sha256, verify_file_sha256, DirectInferBundle, DirectInferProvenance, DirectInferShape,
-    ModelManifest, MODEL_ARTIFACTS_DIR, MODEL_MANIFEST_JSON,
+    file_sha256, model_id_of, verify_file_sha256, DirectInferBundle, DirectInferProvenance,
+    DirectInferShape, ModelCommitment, ModelManifest, MODEL_ARTIFACTS_DIR, MODEL_MANIFEST_JSON,
+    MODEL_MANIFEST_VERSION,
 };
 pub use inference::{
     InferAuxWaveTiming, InferStageTiming, InferenceResult, InferenceRunReport, InferenceTimings,
@@ -255,7 +256,10 @@ mod tests {
             commitment: commitment.to_string(),
         };
         let id = model_id_of(&[entry("embedding", "a"), entry("head", "b")]);
-        assert_eq!(id, model_id_of(&[entry("embedding", "a"), entry("head", "b")]));
+        assert_eq!(
+            id,
+            model_id_of(&[entry("embedding", "a"), entry("head", "b")])
+        );
         for other in [
             vec![entry("embedding", "x"), entry("head", "b")],
             vec![entry("head", "a"), entry("embedding", "b")],
@@ -408,7 +412,10 @@ mod tests {
         assert!(read_run_spec(&path).is_ok());
         fs::write(&path, format!("{spec}chain = \"autoregressive\"\n")).unwrap();
         let error = read_run_spec(&path).unwrap_err().to_string();
-        assert!(error.contains("teacher-forced is the only staged chain"), "{error}");
+        assert!(
+            error.contains("teacher-forced is the only staged chain"),
+            "{error}"
+        );
         fs::remove_dir_all(base).unwrap();
     }
 
@@ -718,9 +725,6 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        std::env::temp_dir().join(format!(
-            "iris-cli-{label}-{}-{nanos}",
-            std::process::id()
-        ))
+        std::env::temp_dir().join(format!("iris-cli-{label}-{}-{nanos}", std::process::id()))
     }
 }

@@ -171,12 +171,12 @@ pub fn advance_cursor(cursor: TokenCursor) -> TokenCursor {
 /// rejects a second write to the same field, and no tile inside the loop knows
 /// whether it is the last one.
 #[tile(kind = iter, description = "Open this stage's activation output")]
-pub fn begin_layer_output(start_position: u32) -> Draft<ActivationSequence> {
+pub fn begin_layer_output(start_position: u32, model: ModelContext) -> Draft<ActivationSequence> {
     let mut output = Draft::<ActivationSequence>::new();
+    output.model().set(model);
     output.start_position().set(start_position);
     output
 }
-
 
 /// Copies one chunk of the inherited cache into this stage's published cache,
 /// dropping rows the sliding window has already retired.
@@ -287,7 +287,9 @@ fn mac_q8_page(
     let stride = det_num::q8::row_bytes(row.len())
         .ok_or_else(|| alloc::format!("matvec in_width {in_width} is not whole Q8_0 blocks"))?;
     if page.len() % stride != 0 {
-        return Err(String::from("weight page does not contain whole output rows"));
+        return Err(String::from(
+            "weight page does not contain whole output rows",
+        ));
     }
     if page.offset() % stride as u64 != 0 {
         return Err(String::from("weight page offset is not row-aligned"));
@@ -323,7 +325,9 @@ fn mac_page(
     }
     let weights = unpack_i32s(page)?;
     if weights.len() % row.len() != 0 {
-        return Err(String::from("weight page does not contain whole output rows"));
+        return Err(String::from(
+            "weight page does not contain whole output rows",
+        ));
     }
     let stride = in_width as u64 * 4;
     if page.offset() % stride != 0 {
@@ -393,7 +397,11 @@ fn begin_qkv_inner(
         ));
     }
     let mut normed = residual.clone();
-    rms_norm(&mut normed, &unpack_i32s(&params.norm_input)?, params.norm_eps)?;
+    rms_norm(
+        &mut normed,
+        &unpack_i32s(&params.norm_input)?,
+        params.norm_eps,
+    )?;
     Ok((residual, normed))
 }
 
@@ -647,7 +655,9 @@ fn softmax_scores_inner(
         return Err(state.error.clone());
     }
     if state.window_len == 0 {
-        return Err(String::from("attention saw no keys at or before this token"));
+        return Err(String::from(
+            "attention saw no keys at or before this token",
+        ));
     }
     // Every position in the window must have been scored. A short count means a
     // key the window needs never reached the sweep — a pruned-too-far decode
@@ -725,7 +735,8 @@ pub fn accumulate_context(
         return state;
     }
     let keys = input.into_value();
-    if let Err(error) = accumulate_weighted(&mut state, keys.as_slice(), &weights, &query, &params) {
+    if let Err(error) = accumulate_weighted(&mut state, keys.as_slice(), &weights, &query, &params)
+    {
         state.error = error;
     }
     state
@@ -826,7 +837,9 @@ fn window_start(query_position: u32, sliding_window: u32) -> u32 {
     if sliding_window == 0 {
         0
     } else {
-        query_position.saturating_add(1).saturating_sub(sliding_window)
+        query_position
+            .saturating_add(1)
+            .saturating_sub(sliding_window)
     }
 }
 
@@ -913,11 +926,7 @@ fn accumulate_key(
             unpack_i32s(&state.acc)?,
         )
     } else {
-        (
-            vec![0; heads],
-            vec![0; heads],
-            vec![0; heads * head_dim],
-        )
+        (vec![0; heads], vec![0; heads], vec![0; heads * head_dim])
     };
 
     for head in 0..heads {
@@ -988,7 +997,9 @@ fn softmax_context_inner(
         return Err(state.error.clone());
     }
     if !state.started {
-        return Err(String::from("attention saw no keys at or before this token"));
+        return Err(String::from(
+            "attention saw no keys at or before this token",
+        ));
     }
     let head_dim = params.head_dim as usize;
     let sums = unpack_i32s(&state.sum)?;
@@ -1019,11 +1030,7 @@ pub fn attn_residual(
     if !attn_proj.error.is_empty() {
         return PackedVec {
             values: pack_i32s(&[]),
-            error: alloc::format!(
-                "token at position {}: {}",
-                query.position,
-                attn_proj.error
-            ),
+            error: alloc::format!("token at position {}: {}", query.position, attn_proj.error),
         };
     }
     match attn_residual_inner(&query, &attn_proj, &params) {
@@ -1114,10 +1121,7 @@ pub fn gelu_mul(gate: ProjAccum, up: ProjAccum) -> PackedVec {
     }
 }
 
-fn gelu_mul_inner(
-    gate: &ProjAccum,
-    up: &ProjAccum,
-) -> core::result::Result<Vec<i32>, String> {
+fn gelu_mul_inner(gate: &ProjAccum, up: &ProjAccum) -> core::result::Result<Vec<i32>, String> {
     let mut gate = unpack_i32s(&gate.values)?;
     let up = unpack_i32s(&up.values)?;
     if gate.len() != up.len() {
@@ -1215,9 +1219,10 @@ pub fn finish_layer(
             token_id: query.token_id,
             values: pack_i32s(&values),
         }),
-        Err(error) => output
-            .errors()
-            .push(alloc::format!("token at position {}: {error}", query.position)),
+        Err(error) => output.errors().push(alloc::format!(
+            "token at position {}: {error}",
+            query.position
+        )),
     }
     output.kv().push(own_key);
     output
@@ -1326,3 +1331,27 @@ pub fn assert_layer_complete(
     }
     Ok(0)
 }
+
+#[tile(kind = iter, description = "Check model and producer context of a transformer layer")]
+pub fn layer_model_context(
+    model: ModelContext,
+    aux: ModelContext,
+    prior: ModelContext,
+    donor_a: ModelContext,
+    donor_b: ModelContext,
+    params: LayerParams,
+) -> ModelContext {
+    model.layer(
+        params.layer_idx,
+        &aux,
+        &prior,
+        &donor_a,
+        &donor_b,
+        params.kv_donor_layer,
+        params.donor_a_layer,
+        params.donor_b_layer,
+    )
+}
+
+pub mod identity;
+pub use identity::*;

@@ -13,8 +13,8 @@ use staged_infer::{
 use inference_artifacts::{
     file_sha256 as sha256_file, read_checkpoint_hashes, read_checkpoint_trace, read_json,
     read_run_spec, write_checkpoint_hashes, write_claim_artifacts_with_prepared_run, write_json,
-    InferenceResult, InferenceRunSpec, ModelManifest, PreparedRun,
-    CHECKPOINT_TRACE_JSON, PREPARED_RUN_JSON,
+    InferenceResult, InferenceRunSpec, ModelManifest, PreparedRun, CHECKPOINT_TRACE_JSON,
+    PREPARED_RUN_JSON,
 };
 use serde::Serialize;
 use sha2::{Digest, Sha256};
@@ -259,7 +259,11 @@ fn prepare_run(
         .join("target")
         .join("iris")
         .join("runs")
-        .join(run_id(&run_spec_path, &prompt.rendered_prompt, run_spec.tokens));
+        .join(run_id(
+            &run_spec_path,
+            &prompt.rendered_prompt,
+            run_spec.tokens,
+        ));
     let prompt_dir = run_dir.join("prompt");
     let ids = match &options.claimed_token_ids {
         Some(ids) => ids.clone(),
@@ -431,7 +435,10 @@ pub(crate) fn render_ranged_manifest(
                 let file_name = Path::new(placeholder)
                     .file_name()
                     .context("input path has no file name")?;
-                let dir = files[0].path.parent().context("run file has no directory")?;
+                let dir = files[0]
+                    .path
+                    .parent()
+                    .context("run file has no directory")?;
                 out.push(format!("{key} = {:?}", dir.join(file_name)));
                 continue;
             }
@@ -909,7 +916,11 @@ count = 0
         };
         let text = file("text", "t0");
         let config = file("config", "g0");
-        let prompt = [file("cut_0", "a0"), file("cut_1", "a1"), file("cut_2", "a2")];
+        let prompt = [
+            file("cut_0", "a0"),
+            file("cut_1", "a1"),
+            file("cut_2", "a2"),
+        ];
         let claimed = [file("claimed_0", "c0")];
         let render = |claimed: &[run_prep::RunFile], merge_repeats| {
             render_ranged_manifest(
@@ -981,9 +992,6 @@ count = 0
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        std::env::temp_dir().join(format!(
-            "iris-cli-{label}-{}-{nanos}",
-            std::process::id()
-        ))
+        std::env::temp_dir().join(format!("iris-cli-{label}-{}-{nanos}", std::process::id()))
     }
 }

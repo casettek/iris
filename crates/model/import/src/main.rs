@@ -267,7 +267,8 @@ pub fn import_model(args: ImportConfig) -> Result<ImportResult, Box<dyn Error>> 
 
     if args.only_tokenizer {
         let mut stages = Vec::new();
-        let decoder_commitment = write_tokenizer(&tokenizer, &eos_ids, &layout, &mut stages)?;
+        let (decoder_commitment, witness_commitment) =
+            write_tokenizer(&tokenizer, &eos_ids, &layout, &mut stages)?;
         println!();
         println!("# ---- tokenizer and decoder externals ----");
         for stage in &stages {
@@ -283,6 +284,16 @@ pub fn import_model(args: ImportConfig) -> Result<ImportResult, Box<dyn Error>> 
                 "raster-stages/output-finalize",
                 "decoder",
                 &decoder_commitment
+            )
+        );
+        print!(
+            "{}",
+            external_line(
+                "witness",
+                &layout,
+                "raster-stages/output-finalize",
+                "witness",
+                &witness_commitment
             )
         );
         direct_manifest::warn_partial_direct_manifest_not_refreshed(&args);
@@ -368,16 +379,53 @@ pub fn import_model(args: ImportConfig) -> Result<ImportResult, Box<dyn Error>> 
     let mut stages = vec![String::from(
         "[[chain.stage]]\nname = \"range_origin\"\nproject = \"raster-stages/range-origin\"\n",
     )];
-    let decoder_commitment = write_tokenizer(&tokenizer, &eos_ids, &layout, &mut stages)?;
+    let (decoder_commitment, witness_commitment) =
+        write_tokenizer(&tokenizer, &eos_ids, &layout, &mut stages)?;
     write_embedding(&weights, &shape, &layout, &mut stages)?;
     write_ple_layers(&weights, &shape, &layout, &mut stages)?;
     write_transformer_layers(&weights, &shape, &layout, &mut stages)?;
     write_head(&weights, &shape, text, &layout, &mut stages)?;
 
+    let commitments = model_commitments(&shape, &decoder_commitment, &stages)?;
+    let descriptor = inference_artifacts::model_identity::descriptor_from_commitments(
+        &commitments,
+        shape.layers,
+    )?;
+    let descriptor =
+        raster::BytesPage::__from_parts(0, 0, descriptor.encode().map_err(|f| format!("{f:?}"))?);
+    let descriptor_commitment = write_external(
+        &descriptor,
+        &layout,
+        "raster-stages/output-finalize",
+        "descriptor",
+    )?;
+    let identity_inputs = format!(
+        "{}{}",
+        external_line(
+            "descriptor",
+            &layout,
+            "raster-stages/output-finalize",
+            "descriptor",
+            &descriptor_commitment
+        ),
+        external_line(
+            "witness",
+            &layout,
+            "raster-stages/output-finalize",
+            "witness",
+            &witness_commitment
+        ),
+    );
     let stage_count = stages.len();
     let (template_path, template) = save_model_template(
         &args,
-        &chain_template(&shape, &layout, &decoder_commitment, &stages)?,
+        &chain_template(
+            &shape,
+            &layout,
+            &decoder_commitment,
+            &identity_inputs,
+            &stages,
+        )?,
     )?;
     direct_manifest::write_model_manifest(
         &args,
@@ -385,7 +433,7 @@ pub fn import_model(args: ImportConfig) -> Result<ImportResult, Box<dyn Error>> 
         &shape,
         text,
         Some((&template_path, &template)),
-        &model_commitments(&shape, &decoder_commitment, &stages)?,
+        &commitments,
     )?;
     Ok(ImportResult {
         manifest_path: Some(template_path),
@@ -486,30 +534,52 @@ fn chain_template(
     shape: &Shape,
     layout: &ArtifactLayout,
     decoder_commitment: &str,
+    identity_inputs: &str,
     prefill_stages: &[String],
 ) -> Result<String, Box<dyn Error>> {
+    let descriptor_line = identity_inputs
+        .lines()
+        .find(|line| line.starts_with("inputs.descriptor ="))
+        .ok_or("missing model descriptor binding")?;
     let tokenizer = stage_external_commitment(prefill_stages, "prompt_prepare", "tokenizer")?;
     let embedding = stage_external_commitment(prefill_stages, "input_embedding", "embedding")?;
     let no_claim = stage_external_commitment(prefill_stages, "input_embedding", "claimed")?;
     let head = stage_external_commitment(prefill_stages, "final_head", "head")?;
     let no_prompt = no_prompt_commitment(layout)?;
+    let tokenizer_witness = stage_external_commitment(prefill_stages, "prompt_prepare", "witness")?;
     let tokenizer_line = external_line(
         "tokenizer",
         layout,
         "raster-stages/prompt-prepare",
         "tokenizer",
         &tokenizer,
+    ) + &external_line(
+        "witness",
+        layout,
+        "raster-stages/prompt-prepare",
+        "witness",
+        &tokenizer_witness,
     );
+    let embedding_witness =
+        stage_external_commitment(prefill_stages, "input_embedding", "witness")?;
     let embedding_line = external_line(
         "embedding",
         layout,
         "raster-stages/input-embedding",
         "embedding",
         &embedding,
+    ) + &external_line(
+        "witness",
+        layout,
+        "raster-stages/input-embedding",
+        "witness",
+        &embedding_witness,
     );
     let range_input = |name: &str, family: &str, index: &str| {
         let path = |extension: &str| {
-            path_string(&Path::new(RUN_PLACEHOLDER_DIR).join(format!("{family}_{{{index}}}.{extension}")))
+            path_string(
+                &Path::new(RUN_PLACEHOLDER_DIR).join(format!("{family}_{{{index}}}.{extension}")),
+            )
         };
         format!(
             "\n[chain.input.{name}]\nindex = \"{index}\"\npath = {:?}\nindex_path = {:?}\ncommitments = []\n",
@@ -556,6 +626,7 @@ fn chain_template(
         "\n[[chain.stage]]\n\
          name = \"prompt_bind\"\n\
          project = \"raster-stages/prompt-bind\"\n\
+         {descriptor_line}\n\
          {tokenizer_line}\
          {}\
          {}",
@@ -596,7 +667,13 @@ fn chain_template(
          {}\
          inputs.previous = {{ from = \"embed_p{{j-1}}\", first = \"range_origin\" }}\n\
          {embedding_line}",
-        external_line("claimed", layout, "raster-stages/input-embedding", "no_claim", &no_claim),
+        external_line(
+            "claimed",
+            layout,
+            "raster-stages/input-embedding",
+            "no_claim",
+            &no_claim
+        ),
     ));
     out.push_str("\n[[chain.repeat]]\nname = \"claimed_embed\"\nindex = \"k\"\ncount = 0\n");
     out.push_str(&format!(
@@ -615,7 +692,12 @@ fn chain_template(
     // needs layer `l - 1`'s range `j` and layer `l`'s range `j - 1`, both
     // already computed in this order. The inner fans' counts are the range
     // counts, filled in by run preparation.
-    let layer_block = |name: &str, start: usize, count: usize, first_rows: &dyn Fn(&str, &str) -> String, donor: &dyn Fn(Option<&i32>, &str, &str) -> String| -> String {
+    let layer_block = |name: &str,
+                       start: usize,
+                       count: usize,
+                       first_rows: &dyn Fn(&str, &str) -> String,
+                       donor: &dyn Fn(Option<&i32>, &str, &str) -> String|
+     -> String {
         let mut text = format!(
             "\n[[chain.repeat]]\nname = \"{name}\"\nindex = \"l\"\nstart = {start}\ncount = {count}\n"
         );
@@ -627,7 +709,8 @@ fn chain_template(
                  count = 0\n\
                  project = \"raster-stages/prefill-prepare-aux\"\n\
                  inputs.embedded = {{ from = \"embed_{p}{{{r}}}\" }}\n\
-                 inputs.layer = {{ input = \"aux_layer_{{l}}\" }}\n"
+                 inputs.layer = {{ input = \"aux_layer_{{l}}\" }}\n\
+                 inputs.witness = {{ input = \"aux_witness_{{l}}\" }}\n"
             ));
         }
         for (p, r, first_kv) in [
@@ -710,6 +793,7 @@ fn chain_template(
             decoder_commitment
         )
     ));
+    out.push_str(identity_inputs);
     Ok(out)
 }
 
@@ -768,6 +852,11 @@ fn indexed_model_inputs(
             stage_external_commitment(stages, &format!("prefill_prepare_aux_l{layer}"), "layer")
         })
         .collect::<Result<Vec<_>, _>>()?;
+    let aux_witness = (0..shape.layers)
+        .map(|layer| {
+            stage_external_commitment(stages, &format!("prefill_prepare_aux_l{layer}"), "witness")
+        })
+        .collect::<Result<Vec<_>, _>>()?;
     let transformer = (0..shape.layers)
         .map(|layer| stage_external_commitment(stages, &format!("prefill_range_l{layer}"), "layer"))
         .collect::<Result<Vec<_>, _>>()?;
@@ -789,7 +878,13 @@ fn indexed_model_inputs(
         )
     };
     Ok(format!(
-        "{}{}",
+        "{}{}{}",
+        render(
+            "aux_witness",
+            "raster-stages/prefill-prepare-aux",
+            &aux_witness
+        )
+        .replace("layer{l}", "witness{l}"),
         render("aux_layer", "raster-stages/prefill-prepare-aux", &aux),
         render(
             "transformer_layer",
@@ -1026,7 +1121,7 @@ fn write_tokenizer(
     eos_ids: &std::collections::BTreeSet<u32>,
     layout: &ArtifactLayout,
     stages: &mut Vec<String>,
-) -> Result<String, Box<dyn Error>> {
+) -> Result<(String, String), Box<dyn Error>> {
     // Reject unsupported profiles, invalid IDs and malformed merge tables
     // before replacing any existing tokenizer/decoder artifact.
     let prepared_tokenizer = run_prep::prompt_tokenizer(tokenizer)?;
@@ -1068,10 +1163,14 @@ fn write_tokenizer(
             terminal: eos_ids.contains(&entry.id),
         };
     }
+    let decoder_table = DecoderTable {
+        tokens: decoder_tokens.into(),
+    };
+    let witness = output_finalize::decoder_witness(&decoder_table).map_err(|f| format!("{f:?}"))?;
+    let witness_commitment =
+        write_external(&witness, layout, "raster-stages/output-finalize", "witness")?;
     let decoder_commitment = write_external(
-        &DecoderTable {
-            tokens: decoder_tokens.into(),
-        },
+        &decoder_table,
         layout,
         "raster-stages/output-finalize",
         "decoder",
@@ -1083,11 +1182,22 @@ fn write_tokenizer(
         "raster-stages/prompt-prepare",
         "tokenizer",
     )?;
+    let tokenizer_witness = prompt_prepare::input::tokenizer_witness(&prepared_tokenizer)
+        .map_err(|f| format!("{f:?}"))?;
+    let tokenizer_witness_commitment = write_external(
+        &tokenizer_witness,
+        layout,
+        "raster-stages/prompt-prepare",
+        "witness",
+    )?;
     // Run preparation supplies the prompt-specific merged_pieces binding.
     write_stage_fixtures(
         "raster-stages/prompt-prepare",
         layout,
-        &[("tokenizer", "tokenizer", &tokenizer_commitment)],
+        &[
+            ("tokenizer", "tokenizer", &tokenizer_commitment),
+            ("witness", "witness", &tokenizer_witness_commitment),
+        ],
     )?;
     let tokenizer_line = external_line(
         "tokenizer",
@@ -1095,6 +1205,12 @@ fn write_tokenizer(
         "raster-stages/prompt-prepare",
         "tokenizer",
         &tokenizer_commitment,
+    ) + &external_line(
+        "witness",
+        layout,
+        "raster-stages/prompt-prepare",
+        "witness",
+        &tokenizer_witness_commitment,
     );
     let pieces_line = external_line(
         "initial_pieces",
@@ -1128,7 +1244,7 @@ project = "raster-stages/prompt-prepare"
 inputs.merged_pieces = {{ from = "tokenize.pieces" }}
 {tokenizer_line}"#
     ));
-    Ok(decoder_commitment)
+    Ok((decoder_commitment, witness_commitment))
 }
 
 // ---------------------------------------------------------------------------
@@ -1141,24 +1257,24 @@ fn write_embedding(
     layout: &ArtifactLayout,
     stages: &mut Vec<String>,
 ) -> Result<(), Box<dyn Error>> {
-    let commitment = write_external(
-        &EmbeddingTable {
-            hidden_size: shape.hidden as u32,
-            // Gemma scales token embeddings by sqrt(hidden) before layer 0. Converted
-            // by local `f32_to_act` so the committed bits match the
-            // deterministic path exactly rather than approximately.
-            embedding_scale: det_num::f32_to_act((shape.hidden as f32).sqrt()).to_bits(),
-            values: mapped_weights::q8_rows(
-                weights,
-                "model.language_model.embed_tokens.weight",
-                0,
-                shape.vocab,
-            )?,
-        },
-        layout,
-        "raster-stages/input-embedding",
-        "embedding",
-    )?;
+    let table = EmbeddingTable {
+        hidden_size: shape.hidden as u32,
+        // Gemma scales token embeddings by sqrt(hidden) before layer 0. Converted
+        // by local `f32_to_act` so the committed bits match the
+        // deterministic path exactly rather than approximately.
+        embedding_scale: det_num::f32_to_act((shape.hidden as f32).sqrt()).to_bits(),
+        values: mapped_weights::q8_rows(
+            weights,
+            "model.language_model.embed_tokens.weight",
+            0,
+            shape.vocab,
+        )?,
+    };
+    let commitment = write_external(&table, layout, "raster-stages/input-embedding", "embedding")?;
+    let witness = model_identity::sparse::witness(table.values.pages.as_slice())
+        .map_err(|f| format!("{f:?}"))?;
+    let witness_commitment =
+        write_external(&witness, layout, "raster-stages/input-embedding", "witness")?;
     // A prompt range embeds only the prompt. A claimed range binds the run's
     // claimed ids here instead.
     let no_claim = write_external(
@@ -1175,7 +1291,14 @@ fn write_embedding(
             "project = \"raster-stages/input-embedding\"\n",
             "inputs.prompt = {{ from = \"prompt_prepare\" }}\n",
             "inputs.previous = {{ from = \"range_origin\" }}\n",
-            "{}{}"
+            "{}{}{}"
+        ),
+        external_line(
+            "witness",
+            layout,
+            "raster-stages/input-embedding",
+            "witness",
+            &witness_commitment
         ),
         external_line(
             "claimed",
@@ -1248,13 +1371,29 @@ fn write_ple_layers(
         let name = format!("layer{layer_idx}");
         let commitment =
             write_external(&layer, layout, "raster-stages/prefill-prepare-aux", &name)?;
+        let witness = model_identity::sparse::witness(layer.embeddings.pages.as_slice())
+            .map_err(|f| format!("{f:?}"))?;
+        let witness_name = format!("witness{layer_idx}");
+        let witness_commitment = write_external(
+            &witness,
+            layout,
+            "raster-stages/prefill-prepare-aux",
+            &witness_name,
+        )?;
         stages.push(format!(
             concat!(
                 "[[chain.stage]]\n",
                 "name = \"prefill_prepare_aux_l{idx}\"\n",
                 "project = \"raster-stages/prefill-prepare-aux\"\n",
                 "inputs.embedded = {{ from = \"input_embedding\" }}\n",
-                "{line}"
+                "{line}{witness_line}"
+            ),
+            witness_line = external_line(
+                "witness",
+                layout,
+                "raster-stages/prefill-prepare-aux",
+                &witness_name,
+                &witness_commitment
             ),
             idx = layer_idx,
             line = external_line(
@@ -1692,10 +1831,37 @@ mod tests {
                 &shape,
                 &text,
                 Some((&path, &template)),
-                &[],
+                &[
+                    "tokenizer",
+                    "decoder",
+                    "embedding",
+                    "head",
+                    "aux_layer_0",
+                    "transformer_layer_0",
+                ]
+                .into_iter()
+                .enumerate()
+                .map(|(i, role)| inference_artifacts::ModelCommitment {
+                    role: role.into(),
+                    commitment: format!("{:02x}", i).repeat(32),
+                })
+                .collect::<Vec<_>>(),
             )
             .unwrap();
             let model = inference_artifacts::ModelManifest::load_verified(&model_path).unwrap();
+            let descriptor_bytes = fs::read(
+                model_path
+                    .parent()
+                    .unwrap()
+                    .join(inference_artifacts::model_identity::MODEL_DESCRIPTOR_BIN),
+            )
+            .unwrap();
+            assert_eq!(
+                descriptor_bytes,
+                model.descriptor().unwrap().encode().unwrap()
+            );
+            assert_eq!(descriptor_bytes.len(), 200); // Four global and two layer roots.
+
             assert_eq!(
                 model.verified_raster_template(&model_path).unwrap().1,
                 template

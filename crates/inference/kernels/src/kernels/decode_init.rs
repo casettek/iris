@@ -6,6 +6,7 @@ pub struct DecodeInitDirectInputs;
 
 pub fn run_decode_init_direct(_inputs: DecodeInitDirectInputs) -> Result<DecodeEdge> {
     Ok(DecodeEdge {
+        model: Default::default(),
         has_selected: false,
         decode_position: 0,
         token_id: 0,

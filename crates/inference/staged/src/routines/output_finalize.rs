@@ -15,6 +15,8 @@ pub struct Inputs {
     pub decoder: DecoderTable,
     /// The last prompt range's context: what the chain consumed, and how.
     pub context: PromptContext,
+    pub descriptor: raster::BytesPage,
+    pub witness: output_finalize::input::DecoderWitness,
 }
 
 pub fn load_inputs_from_args() -> Result<Inputs> {
@@ -36,6 +38,8 @@ pub fn run_direct(inputs: &Inputs) -> Result<GeneratedOutput> {
         edge: &inputs.edge,
         decoder: &inputs.decoder,
         context: &inputs.context,
+        descriptor: &inputs.descriptor,
+        witness: &inputs.witness,
     })
 }
 
@@ -44,6 +48,8 @@ fn load_inputs_from_initialized_runtime(cached_inputs: &CachedInputs) -> Result<
         raster::entry_argument_spec::<DecodeEdge>("edge"),
         raster::entry_argument_spec::<DecoderTable>("decoder"),
         raster::entry_argument_spec::<PromptState>("prompt"),
+        raster::entry_argument_spec::<raster::BytesPage>("descriptor"),
+        raster::entry_argument_spec::<output_finalize::input::DecoderWitness>("witness"),
     ])?;
     let edge = match cached_inputs.get("edge") {
         Some(value) => value.as_output_edge()?,
@@ -54,17 +60,29 @@ fn load_inputs_from_initialized_runtime(cached_inputs: &CachedInputs) -> Result<
     };
     let context = match cached_inputs.get("prompt") {
         Some(value) => value.as_output_prompt_context()?,
-        None => raster::materialize_auth_return(raster::entry_argument_auth_ref::<PromptState>(
-            binding.reference.clone(),
-            "prompt",
-        ))
-        .context,
+        None => {
+            raster::materialize_auth_return(raster::entry_argument_auth_ref::<PromptState>(
+                binding.reference.clone(),
+                "prompt",
+            ))
+            .context
+        }
     };
     let decoder = raster::materialize_auth_return(raster::entry_argument_auth_ref::<DecoderTable>(
-        binding.reference,
+        binding.reference.clone(),
         "decoder",
     ));
+    let descriptor = raster::materialize_auth_return(raster::entry_argument_auth_ref::<
+        raster::BytesPage,
+    >(binding.reference.clone(), "descriptor"));
+    // Never reuse a validation flag from CachedInputs: check the supplied
+    // witness against the bytes being consumed on every execution.
+    let witness = raster::materialize_auth_return(raster::entry_argument_auth_ref::<
+        output_finalize::input::DecoderWitness,
+    >(binding.reference, "witness"));
     Ok(Inputs {
+        descriptor,
+        witness,
         edge,
         decoder,
         context,

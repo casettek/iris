@@ -49,10 +49,16 @@ fn resolve_atom(
 /// Stage entrypoint: `text` is the original prompt, `config` the run's
 /// configuration, `tokenizer` the committed tokenizer.
 #[sequence]
-fn main(tokenizer: PromptTokenizer, text: PromptText, config: RunConfig) -> PromptState {
+fn main(
+    tokenizer: PromptTokenizer,
+    witness: TokenizerWitness,
+    text: PromptText,
+    config: RunConfig,
+    descriptor: BytesPage,
+) -> PromptState {
     let profile = select!(TokenizerProfile, tokenizer.clone().profile);
     let count = select!(u32, tokenizer.clone().vocab_bucket_count);
-    let vocab = select!(List<VocabBucket>, tokenizer.vocab_buckets);
+    let vocab = select!(List<VocabBucket>, tokenizer.clone().vocab_buckets);
     let chunks = select!(List<String>, text.chunks);
 
     let fold_seed = call!(begin_text_fold);
@@ -74,7 +80,17 @@ fn main(tokenizer: PromptTokenizer, text: PromptText, config: RunConfig) -> Prom
     );
     let atoms = select!(List<PromptAtom>, scanned.atoms);
 
-    let opened = call!(open_bound_prompt, fold, config);
+    let root = call_seq!(identity_root, tokenizer, witness.clone());
+    let context = call!(identity_bound_context, fold, config, descriptor, root);
+    let vocab_header = select!(SparseHeader, witness.clone().vocab);
+    let vocab_paths = select!(List<SparsePath>, witness.vocab_paths);
+    let context = call_recur_seq!(
+        sequence = verify_atom,
+        input = atoms.clone(),
+        state = context,
+        args = (vocab.clone(), count.clone(), vocab_header, vocab_paths)
+    );
+    let opened = call!(identity_open_bound, context);
     let split_seed = call!(begin_split);
     let bound = call_recur_seq!(
         sequence = resolve_atom,
@@ -85,4 +101,96 @@ fn main(tokenizer: PromptTokenizer, text: PromptText, config: RunConfig) -> Prom
     );
     raster::println!("prompt bind → {:?}", bound);
     bound
+}
+
+#[sequence]
+fn identity_root(value: PromptTokenizer, witness: TokenizerWitness) -> BytesPage {
+    let vocab_bucket_count = select!(u32, value.clone().vocab_bucket_count);
+    let vocab_bucket_count = call!(identity_hash_u32, vocab_bucket_count);
+    let merge_bucket_count = select!(u32, value.clone().merge_bucket_count);
+    let merge_bucket_count = call!(identity_hash_u32, merge_bucket_count);
+    let boundary_bucket_count = select!(u32, value.clone().boundary_bucket_count);
+    let boundary_bucket_count = call!(identity_hash_u32, boundary_bucket_count);
+    let profile = select!(TokenizerProfile, value.clone().profile);
+    let profile = call!(identity_hash_tokenizerprofile, profile);
+    let vocab_header = select!(SparseHeader, witness.clone().vocab);
+    let vocab_buckets = call!(identity_sparse_root, vocab_header);
+    let merge_header = select!(SparseHeader, witness.clone().merges);
+    let merge_buckets = call!(identity_sparse_root, merge_header);
+    let boundary_header = select!(SparseHeader, witness.boundaries);
+    let boundary_buckets = call!(identity_sparse_root, boundary_header);
+    call!(
+        identity_component,
+        vocab_bucket_count,
+        merge_bucket_count,
+        boundary_bucket_count,
+        profile,
+        vocab_buckets,
+        merge_buckets,
+        boundary_buckets
+    )
+}
+
+#[sequence]
+fn identity_vocabbucket_contents(buckets: List<VocabBucket>, index: u32) -> BytesPage {
+    let input = select!(VocabBucket, buckets[index]);
+    let entries = select!(List<TokenEntry>, input.entries);
+    let seed = call!(identity_empty);
+    let folded = call_recur!(
+        tile = identity_vocabbucket_entry,
+        input = entries,
+        state = seed,
+        args = ()
+    );
+    let root = call!(identity_finish, folded);
+    let root = call!(identity_vocabbucket_root, root);
+    root
+}
+
+#[sequence]
+fn identity_mergebucket_contents(buckets: List<MergeBucket>, index: u32) -> BytesPage {
+    let input = select!(MergeBucket, buckets[index]);
+    let entries = select!(List<BpeMerge>, input.rules);
+    let seed = call!(identity_empty);
+    let folded = call_recur!(
+        tile = identity_mergebucket_entry,
+        input = entries,
+        state = seed,
+        args = ()
+    );
+    let root = call!(identity_finish, folded);
+    let root = call!(identity_mergebucket_root, root);
+    root
+}
+
+#[sequence]
+fn identity_boundarybucket_contents(buckets: List<BoundaryBucket>, index: u32) -> BytesPage {
+    let input = select!(BoundaryBucket, buckets[index]);
+    let entries = select!(List<BoundaryPair>, input.pairs);
+    let seed = call!(identity_empty);
+    let folded = call_recur!(
+        tile = identity_boundarybucket_entry,
+        input = entries,
+        state = seed,
+        args = ()
+    );
+    let root = call!(identity_finish, folded);
+    let root = call!(identity_boundarybucket_root, root);
+    root
+}
+
+#[sequence(kind=recur)]
+fn verify_atom(
+    input: RecurSequenceInput<PromptAtom>,
+    state: RecurSequenceState<PromptContext>,
+    buckets: List<VocabBucket>,
+    count: u32,
+    header: SparseHeader,
+    paths: List<SparsePath>,
+) -> RecurSequenceState<PromptContext> {
+    let query = call!(identity_atom_query, input);
+    let index = call!(vocab_bucket_index, query, count);
+    let root = call_seq!(identity_vocabbucket_contents, buckets, index.clone());
+    let proof = select!(SparsePath, paths[index]);
+    call!(identity_sparse_context, state, root, index, header, proof)
 }

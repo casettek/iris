@@ -3,8 +3,8 @@
 //! same scores into a running argmax instead of building this list.
 use anyhow::{bail, Result};
 use raster::List;
-use serde::{Deserialize, Serialize};
 use sequence_check::input::DecodeEdge;
+use serde::{Deserialize, Serialize};
 
 /// One scored token.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
@@ -32,9 +32,14 @@ pub fn select_next_token(logits: &PrefillLogits, prior: &DecodeEdge) -> Result<D
     let Some(best) = best else {
         bail!("output decode requires at least one logit to select the next token");
     };
-    let mut generated_token_ids = prior.generated_token_ids.iter().copied().collect::<Vec<_>>();
+    let mut generated_token_ids = prior
+        .generated_token_ids
+        .iter()
+        .copied()
+        .collect::<Vec<_>>();
     generated_token_ids.push(best.token_id);
     Ok(DecodeEdge {
+        model: prior.model.clone(),
         has_selected: true,
         decode_position: logits.decode_position,
         token_id: best.token_id,
@@ -57,8 +62,14 @@ mod tests {
         let logits = PrefillLogits {
             decode_position: 9,
             logits: List::from(vec![
-                LogitEntry { token_id: 5, value: 10 },
-                LogitEntry { token_id: 3, value: 10 },
+                LogitEntry {
+                    token_id: 5,
+                    value: 10,
+                },
+                LogitEntry {
+                    token_id: 3,
+                    value: 10,
+                },
             ]),
             errors: List::new(),
         };

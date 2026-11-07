@@ -571,8 +571,12 @@ fn print_infer_result(result: &staged_infer::InferenceResult, run_spec_path: Opt
     println!("input text sha256: {}", result.input_text_sha256);
     println!("model id: {}", result.model_id);
     println!(
-        "faults: prompt {}, check {}, output {}; claim mismatches: {}",
-        result.prompt_fault, result.check_fault, result.output_fault, result.claim_mismatches
+        "faults: prompt {}, check {}, output {}, model {}; claim mismatches: {}",
+        result.prompt_fault,
+        result.check_fault,
+        result.output_fault,
+        result.model_fault,
+        result.claim_mismatches
     );
     println!("generated text:");
     println!("{}", result.generated_text);

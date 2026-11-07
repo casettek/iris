@@ -9,8 +9,7 @@ use detwgt::{DetwgtMatrixView, DetwgtSlice, MmapDetwgt, Q8MatrixView};
 use inference_kernels::tensor::MatrixSource;
 
 const ONE: i32 = 1 << 16;
-pub const MISSING_DIRECT_MANIFEST: &str =
-    "run iris model import ... to generate a model manifest";
+pub const MISSING_DIRECT_MANIFEST: &str = "run iris model import ... to generate a model manifest";
 
 pub struct DirectInferenceModel {
     pub manifest: ModelManifest,

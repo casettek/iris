@@ -18,11 +18,13 @@ use raster::List;
 use std::{path::Path, sync::Arc};
 
 pub struct Inputs {
+    component_root: raster::BytesPage,
     pub prompt: PromptTokenization,
     /// Embedded after the prompt; empty for a prompt range.
     pub claimed: ClaimedOutput,
     /// Where this range starts: right after the previous range's rows.
     pub start_position: u32,
+    pub model: model_identity::ModelContext,
     embedding: Weights,
 }
 enum Weights {
@@ -33,6 +35,11 @@ impl Inputs {
     /// Already-materialized comparison path; indexed Raster inputs use selective loading.
     pub fn eager(prompt: PromptTokenization, embedding: Arc<EmbeddingTable>) -> Self {
         Self {
+            component_root: model_identity::stream::digest(embedding.as_ref()),
+            model: model_identity::ModelContext::embedding(
+                &prompt.context.model,
+                &Default::default(),
+            ),
             prompt,
             claimed: ClaimedOutput::default(),
             start_position: 0,
@@ -110,6 +117,7 @@ pub fn run_direct(inputs: &Inputs) -> Result<ActivationSequence> {
                 })
                 .collect::<Result<Vec<_>>>()?;
             ActivationSequence {
+                model: inputs.model.clone(),
                 rows: List::from(rows),
                 errors: List::new(),
                 kv: List::new(),
@@ -117,7 +125,13 @@ pub fn run_direct(inputs: &Inputs) -> Result<ActivationSequence> {
             }
         }
     };
+    output.model = inputs.model.clone();
     output.start_position = inputs.start_position;
+    output.model = model_identity::stream::verify(
+        output.model,
+        &inputs.component_root,
+        model_identity::Role::Embedding,
+    );
     Ok(output)
 }
 fn load_inputs_from_initialized_runtime(
@@ -132,7 +146,9 @@ fn load_inputs_from_initialized_runtime(
         raster::entry_argument_spec::<ClaimedOutput>("claimed"),
         raster::entry_argument_spec::<ActivationSequence>("previous"),
         raster::entry_argument_spec::<EmbeddingTable>("embedding"),
+        raster::entry_argument_spec::<model_identity::sparse::SparseWitness>("witness"),
     ])?;
+    let component_root;
     let prompt = match cached_inputs.get("prompt") {
         Some(value) => value.as_embedding_prompt()?,
         None => raster::materialize_auth_return(raster::entry_argument_auth_ref::<
@@ -153,8 +169,17 @@ fn load_inputs_from_initialized_runtime(
         .checked_add(previous.rows.len() as u32)
         .ok_or_else(|| anyhow::anyhow!("range start position overflows u32"))?;
 
+    let mut sparse_valid = true;
     let embedding = if raster_inputs(&binding) {
-        Weights::Selective(embedding::load(
+        let identity_source = crate::verified_weights::VerifiedSelections::new(
+            raster_runtime::EntryArgumentsBinding {
+                reference: binding.reference.clone(),
+                arguments: binding.arguments.clone(),
+            },
+            input,
+            manifest,
+        )?;
+        let selected = embedding::load(
             binding,
             input,
             manifest,
@@ -165,21 +190,62 @@ fn load_inputs_from_initialized_runtime(
                 .copied(),
             materialization_cache,
             key,
-        )?)
+        )?;
+        (component_root, sparse_valid) = selected.identity(&identity_source)?;
+        Weights::Selective(selected)
     } else {
         let key = key.map(|mut key| {
             key.type_name = std::any::type_name::<EmbeddingTable>();
             key
         });
         // Preserve postcard compatibility; never use this to recover from invalid Raster.
-        Weights::Eager(materialize_with_cache(None, key, || {
+        let witness =
+            raster::materialize_auth_return(raster::entry_argument_auth_ref::<
+                model_identity::sparse::SparseWitness,
+            >(binding.reference.clone(), "witness"));
+        let table = materialize_with_cache(None, key, || {
             raster::materialize_auth_return(raster::entry_argument_auth_ref::<EmbeddingTable>(
                 binding.reference,
                 "embedding",
             ))
-        })?)
+        })?;
+        component_root = embedding::embedding_identity_root(
+            table.hidden_size,
+            table.embedding_scale,
+            table.values.byte_len,
+            table.values.page_size,
+            &witness.header,
+        );
+        for token in prompt.token_ids.iter().chain(claimed.token_ids.iter()) {
+            let offset =
+                input_embedding::row_byte_offset(*token, table.hidden_size, table.values.byte_len);
+            let index = offset / table.values.page_size;
+            sparse_valid &= table
+                .values
+                .pages
+                .as_slice()
+                .get(index as usize)
+                .zip(witness.paths.as_slice().get(index as usize))
+                .map(|(page, path)| {
+                    model_identity::sparse::verify(
+                        &witness.header.root,
+                        witness.header.count,
+                        index,
+                        path,
+                        &model_identity::stream::digest(page),
+                    )
+                })
+                .unwrap_or(false);
+        }
+        Weights::Eager(table)
     };
+    let mut model = model_identity::ModelContext::embedding(&prompt.context.model, &previous.model);
+    model.require(sparse_valid);
+    model.require(!previous.model.is_origin() || previous.rows.is_empty());
+    model.require(!prompt.context.model.is_origin() || prompt.token_ids.is_empty());
     Ok(Inputs {
+        component_root,
+        model,
         prompt,
         claimed,
         start_position,

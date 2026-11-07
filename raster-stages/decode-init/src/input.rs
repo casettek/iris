@@ -1,5 +1,6 @@
 //! Boundary type shared with `sequence-check` and `output-finalize`.
 
+pub use model_identity::ModelContext;
 extern crate alloc;
 
 use raster::List;
@@ -8,6 +9,7 @@ use serde::{Deserialize, Serialize};
 /// The edge before the first claimed range: no selection and no transcript.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
 pub struct DecodeEdge {
+    pub model: ModelContext,
     pub has_selected: bool,
     pub decode_position: u32,
     pub token_id: u32,

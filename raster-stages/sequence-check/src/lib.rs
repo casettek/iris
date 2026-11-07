@@ -461,8 +461,10 @@ pub fn begin_decode_edge(
     prior_mismatches: u32,
     prior_first_mismatch_position: u32,
     fault: CheckFault,
+    model: ModelContext,
 ) -> Draft<DecodeEdge> {
     let mut output = Draft::<DecodeEdge>::new();
+    output.model().set(model);
     output.has_selected().set(summary.has_selected);
     output.decode_position().set(summary.decode_position);
     output.token_id().set(summary.token_id);
@@ -509,3 +511,16 @@ pub fn copy_selected_token_ids(
     }
     output
 }
+
+#[tile(kind = iter, description = "Check completed model lineage before head scoring")]
+pub fn head_model_context(
+    model: ModelContext,
+    previous: ModelContext,
+    prompt: ModelContext,
+    prior: ModelContext,
+) -> ModelContext {
+    model.head(&previous, &prompt, &prior)
+}
+
+pub mod identity;
+pub use identity::*;

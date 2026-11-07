@@ -4,13 +4,17 @@
 //! Q16.16 fixed point throughout (`1.0 == 1 << 16`), integer-only so every
 //! tile replays bit-identically in the zkVM (SKILL.md §3).
 
+pub use model_identity::ModelContext;
 extern crate alloc;
 
 use alloc::string::String;
 use alloc::vec::Vec;
-use raster::{Bytes, BytesPage, List};
-use det_num::ops::{div_act, gelu_pytorch_tanh_act, mac_bits, mul_sat, requantize, rms_norm_in_place, value_rms_norm_in_place};
+use det_num::ops::{
+    div_act, gelu_pytorch_tanh_act, mac_bits, mul_sat, requantize, rms_norm_in_place,
+    value_rms_norm_in_place,
+};
 use det_num::{Acc, Act, Wgt};
+use raster::{Bytes, BytesPage, List};
 use serde::{Deserialize, Serialize};
 
 /// Fractional bits in the Q16.16 representation.
@@ -42,6 +46,7 @@ pub struct ActivationRow {
 /// A prompt's activations, in prompt order.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
 pub struct ActivationSequence {
+    pub model: ModelContext,
     pub rows: List<ActivationRow>,
     pub errors: List<String>,
     /// This layer's K/V cache after this stage: everything it was handed as
@@ -83,6 +88,7 @@ pub struct PleRow {
 /// position.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
 pub struct PleLayerInputs {
+    pub model: ModelContext,
     pub layer_idx: u32,
     pub rows: List<PleRow>,
     pub errors: List<String>,
@@ -297,7 +303,10 @@ pub fn pack_i64s(values: &[i64]) -> BytesPage {
 pub fn unpack_i64s(page: &BytesPage) -> core::result::Result<Vec<i64>, String> {
     let bytes = page.as_slice();
     if bytes.len() % 8 != 0 {
-        return Err(alloc::format!("page length {} is not i64-aligned", bytes.len()));
+        return Err(alloc::format!(
+            "page length {} is not i64-aligned",
+            bytes.len()
+        ));
     }
     Ok(bytes
         .chunks_exact(8)
@@ -409,7 +418,6 @@ pub fn div(a: i32, b: i32) -> i32 {
 pub fn add_sat(a: i32, b: i32) -> i32 {
     a.saturating_add(b)
 }
-
 
 pub fn exp(x: i32) -> i32 {
     const LOG2E: i32 = 94548;

@@ -101,6 +101,11 @@ impl DirectInferenceExecutor {
         trace.record("decode_init", &edge)?;
         for token_idx in 0..run_spec.tokens {
             edge = crate::generation::select_next_token(&logits, &edge)?;
+            edge.model = prior_layers
+                .last()
+                .map(|layer| layer.model.clone())
+                .unwrap_or_else(|| crate::view_kernels::bound_model_context(&model));
+            edge.model.producer = model_identity::context::DECODE;
             trace.record(&format!("decode_select_t{token_idx}"), &edge)?;
             if prepared_prompt.eos_token_ids.contains(&edge.token_id) {
                 // Keep EOS in the result, but never run another decode pass.
@@ -128,6 +133,7 @@ impl DirectInferenceExecutor {
 
         let finalize_started = Instant::now();
         let output_edge = output_finalize::input::DecodeEdge {
+            model: edge.model.clone(),
             has_selected: edge.has_selected,
             decode_position: edge.decode_position,
             token_id: edge.token_id,
@@ -139,13 +145,31 @@ impl DirectInferenceExecutor {
             generated_token_ids: edge.generated_token_ids.clone(),
         };
         let decoder = model.decoder_table()?;
-        let output = inference_kernels::kernels::output_finalize::run_output_finalize_direct(
+        let descriptor = raster::BytesPage::__from_parts(
+            0,
+            0,
+            if model.manifest().model_commitments.is_empty() {
+                Vec::new()
+            } else {
+                model
+                    .manifest()
+                    .descriptor()?
+                    .encode()
+                    .map_err(|f| anyhow::anyhow!("{f:?}"))?
+            },
+        );
+        let witness =
+            output_finalize::decoder_witness(&decoder).map_err(|f| anyhow::anyhow!("{f:?}"))?;
+        let finalize_inputs =
             inference_kernels::kernels::output_finalize::OutputFinalizeDirectInputs {
                 edge: &output_edge,
                 decoder: &decoder,
+                descriptor: &descriptor,
+                witness: &witness,
                 // The record the chain publishes for this run: a direct result
                 // and an honest claim's final record are the same bytes.
                 context: &output_finalize::prompt::PromptContext {
+                    model: crate::view_kernels::bound_model_context(&model),
                     input_text_sha256: output_finalize::sha256_hex(
                         prepared_prompt.resolved_prompt.as_bytes(),
                     ),
@@ -159,10 +183,22 @@ impl DirectInferenceExecutor {
                     fault: 0,
                     fault_position: 0,
                 },
-            },
-        )?;
+            };
+        let output = if model.manifest().model_commitments.is_empty() {
+            inference_kernels::kernels::output_finalize::run_output_finalize_discovery(
+                finalize_inputs.edge,
+                finalize_inputs.decoder,
+                finalize_inputs.context,
+            )?
+        } else {
+            inference_kernels::kernels::output_finalize::run_output_finalize_direct(
+                finalize_inputs,
+            )?
+        };
+
         trace.record("output_finalize", &output)?;
         let result = InferenceResult {
+            model_fault: output.model_fault,
             generated_token_count: output.generated_token_count,
             generated_token_ids: output.generated_token_ids.iter().copied().collect(),
             generated_token_ids_sha256: output.generated_token_ids_sha256,
@@ -229,7 +265,11 @@ fn run_layers_and_logits(
         let prior_kv = prior_layers
             .and_then(|layers| layers.get(layer_idx))
             .cloned()
-            .unwrap_or_else(|| empty_or_embedding.clone());
+            .unwrap_or_else(|| {
+                let mut empty = empty_or_embedding.clone();
+                empty.model = Default::default();
+                empty
+            });
         let donor_a_kv = donor_input(
             &layer_outputs,
             layer.params.donor_a_layer,

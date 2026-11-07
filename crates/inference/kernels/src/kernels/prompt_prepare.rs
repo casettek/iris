@@ -3,8 +3,8 @@ use prompt_prepare::input::{
     apply_atom, begin_scan_state, begin_slice_state, begin_text_fold_state, boundary_bucket_of,
     boundary_query_of, finish_slice_context, finish_token_context, fold_text, merge_bucket_of,
     observe_piece, open_prompt_context, scan_chunk_into, scan_plan_of, vocab_bucket_of,
-    BoundaryHit, BpePiece, BpePieces, MergeCandidate, PromptContext, PromptState,
-    PromptText, PromptTokenization, PromptTokenizer, RangeCut, RunConfig, SplitState,
+    BoundaryHit, BpePiece, BpePieces, MergeCandidate, PromptContext, PromptState, PromptText,
+    PromptTokenization, PromptTokenizer, RangeCut, RunConfig, SplitState,
 };
 use raster::List;
 
@@ -35,6 +35,7 @@ pub fn best_merge(pieces: &[BpePiece], tokenizer: &PromptTokenizer) -> Result<Me
                 && (!best.matched || rule.rank < best.rank)
             {
                 best = MergeCandidate {
+                    model_fault: 0,
                     matched: true,
                     rank: rule.rank,
                     left: left as u64,
@@ -101,7 +102,9 @@ pub fn run_prompt_bind(
     let fold = text
         .chunks
         .iter()
-        .fold(begin_text_fold_state(), |fold, chunk| fold_text(fold, chunk));
+        .fold(begin_text_fold_state(), |fold, chunk| {
+            fold_text(fold, chunk)
+        });
     let plan = scan_plan_of(&fold, config, profile);
     let mut scan = begin_scan_state(&plan);
     let mut atoms = Vec::new();
@@ -112,7 +115,9 @@ pub fn run_prompt_bind(
     let mut split = SplitState::default();
     for atom in &atoms {
         let known = in_vocabulary(tokenizer, &atom.text)?;
-        split = apply_atom(&split, atom, known, profile, &mut |piece| pieces.push(piece));
+        split = apply_atom(&split, atom, known, profile, &mut |piece| {
+            pieces.push(piece)
+        });
     }
     Ok(PromptState {
         pieces: List::from(pieces),
@@ -129,6 +134,8 @@ pub fn run_prompt_seed(
     previous: &PromptContext,
     cut: &RangeCut,
 ) -> Result<PromptState> {
+    let joined = ::prompt_prepare::input::join_prompt_models(previous.clone(), &bound.context);
+    let previous = &joined;
     let mut slice = begin_slice_state(previous, cut.end);
     for piece in bound.pieces.iter() {
         observe_piece(&mut slice, piece);
@@ -176,8 +183,7 @@ pub fn finalize_prompt(inputs: PromptPrepareDirectInputs<'_>) -> Result<PromptTo
         .cloned()
         .collect::<Vec<_>>();
     let best = best_merge(&pieces, inputs.tokenizer)?;
-    let context =
-        finish_token_context(&inputs.initial_pieces.context, &best, pieces.len() as u64);
+    let context = finish_token_context(&inputs.initial_pieces.context, &best, pieces.len() as u64);
     ensure!(
         inputs.tokenizer.vocab_bucket_count > 0
             && inputs.tokenizer.vocab_bucket_count as usize == inputs.tokenizer.vocab_buckets.len(),

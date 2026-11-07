@@ -4,6 +4,8 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct InferenceResult {
+    /// Required, without a legacy default: missing verification is not success.
+    pub model_fault: u32,
     pub generated_token_count: u32,
     pub generated_token_ids: Vec<u32>,
     pub generated_token_ids_sha256: String,
@@ -76,4 +78,15 @@ pub struct InferAuxWaveTiming {
     pub parallelism: usize,
     pub wall_duration: Duration,
     pub stage_duration_sum: Duration,
+}
+
+#[cfg(test)]
+mod model_fault_contract_tests {
+    use super::*;
+    #[test]
+    fn legacy_result_without_model_verdict_is_rejected() {
+        let mut json = serde_json::to_value(InferenceResult::default()).unwrap();
+        json.as_object_mut().unwrap().remove("model_fault");
+        assert!(serde_json::from_value::<InferenceResult>(json).is_err());
+    }
 }

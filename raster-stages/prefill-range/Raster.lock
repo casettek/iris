@@ -1,142 +1,186 @@
 {
   "format": 1,
-  "program_commitment": "3c58f3a907c7f67d4b1b95061fc7bcef3032e31d81b78822237c35570bd18787",
+  "program_commitment": "753fbde428e1cbd5b5ac367cb46c84f6fdc05ecd68bf75296d5a0e756d7f6974",
   "tiles": {
     "accumulate_context": {
-      "image_id": "755ee682cc9b7f2b637fa196effd97457f969af5a808e33233cc11c831b55a9e",
-      "source_hash": "5460d47866cd76b5000000000000af5c"
+      "image_id": "8288f5f399f305502ad728e3df62a22c0a927ed4972af9b4bc00fd7deddbae7a",
+      "source_hash": "72f55065077aee8d000000000000b1d7"
     },
     "advance_cursor": {
-      "image_id": "0a366105e0278c89330885a09423fc2c9e6f6b4b645b787c3aedd85b906d0a23",
-      "source_hash": "5460d47866cd76b5000000000000af5c"
+      "image_id": "4c559fd8ebce8faa21795a542c37443166358e84663c4e9c1f87896f77c0a11f",
+      "source_hash": "72f55065077aee8d000000000000b1d7"
     },
     "assert_layer_complete": {
-      "image_id": "4133266433a45fe96b278f87124483cc4c3ecf8706f164e2d86fc045814b70a9",
-      "source_hash": "5460d47866cd76b5000000000000af5c"
+      "image_id": "d37275c8df9cccc70fa1b6794e9598294840b1287d42f7684c84a03db23455de",
+      "source_hash": "72f55065077aee8d000000000000b1d7"
     },
     "assert_matrix_bytes": {
-      "image_id": "d483302e1a364c8cf107f590ee8a9879820bf6a3c968d6a5c14902ab5f63220d",
-      "source_hash": "5460d47866cd76b5000000000000af5c"
+      "image_id": "f4ce1ea9404b576e24e133b5d3ab8e38fba132da2fa82640a85e7cba4af2b8ed",
+      "source_hash": "72f55065077aee8d000000000000b1d7"
     },
     "attend_kv_chunk": {
-      "image_id": "4a290e4229eec5b7286445b1bdc44caf71538c625ee86efaeced0940d7b6633f",
-      "source_hash": "5460d47866cd76b5000000000000af5c"
+      "image_id": "d87fd30e1efba203db3e8f43dc9901419d9aa38dd5b121ca38458b376baba17c",
+      "source_hash": "72f55065077aee8d000000000000b1d7"
     },
     "attn_residual": {
-      "image_id": "a14bc7ea650a000cf0e8a6840d69cc9e6627dd055ef1e315c0b4877fd4394254",
-      "source_hash": "5460d47866cd76b5000000000000af5c"
+      "image_id": "9ca27f3e5625fe59f4154a9150433008886f926294ed8897b197ec923c98390f",
+      "source_hash": "72f55065077aee8d000000000000b1d7"
     },
     "begin_attention": {
-      "image_id": "d72b38f7256a7f87acd732f4602bd2d961c547eb41b4ae9d5c753f0a2ae3e775",
-      "source_hash": "5460d47866cd76b5000000000000af5c"
+      "image_id": "4a80d613a772e37254b0f43651e11b415d9e34047afb0d2e55f98568a4060a05",
+      "source_hash": "72f55065077aee8d000000000000b1d7"
     },
     "begin_cursor": {
-      "image_id": "651e687ca761c53acd71e103bcfd5f85c545a2fe02596eb4615b393efa9edc45",
-      "source_hash": "5460d47866cd76b5000000000000af5c"
+      "image_id": "ce059d9264832814826f8e80abf291d5815b0d3a09621ff14ee836c2e2544f1d",
+      "source_hash": "72f55065077aee8d000000000000b1d7"
     },
     "begin_error_summary": {
-      "image_id": "163eb429310ceab322a45dc27bbebaedf547a1d60f6db26da44be58698bf5850",
-      "source_hash": "5460d47866cd76b5000000000000af5c"
+      "image_id": "f5627979ef189e32a7a84c5966ed09d853112828653229c1f8f82e80d47ea02a",
+      "source_hash": "72f55065077aee8d000000000000b1d7"
     },
     "begin_layer_output": {
-      "image_id": "db704d00031b801bf1862c8c8ef5ffb33a2a13dbd66d92d7cba61511bccc8feb",
-      "source_hash": "5460d47866cd76b5000000000000af5c"
+      "image_id": "93ebc9627f9f08d46da515dad6e0f84c6d4c4b56c20ac8a5e6d9831ba0d7c39d",
+      "source_hash": "72f55065077aee8d000000000000b1d7"
     },
     "begin_qkv": {
-      "image_id": "0198691aa01bfb9ab979e6a2dd642c630bbf43f95308cd4af53df4057bf2c1cc",
-      "source_hash": "5460d47866cd76b5000000000000af5c"
+      "image_id": "bd5a6ee012166d96c116eccd24b07eae0ef991610515e2a938a43214f6fe30ea",
+      "source_hash": "72f55065077aee8d000000000000b1d7"
     },
     "carry_cached_key": {
-      "image_id": "dc9c9a196b5d3085589b482d655583b76987a6ecbe798c43f1567477ec9b1770",
-      "source_hash": "5460d47866cd76b5000000000000af5c"
+      "image_id": "bf7dd0514864c72e2c966ba3bfd34d24ff6674c614a2f007cf35218a5644d26d",
+      "source_hash": "72f55065077aee8d000000000000b1d7"
     },
     "finish_context": {
-      "image_id": "d2dfabe3a885096e09388fdc15454d3bc03f3d98cc28354492118f072e8d0b93",
-      "source_hash": "5460d47866cd76b5000000000000af5c"
+      "image_id": "2bd9b262de1b9f7cadbefdca6b6cd6e63c323f48e238b284660ee794bfbc97d3",
+      "source_hash": "72f55065077aee8d000000000000b1d7"
     },
     "finish_layer": {
-      "image_id": "e4ccebb9ea26b37f742b4f1a4c40fe1cda7380b854b62975b7492f635cb7f930",
-      "source_hash": "5460d47866cd76b5000000000000af5c"
+      "image_id": "4b32bcafc2ed3980dfe190090aff98ad4090d203d04b48185df1846d5109f794",
+      "source_hash": "72f55065077aee8d000000000000b1d7"
     },
     "finish_mlp": {
-      "image_id": "a8da2cd9bd43658e60dbbf42c8c783d4d8d9d335241fa9e7b0ba4090b74a0532",
-      "source_hash": "5460d47866cd76b5000000000000af5c"
+      "image_id": "76866e7b824e54d738b1a53789edde3ff7fbef349afb0f25c4c0de944e117553",
+      "source_hash": "72f55065077aee8d000000000000b1d7"
     },
     "finish_qkv": {
-      "image_id": "ef7ea13c5782e30172a45d09957952cadb4f7acc24b942bad052b939fc059d15",
-      "source_hash": "5460d47866cd76b5000000000000af5c"
+      "image_id": "3af25deedc0082e89b47cd9f1054aa6af37555e64ba936b2810ade1245e10495",
+      "source_hash": "72f55065077aee8d000000000000b1d7"
     },
     "gelu_mul": {
-      "image_id": "09d0554c4a77ceb566467b68910c67070151c3e09e6c184b6d2d019c3663f34f",
-      "source_hash": "5460d47866cd76b5000000000000af5c"
+      "image_id": "9b81c803861f4bd35e82302e3a9b5a27390b913d100131683c664a13c02af262",
+      "source_hash": "72f55065077aee8d000000000000b1d7"
+    },
+    "identity_bytes": {
+      "image_id": "056499a3f822f429b48fa3fde05aacd49dc0659364870b50f8970e6468d00793",
+      "source_hash": "0067ab6a66e2369900000000000008b2"
+    },
+    "identity_component": {
+      "image_id": "e1703c715a0cd1cef507738bd3ed16e66d1a34f9954296eca9ddae1b96e7c29e",
+      "source_hash": "0067ab6a66e2369900000000000008b2"
+    },
+    "identity_count_keys": {
+      "image_id": "6bed896a5de194efafa7eb52f396471231f2e4bc5307b2602bee818650f86367",
+      "source_hash": "0067ab6a66e2369900000000000008b2"
+    },
+    "identity_empty": {
+      "image_id": "c5be6046385d7d88c71fbecc48ee5098964e0f6cf4166772aca3e518c4ec4b7a",
+      "source_hash": "0067ab6a66e2369900000000000008b2"
+    },
+    "identity_finish": {
+      "image_id": "5c893eb76615f0eb8b632460060e0d3e41acd2f86ccc6485cbba7758534b24a8",
+      "source_hash": "0067ab6a66e2369900000000000008b2"
+    },
+    "identity_hash_layerparams": {
+      "image_id": "ca87e633fe0e3432d49e98c19a946b532fabe950f50e3449642c8cbf6d0b8743",
+      "source_hash": "0067ab6a66e2369900000000000008b2"
+    },
+    "identity_page": {
+      "image_id": "c6ec2d78b46f2aa1eaf60bf7cd46751cf9f80f3136236ea1506a7d0c4ac89f0d",
+      "source_hash": "0067ab6a66e2369900000000000008b2"
+    },
+    "identity_prior_guard": {
+      "image_id": "6f9cbf3621ad9b40c2d790f890749963da9d9a3547414ac588482510563dbec7",
+      "source_hash": "0067ab6a66e2369900000000000008b2"
+    },
+    "identity_verify": {
+      "image_id": "1f800f6cfda7e5a5a06f00077a73fcac29c6f49af3f158a3fdacbfd2e066fe17",
+      "source_hash": "0067ab6a66e2369900000000000008b2"
+    },
+    "identity_zero_count": {
+      "image_id": "3bfa5a709008a123e623a58e814e097242bc826880630a3149d084aa4d794fd8",
+      "source_hash": "0067ab6a66e2369900000000000008b2"
     },
     "kv_out_len": {
-      "image_id": "ad74cc5d77bee5da3cab3781ba09681f3064a6ed3f80fa1ecd3cc0fbd20e11c7",
-      "source_hash": "5460d47866cd76b5000000000000af5c"
+      "image_id": "08f2b698f4b882d16f84eb032effa69214abff2ecab766ff69b1d9c284c3230c",
+      "source_hash": "72f55065077aee8d000000000000b1d7"
+    },
+    "layer_model_context": {
+      "image_id": "18d90ac82fe4e2bd3e65efc9b6c09cc75c3cb8933b55a5023e4f98af645795c1",
+      "source_hash": "72f55065077aee8d000000000000b1d7"
     },
     "mac_q8_weight_page": {
-      "image_id": "081b737c3001a60a6fb2f917f6bc43a85c86324048ce23db3e33e2c28019f423",
-      "source_hash": "5460d47866cd76b5000000000000af5c"
+      "image_id": "08dc90c8c3c5bc499c59a1d9eb416c02a0f99bf7266e99108506886279488b3f",
+      "source_hash": "72f55065077aee8d000000000000b1d7"
     },
     "mac_weight_page": {
-      "image_id": "42b77fbe0e34b4d00c6fca74b1fb138faa517fe219beece9a15d12b0b9176edf",
-      "source_hash": "5460d47866cd76b5000000000000af5c"
+      "image_id": "92f1baa7f0258e1610cf9a1a1d7ee0e8652d6a7880b16391451b6ee6178650f2",
+      "source_hash": "72f55065077aee8d000000000000b1d7"
     },
     "packed_values": {
-      "image_id": "e8da97f112c092f9a515505ffe3f1b1093f7ad89901d7b50c7fc03c2a91bbf21",
-      "source_hash": "5460d47866cd76b5000000000000af5c"
+      "image_id": "fba9ae3998e11b8d9f45766cf485fa58609d12a7e74c7dc53dcae3d2bb766abc",
+      "source_hash": "72f55065077aee8d000000000000b1d7"
     },
     "ple_gate_mul": {
-      "image_id": "482b4b775634c23a360f7a35c3d78e4e881ce76a875ee695aba88ec70680a759",
-      "source_hash": "5460d47866cd76b5000000000000af5c"
+      "image_id": "811f05b03581d1924e92d74b45f4295624f9d74f9d97ad41a0ed3d8a4932c8ba",
+      "source_hash": "72f55065077aee8d000000000000b1d7"
     },
     "pre_ff_norm": {
-      "image_id": "9b8c58b339babd66cc86ab0f90f3f92e20039555c3b0a043864a8345b9abb08a",
-      "source_hash": "5460d47866cd76b5000000000000af5c"
+      "image_id": "0e8cdbc3f4d012ab45951774841f707984f71cfcd69325ccb0a4d6cf03839a94",
+      "source_hash": "72f55065077aee8d000000000000b1d7"
     },
     "q_out_len": {
-      "image_id": "8cdb066abb16d181167be103a6755e0b97b71edd6730ccf4a868f0b76f4c90e2",
-      "source_hash": "5460d47866cd76b5000000000000af5c"
+      "image_id": "37bc6fc404b207e55fb139c1869dd59ce6c449b899b940769fc814534b6596fc",
+      "source_hash": "72f55065077aee8d000000000000b1d7"
     },
     "qkv_normed": {
-      "image_id": "e88ee6a56a8dd7c874688e41565e4592a09a9c0100a2f1b9e7525b171462e103",
-      "source_hash": "5460d47866cd76b5000000000000af5c"
+      "image_id": "dce633beea5f745a31df87657b276a6f478b2c0b434234ffc3d2b244e4531f62",
+      "source_hash": "72f55065077aee8d000000000000b1d7"
     },
     "score_key": {
-      "image_id": "1d0710137c247c3b4e594eb1e51bf561366eba7f5edb5775496d089619e0756b",
-      "source_hash": "5460d47866cd76b5000000000000af5c"
+      "image_id": "f1d67cec0fa23ab5b47e8db66a9760cc8742ac728326188a83b909119030bcdf",
+      "source_hash": "72f55065077aee8d000000000000b1d7"
     },
     "softmax_context": {
-      "image_id": "ea88620089c641d124f32f3b0e259273d146b6a40133014e156fa09119b9e7b5",
-      "source_hash": "5460d47866cd76b5000000000000af5c"
+      "image_id": "6387b48886d09720f0a01a9bc790e965c1d9383098857f3be5b2f6507c115402",
+      "source_hash": "72f55065077aee8d000000000000b1d7"
     },
     "softmax_scores": {
-      "image_id": "08eb8ed3dec41a3302fd8998521a320544136feb291b952a42874715e9fbd973",
-      "source_hash": "5460d47866cd76b5000000000000af5c"
+      "image_id": "6b33781dca433a65c70fa8a3956e2c03d2a828ecf6610d19a2c3570b0bba81af",
+      "source_hash": "72f55065077aee8d000000000000b1d7"
     },
     "summarise_errors": {
-      "image_id": "600978838d29141c0d3e11dcd47cd0f3d43e54aca425eab7cafc1624ae3fad29",
-      "source_hash": "5460d47866cd76b5000000000000af5c"
+      "image_id": "2214945e0a87f9175cdd718da9526b18ed20ac0b7834d6e53bb7c917249df6d8",
+      "source_hash": "72f55065077aee8d000000000000b1d7"
     },
     "validate_layer_params": {
-      "image_id": "3805d028e127e99a13438757e6da2c5bd9628979e976cb4828d7fd14d30998ec",
-      "source_hash": "5460d47866cd76b5000000000000af5c"
+      "image_id": "e151d002ecd0daac54e865da1f91c3ff68ec90c92fd50e42071fbf89f342d183",
+      "source_hash": "72f55065077aee8d000000000000b1d7"
     },
     "zero_accum": {
-      "image_id": "654a2cc212015525405b411817d91b744483f8c23056bae0abd21b857d6dca55",
-      "source_hash": "5460d47866cd76b5000000000000af5c"
+      "image_id": "c2168d451d6bf86e9c7beb82325eecc72e803a91b4b4ecbcc6a59d6c63935edf",
+      "source_hash": "72f55065077aee8d000000000000b1d7"
     },
     "zero_attn_state": {
-      "image_id": "e38434615976780fe42512c088ab60f35f6136a54f53e593372aed072eb441c2",
-      "source_hash": "5460d47866cd76b5000000000000af5c"
+      "image_id": "6577a681bc6c167672f2afda4b193f38a7cd456e27945cf81e8a4d7414a27ec6",
+      "source_hash": "72f55065077aee8d000000000000b1d7"
     },
     "zero_context": {
-      "image_id": "ff04d3f10cff4ee92e079a0ddf4acf932d789b3ed31182fc80272c6dcd28c821",
-      "source_hash": "5460d47866cd76b5000000000000af5c"
+      "image_id": "9baf6d2c9378afd10c7079692174ef43017ac08c39f8b6f76e1abb05652473b5",
+      "source_hash": "72f55065077aee8d000000000000b1d7"
     },
     "zero_scores": {
-      "image_id": "b8455f16dcf53339313380883479703ddbe13784620e8971a4f741a1cfcb8984",
-      "source_hash": "5460d47866cd76b5000000000000af5c"
+      "image_id": "7079fdf5c18dbc9355283504a9f98220f4b132954212b0505511933bf17a8be0",
+      "source_hash": "72f55065077aee8d000000000000b1d7"
     }
   },
   "toolchain": {

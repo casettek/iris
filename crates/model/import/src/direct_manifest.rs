@@ -80,6 +80,17 @@ pub fn write_model_manifest(
         ),
     };
 
+    if direct.provenance.is_some() {
+        let descriptor = direct.descriptor().map_err(|error| error.to_string())?;
+        let bytes = descriptor
+            .encode()
+            .map_err(|fault| format!("invalid model descriptor: {fault:?}"))?;
+        fs::write(
+            artifact_dir.join(inference_artifacts::model_identity::MODEL_DESCRIPTOR_BIN),
+            bytes,
+        )?;
+    }
+
     write_json(&manifest_path, &direct)
         .map_err(|error| -> Box<dyn Error> { error.to_string().into() })?;
     println!("wrote {}", manifest_path.display());

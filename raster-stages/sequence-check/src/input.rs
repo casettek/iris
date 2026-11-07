@@ -8,6 +8,7 @@
 //! The scoring numerics delegate to `det_num`, so a score is bit-identical to
 //! direct generation's score of the same activation row.
 
+pub use model_identity::ModelContext;
 extern crate alloc;
 
 use alloc::string::String;
@@ -47,6 +48,7 @@ pub struct KeyRow {
 /// MUST match `ActivationSequence` in `prefill-range`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
 pub struct ActivationSequence {
+    pub model: ModelContext,
     pub rows: List<ActivationRow>,
     pub errors: List<String>,
     pub kv: List<KeyRow>,
@@ -86,6 +88,7 @@ pub struct FinalHead {
 /// claim it is byte-identical to direct generation's final edge.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
 pub struct DecodeEdge {
+    pub model: ModelContext,
     pub has_selected: bool,
     pub decode_position: u32,
     pub token_id: u32,

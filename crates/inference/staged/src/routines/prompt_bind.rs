@@ -12,9 +12,11 @@ use crate::cache::{
 use inference_kernels::kernels::prompt_prepare::run_prompt_bind;
 
 pub struct Inputs {
+    pub witness: prompt_prepare::input::TokenizerWitness,
     pub tokenizer: Arc<PromptTokenizer>,
     pub text: PromptText,
     pub config: RunConfig,
+    pub descriptor: raster::BytesPage,
 }
 
 pub fn load_inputs_from_args() -> Result<Inputs> {
@@ -37,7 +39,21 @@ pub fn load_inputs_from_paths_with_cache(
 }
 
 pub fn run_direct(inputs: &Inputs) -> Result<PromptState> {
-    run_prompt_bind(&inputs.tokenizer, &inputs.text, &inputs.config)
+    let mut output = run_prompt_bind(&inputs.tokenizer, &inputs.text, &inputs.config)?;
+    output.context.model =
+        model_identity::ModelContext::bind(inputs.descriptor.as_slice(), &inputs.config.model_id);
+    output.context.model = model_identity::stream::verify(
+        output.context.model,
+        &crate::prompt_identity::root(&inputs.tokenizer, &inputs.witness),
+        model_identity::Role::Tokenizer,
+    );
+    output.context.model.require(crate::prompt_identity::bind(
+        &inputs.tokenizer,
+        &inputs.witness,
+        &inputs.text,
+        &inputs.config,
+    ));
+    Ok(output)
 }
 
 fn load_inputs_with_cache(
@@ -46,9 +62,14 @@ fn load_inputs_with_cache(
 ) -> Result<Inputs> {
     let binding = raster::start_program(&[
         raster::entry_argument_spec::<PromptTokenizer>("tokenizer"),
+        raster::entry_argument_spec::<prompt_prepare::input::TokenizerWitness>("witness"),
         raster::entry_argument_spec::<PromptText>("text"),
         raster::entry_argument_spec::<RunConfig>("config"),
+        raster::entry_argument_spec::<raster::BytesPage>("descriptor"),
     ])?;
+    let witness = raster::materialize_auth_return(raster::entry_argument_auth_ref::<
+        prompt_prepare::input::TokenizerWitness,
+    >(binding.reference.clone(), "witness"));
     let tokenizer = materialize_with_cache(materialization_cache, key, || {
         raster::materialize_auth_return(raster::entry_argument_auth_ref::<PromptTokenizer>(
             binding.reference.clone(),
@@ -60,10 +81,15 @@ fn load_inputs_with_cache(
         "text",
     ));
     let config = raster::materialize_auth_return(raster::entry_argument_auth_ref::<RunConfig>(
-        binding.reference,
+        binding.reference.clone(),
         "config",
     ));
+    let descriptor = raster::materialize_auth_return(raster::entry_argument_auth_ref::<
+        raster::BytesPage,
+    >(binding.reference, "descriptor"));
     Ok(Inputs {
+        witness,
+        descriptor,
         tokenizer,
         text,
         config,

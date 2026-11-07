@@ -10,6 +10,8 @@ name = "model-import"
 path = "src/main.rs"
 
 [dependencies]
+model-identity = { path = "../identity" }
+output-finalize = { path = "../../../raster-stages/output-finalize" }
 det-num = { path = "../../det-num" }
 detwgt = { path = "../detwgt" }
 inference-artifacts = { path = "../../inference/artifacts" }

@@ -958,6 +958,7 @@ dependencies = [
 name = "decode-init"
 version = "0.1.0"
 dependencies = [
+ "model-identity",
  "raster",
  "serde",
 ]
@@ -1126,6 +1127,7 @@ dependencies = [
  "inference-artifacts",
  "inference-kernels",
  "input-embedding",
+ "model-identity",
  "output-finalize",
  "prefill-prepare-aux",
  "prefill-range",
@@ -2046,6 +2048,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "hex",
+ "model-identity",
  "postcard",
  "raster-core",
  "serde",
@@ -2061,6 +2064,7 @@ dependencies = [
  "anyhow",
  "det-num",
  "input-embedding",
+ "model-identity",
  "output-finalize",
  "prefill-prepare-aux",
  "prefill-range",
@@ -2078,6 +2082,7 @@ name = "input-embedding"
 version = "0.1.0"
 dependencies = [
  "det-num",
+ "model-identity",
  "raster",
  "serde",
  "sha2",
@@ -2108,7 +2113,9 @@ dependencies = [
  "direct-infer",
  "hex",
  "inference-artifacts",
+ "model-identity",
  "model-import",
+ "output-finalize",
  "postcard",
  "raster",
  "raster-analysis",
@@ -2535,12 +2542,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "model-identity"
+version = "0.1.0"
+dependencies = [
+ "raster",
+ "raster-core",
+ "serde",
+ "sha2",
+]
+
+[[package]]
 name = "model-import"
 version = "0.1.0"
 dependencies = [
  "det-num",
  "detwgt",
  "inference-artifacts",
+ "model-identity",
+ "output-finalize",
  "prompt-prepare",
  "raster",
  "run-prep",
@@ -2760,6 +2779,7 @@ checksum = "04744f49eae99ab78e0d5c0b603ab218f515ea8cfe5a456d7629ad883a3b6e7d"
 name = "output-finalize"
 version = "0.1.0"
 dependencies = [
+ "model-identity",
  "raster",
  "serde",
  "sha2",
@@ -2905,6 +2925,7 @@ name = "prefill-prepare-aux"
 version = "0.1.0"
 dependencies = [
  "det-num",
+ "model-identity",
  "raster",
  "raster-runtime",
  "serde",
@@ -2915,6 +2936,7 @@ name = "prefill-range"
 version = "0.1.0"
 dependencies = [
  "det-num",
+ "model-identity",
  "raster",
  "raster-runtime",
  "serde",
@@ -2942,6 +2964,7 @@ dependencies = [
 name = "prompt-bind"
 version = "0.1.0"
 dependencies = [
+ "model-identity",
  "raster",
  "serde",
  "sha2",
@@ -2951,6 +2974,7 @@ dependencies = [
 name = "prompt-core"
 version = "0.1.0"
 dependencies = [
+ "model-identity",
  "raster",
  "serde",
  "sha2",
@@ -2960,6 +2984,7 @@ dependencies = [
 name = "prompt-merge"
 version = "0.1.0"
 dependencies = [
+ "model-identity",
  "raster",
  "serde",
  "sha2",
@@ -2969,6 +2994,7 @@ dependencies = [
 name = "prompt-prepare"
 version = "0.1.0"
 dependencies = [
+ "model-identity",
  "raster",
  "serde",
  "sha2",
@@ -2978,6 +3004,7 @@ dependencies = [
 name = "prompt-seed"
 version = "0.1.0"
 dependencies = [
+ "model-identity",
  "raster",
  "serde",
  "sha2",
@@ -3216,6 +3243,7 @@ dependencies = [
 name = "range-origin"
 version = "0.1.0"
 dependencies = [
+ "model-identity",
  "raster",
  "serde",
 ]
@@ -4134,6 +4162,7 @@ name = "sequence-check"
 version = "0.1.0"
 dependencies = [
  "det-num",
+ "model-identity",
  "raster",
  "serde",
  "sha2",
@@ -4363,6 +4392,7 @@ dependencies = [
  "inference-artifacts",
  "inference-kernels",
  "input-embedding",
+ "model-identity",
  "output-finalize",
  "prefill-prepare-aux",
  "prefill-range",

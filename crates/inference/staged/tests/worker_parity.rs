@@ -116,26 +116,37 @@ impl Fixture {
         )
     }
     fn manifest(&mut self) {
-        let context = input_embedding::prompt::PromptContext {
-            max_new_tokens: 3,
-            range_size: 1,
-            prompt_tokens: 2,
-            complete: true,
-            ..Default::default()
+        let decoder_table = output_finalize::input::DecoderTable {
+            tokens: List::from(vec![
+                output_finalize::input::DecoderToken {
+                    token: "a".into(),
+                    special: false,
+                    terminal: false,
+                },
+                output_finalize::input::DecoderToken {
+                    token: "b".into(),
+                    special: false,
+                    terminal: false,
+                },
+            ]),
         };
-        let prompt = self.external(
-            "prompt",
-            &input_embedding::input::PromptTokenization {
-                token_ids: List::from(vec![0, 1]),
-                context,
-                ..Default::default()
-            },
-        );
+        let mut descriptor = model_identity::ModelDescriptor {
+            version: 1,
+            tokenizer: [1; 32],
+            decoder: raster::core::tree::value_root(&decoder_table).unwrap(),
+            embedding: [2; 32],
+            head: [3; 32],
+            auxiliary: vec![[4; 32]; 2],
+            transformer: vec![[5; 32]; 2],
+        };
         let no_prompt = self.external(
             "no_prompt",
             &input_embedding::input::PromptTokenization::default(),
         );
-        let no_claim = self.external("no_claim", &input_embedding::input::ClaimedOutput::default());
+        let no_claim = self.external(
+            "no_claim",
+            &input_embedding::input::ClaimedOutput::default(),
+        );
         let claimed = [1, 0, 1].map(|id: u32| {
             self.external(
                 &format!("claimed_{id}"),
@@ -152,6 +163,11 @@ impl Fixture {
                 values: q8_one_hot(2, 0x3c00),
             },
         );
+        let page_witness = self.external(
+            "page_witness",
+            &model_identity::sparse::witness(q8_one_hot::<195_840>(2, 0x3c00).pages.as_slice())
+                .unwrap(),
+        );
         let head = self.external(
             "head",
             &sequence_check::input::FinalHead {
@@ -164,22 +180,10 @@ impl Fixture {
                 projection: q8_one_hot(2, 0x3c00),
             },
         );
-        let decoder = self.external(
-            "decoder",
-            &output_finalize::input::DecoderTable {
-                tokens: List::from(vec![
-                    output_finalize::input::DecoderToken {
-                        token: "a".into(),
-                        special: false,
-                        terminal: false,
-                    },
-                    output_finalize::input::DecoderToken {
-                        token: "b".into(),
-                        special: false,
-                        terminal: false,
-                    },
-                ]),
-            },
+        let decoder = self.external("decoder", &decoder_table);
+        let witness = self.external(
+            "witness",
+            &output_finalize::decoder_witness(&decoder_table).unwrap(),
         );
         let mut aux = Vec::new();
         let mut layers = Vec::new();
@@ -211,6 +215,41 @@ impl Fixture {
                 },
             ));
         }
+        let root = |binding: &str| -> [u8; 32] {
+            let parsed: toml::Value = format!("value = {binding}").parse().unwrap();
+            hex::decode(parsed["value"]["external"]["commitment"].as_str().unwrap())
+                .unwrap()
+                .try_into()
+                .unwrap()
+        };
+        descriptor.embedding = root(&embedding);
+        descriptor.head = root(&head);
+        descriptor.auxiliary = aux.iter().map(|b| root(b)).collect();
+        descriptor.transformer = layers.iter().map(|b| root(b)).collect();
+        let context = input_embedding::prompt::PromptContext {
+            model: model_identity::ModelContext::bind(
+                &descriptor.encode().unwrap(),
+                &hex::encode(descriptor.model_id().unwrap()),
+            ),
+            model_id: hex::encode(descriptor.model_id().unwrap()),
+            max_new_tokens: 3,
+            range_size: 1,
+            prompt_tokens: 2,
+            complete: true,
+            ..Default::default()
+        };
+        let prompt = self.external(
+            "prompt",
+            &input_embedding::input::PromptTokenization {
+                token_ids: List::from(vec![0, 1]),
+                context,
+                ..Default::default()
+            },
+        );
+        let descriptor = self.external(
+            "descriptor",
+            &raster::BytesPage::__from_parts(0, 0, descriptor.encode().unwrap()),
+        );
         let mut text = String::from("[chain]\nname = \"worker-parity\"\nversion = \"0.1.0\"\n");
         let mut add = |name: String, project: &str, inputs: Vec<(&str, String)>| {
             text.push_str(&format!(
@@ -233,13 +272,18 @@ impl Fixture {
                 ("claimed", no_claim),
                 ("previous", from("range_origin")),
                 ("embedding", embedding.clone()),
+                ("witness", page_witness.clone()),
             ],
         );
         for l in 0..2 {
             add(
                 format!("aux_p0_l{l}"),
                 "prefill-prepare-aux",
-                vec![("embedded", from("embed_p0")), ("layer", aux[l].clone())],
+                vec![
+                    ("embedded", from("embed_p0")),
+                    ("witness", page_witness.clone()),
+                    ("layer", aux[l].clone()),
+                ],
             );
         }
         for l in 0..2 {
@@ -276,6 +320,7 @@ impl Fixture {
                         }),
                     ),
                     ("embedding", embedding.clone()),
+                    ("witness", page_witness.clone()),
                 ],
             );
             for l in 0..2 {
@@ -284,6 +329,7 @@ impl Fixture {
                     "prefill-prepare-aux",
                     vec![
                         ("embedded", from(&format!("embed_c{t}"))),
+                        ("witness", page_witness.clone()),
                         ("layer", aux[l].clone()),
                     ],
                 );
@@ -349,6 +395,8 @@ impl Fixture {
             vec![
                 ("edge", from("check_c2")),
                 ("decoder", decoder),
+                ("descriptor", descriptor),
+                ("witness", witness),
                 ("prompt", prompt),
             ],
         );
@@ -436,9 +484,13 @@ fn repeated_ranges_have_identical_checkpoints_with_worker_and_cache_reuse() {
         assert_eq!(perf["stages"][0]["name"], "range_origin");
         assert_eq!(perf["stages"][1]["name"], "embed_p0");
         // The initial embedding retains only small verified metadata now.
-        let initial_retained = perf["stages"][1]["cache"]["retained_bytes"].as_u64().unwrap();
+        let initial_retained = perf["stages"][1]["cache"]["retained_bytes"]
+            .as_u64()
+            .unwrap();
         assert!(initial_retained <= 16 * 1024);
-        if budget == 0 { assert_eq!(initial_retained, 0); }
+        if budget == 0 {
+            assert_eq!(initial_retained, 0);
+        }
         assert!(starts >= 1 && starts <= workers as u64);
         assert!(perf["main_cache"]["retained_bytes"].as_u64().unwrap() <= budget as u64);
         if budget >= 64 * 1024 * 1024 {
@@ -519,9 +571,7 @@ fn selective_input_failure_does_not_publish_and_unknown_mode_fails_early() {
     assert!(!f.base.join("target/staged-infer/runs").exists());
     let run = f.run(0, 1, false);
     let source = run.join("aux_p0_l0");
-    let dest = f
-        .base
-        .join("target/staged-infer/runs/rejected/aux_p0_l0");
+    let dest = f.base.join("target/staged-infer/runs/rejected/aux_p0_l0");
     fs::create_dir_all(&dest).unwrap();
     for file in ["input.json", "input_manifest.json"] {
         fs::copy(source.join(file), dest.join(file)).unwrap();
@@ -546,7 +596,8 @@ fn selective_input_failure_does_not_publish_and_unknown_mode_fails_early() {
         .unwrap();
     assert!(!result.status.success());
     assert!(
-        String::from_utf8_lossy(&result.stderr).contains("typed selection differs from verified payload"),
+        String::from_utf8_lossy(&result.stderr)
+            .contains("typed selection differs from verified payload"),
         "{}",
         String::from_utf8_lossy(&result.stderr)
     );

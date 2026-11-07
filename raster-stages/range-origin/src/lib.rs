@@ -21,6 +21,7 @@ use input::*;
 #[tile(kind = iter, description = "Open the empty sequence ranges start from")]
 pub fn empty_sequence() -> Draft<ActivationSequence> {
     let mut output = Draft::<ActivationSequence>::new();
+    output.model().set(ModelContext::default());
     output.start_position().set(0);
     output
 }

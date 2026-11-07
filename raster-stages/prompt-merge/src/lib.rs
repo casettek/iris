@@ -61,6 +61,7 @@ pub fn finish_ranked_step(step: RankedStep, hit: MergeMatch) -> MergeScan {
     // The scan runs left to right; retaining equal ranks implements the tie break.
     if hit.matched && (!best.matched || hit.rank < best.rank) {
         best = MergeCandidate {
+            model_fault: best.model_fault,
             matched: true,
             rank: hit.rank,
             left: step
@@ -130,3 +131,6 @@ pub fn carry_pieces(
     }
     output
 }
+
+pub mod identity;
+pub use identity::*;

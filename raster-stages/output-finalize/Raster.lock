@@ -1,26 +1,30 @@
 {
   "format": 1,
-  "program_commitment": "0f1332d7e650e157ac82865164d281a585894160324e4f80e2b20c6d60df4983",
+  "program_commitment": "859d6573579f16566a7630a0dd2d76203640b350538e0d3203f054c51162fbdb",
   "tiles": {
-    "begin_finalize_state": {
-      "image_id": "ca799bd966d7f3a13542206bcdde1f21ed44b8a0f810d5d691de9260a1c7d125",
-      "source_hash": "4b0cbcd6e5cd54ec0000000000001b85"
+    "begin_authenticated_finalize": {
+      "image_id": "da24146b26bc618ac504b112a27542ada067b59c11578838085175396dcc20fe",
+      "source_hash": "cc5c3eb0878655f60000000000001d55"
     },
     "begin_generated_output": {
-      "image_id": "9de35b30dbed96d09efa5e9d04993dabaafe7910d3fdc6aceb8f812ea7d0091e",
-      "source_hash": "4b0cbcd6e5cd54ec0000000000001b85"
+      "image_id": "07be8f17d7ada5aeca7fb0f7d2accc369e3974822ba1c126018f7900ce03c72e",
+      "source_hash": "efe364d92ca6fb3c00000000000018f0"
     },
-    "consume_decoder_token": {
-      "image_id": "339597c6276fbb9150f1e20c4dc37fade56a0a6d7be7b7e2cfca713e09f435a5",
-      "source_hash": "4b0cbcd6e5cd54ec0000000000001b85"
+    "consume_authenticated_decoder": {
+      "image_id": "e483bbc9a14e651099a1c24e8c9d815793dcfd70ec52b3e0a80c10bacbecced5",
+      "source_hash": "cc5c3eb0878655f60000000000001d55"
     },
     "copy_output_token_ids": {
-      "image_id": "234a1dafbda491b6f3aab953eb10342b546e861723c66ba085f6755b8b730e85",
-      "source_hash": "4b0cbcd6e5cd54ec0000000000001b85"
+      "image_id": "c4f7cb5e691a7e3452b2b45c187985ac5f8cb3319ac2b14cedc3685b8541a2d8",
+      "source_hash": "efe364d92ca6fb3c00000000000018f0"
     },
     "finish_finalize_state": {
-      "image_id": "58748d1754cf696edbd32c51339cf9ae344637adb89c708c1212644df34cbe13",
-      "source_hash": "4b0cbcd6e5cd54ec0000000000001b85"
+      "image_id": "2e56acce39facd557539e9f80740427de2f94049ae636c9ecdaa9d367cc731e6",
+      "source_hash": "efe364d92ca6fb3c00000000000018f0"
+    },
+    "verify_final_model_context": {
+      "image_id": "1a3723acd6e5b7c18717e9b03e39dbf18644c8d27bb9d68a40e6d65f447c4024",
+      "source_hash": "cc5c3eb0878655f60000000000001d55"
     }
   },
   "toolchain": {

@@ -4,6 +4,7 @@
 //! `input-embedding/src/input.rs`: the chain links stages by the structural
 //! commitment of their values, not by Rust type name.
 
+pub use model_identity::ModelContext;
 extern crate alloc;
 
 use alloc::string::String;
@@ -28,6 +29,7 @@ pub struct KeyRow {
 /// MUST match `ActivationSequence` in every stage that carries activations.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
 pub struct ActivationSequence {
+    pub model: ModelContext,
     pub rows: List<ActivationRow>,
     pub errors: List<String>,
     pub kv: List<KeyRow>,

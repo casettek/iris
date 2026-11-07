@@ -1,11 +1,11 @@
 use super::*;
-use serde::Serialize;
 use crate::{artifact_io::with_stage_sequence_scope, cache::materialization_key_from_stage_files};
 use inference_kernels::{
     kernels::prefill_prepare_aux::{run_prefill_prepare_aux_direct, PrefillPrepareAuxDirectInputs},
     weight_budget::WeightBudget,
 };
 use prefill_prepare_aux::input::{ActivationRow, PleLayer};
+use serde::Serialize;
 use std::{
     fs,
     path::PathBuf,
@@ -58,6 +58,7 @@ impl Fixture {
         let rows_per_page = (Q8_PAGE_SIZE as usize / row_bytes(width)) as u32;
         let tokens = [0, rows_per_page, rows_per_page, (rows - 1) as u32];
         let embedded = ActivationSequence {
+            model: Default::default(),
             rows: List::from(
                 tokens
                     .iter()
@@ -96,6 +97,14 @@ impl Fixture {
         let mut input = serde_json::Map::new();
         let mut manifest = serde_json::Map::new();
         for (name, value) in [
+            (
+                "witness",
+                raster::encode_raster_value(
+                    &model_identity::sparse::witness(self.layer.embeddings.pages.as_slice())
+                        .unwrap(),
+                )
+                .unwrap(),
+            ),
             ("layer", raster::encode_raster_value(&self.layer).unwrap()),
             (
                 "embedded",
@@ -497,4 +506,56 @@ fn selective_loading_benchmark() {
     }
     println!("PLE benchmark: table_bytes={} selected_embedding_bytes={} eager_mean_ms={:.3} selective_mean_ms={:.3}",
         f.layer.embeddings.byte_len(), 2 * Q8_PAGE_SIZE as usize + 3 * row_bytes(32), eager_ns as f64 / 5e6, selective_ns as f64 / 5e6);
+}
+
+#[test]
+fn auxiliary_sparse_witness_is_rechecked_after_cache_hit() {
+    let mut f = Fixture::new(4, 32);
+    let root = raster::core::tree::value_root(&f.layer).unwrap();
+    let d = model_identity::ModelDescriptor {
+        version: 1,
+        tokenizer: [1; 32],
+        decoder: [2; 32],
+        embedding: [3; 32],
+        head: [4; 32],
+        auxiliary: vec![root; 4],
+        transformer: vec![[5; 32]; 4],
+    };
+    let id = d
+        .model_id()
+        .unwrap()
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect::<String>();
+    let prompt = model_identity::ModelContext::bind(&d.encode().unwrap(), &id);
+    f.embedded.model = model_identity::ModelContext::embedding(&prompt, &Default::default());
+    f.write(false);
+    let cache = MaterializationCache::with_budget(Arc::new(WeightBudget::new(1 << 20)));
+    let run = || {
+        let inputs = crate::routines::prefill_prepare_aux::load_inputs_from_paths_with_cache(
+            &f.dir.join("input.json"),
+            &f.dir.join("input_manifest.json"),
+            &crate::cache::CachedInputs::new(),
+            Some(&cache),
+        )
+        .unwrap();
+        crate::routines::prefill_prepare_aux::run_direct(&inputs).unwrap()
+    };
+    assert_eq!(run().model.fault, 0);
+    let mut witness = model_identity::sparse::witness(f.layer.embeddings.pages.as_slice()).unwrap();
+    let mut paths = witness.paths.as_slice().to_vec();
+    paths[0].siblings = BytesPage::__from_parts(0, 0, vec![0; 31]);
+    witness.paths = paths.into();
+    f.release_mappings();
+    let (data, index, commitment) = raster::encode_raster_value(&witness).unwrap();
+    fs::write(f.dir.join("witness.bin"), data).unwrap();
+    fs::write(f.dir.join("witness.rindex"), index).unwrap();
+    let manifest_path = f.dir.join("input_manifest.json");
+    let mut manifest: serde_json::Value =
+        serde_json::from_slice(&fs::read(&manifest_path).unwrap()).unwrap();
+    manifest["witness"]["commitment"] = commitment.into();
+    fs::write(manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+    assert_ne!(run().model.fault, 0);
+    f.write(false);
+    assert_eq!(run().model.fault, 0);
 }

@@ -130,7 +130,16 @@ fn production_reference_ids() {
 #[test]
 fn batch_boundaries_and_recorded_budget_fault() {
     let batch = run_prep::MERGES_PER_STAGE;
-    for merges_needed in [0, 1, batch - 1, batch, batch + 1, 2 * batch - 1, 2 * batch, 2 * batch + 1] {
+    for merges_needed in [
+        0,
+        1,
+        batch - 1,
+        batch,
+        batch + 1,
+        2 * batch - 1,
+        2 * batch,
+        2 * batch + 1,
+    ] {
         // Distinct single-character pieces, more than the ASCII letters.
         let text = (0..=merges_needed)
             .map(|i| char::from_u32(0x100 + i as u32).unwrap())
@@ -157,7 +166,10 @@ fn batch_boundaries_and_recorded_budget_fault() {
                 initial_pieces: &merged,
             })
             .unwrap();
-            assert_eq!(early.context.fault, prompt_prepare::input::FAULT_MERGES_INCOMPLETE);
+            assert_eq!(
+                early.context.fault,
+                prompt_prepare::input::FAULT_MERGES_INCOMPLETE
+            );
         }
         let batches = run_prep::tokenizer_repeat_count(merged.pieces.len()).unwrap() + 1;
         for index in 0..batches {

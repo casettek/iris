@@ -13,12 +13,12 @@ use inference_artifacts::{
     INFERENCE_RUN_SPEC_TOML, MODEL_ARTIFACTS_DIR, MODEL_MANIFEST_JSON,
 };
 use inference_kernels::tensor::{dot_bits, matvec_from_source, Matrix, MatrixSource};
-use sequence_check::input::FinalHeadParams;
 use prefill_range::input::{
     pack_i32s, unpack_i32s, ActivationRow, ActivationSequence, LayerParams, PleLayerInputs, PleRow,
     TransformerLayer,
 };
 use raster::{Bytes, List};
+use sequence_check::input::FinalHeadParams;
 use sha2::{Digest, Sha256};
 
 const ONE: i32 = 1 << 16;
@@ -162,6 +162,7 @@ fn final_head_logits_feed_shared_decode_select_tie_break() {
         projection: DirectQ8View::new(model.q8_matrix("projection").unwrap()),
     };
     let activations = prefill_range::input::ActivationSequence {
+        model: Default::default(),
         rows: List::from(vec![prefill_range::input::ActivationRow {
             token_id: 1,
             values: pack_i32_page(&one_hot_rows(&[Some(0)])),
@@ -267,6 +268,7 @@ fn native_decode_rotary_outputs_match_prefill_across_chunks() {
         ple_layer_projection: paged(&identity),
     };
     let empty = ActivationSequence {
+        model: Default::default(),
         rows: List::new(),
         errors: List::new(),
         kv: List::new(),
@@ -290,6 +292,7 @@ fn native_decode_rotary_outputs_match_prefill_across_chunks() {
         ..empty.clone()
     };
     let ple = PleLayerInputs {
+        model: Default::default(),
         layer_idx: 0,
         rows: List::from(vec![
             PleRow {

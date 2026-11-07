@@ -13,3 +13,11 @@ profiling = ["raster/profiling"]
 raster = { path = "../../../raster/crates/raster", default-features = false }
 serde = { version = "1.0", default-features = false, features = ["derive", "alloc"] }
 sha2 = { version = "0.10", default-features = false, features = ["compress"] }
+
+model-identity = { path = "../../crates/model/identity" }
+
+# Sequences run on the host; only the library is built for proof guests.
+[[bin]]
+name = "output-finalize"
+path = "src/main.rs"
+required-features = ["std"]

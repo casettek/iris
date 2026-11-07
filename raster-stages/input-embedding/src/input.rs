@@ -1,5 +1,6 @@
 //! Shared Rastered data types for the `input-embedding` stage.
 
+pub use model_identity::ModelContext;
 extern crate alloc;
 
 use alloc::string::String;
@@ -80,6 +81,7 @@ pub struct KeyRow {
 /// The stage's authorized output, and the pipeline's activation type.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
 pub struct ActivationSequence {
+    pub model: ModelContext,
     pub rows: List<ActivationRow>,
     pub errors: List<String>,
     /// This layer's K/V cache after this stage: everything it was handed as
@@ -151,3 +153,5 @@ pub fn q8_row_at(
     det_num::q8::dequantize_row(bytes, &mut values).map_err(String::from)?;
     Ok(values)
 }
+
+pub use model_identity::sparse::{SparseHeader, SparsePath, SparseWitness};

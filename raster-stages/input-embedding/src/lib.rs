@@ -95,8 +95,12 @@ pub fn range_start(previous_start: u32, previous_rows: RowCount) -> Result<u32> 
 /// positions. Set-once, so it happens here rather than inside the per-token
 /// append.
 #[tile(kind = iter, description = "Open this range's activation sequence at its start position")]
-pub fn begin_prompt_activations(start_position: u32) -> Draft<ActivationSequence> {
+pub fn begin_prompt_activations(
+    start_position: u32,
+    model: ModelContext,
+) -> Draft<ActivationSequence> {
     let mut output = Draft::<ActivationSequence>::new();
+    output.model().set(model);
     output.start_position().set(start_position);
     output
 }
@@ -174,3 +178,6 @@ pub fn assert_all_tokens_embedded(error_count: u32, first_error: String) -> Resu
         ))
     }
 }
+
+pub mod identity;
+pub use identity::*;

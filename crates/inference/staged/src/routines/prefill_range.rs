@@ -60,7 +60,7 @@ pub fn run_direct_with_weight_cache(
     inputs: &Inputs,
     weight_cache: Option<&PrefillRangeWeightCache>,
 ) -> Result<ActivationSequence> {
-    run_prefill_range_direct_with_weight_cache(
+    let mut output = run_prefill_range_direct_with_weight_cache(
         PrefillRangeDirectInputs {
             activations: &inputs.activations,
             layer: &inputs.layer,
@@ -71,7 +71,18 @@ pub fn run_direct_with_weight_cache(
             ple: &inputs.ple,
         },
         weight_cache,
-    )
+    )?;
+    output.model = model_identity::stream::verify(
+        output.model,
+        &model_identity::stream::digest(inputs.layer.as_ref()),
+        model_identity::Role::Transformer(inputs.layer.params.layer_idx),
+    );
+    output.model.require(
+        !(inputs.prior_kv.model.is_origin()
+            || inputs.prior_kv.model.producer == model_identity::context::EMBEDDING)
+            || inputs.prior_kv.kv.is_empty(),
+    );
+    Ok(output)
 }
 
 fn load_inputs_from_initialized_runtime(

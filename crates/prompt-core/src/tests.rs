@@ -145,7 +145,10 @@ fn a_bad_cut_is_recorded_and_the_stage_still_finishes() {
 
     let (context, state) = sliced(4, 2, 9);
     let next = finish_slice_context(&context, &state, &BoundaryHit::default());
-    assert_eq!((next.fault, next.next_piece, next.complete), (FAULT_CUT_BEYOND_TEXT, 4, true));
+    assert_eq!(
+        (next.fault, next.next_piece, next.complete),
+        (FAULT_CUT_BEYOND_TEXT, 4, true)
+    );
 
     let (context, state) = sliced(4, 0, 2);
     let next = finish_slice_context(&context, &state, &BoundaryHit { found: true });
@@ -177,12 +180,16 @@ fn the_first_fault_is_the_one_kept() {
         ..PromptContext::default()
     };
     let best = MergeCandidate {
+        model_fault: 0,
         matched: true,
         left: 1,
         ..MergeCandidate::default()
     };
     let next = finish_token_context(&context, &best, 3);
-    assert_eq!((next.fault, next.fault_position), (FAULT_MERGES_INCOMPLETE, 1));
+    assert_eq!(
+        (next.fault, next.fault_position),
+        (FAULT_MERGES_INCOMPLETE, 1)
+    );
     assert_eq!(next.prompt_tokens, 3);
 
     let next = finish_token_context(&context, &MergeCandidate::default(), 3);

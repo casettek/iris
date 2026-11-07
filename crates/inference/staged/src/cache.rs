@@ -288,8 +288,13 @@ impl CachedStageValue {
 
     pub fn as_embedding_prompt(&self) -> Result<embedding_input::PromptTokenization> {
         match self {
-            // The stage reads only the ids, and has its own copy of the type.
+            // Embedding consumes both token IDs and the authenticated model context.
             Self::PromptTokenization(value) => Ok(embedding_input::PromptTokenization {
+                context: input_embedding::prompt::PromptContext {
+                    model: value.context.model.clone(),
+                    model_id: value.context.model_id.clone(),
+                    ..Default::default()
+                },
                 token_ids: value.token_ids.clone(),
                 ..Default::default()
             }),
@@ -371,6 +376,7 @@ impl CachedStageValue {
     /// The empty starting sequence is consumed exactly like an embedded range.
     pub fn from_range_origin(value: origin_input::ActivationSequence) -> Self {
         Self::EmbeddedActivations(embedding_input::ActivationSequence {
+            model: value.model,
             rows: map_list(&value.rows, |row| embedding_input::ActivationRow {
                 token_id: row.token_id,
                 values: row.values.clone(),
@@ -390,6 +396,7 @@ fn check_activation_from_range(
     source: &range_input::ActivationSequence,
 ) -> check_input::ActivationSequence {
     check_input::ActivationSequence {
+        model: source.model.clone(),
         rows: map_list(&source.rows, |row| check_input::ActivationRow {
             token_id: row.token_id,
             values: row.values.clone(),
@@ -417,6 +424,7 @@ fn aux_activation_from_embedding(
     source: &embedding_input::ActivationSequence,
 ) -> aux_input::ActivationSequence {
     aux_input::ActivationSequence {
+        model: source.model.clone(),
         rows: map_list(&source.rows, |row| aux_input::ActivationRow {
             token_id: row.token_id,
             values: row.values.clone(),
@@ -435,6 +443,7 @@ fn aux_activation_from_range(
     source: &range_input::ActivationSequence,
 ) -> aux_input::ActivationSequence {
     aux_input::ActivationSequence {
+        model: source.model.clone(),
         rows: map_list(&source.rows, |row| aux_input::ActivationRow {
             token_id: row.token_id,
             values: row.values.clone(),
@@ -453,6 +462,7 @@ fn range_activation_from_embedding(
     source: &embedding_input::ActivationSequence,
 ) -> range_input::ActivationSequence {
     range_input::ActivationSequence {
+        model: source.model.clone(),
         rows: map_list(&source.rows, |row| range_input::ActivationRow {
             token_id: row.token_id,
             values: row.values.clone(),
@@ -469,6 +479,7 @@ fn range_activation_from_embedding(
 
 fn range_ple_from_aux(source: &aux_input::PleLayerInputs) -> range_input::PleLayerInputs {
     range_input::PleLayerInputs {
+        model: source.model.clone(),
         layer_idx: source.layer_idx,
         rows: map_list(&source.rows, |row| range_input::PleRow {
             values: row.values.clone(),
@@ -479,6 +490,7 @@ fn range_ple_from_aux(source: &aux_input::PleLayerInputs) -> range_input::PleLay
 
 fn output_edge_from_decode(source: &check_input::DecodeEdge) -> output_input::DecodeEdge {
     output_input::DecodeEdge {
+        model: source.model.clone(),
         has_selected: source.has_selected,
         decode_position: source.decode_position,
         token_id: source.token_id,
@@ -680,7 +692,19 @@ mod tests {
 
     #[test]
     fn cached_prompt_converts_to_embedding_input() {
+        let model = model_identity::ModelContext {
+            model_id: "ab".repeat(32),
+            fault: 7,
+            layers: 2,
+            producer: model_identity::context::PROMPT,
+            ..Default::default()
+        };
         let cached = CachedStageValue::PromptTokenization(prompt_input::PromptTokenization {
+            context: prompt_input::PromptContext {
+                model: model.clone(),
+                model_id: model.model_id.clone(),
+                ..Default::default()
+            },
             token_ids: List::from(vec![7, 8]),
             ..Default::default()
         });
@@ -688,6 +712,8 @@ mod tests {
         let prompt = cached.as_embedding_prompt().unwrap();
 
         assert_eq!(prompt.token_ids.as_slice(), &[7, 8]);
+        assert_eq!(prompt.context.model, model);
+        assert_eq!(prompt.context.model_id, model.model_id);
     }
 
     fn temp_dir(label: &str) -> PathBuf {

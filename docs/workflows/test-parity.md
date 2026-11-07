@@ -315,3 +315,24 @@ cache effects. Each `result.json` identifies its `chain_dir`. Compare every
 entry of `checkpoint_trace.json` and `checkpoints.txt`, not just final text or
 EOS, and inspect `staged-performance.json` for embedding/check timings
 and sampled process-tree memory. Then repeat the original full-length run.
+
+## Model-fault self-replay
+
+The challenge leg also executes substituted tokenizer inputs at each prompt
+stage, embedding inputs in prompt and claimed ranges, auxiliary layers,
+transformer weights, and the output head through both implementations. It includes
+exchanged auxiliary roles. Each case retains the original statement model ID
+and uses coherent outer commitments for the substituted artifacts.
+
+Two additional cases replace consumed decoder data: one retains the original
+membership witness, and one supplies a rebuilt witness for the changed decoder.
+These tests change consumed entries, including hidden special-token text.
+
+Every checkpoint must agree between Raster and native execution, and final claim
+acceptance must nevertheless reject the committed model fault. This is distinct
+from the existing tests that deliberately falsify a checkpoint and require a
+replay divergence.
+
+Explicit guest and complete authored finalization sequence checks are listed in
+[model identity validation](../proposals/model-identity-validation.md), together
+with sparse witness storage/cycle measurements and the independent pipeline gaps.

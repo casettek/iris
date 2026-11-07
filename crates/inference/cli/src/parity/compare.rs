@@ -26,7 +26,8 @@ pub(super) struct RangedShape {
 impl RangedShape {
     /// Reads the shape back from an executed chain's stage inventory.
     pub(super) fn from_names(names: &[String]) -> Self {
-        let count = |prefix: &str| names.iter().filter(|name| name.starts_with(prefix)).count() as u32;
+        let count =
+            |prefix: &str| names.iter().filter(|name| name.starts_with(prefix)).count() as u32;
         Self {
             layers: count("range_p0_l"),
             prompt_ranges: count("embed_p"),
@@ -404,7 +405,9 @@ mod tests {
         assert_eq!(names.len(), 3 + 3 * 12 + 2 * 10 + 1);
         assert_eq!(RangedShape::from_names(&names), shape);
         assert_eq!(names.last().map(String::as_str), Some("output_finalize"));
-        assert!(!names.iter().any(|name| name.starts_with("decode_") && name != "decode_init"));
+        assert!(!names
+            .iter()
+            .any(|name| name.starts_with("decode_") && name != "decode_init"));
     }
 
     #[test]

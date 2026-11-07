@@ -1,16 +1,16 @@
 pub mod artifact_io;
 pub mod cache;
 pub mod chain_runner;
+mod embedding;
 pub mod executor;
+mod head;
 pub mod parity;
 mod ple;
-mod verified_weights;
-mod embedding;
-mod head;
-#[cfg(test)]
-mod weight_tests;
 pub mod routines;
 pub mod uncheckpointed;
+mod verified_weights;
+#[cfg(test)]
+mod weight_tests;
 pub mod weights;
 pub mod worker;
 
@@ -26,3 +26,5 @@ pub use inference_artifacts::{
 pub use inference_kernels::{kernels, prefill_range, tensor};
 pub use kernels::prefill_range::{run_prefill_range_direct, PrefillRangeDirectInputs};
 pub use uncheckpointed::{UncheckpointedInferenceConfig, UncheckpointedInferenceExecutor};
+
+mod prompt_identity;

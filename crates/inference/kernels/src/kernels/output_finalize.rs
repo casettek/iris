@@ -8,12 +8,15 @@ pub struct OutputFinalizeDirectInputs<'a> {
     pub edge: &'a DecodeEdge,
     pub decoder: &'a DecoderTable,
     pub context: &'a PromptContext,
+    pub descriptor: &'a raster::BytesPage,
+    pub witness: &'a output_finalize::input::DecoderWitness,
 }
 
 /// This stage's copy of the prompt context: the stages share its source, not a
 /// Rust type.
 pub fn prompt_context(source: &prompt_prepare::input::PromptContext) -> PromptContext {
     PromptContext {
+        model: source.model.clone(),
         input_text_sha256: source.input_text_sha256.clone(),
         model_id: source.model_id.clone(),
         raw_prompt: source.raw_prompt,
@@ -30,27 +33,65 @@ pub fn prompt_context(source: &prompt_prepare::input::PromptContext) -> PromptCo
 pub fn run_output_finalize_direct(
     inputs: OutputFinalizeDirectInputs<'_>,
 ) -> Result<GeneratedOutput> {
-    let mut state = output_finalize::initial_finalize_state();
+    let mut state =
+        output_finalize::authenticated_finalize_state(inputs.descriptor, &inputs.context.model_id);
+    state.model_fault |=
+        output_finalize::final_context_fault(&inputs.edge.model, inputs.context, inputs.descriptor);
     for token_id in inputs.edge.generated_token_ids.iter().copied() {
         let token = inputs
             .decoder
             .tokens
             .get(token_id as usize)
             .ok_or_else(|| anyhow::anyhow!("decoder table has no token id {token_id}"))?;
+        let siblings = inputs
+            .witness
+            .paths
+            .get(token_id as usize)
+            .ok_or_else(|| anyhow::anyhow!("decoder witness has no token id {token_id}"))?;
+        state = output_finalize::advance_authenticated_finalize(
+            state,
+            inputs.descriptor,
+            &inputs.context.model_id,
+            token_id,
+            inputs.witness.token_count,
+            &siblings.siblings,
+            token.clone(),
+        );
+    }
+    finish_output(state, inputs.edge, inputs.context)
+}
+
+/// Output discovery for direct-only imports without a staged commitment package.
+/// Explicitly marks the record unverified; this path cannot authorize a claim.
+pub fn run_output_finalize_discovery(
+    edge: &DecodeEdge,
+    decoder: &DecoderTable,
+    context: &PromptContext,
+) -> Result<GeneratedOutput> {
+    let mut state = output_finalize::initial_finalize_state();
+    state.model_fault = 1;
+    for &token_id in edge.generated_token_ids.iter() {
+        let token = decoder
+            .tokens
+            .get(token_id as usize)
+            .ok_or_else(|| anyhow::anyhow!("decoder table has no token id {token_id}"))?;
         state = output_finalize::advance_finalize_state(state, token_id, token.clone());
     }
+    finish_output(state, edge, context)
+}
+
+fn finish_output(
+    state: output_finalize::input::FinalizeState,
+    edge: &DecodeEdge,
+    context: &PromptContext,
+) -> Result<GeneratedOutput> {
     let state = output_finalize::finished_state(state);
-    let output_fault = output_fault_of(&state, inputs.edge.has_selected, inputs.context);
-    let context = inputs.context;
+    let output_fault = output_fault_of(&state, edge.has_selected, context);
     Ok(GeneratedOutput {
+        model_fault: state.model_fault,
         generated_token_count: state.count,
         generated_token_ids: List::from(
-            inputs
-                .edge
-                .generated_token_ids
-                .iter()
-                .copied()
-                .collect::<Vec<_>>(),
+            edge.generated_token_ids.iter().copied().collect::<Vec<_>>(),
         ),
         generated_token_ids_sha256: sha256_hex(state.json.as_bytes()),
         output_text_sha256: sha256_hex(state.text.as_bytes()),
@@ -60,10 +101,10 @@ pub fn run_output_finalize_direct(
         } else {
             String::from("max_new_tokens")
         },
-        claim_mismatches: inputs.edge.claim_mismatches,
-        first_claim_mismatch_position: inputs.edge.first_claim_mismatch_position,
-        check_fault: inputs.edge.check_fault,
-        check_fault_position: inputs.edge.check_fault_position,
+        claim_mismatches: edge.claim_mismatches,
+        first_claim_mismatch_position: edge.first_claim_mismatch_position,
+        check_fault: edge.check_fault,
+        check_fault_position: edge.check_fault_position,
         output_fault,
         input_text_sha256: context.input_text_sha256.clone(),
         model_id: context.model_id.clone(),

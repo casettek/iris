@@ -40,6 +40,7 @@ pub fn run_prefill_prepare_aux_direct(
     };
 
     Ok(PleLayerInputs {
+        model: inputs.embedded.model.auxiliary(params.layer_idx),
         layer_idx: params.layer_idx,
         rows: List::from(rows),
         errors: List::new(),
@@ -102,8 +103,11 @@ fn prepare_row(
 
 fn ple_embedding(token_id: u32, layer: &PleLayer, params: &PleLayerParams) -> Result<Vec<i32>> {
     let page_size = layer.embeddings.page_size();
-    let byte_off =
-        prefill_prepare_aux::ple_row_offset(token_id, params.ple_width, layer.embeddings.byte_len());
+    let byte_off = prefill_prepare_aux::ple_row_offset(
+        token_id,
+        params.ple_width,
+        layer.embeddings.byte_len(),
+    );
     let page_idx = if page_size == 0 {
         0
     } else {

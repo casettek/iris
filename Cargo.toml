@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/det-num",
     "crates/prompt-core",
+    "crates/model/identity",
     "crates/model/detwgt",
     "crates/model/import",
     "crates/model/run-prep",
@@ -27,6 +28,7 @@ members = [
 default-members = [
     "crates/det-num",
     "crates/prompt-core",
+    "crates/model/identity",
     "crates/model/detwgt",
     "crates/model/import",
     "crates/model/run-prep",

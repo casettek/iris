@@ -1,5 +1,6 @@
 //! Boundary and work types for generated-token finalization.
 
+pub use model_identity::ModelContext;
 extern crate alloc;
 
 use alloc::string::String;
@@ -9,6 +10,7 @@ use serde::{Deserialize, Serialize};
 /// MUST match the output of `decode-init` and `sequence-check`.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
 pub struct DecodeEdge {
+    pub model: ModelContext,
     pub has_selected: bool,
     pub decode_position: u32,
     pub token_id: u32,
@@ -44,6 +46,7 @@ pub struct DecoderTable {
 /// static repeat count pins that bound.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
 pub struct FinalizeState {
+    pub model_fault: u32,
     pub count: u32,
     pub json: String,
     pub text: String,
@@ -59,6 +62,8 @@ pub struct FinalizeState {
 /// Final authorized inference output.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
 pub struct GeneratedOutput {
+    /// Nonzero when consumed model data failed authentication.
+    pub model_fault: u32,
     pub generated_token_count: u32,
     pub generated_token_ids: List<u32>,
     pub generated_token_ids_sha256: String,
@@ -121,4 +126,16 @@ pub fn output_fault_description(fault: u32) -> &'static str {
         OUTPUT_FAULT_EDGE_DISAGREES => "the decode edge's selection flag disagrees with its tokens",
         _ => "an unknown fault",
     }
+}
+
+/// Reusable membership paths; separate from the decoder's identity.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
+pub struct DecoderWitness {
+    pub token_count: u64,
+    pub paths: List<DecoderProof>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
+pub struct DecoderProof {
+    pub siblings: BytesPage,
 }

@@ -29,6 +29,7 @@ pub struct CheckPosition {
 /// Rust type.
 pub fn prompt_context(source: &prompt_prepare::input::PromptContext) -> PromptContext {
     PromptContext {
+        model: source.model.clone(),
         input_text_sha256: source.input_text_sha256.clone(),
         model_id: source.model_id.clone(),
         raw_prompt: source.raw_prompt,
@@ -191,6 +192,7 @@ pub fn decode_edge(
     );
     let fault = check_fault_of(&summary, &errors, frame);
     Ok(DecodeEdge {
+        model: prior.model.clone(),
         has_selected: summary.has_selected,
         decode_position: summary.decode_position,
         token_id: summary.token_id,
@@ -276,10 +278,16 @@ pub fn run_sequence_check_direct(inputs: SequenceCheckDirectInputs<'_>) -> Resul
                 .ok_or_else(|| anyhow::anyhow!("the head scored no token"))
         })
         .collect::<Result<Vec<_>>>()?;
-    decode_edge(
+    let mut edge = decode_edge(
         &positions,
         &selections,
         inputs.prior,
         &check_frame(inputs.activations, inputs.prior, inputs.context),
-    )
+    )?;
+    edge.model = inputs.activations.model.head(
+        &inputs.previous.model,
+        &inputs.context.model,
+        &inputs.prior.model,
+    );
+    Ok(edge)
 }

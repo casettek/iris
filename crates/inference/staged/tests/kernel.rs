@@ -92,6 +92,7 @@ fn tiny_layer(kv_donor_layer: i32) -> TransformerLayer {
 
 fn activation_sequence(values: &[i32]) -> ActivationSequence {
     ActivationSequence {
+        model: Default::default(),
         rows: List::from(vec![ActivationRow {
             token_id: 7,
             values: pack_i32s(values),
@@ -104,6 +105,7 @@ fn activation_sequence(values: &[i32]) -> ActivationSequence {
 
 fn donor_sequence() -> ActivationSequence {
     ActivationSequence {
+        model: Default::default(),
         rows: List::new(),
         errors: List::new(),
         kv: List::from(vec![KeyRow {
@@ -117,6 +119,7 @@ fn donor_sequence() -> ActivationSequence {
 
 fn ple_inputs() -> PleLayerInputs {
     PleLayerInputs {
+        model: Default::default(),
         layer_idx: 0,
         rows: List::from(vec![PleRow {
             values: pack_i32s(&[ONE; N]),

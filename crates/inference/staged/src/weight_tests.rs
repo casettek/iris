@@ -196,11 +196,16 @@ fn prompt_fixture(pages: usize, width: u32) -> (Fixture, EmbeddingTable, PromptT
         ..Default::default()
     };
     f.write("embedding", &table);
+    f.write(
+        "witness",
+        &model_identity::sparse::witness(table.values.pages.as_slice()).unwrap(),
+    );
     f.write("prompt", &prompt);
     f.write("claimed", &input_embedding::input::ClaimedOutput::default());
     f.write(
         "previous",
         &input_embedding::input::ActivationSequence {
+            model: Default::default(),
             rows: List::new(),
             errors: List::new(),
             kv: List::new(),
@@ -266,6 +271,10 @@ fn embedding_fixed_point_boundaries_and_empty_prompt() {
     for scale in [i32::MIN, i32::MAX, 0, ONE, -ONE] {
         table.embedding_scale = scale;
         f.write("embedding", &table);
+        f.write(
+            "witness",
+            &model_identity::sparse::witness(table.values.pages.as_slice()).unwrap(),
+        );
         assert_eq!(f.prompt(None).unwrap(), eager_prompt(&table, &prompt));
     }
     prompt.token_ids = List::new();
@@ -299,6 +308,10 @@ fn embedding_rejects_cross_page_rows_and_bad_geometry() {
     table.values.pages[0] =
         BytesPage::__from_parts(0, 4, table.values.pages[0].as_slice().to_vec());
     f.write("embedding", &table);
+    f.write(
+        "witness",
+        &model_identity::sparse::witness(table.values.pages.as_slice()).unwrap(),
+    );
     assert!(f.prompt(None).is_err());
 }
 
@@ -311,6 +324,10 @@ fn embedding_rejects_corruption_and_separates_commitments_and_paths() {
         .unwrap();
     table.embedding_scale += 1;
     f.write("embedding", &table);
+    f.write(
+        "witness",
+        &model_identity::sparse::witness(table.values.pages.as_slice()).unwrap(),
+    );
     let second = f
         .selected(prompt.token_ids.as_slice(), Some(&cache))
         .unwrap();
@@ -327,12 +344,20 @@ fn embedding_rejects_corruption_and_separates_commitments_and_paths() {
     fs::write(&path, data).unwrap();
     assert!(f.prompt(Some(&cache)).is_err());
     f.write("embedding", &table);
+    f.write(
+        "witness",
+        &model_identity::sparse::witness(table.values.pages.as_slice()).unwrap(),
+    );
     let mut other_table = table.clone();
     other_table.embedding_scale += 1;
     let (_, index, _) = raster::encode_raster_value(&other_table).unwrap();
     fs::write(f.dir.join("embedding.rindex"), index).unwrap();
     assert!(f.prompt(Some(&cache)).is_err());
     f.write("embedding", &table);
+    f.write(
+        "witness",
+        &model_identity::sparse::witness(table.values.pages.as_slice()).unwrap(),
+    );
     f.update(
         "input_manifest.json",
         "embedding",
@@ -359,21 +384,39 @@ fn embedding_multi_page_authenticated_raster_parity() {
     for scale in [i32::MIN, i32::MAX] {
         table.embedding_scale = scale;
         f.write("embedding", &table);
+        f.write(
+            "witness",
+            &model_identity::sparse::witness(table.values.pages.as_slice()).unwrap(),
+        );
         f.compare_raster(
             "input-embedding",
             &f.prompt(None).unwrap(),
             &format!("prompt-scale-{scale}"),
         );
     }
-    // Raster permits zero-width embedding rows; the eager prompt kernel rejects them.
+    // Both execution paths reject rows without a whole Q8_0 block.
     let mut zero = table;
     zero.hidden_size = 0;
     f.write("embedding", &zero);
-    f.compare_raster(
-        "input-embedding",
-        &f.prompt(None).unwrap(),
-        "zero-width-raster",
+    f.write(
+        "witness",
+        &model_identity::sparse::witness(zero.values.pages.as_slice()).unwrap(),
     );
+    assert!(f.prompt(None).is_err());
+    let bin = PathBuf::from(std::env::var_os("STAGED_INFER_REPLAY_BIN_DIR").unwrap());
+    let dest = f.dir.join("zero-width-raster");
+    fs::create_dir(&dest).unwrap();
+    let result = std::process::Command::new(bin.join("input-embedding"))
+        .arg("--input")
+        .arg(f.dir.join("input.json"))
+        .arg("--input-manifest")
+        .arg(f.dir.join("input_manifest.json"))
+        .env("RASTER_AUTH", "1")
+        .env("RASTER_OUTPUT_DIR", &dest)
+        .output()
+        .unwrap();
+    assert!(!result.status.success());
+    assert!(!dest.join("output.bin").exists());
 }
 
 #[test]
@@ -427,6 +470,7 @@ const HEAD_WIDTH: u32 = 256;
 /// The row before the claimed range, which predicts its first token.
 fn head_previous(width: u32) -> ActivationSequence {
     ActivationSequence {
+        model: Default::default(),
         rows: List::from(vec![ActivationRow {
             token_id: 0,
             values: pack_i32s(&vec![ONE; width as usize]),
@@ -465,8 +509,14 @@ fn head_fixture(pages: usize) -> (Fixture, FinalHead, ActivationSequence) {
         values: pack_i32s(values),
     };
     let activations = ActivationSequence {
+        model: Default::default(),
         rows: List::from(vec![
-            row(1, &(0..width).map(|i| (i as i32 - 128) * 731).collect::<Vec<_>>()),
+            row(
+                1,
+                &(0..width)
+                    .map(|i| (i as i32 - 128) * 731)
+                    .collect::<Vec<_>>(),
+            ),
             row(0, &vec![ONE; width as usize]),
         ]),
         errors: List::new(),
@@ -614,7 +664,10 @@ fn a_row_of_the_wrong_width_is_published_as_a_fault() {
     f.write("activations", &activations);
     let edge = f.check(None).unwrap();
     assert_eq!(edge, eager_check(&head, &activations));
-    assert_eq!(edge.check_fault, sequence_check::input::CHECK_FAULT_UNSCORED);
+    assert_eq!(
+        edge.check_fault,
+        sequence_check::input::CHECK_FAULT_UNSCORED
+    );
 }
 
 #[test]
@@ -644,6 +697,7 @@ fn head_rejects_missing_extra_misaligned_and_partial_rows() {
     split.params.norm_weights = pack_i32s(&[ONE; 224]);
     split.projection = Bytes::paged(vec![0; 220 * 238]).unwrap();
     let activations = ActivationSequence {
+        model: Default::default(),
         rows: List::from(vec![
             ActivationRow {
                 token_id: 1,
@@ -782,8 +836,23 @@ fn head_multi_page_authenticated_raster_parity() {
     .env("RASTER_TRACE_FORMAT", "json")
     .output()
     .unwrap();
-    assert!(!rejected.status.success());
-    assert!(!dest.join("output.bin").exists());
+    assert!(
+        rejected.status.success(),
+        "{}",
+        String::from_utf8_lossy(&rejected.stderr)
+    );
+    // Authored head execution publishes a semantic error instead of aborting.
+    let value = raster_runtime::read_raster_value(
+        &dest.join("output.bin"),
+        &dest.join("output.rindex"),
+        &raster_runtime::ReadLimits::default(),
+    )
+    .unwrap();
+    let raster_runtime::RasterValue::Struct { fields, .. } = value else {
+        panic!("expected decode edge");
+    };
+    assert!(fields.iter().any(|(name, value)| name == "check_fault"
+        && matches!(value, raster_runtime::RasterValue::Int { value, .. } if *value != 0)));
 }
 
 #[test]
@@ -971,4 +1040,181 @@ fn standalone_publishes_exact_outputs_and_rejects_corruption_before_publication(
     for file in ["output.bin", "output.rindex", "output_manifest.json"] {
         assert!(!dest.join(file).exists());
     }
+}
+
+#[test]
+fn sparse_embedding_checks_current_proofs_with_warm_cache() {
+    let (f, table, mut prompt) = prompt_fixture(4, 32);
+    let root = raster::core::tree::value_root(&table).unwrap();
+    let descriptor = model_identity::ModelDescriptor {
+        version: 1,
+        tokenizer: [1; 32],
+        decoder: [2; 32],
+        embedding: root,
+        head: [3; 32],
+        auxiliary: vec![[4; 32]],
+        transformer: vec![[5; 32]],
+    };
+    let id = descriptor
+        .model_id()
+        .unwrap()
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect::<String>();
+    prompt.context.model = model_identity::ModelContext::bind(&descriptor.encode().unwrap(), &id);
+    prompt.context.model_id = id;
+    prompt.token_ids = vec![0].into();
+    f.write("prompt", &prompt);
+    let witness = model_identity::sparse::witness(table.values.pages.as_slice()).unwrap();
+    let cache = MaterializationCache::with_budget(Arc::new(WeightBudget::new(1 << 20)));
+    let run = || f.prompt(Some(&cache)).unwrap();
+    let check = |label: &str, clean: bool| {
+        let output = run();
+        assert_eq!(output.model.fault == 0, clean, "{label}");
+        if std::env::var_os("STAGED_INFER_REPLAY_BIN_DIR").is_some() {
+            f.compare_raster("input-embedding", &output, label);
+        }
+    };
+    check("sparse-honest", true);
+    let mut invalid = witness.clone();
+    let mut paths = invalid.paths.as_slice().to_vec();
+    paths[0] = paths[1].clone();
+    invalid.paths = paths.into();
+    f.write("witness", &invalid);
+    check("sparse-warm-invalid-proof", false);
+    assert_ne!(
+        run().model.fault,
+        0,
+        "cached metadata must not cache the old witness verdict"
+    );
+    f.write("witness", &witness);
+    check("sparse-restored", true);
+
+    let mutate = |index: usize| {
+        let mut changed = table.clone();
+        let mut pages = changed.values.pages.as_slice().to_vec();
+        let page = &pages[index];
+        let mut bytes = page.as_slice().to_vec();
+        bytes[2] ^= 1;
+        pages[index] = BytesPage::__from_parts(page.index(), page.offset(), bytes);
+        changed.values.pages = pages.into();
+        changed
+    };
+    f.write("embedding", &mutate(2));
+    check("sparse-unread-page", true);
+    assert_eq!(
+        run().model.fault,
+        0,
+        "unchanged consumed page authenticates without reading other pages"
+    );
+    f.write("embedding", &mutate(0));
+    check("sparse-consumed-page", false);
+    assert_ne!(
+        run().model.fault,
+        0,
+        "consumed bytes must match the original root"
+    );
+    let replacement = model_identity::sparse::witness(mutate(0).values.pages.as_slice()).unwrap();
+    f.write("witness", &replacement);
+    check("sparse-replaced-witness", false);
+    assert_ne!(
+        run().model.fault,
+        0,
+        "new self-consistent witness cannot replace the statement root"
+    );
+}
+
+#[test]
+fn sparse_merge_fault_survives_later_matches_and_cached_tokenizer() {
+    use prompt_prepare::input::*;
+    let f = Fixture::new();
+    let mut buckets = vec![MergeBucket::default(); 16];
+    let index = merge_bucket_of("a", "b", 16) as usize;
+    buckets[index].rules = vec![BpeMerge {
+        left: "a".into(),
+        right: "b".into(),
+        merged: "ab".into(),
+        rank: 0,
+    }]
+    .into();
+    let tokenizer = PromptTokenizer {
+        vocab_bucket_count: 1,
+        merge_bucket_count: 16,
+        boundary_bucket_count: 1,
+        vocab_buckets: vec![VocabBucket::default()].into(),
+        merge_buckets: buckets.into(),
+        boundary_buckets: vec![BoundaryBucket::default()].into(),
+        ..Default::default()
+    };
+    let witness = tokenizer_witness(&tokenizer).unwrap();
+    let root = raster::core::tree::value_root(&tokenizer).unwrap();
+    let descriptor = model_identity::ModelDescriptor {
+        version: 1,
+        tokenizer: root,
+        decoder: [1; 32],
+        embedding: [2; 32],
+        head: [3; 32],
+        auxiliary: vec![[4; 32]],
+        transformer: vec![[5; 32]],
+    };
+    let id = descriptor
+        .model_id()
+        .unwrap()
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect::<String>();
+    let initial = PromptState {
+        pieces: vec![
+            BpePiece {
+                text: "a".into(),
+                segment: 0,
+            },
+            BpePiece {
+                text: "b".into(),
+                segment: 0,
+            },
+        ]
+        .into(),
+        context: PromptContext {
+            model: model_identity::ModelContext::bind(&descriptor.encode().unwrap(), &id),
+            model_id: id,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    f.write("tokenizer", &tokenizer);
+    f.write("witness", &witness);
+    f.write("initial_pieces", &initial);
+    let cache = MaterializationCache::with_budget(Arc::new(WeightBudget::new(1 << 20)));
+    let run = || {
+        let inputs = routines::prompt_merge::load_inputs_from_paths_with_cache(
+            &f.dir.join("input.json"),
+            &f.dir.join("input_manifest.json"),
+            &CachedInputs::new(),
+            Some(&cache),
+        )
+        .unwrap();
+        routines::prompt_merge::run_direct(&inputs).unwrap()
+    };
+    assert_eq!(run().context.model.fault, 0);
+    let mut bad = witness.clone();
+    let mut paths = bad.merge_paths.as_slice().to_vec();
+    paths[merge_bucket_of("", "a", 16) as usize].siblings =
+        BytesPage::__from_parts(0, 0, vec![0; 31]);
+    bad.merge_paths = paths.into();
+    f.write("witness", &bad);
+    let output = run();
+    assert_eq!(
+        output.pieces.as_slice(),
+        &[BpePiece {
+            text: "ab".into(),
+            segment: 0
+        }]
+    );
+    assert_ne!(output.context.model.fault, 0);
+    if std::env::var_os("STAGED_INFER_REPLAY_BIN_DIR").is_some() {
+        f.compare_raster("prompt-merge", &output, "merge-sticky-fault");
+    }
+    f.write("witness", &witness);
+    assert_eq!(run().context.model.fault, 0);
 }

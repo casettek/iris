@@ -157,6 +157,7 @@ impl UncheckpointedInferenceConfig {
 
 pub(crate) fn inference_result_from_generated(output: GeneratedOutput) -> InferenceResult {
     InferenceResult {
+        model_fault: output.model_fault,
         generated_token_count: output.generated_token_count,
         generated_token_ids: output.generated_token_ids.iter().copied().collect(),
         generated_token_ids_sha256: output.generated_token_ids_sha256,
@@ -526,10 +527,7 @@ impl InferenceTempDir {
             .duration_since(UNIX_EPOCH)
             .context("system clock is before UNIX_EPOCH")?
             .as_nanos();
-        let path = std::env::temp_dir().join(format!(
-            "iris-infer-{}-{nanos}",
-            std::process::id()
-        ));
+        let path = std::env::temp_dir().join(format!("iris-infer-{}-{nanos}", std::process::id()));
         fs::create_dir_all(&path)
             .with_context(|| format!("failed to create {}", path.display()))?;
         Ok(Self { path })

@@ -15,6 +15,8 @@ cuda = ["risc0-zkvm/cuda", "raster-backend-risc0/cuda"]
 replay-profile = []
 
 [dependencies]
+raster = { path = "../../../../raster/crates/raster" }
+output-finalize = { path = "../../../raster-stages/output-finalize" }
 raster-core = { path = "../../../../raster/crates/raster-core" }
 raster-prover = { path = "../../../../raster/crates/raster-prover" }
 raster-compiler = { path = "../../../../raster/crates/raster-compiler" }
@@ -41,4 +43,5 @@ toml = "0.8"
 
 [dev-dependencies]
 postcard = { version = "1", default-features = false, features = ["alloc"] }
-raster = { path = "../../../../raster/crates/raster" }
+
+model-identity = { path = "../../model/identity" }

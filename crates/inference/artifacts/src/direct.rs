@@ -9,7 +9,7 @@ use sha2::{Digest, Sha256};
 pub const MODEL_ARTIFACTS_DIR: &str = "runtime/model-artifacts";
 pub const MODEL_MANIFEST_JSON: &str = "manifest.json";
 
-pub const MODEL_MANIFEST_VERSION: u32 = 4;
+pub const MODEL_MANIFEST_VERSION: u32 = 5;
 
 /// One committed model input, named by the role it plays in the chain.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -20,10 +20,10 @@ pub struct ModelCommitment {
 
 /// The model's identifier: a hash of its commitments by role, in order.
 ///
-/// A stage cannot read its inputs' commitments, so the chain carries this as a
-/// claimed value. Anyone can check it: recompute it from the roles, and compare
-/// a stage's `input_manifest.json` entry against the role it binds. It holds no
-/// paths, so moving an import does not change it.
+/// This is the legacy role-list adapter, also used for direct-only imports.
+/// Claim-capable imports validate the inventory through ModelDescriptor; stages
+/// bind that descriptor to the expected ID and verify actual component data.
+/// Paths are excluded, so relocating an import preserves identity.
 pub fn model_id_of(commitments: &[ModelCommitment]) -> String {
     let mut hasher = Sha256::new();
     for entry in commitments {
@@ -51,7 +51,8 @@ pub struct ModelManifest {
 
 impl ModelManifest {
     /// Validate the bundle once at the workflow boundary, before any inference.
-    /// Callers retain this manifest; tensor and stage loaders do no extra hashing.
+    /// This validates host bundle provenance. Stage-level component authentication
+    /// remains mandatory and is independent of this host check.
     pub fn load_verified(path: &Path) -> Result<Self> {
         let manifest: Self = crate::read_json(path)?;
         if manifest.version != MODEL_MANIFEST_VERSION {

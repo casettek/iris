@@ -94,6 +94,16 @@ pub fn run_prefill_range_direct_with_weight_cache(
     // the stage's push-only K/V site does: the next range's keys come through it.
     if input_rows.rows() == 0 {
         return Ok(ActivationSequence {
+            model: inputs.activations.model.layer(
+                params.layer_idx,
+                &inputs.ple.model,
+                &inputs.prior_kv.model,
+                &inputs.donor_a_kv.model,
+                &inputs.donor_b_kv.model,
+                params.kv_donor_layer,
+                params.donor_a_layer,
+                params.donor_b_layer,
+            ),
             rows: List::new(),
             errors: List::new(),
             kv: List::from(output_kv(
@@ -131,6 +141,16 @@ pub fn run_prefill_range_direct_with_weight_cache(
     );
 
     Ok(ActivationSequence {
+        model: inputs.activations.model.layer(
+            params.layer_idx,
+            &inputs.ple.model,
+            &inputs.prior_kv.model,
+            &inputs.donor_a_kv.model,
+            &inputs.donor_b_kv.model,
+            params.kv_donor_layer,
+            params.donor_a_layer,
+            params.donor_b_layer,
+        ),
         rows: List::from(output_rows),
         errors: List::new(),
         kv: List::from(output_kv),

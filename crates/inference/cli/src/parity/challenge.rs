@@ -25,8 +25,7 @@ use super::{block_name, command, logged, manifest_blocks, Case};
 use crate::challenge::locate_divergence;
 use crate::claim::{
     build_claim, corrupt_checkpoint_hashes, render_ranged_manifest, ClaimBuildOptions,
-    ClaimBuildResult, CorruptCheckpointHashesOptions, CorruptCheckpointSelection,
-    PreparedClaimRun,
+    ClaimBuildResult, CorruptCheckpointHashesOptions, CorruptCheckpointSelection, PreparedClaimRun,
 };
 
 /// The window a challenge replays at.
@@ -76,7 +75,12 @@ pub(super) fn run_challenge_leg(leg: &Leg) -> Result<Value> {
     let spec = run_spec(leg, leg.model_path, "inference.toml")?;
     let inputs = honest_inputs(leg)?;
     let (other_path, other) = import_other_model(leg)?;
-    let honest_manifest = render(leg.model_path, leg.model, &inputs, &leg.dir.join("honest-run"))?;
+    let honest_manifest = render(
+        leg.model_path,
+        leg.model,
+        &inputs,
+        &leg.dir.join("honest-run"),
+    )?;
     let other_manifest = render(&other_path, &other, &inputs, &leg.dir.join("other-run"))?;
 
     let honest = claim(leg, "honest", &spec, Some(leg.claimed.to_vec()))?;
@@ -85,7 +89,13 @@ pub(super) fn run_challenge_leg(leg: &Leg) -> Result<Value> {
     let mut replays = Vec::new();
 
     // An honest claim has nothing to dispute and nothing to reject.
-    let log = challenge(leg, "honest", &spec, context, &honest.checkpoint_hashes_path)?;
+    let log = challenge(
+        leg,
+        "honest",
+        &spec,
+        context,
+        &honest.checkpoint_hashes_path,
+    )?;
     ensure!(
         has_line(&log, "no divergence found"),
         "an honest claim was disputed"
@@ -102,7 +112,9 @@ pub(super) fn run_challenge_leg(leg: &Leg) -> Result<Value> {
             output_path: Some(hashes.clone()),
             selection: CorruptCheckpointSelection::Stage(stage.to_string()),
         })?;
-        replays.push(expect_divergence(leg, &name, &spec, context, &hashes, stage)?);
+        replays.push(expect_divergence(
+            leg, &name, &spec, context, &hashes, stage,
+        )?);
     }
 
     // Correct execution over ids that are not the greedy output: every
@@ -153,51 +165,122 @@ pub(super) fn run_challenge_leg(leg: &Leg) -> Result<Value> {
         (
             "other-text",
             "prompt_bind",
-            RunInputs { text: format!("{} ", inputs.text), ..inputs.clone() },
+            RunInputs {
+                text: format!("{} ", inputs.text),
+                ..inputs.clone()
+            },
         ),
         (
             "other-config",
             "prompt_bind",
-            RunInputs { config: other_budget, ..inputs.clone() },
+            RunInputs {
+                config: other_budget,
+                ..inputs.clone()
+            },
         ),
         (
             "other-cuts",
             "prompt_seed_p0",
-            RunInputs { cuts: moved_cut, ..inputs.clone() },
+            RunInputs {
+                cuts: moved_cut,
+                ..inputs.clone()
+            },
         ),
         (
             "other-ids",
             "embed_c0",
-            RunInputs { ids: not_greedy, ..inputs.clone() },
+            RunInputs {
+                ids: not_greedy,
+                ..inputs.clone()
+            },
         ),
     ];
     for (name, stage, run) in doctored {
-        let manifest = render(leg.model_path, leg.model, &run, &leg.dir.join(name).join("run"))?;
-        replays.push(expect_found(leg, name, &spec, context, &honest_trace, &manifest, stage)?);
+        let manifest = render(
+            leg.model_path,
+            leg.model,
+            &run,
+            &leg.dir.join(name).join("run"),
+        )?;
+        replays.push(expect_found(
+            leg,
+            name,
+            &spec,
+            context,
+            &honest_trace,
+            &manifest,
+            stage,
+        )?);
     }
 
     let take = |stage, key| take_binding(&honest_manifest, &other_manifest, stage, key);
     let table = |header| take_table(&honest_manifest, &other_manifest, header);
     let wire = |stage, key, line: &str| replace_binding(&honest_manifest, stage, key, line);
+    // Sparse verification authenticates reads, not unused tokenizer content.
+    // Change every bucket so each of these consuming stages sees a real mutation.
+    let changed_tokenizer = tokenizer_substitution_binding(
+        &honest_manifest,
+        &leg.dir.join("tokenizer-substitution-inputs"),
+    )?;
     let substituted = [
-        ("tokenizer-at-bind", "prompt_bind", take("prompt_bind", "tokenizer")?),
-        ("tokenizer-at-seed", "prompt_seed_p0", take("prompt_seed_p{j}", "tokenizer")?),
-        ("tokenizer-at-merge", "prompt_merge_p0_b0", take("prompt_merge_p{j}_b{b}", "tokenizer")?),
-        ("tokenizer-at-prepare", "prompt_prepare_p0", take("prompt_prepare_p{j}", "tokenizer")?),
-        ("embedding-in-prompt", "embed_p0", take("embed_p{j}", "embedding")?),
-        ("embedding-in-claim", "embed_c0", take("embed_c{k}", "embedding")?),
+        (
+            "tokenizer-at-bind",
+            "prompt_bind",
+            wire("prompt_bind", "tokenizer", &changed_tokenizer)?,
+        ),
+        (
+            "tokenizer-at-seed",
+            "prompt_seed_p0",
+            wire("prompt_seed_p{j}", "tokenizer", &changed_tokenizer)?,
+        ),
+        (
+            "tokenizer-at-merge",
+            "prompt_merge_p0_b0",
+            wire("prompt_merge_p{j}_b{b}", "tokenizer", &changed_tokenizer)?,
+        ),
+        (
+            "tokenizer-at-prepare",
+            "prompt_prepare_p0",
+            wire("prompt_prepare_p{j}", "tokenizer", &changed_tokenizer)?,
+        ),
+        (
+            "embedding-in-prompt",
+            "embed_p0",
+            take("embed_p{j}", "embedding")?,
+        ),
+        (
+            "embedding-in-claim",
+            "embed_c0",
+            take("embed_c{k}", "embedding")?,
+        ),
         ("other-head", "check_c0", take("check_c{k}", "head")?),
-        ("other-decoder", "output_finalize", take("output_finalize", "decoder")?),
+        (
+            "other-decoder",
+            "output_finalize",
+            take("output_finalize", "decoder")?,
+        ),
         ("other-ple", "aux_p0_l0", table("[chain.input.aux_layer]")?),
-        ("other-weights", "range_p0_l0", table("[chain.input.transformer_layer]")?),
+        (
+            "other-weights",
+            "range_p0_l0",
+            table("[chain.input.transformer_layer]")?,
+        ),
         // Transformer layers have no such case: their caches differ by attention
         // type and donor, so a stage given another layer's weights stops, and
         // the claimer has no output to post.
-        ("swapped-ple", "aux_p0_l0", swapped_ple(leg, &honest_manifest)?),
+        (
+            "swapped-ple",
+            "aux_p0_l0",
+            swapped_ple(leg, &honest_manifest)?,
+        ),
         (
             "repeated-context",
             "prompt_seed_p1",
-            wire("prompt_seed_p{j}", "previous", r#"{ from = "prompt_bind" }"#)?,
+            wire(
+                "prompt_seed_p{j}",
+                "previous",
+                r#"{ from = "prompt_bind" }"#,
+            )?,
         ),
         (
             "dropped-verdict",
@@ -212,12 +295,53 @@ pub(super) fn run_challenge_leg(leg: &Leg) -> Result<Value> {
         (
             "first-prompt-context",
             "output_finalize",
-            wire("output_finalize", "prompt", r#"{ from = "prompt_prepare_p0" }"#)?,
+            wire(
+                "output_finalize",
+                "prompt",
+                r#"{ from = "prompt_prepare_p0" }"#,
+            )?,
         ),
     ];
     for (name, stage, manifest) in &substituted {
-        replays.push(expect_found(leg, name, &spec, context, &honest_trace, manifest, stage)?);
+        replays.push(expect_found(
+            leg,
+            name,
+            &spec,
+            context,
+            &honest_trace,
+            manifest,
+            stage,
+        )?);
     }
+
+    for (name, _, manifest) in substituted
+        .iter()
+        .take(11)
+        .filter(|(name, _, _)| *name != "other-decoder")
+    {
+        replays.push(expect_model_fault(
+            leg,
+            &format!("{name}-self-replay"),
+            manifest,
+        )?);
+    }
+
+    // Self-replay the same dishonest model inputs. Agreement is expected;
+    // rejection must come from the committed semantic fault.
+    let (changed_decoder, changed_proof) = decoder_substitution_manifests(
+        &honest_manifest,
+        &leg.dir.join("decoder-substitution-inputs"),
+    )?;
+    replays.push(expect_model_fault(
+        leg,
+        "decoder-self-replay",
+        &changed_decoder,
+    )?);
+    replays.push(expect_model_fault(
+        leg,
+        "decoder-and-proof-self-replay",
+        &changed_proof,
+    )?);
 
     // Positions that no longer line up with the cache stop the layer stage, in
     // Raster and natively, so the claimer has no output to post. Only a manifest
@@ -229,7 +353,11 @@ pub(super) fn run_challenge_leg(leg: &Leg) -> Result<Value> {
         ),
         (
             "dropped-cache",
-            wire("range_p{j}_l{l}", "prior_kv", r#"{ from = "range_origin" }"#)?,
+            wire(
+                "range_p{j}_l{l}",
+                "prior_kv",
+                r#"{ from = "range_origin" }"#,
+            )?,
         ),
     ];
     for (name, manifest) in &stopped {
@@ -308,7 +436,10 @@ fn expect_divergence(
             .find(|line| line.starts_with("divergence found") || line.starts_with("no divergence"))
             .unwrap_or("it reported no outcome")
     );
-    let replay = leg.dir.join(name).join("challenge/target/staged-infer/runs");
+    let replay = leg
+        .dir
+        .join(name)
+        .join("challenge/target/staged-infer/runs");
     let run = fs::read_dir(&replay)?
         .next()
         .with_context(|| format!("challenge `{name}` recorded no run"))??
@@ -393,7 +524,9 @@ fn honest_inputs(leg: &Leg) -> Result<RunInputs> {
 
 fn not_greedy_ids(leg: &Leg) -> Result<Vec<u32>> {
     let mut ids = leg.claimed.to_vec();
-    let first = ids.first_mut().context("the pinned case claims no tokens")?;
+    let first = ids
+        .first_mut()
+        .context("the pinned case claims no tokens")?;
     *first = (*first + 1) % leg.model.shape.vocab_size as u32;
     Ok(ids)
 }
@@ -476,9 +609,15 @@ fn import_other_model(leg: &Leg) -> Result<(PathBuf, ModelManifest)> {
     let mut tokenizer: Value = read_json(&source.join("tokenizer.json"))?;
     let vocab = &mut tokenizer["model"]["vocab"];
     let (a, b) = (vocab["a"].take(), vocab["b"].take());
-    ensure!(a.is_u64() && b.is_u64(), "the pinned vocabulary lacks `a` and `b`");
+    ensure!(
+        a.is_u64() && b.is_u64(),
+        "the pinned vocabulary lacks `a` and `b`"
+    );
     (vocab["a"], vocab["b"]) = (b, a);
-    fs::write(bundle.join("tokenizer.json"), serde_json::to_vec(&tokenizer)?)?;
+    fs::write(
+        bundle.join("tokenizer.json"),
+        serde_json::to_vec(&tokenizer)?,
+    )?;
 
     let artifact_root = leg.dir.join("other-artifacts");
     let mut import = command(leg.exe, leg.root);
@@ -488,10 +627,7 @@ fn import_other_model(leg: &Leg) -> Result<(PathBuf, ModelManifest)> {
         .arg("--artifact-root")
         .arg(&artifact_root)
         .args(["--model-id", "other-model", "--no-stage-fixtures"])
-        .args([
-            "--range-size",
-            &leg.model.range_size.to_string(),
-        ]);
+        .args(["--range-size", &leg.model.range_size.to_string()]);
     logged(import, &leg.dir.join("other-import.log"))?;
     let path = artifact_root.join("other-model/manifest.json");
     let model = ModelManifest::load_verified(&path)?;
@@ -524,7 +660,9 @@ fn change_every_tensor(bytes: &mut [u8]) -> Result<()> {
         at += 16;
         at = at.next_multiple_of(PAYLOAD_ALIGNMENT);
         let value = if payload > 8 { 8 } else { 0 };
-        *bytes.get_mut(at + value).context("weights ended mid-tensor")? ^= 1;
+        *bytes
+            .get_mut(at + value)
+            .context("weights ended mid-tensor")? ^= 1;
         at += payload;
     }
     ensure!(at == bytes.len(), "weights have trailing bytes");
@@ -641,9 +779,306 @@ fn swapped_ple(leg: &Leg, manifest: &str) -> Result<String> {
     Ok(out.join("\n") + "\n")
 }
 
+/// Change all complete buckets without changing any matching rule. This tests
+/// membership even when the numerical/tokenization result happens to be equal.
+fn tokenizer_substitution_binding(manifest: &str, dir: &Path) -> Result<String> {
+    use output_finalize::prompt::{BoundaryPair, BpeMerge, PromptTokenizer, TokenEntry};
+    let parsed: toml::Value = toml::from_str(manifest)?;
+    let stage = parsed["chain"]["stage"]
+        .as_array()
+        .context("missing stages")?
+        .iter()
+        .find(|s| s["name"].as_str() == Some("prompt_bind"))
+        .context("missing prompt bind")?;
+    let external = &stage["inputs"]["tokenizer"]["external"];
+    let data = Path::new(
+        external["path"]
+            .as_str()
+            .context("missing tokenizer path")?,
+    );
+    let index = Path::new(
+        external["index_path"]
+            .as_str()
+            .context("missing tokenizer index")?,
+    );
+    ensure!(
+        data.is_absolute() && index.is_absolute(),
+        "mutation fixture paths must be absolute"
+    );
+    let value =
+        raster_runtime::read_raster_value(data, index, &raster_runtime::ReadLimits::unbounded())?;
+    let mut tokenizer: PromptTokenizer =
+        serde_json::from_value(super::compare::value_json(&value)?)?;
+    for bucket in tokenizer.vocab_buckets.iter_mut() {
+        let mut entries = bucket.entries.as_slice().to_vec();
+        entries.push(TokenEntry {
+            token: "\0iris-model-substitution".into(),
+            id: u32::MAX,
+        });
+        bucket.entries = entries.into();
+    }
+    for bucket in tokenizer.merge_buckets.iter_mut() {
+        let mut rules = bucket.rules.as_slice().to_vec();
+        rules.push(BpeMerge {
+            left: "\0iris-model-substitution".into(),
+            right: "\0iris-model-substitution".into(),
+            merged: "\0iris-model-substitution".into(),
+            rank: u32::MAX,
+        });
+        bucket.rules = rules.into();
+    }
+    for bucket in tokenizer.boundary_buckets.iter_mut() {
+        let mut pairs = bucket.pairs.as_slice().to_vec();
+        pairs.push(BoundaryPair {
+            left: u32::MAX,
+            right: u32::MAX,
+        });
+        bucket.pairs = pairs.into();
+    }
+    fs::create_dir_all(dir)?;
+    let data = dir.join("tokenizer.rastered");
+    let index = dir.join("tokenizer.rindex");
+    let root = raster::write_raster_files(&tokenizer, &data, &index)?;
+    Ok(format!(
+        "{{ external = {{ path = {}, index_path = {}, commitment = {} }} }}",
+        serde_json::to_string(&data)?,
+        serde_json::to_string(&index)?,
+        serde_json::to_string(&root)?
+    ))
+}
+
+/// Change every entry, including hidden text, so every consumed token tests
+/// membership. Changes confined to unread entries need not alter execution.
+fn decoder_substitution_manifests(manifest: &str, dir: &Path) -> Result<(String, String)> {
+    let parsed: toml::Value = toml::from_str(manifest)?;
+    let stage = parsed["chain"]["stage"]
+        .as_array()
+        .context("missing stages")?
+        .iter()
+        .find(|stage| stage["name"].as_str() == Some("output_finalize"))
+        .context("missing finalization stage")?;
+    let external = &stage["inputs"]["decoder"]["external"];
+    let data = Path::new(external["path"].as_str().context("missing decoder path")?);
+    let index = Path::new(
+        external["index_path"]
+            .as_str()
+            .context("missing decoder index")?,
+    );
+    ensure!(
+        data.is_absolute() && index.is_absolute(),
+        "mutation fixture paths must be absolute"
+    );
+    let artifact =
+        raster_runtime::read_raster_value(data, index, &raster_runtime::ReadLimits::unbounded())?;
+    let table: output_finalize::input::DecoderTable =
+        serde_json::from_value(super::compare::value_json(&artifact)?)?;
+    let tokens = table
+        .tokens
+        .iter()
+        .cloned()
+        .map(|mut token| {
+            token.token.push_str("model-identity-substitution");
+            token
+        })
+        .collect::<Vec<_>>();
+    let table = output_finalize::input::DecoderTable {
+        tokens: tokens.into(),
+    };
+    let witness = output_finalize::decoder_witness(&table).map_err(|f| anyhow::anyhow!("{f:?}"))?;
+    fs::create_dir_all(dir)?;
+    let binding = |name: &str, root: String| -> Result<String> {
+        Ok(format!(
+            "{{ external = {{ path = {}, index_path = {}, commitment = {} }} }}",
+            serde_json::to_string(&dir.join(format!("{name}.rastered")))?,
+            serde_json::to_string(&dir.join(format!("{name}.rindex")))?,
+            serde_json::to_string(&root)?
+        ))
+    };
+    let decoder_root = raster::write_raster_files(
+        &table,
+        &dir.join("decoder.rastered"),
+        &dir.join("decoder.rindex"),
+    )?;
+    let witness_root = raster::write_raster_files(
+        &witness,
+        &dir.join("witness.rastered"),
+        &dir.join("witness.rindex"),
+    )?;
+    let changed = replace_binding(
+        manifest,
+        "output_finalize",
+        "decoder",
+        &binding("decoder", decoder_root)?,
+    )?;
+    let changed_proof = replace_binding(
+        &changed,
+        "output_finalize",
+        "witness",
+        &binding("witness", witness_root)?,
+    )?;
+    Ok((changed, changed_proof))
+}
+
+fn expect_model_fault(leg: &Leg, name: &str, manifest: &str) -> Result<Value> {
+    replay_model_fault(
+        leg.root,
+        leg.dir.join(name),
+        leg.exe,
+        leg.raster,
+        &leg.model.model_id,
+        name,
+        manifest,
+    )
+}
+
+fn replay_model_fault(
+    root: &Path,
+    dir: PathBuf,
+    exe: &Path,
+    raster: &Path,
+    expected_model_id: &str,
+    name: &str,
+    manifest: &str,
+) -> Result<Value> {
+    fs::create_dir_all(&dir)?;
+    let manifest_path = dir.join("Raster.toml");
+    fs::write(&manifest_path, manifest)?;
+    let native = CheckpointedInferenceExecutor.run(CheckpointedInferenceConfig {
+        base_dir: dir.clone(),
+        manifest_path: manifest_path.clone(),
+        current_exe: exe.to_path_buf(),
+        staged_backend: StagedExecutionBackend::InProcess,
+        parity_policy: ParityPolicy::Skip,
+    })?;
+    let raster_dir = dir.join("raster");
+    fs::create_dir(&raster_dir)?;
+    let mut run = command(raster, root);
+    run.args(["raster", "chain", "run"])
+        .arg(&manifest_path)
+        .args(["--no-auth", "--run"])
+        .arg(&raster_dir);
+    logged(run, &dir.join("raster.log"))?;
+    let order =
+        inference_artifacts::read_stage_order(&raster_dir)?.context("missing stage inventory")?;
+    let raster_outputs = super::read_boundaries(&raster_dir, &order, false)?;
+    let native_outputs = super::read_boundaries(&native.chain_dir, &order, false)?;
+    for stage in &order {
+        super::compare(stage, &raster_outputs[stage], &native_outputs[stage])?;
+    }
+    let result = native.final_result.context("missing final record")?;
+    ensure!(
+        result.model_id == expected_model_id,
+        "substitution replaced the statement model ID"
+    );
+    ensure!(
+        result.model_fault != 0,
+        "substitution produced a clean model verdict"
+    );
+    let rejection = crate::challenge::claimed_output_rejection(Some(&result))?
+        .context("matching dishonest execution was accepted")?;
+    ensure!(
+        rejection.contains("model data failed authentication"),
+        "{rejection}"
+    );
+    Ok(
+        json!({"name": name, "matching_checkpoints": order.len(), "model_fault": result.model_fault, "rejected": true}),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[ignore = "requires retained three-path parity fixtures; set IRIS_PARITY_RUN"]
+    fn decoder_self_replay_rejects_matching_dishonest_execution() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../..")
+            .canonicalize()
+            .unwrap();
+        let base = std::path::PathBuf::from(
+            std::env::var_os("IRIS_PARITY_RUN").expect("set IRIS_PARITY_RUN"),
+        );
+        let model: inference_artifacts::ModelManifest = inference_artifacts::read_json(
+            &base.join("model-artifacts/parity-gemma/manifest.json"),
+        )
+        .unwrap();
+        let challenges = base.join("over-window/challenges");
+        let changed =
+            std::fs::read_to_string(challenges.join("other-decoder/Raster.toml")).unwrap();
+        let (changed, changed_proof) = super::decoder_substitution_manifests(
+            &changed,
+            &base.join(format!("decoder-mutation-inputs-{}", std::process::id())),
+        )
+        .unwrap();
+        let cases = [
+            ("decoder-self-replay", changed),
+            ("decoder-and-proof-self-replay", changed_proof),
+        ];
+        for (name, manifest) in cases {
+            let dir = base.join(format!("{name}-{}", std::process::id()));
+            let result = super::replay_model_fault(
+                &root,
+                dir,
+                &root.join("target/release/iris"),
+                &root.join("target/parity-tools/release/cargo-raster"),
+                &model.model_id,
+                name,
+                &manifest,
+            )
+            .unwrap();
+            assert_eq!(result["rejected"], true);
+        }
+    }
+
+    #[test]
+    #[ignore = "requires retained parity fixtures; set IRIS_PARITY_RUN"]
+    fn tokenizer_substitutions_touch_consumed_buckets() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../..")
+            .canonicalize()
+            .unwrap();
+        let base = PathBuf::from(std::env::var_os("IRIS_PARITY_RUN").expect("set IRIS_PARITY_RUN"))
+            .canonicalize()
+            .unwrap();
+        let model: ModelManifest =
+            read_json(&base.join("model-artifacts/parity-gemma/manifest.json")).unwrap();
+        let runs = base.join("over-window/target/iris/runs");
+        let prepared = fs::read_dir(runs).unwrap().next().unwrap().unwrap().path();
+        let manifest = fs::read_to_string(prepared.join("Raster.toml")).unwrap();
+        let work = base.join(format!("sparse-tokenizer-native-{}", std::process::id()));
+        let binding = tokenizer_substitution_binding(&manifest, &work.join("inputs")).unwrap();
+        for (name, stage) in [
+            ("bind", "prompt_bind"),
+            ("seed", "prompt_seed_p{j}"),
+            ("merge", "prompt_merge_p{j}_b{b}"),
+            ("prepare", "prompt_prepare_p{j}"),
+        ] {
+            let dir = work.join(name);
+            fs::create_dir_all(&dir).unwrap();
+            let path = dir.join("Raster.toml");
+            fs::write(
+                &path,
+                replace_binding(&manifest, stage, "tokenizer", &binding).unwrap(),
+            )
+            .unwrap();
+            let run = CheckpointedInferenceExecutor
+                .run(CheckpointedInferenceConfig {
+                    base_dir: dir,
+                    manifest_path: path,
+                    current_exe: root.join("target/release/iris"),
+                    staged_backend: StagedExecutionBackend::InProcess,
+                    parity_policy: ParityPolicy::Skip,
+                })
+                .unwrap();
+            let result = run.final_result.unwrap();
+            assert_eq!(result.model_id, model.model_id);
+            assert_ne!(
+                result.model_fault, 0,
+                "{name} must consume a mutated bucket"
+            );
+        }
+    }
 
     const MANIFEST: &str = "[chain]\nname = \"iris\"\n\n[chain.input.layers]\nindex = \"l\"\npath = \"a/layer{l}.rastered\"\ncommitments = [\n  \"one\", # l0\n  \"two\", # l1\n]\n\n[[chain.stage]]\nname = \"first\"\ninputs.value = { from = \"source\" }\n\n[[chain.repeat]]\nname = \"more\"\n\n  [[chain.repeat.stage]]\nname = \"later_{j}\"\ninputs.value = { from = \"first\" }\ninputs.other = { from = \"first\" }\n";
 
@@ -698,7 +1133,9 @@ mod tests {
         }
         let original = bytes.clone();
         change_every_tensor(&mut bytes).unwrap();
-        let changed: Vec<usize> = (0..bytes.len()).filter(|&i| bytes[i] != original[i]).collect();
+        let changed: Vec<usize> = (0..bytes.len())
+            .filter(|&i| bytes[i] != original[i])
+            .collect();
         assert_eq!(changed.len(), 2);
         for at in changed {
             assert_eq!(bytes[at] ^ original[at], 1);

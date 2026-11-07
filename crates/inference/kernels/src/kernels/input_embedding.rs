@@ -54,6 +54,10 @@ pub fn run_input_embedding_direct(
     }
 
     Ok(ActivationSequence {
+        model: model_identity::ModelContext::embedding(
+            &inputs.prompt.context.model,
+            &Default::default(),
+        ),
         rows: List::from(rows),
         errors: List::new(),
         kv: List::new(),

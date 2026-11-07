@@ -273,6 +273,7 @@ pub struct BpePiece {
 /// All-scalar and small, so it travels through every prompt stage.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
 pub struct PromptContext {
+    pub model: model_identity::ModelContext,
     /// SHA-256 of the original UTF-8 prompt bytes, in lowercase hex.
     pub input_text_sha256: String,
     pub model_id: String,
@@ -314,6 +315,7 @@ pub type PromptTokenization = PromptState;
 /// One merge round's pieces, inside a stage.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
 pub struct MergeRound {
+    pub model_fault: u32,
     pub pieces: List<BpePiece>,
 }
 
@@ -341,6 +343,7 @@ impl PromptState {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
 pub struct MergeCandidate {
+    pub model_fault: u32,
     pub matched: bool,
     pub rank: u32,
     pub left: u64,
@@ -779,15 +782,23 @@ pub fn split_rendered(
         templated: false,
     };
     let mut atoms = Vec::new();
-    scan_chunk_into(begin_scan_state(&plan), rendered, &plan, profile, &mut |atom| {
-        atoms.push(atom)
-    });
+    scan_chunk_into(
+        begin_scan_state(&plan),
+        rendered,
+        &plan,
+        profile,
+        &mut |atom| atoms.push(atom),
+    );
     let mut pieces = Vec::new();
     let mut state = SplitState::default();
     for atom in &atoms {
-        state = apply_atom(&state, atom, in_vocabulary(&atom.text), profile, &mut |piece| {
-            pieces.push(piece)
-        });
+        state = apply_atom(
+            &state,
+            atom,
+            in_vocabulary(&atom.text),
+            profile,
+            &mut |piece| pieces.push(piece),
+        );
     }
     pieces
 }
@@ -907,4 +918,41 @@ pub fn finish_token_context(
         .prompt_tokens
         .saturating_add(u32::try_from(tokens).unwrap_or(u32::MAX));
     next
+}
+
+pub fn join_prompt_models(mut previous: PromptContext, bound: &PromptContext) -> PromptContext {
+    previous.model.same_model(&bound.model);
+    let valid = previous.model.valid()
+        && previous.model.producer == model_identity::context::PROMPT
+        && bound.model.producer == model_identity::context::PROMPT
+        && previous.model.model_id == previous.model_id
+        && bound.model.model_id == bound.model_id;
+    previous.model.require(valid);
+    previous
+}
+
+pub use model_identity::sparse::{SparseHeader, SparsePath, SparseWitness};
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
+pub struct TokenizerWitness {
+    pub vocab: SparseHeader,
+    pub vocab_paths: List<SparsePath>,
+    pub merges: SparseHeader,
+    pub merge_paths: List<SparsePath>,
+    pub boundaries: SparseHeader,
+    pub boundary_paths: List<SparsePath>,
+}
+pub fn tokenizer_witness(
+    tokenizer: &PromptTokenizer,
+) -> core::result::Result<TokenizerWitness, model_identity::ModelFault> {
+    let vocab = model_identity::sparse::witness(tokenizer.vocab_buckets.as_slice())?;
+    let merges = model_identity::sparse::witness(tokenizer.merge_buckets.as_slice())?;
+    let boundaries = model_identity::sparse::witness(tokenizer.boundary_buckets.as_slice())?;
+    Ok(TokenizerWitness {
+        vocab: vocab.header,
+        vocab_paths: vocab.paths,
+        merges: merges.header,
+        merge_paths: merges.paths,
+        boundaries: boundaries.header,
+        boundary_paths: boundaries.paths,
+    })
 }

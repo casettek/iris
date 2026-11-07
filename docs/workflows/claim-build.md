@@ -125,3 +125,17 @@ The harness saves both logs, timings, and trace/hash comparisons. It reports
 measured speedup only after both runs complete; fixture parity alone is not a
 production performance result. Repeat with reversed binary order to check for
 OS-cache effects. Native Windows builds use `scripts/build-windows.ps1`.
+
+A final record with a nonzero model fault is rejected even when native and
+Raster checkpoints agree. Every model-consuming stage binds its actual component
+to the descriptor carried by the expected model context. Transformer stages check
+layer progression and prior/donor context; finalization requires a completed
+same-model decode edge. Decoder text, special-token flags, and EOS flags are
+authenticated at each consumed index, including entries after the first EOS.
+Missing verification inputs or model context cannot produce an accepted record.
+
+Sparse tokenizer/embedding reads authenticate selected complete buckets or pages.
+Their separate witness files are inputs to the authorized stage programs; cache
+hits do not bypass current witness checks. Dense projections and transformer
+weights retain complete sweeps. See the
+[validation report](../proposals/model-identity-validation.md).

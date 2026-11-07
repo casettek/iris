@@ -9,6 +9,7 @@ default = ["std"]
 std = ["raster/std"]
 
 [dependencies]
+model-identity = { path = "../model/identity", default-features = false }
 raster = { path = "../../../raster/crates/raster", default-features = false }
 serde = { version = "1.0", default-features = false, features = ["derive", "alloc"] }
 sha2 = { version = "0.10", default-features = false, features = ["compress"] }

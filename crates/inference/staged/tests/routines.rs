@@ -123,7 +123,13 @@ fn temp_dir(label: &str) -> std::path::PathBuf {
 #[test]
 fn output_finalize_decodes_generated_ids() {
     let inputs = routines::output_finalize::Inputs {
+        descriptor: raster::BytesPage::__from_parts(0, 0, vec![]),
+        witness: output_finalize::input::DecoderWitness {
+            token_count: 0,
+            paths: List::new(),
+        },
         edge: output_finalize::input::DecodeEdge {
+            model: Default::default(),
             has_selected: true,
             decode_position: 2,
             token_id: 1,
@@ -154,12 +160,15 @@ fn output_finalize_decodes_generated_ids() {
             ..Default::default()
         },
     };
+    let inputs = authenticate_decoder_inputs(inputs);
     let output = routines::output_finalize::run_direct(&inputs).unwrap();
     let kernel_output = kernels::output_finalize::run_output_finalize_direct(
         kernels::output_finalize::OutputFinalizeDirectInputs {
             edge: &inputs.edge,
             decoder: &inputs.decoder,
             context: &inputs.context,
+            descriptor: &inputs.descriptor,
+            witness: &inputs.witness,
         },
     )
     .unwrap();
@@ -184,6 +193,11 @@ fn finalize(ids: &[u32], max_new_tokens: u32) -> output_finalize::input::Generat
         terminal,
     };
     let inputs = routines::output_finalize::Inputs {
+        descriptor: raster::BytesPage::__from_parts(0, 0, vec![]),
+        witness: output_finalize::input::DecoderWitness {
+            token_count: 0,
+            paths: List::new(),
+        },
         edge: output_finalize::input::DecodeEdge {
             has_selected: !ids.is_empty(),
             decode_position: 9,
@@ -213,6 +227,7 @@ fn finalize(ids: &[u32], max_new_tokens: u32) -> output_finalize::input::Generat
             ..Default::default()
         },
     };
+    let inputs = authenticate_decoder_inputs(inputs);
     let output = routines::output_finalize::run_direct(&inputs).unwrap();
     assert_same_json(
         &output,
@@ -221,6 +236,8 @@ fn finalize(ids: &[u32], max_new_tokens: u32) -> output_finalize::input::Generat
                 edge: &inputs.edge,
                 decoder: &inputs.decoder,
                 context: &inputs.context,
+                descriptor: &inputs.descriptor,
+                witness: &inputs.witness,
             },
         )
         .unwrap(),
@@ -259,7 +276,8 @@ fn output_finalize_commits_the_exact_text_it_emits() {
 fn output_finalize_reports_what_the_chain_consumed() {
     let output = finalize(&[0], 1);
     assert_eq!(output.input_text_sha256, "input-hash");
-    assert_eq!(output.model_id, "model-id");
+    assert_eq!(output.model_id.len(), 64);
+    assert_eq!(output.model_fault, 0);
     assert!(output.raw_prompt);
     assert_eq!(output.max_new_tokens, 1);
     assert_eq!(output.range_size, 4);
@@ -283,11 +301,20 @@ fn output_finalize_publishes_budget_and_eos_faults_instead_of_failing() {
         // A run that names no budget has none to spare.
         (vec![0], 0, OUTPUT_FAULT_OVER_BUDGET),
     ] {
-        assert_eq!(finalize(&ids, budget).output_fault, expected, "{ids:?} of {budget}");
+        assert_eq!(
+            finalize(&ids, budget).output_fault,
+            expected,
+            "{ids:?} of {budget}"
+        );
     }
 
     // The edge's flag and its transcript disagree: published, not raised.
     let inputs = routines::output_finalize::Inputs {
+        descriptor: raster::BytesPage::__from_parts(0, 0, vec![]),
+        witness: output_finalize::input::DecoderWitness {
+            token_count: 0,
+            paths: List::new(),
+        },
         edge: output_finalize::input::DecodeEdge {
             has_selected: true,
             ..Default::default()
@@ -297,26 +324,28 @@ fn output_finalize_publishes_budget_and_eos_faults_instead_of_failing() {
         },
         context: Default::default(),
     };
+    let inputs = authenticate_decoder_inputs(inputs);
     let output = routines::output_finalize::run_direct(&inputs).unwrap();
     assert_eq!(output.output_fault, OUTPUT_FAULT_EDGE_DISAGREES);
 }
 
 #[test]
 fn prompt_prepare_resolves_vocab_bucket() {
-    let inputs = routines::prompt_prepare::Inputs {
-        tokenizer: PromptTokenizer {
-            vocab_bucket_count: 1,
-            merge_bucket_count: 1,
-            vocab_buckets: List::from(vec![VocabBucket {
-                entries: List::from(vec![TokenEntry {
-                    token: "hello".to_string(),
-                    id: 42,
-                }]),
+    let tokenizer = PromptTokenizer {
+        vocab_bucket_count: 1,
+        merge_bucket_count: 1,
+        vocab_buckets: List::from(vec![VocabBucket {
+            entries: List::from(vec![TokenEntry {
+                token: "hello".to_string(),
+                id: 42,
             }]),
-            merge_buckets: List::from(vec![MergeBucket { rules: List::new() }]),
-            ..Default::default()
-        }
-        .into(),
+        }]),
+        merge_buckets: List::from(vec![MergeBucket { rules: List::new() }]),
+        ..Default::default()
+    };
+    let mut inputs = routines::prompt_prepare::Inputs {
+        witness: prompt_prepare::input::tokenizer_witness(&tokenizer).unwrap(),
+        tokenizer: tokenizer.into(),
         initial_pieces: BpePieces {
             pieces: List::from(vec![prompt_prepare::input::BpePiece {
                 text: "hello".to_string(),
@@ -325,6 +354,21 @@ fn prompt_prepare_resolves_vocab_bucket() {
             ..Default::default()
         },
     };
+    let root = raster::core::tree::value_root(inputs.tokenizer.as_ref()).unwrap();
+    let d = model_identity::ModelDescriptor {
+        version: 1,
+        tokenizer: root,
+        decoder: [2; 32],
+        embedding: [3; 32],
+        head: [4; 32],
+        auxiliary: vec![[5; 32]],
+        transformer: vec![[6; 32]],
+    };
+    inputs.initial_pieces.context.model_id = hex::encode(d.model_id().unwrap());
+    inputs.initial_pieces.context.model = model_identity::ModelContext::bind(
+        &d.encode().unwrap(),
+        &inputs.initial_pieces.context.model_id,
+    );
     let output = routines::prompt_prepare::run_direct(&inputs).unwrap();
     let kernel_output = kernels::prompt_prepare::run_prompt_prepare_direct(
         kernels::prompt_prepare::PromptPrepareDirectInputs {
@@ -371,6 +415,7 @@ fn input_embedding_gathers_and_scales_rows() {
 fn prefill_prepare_aux_publishes_one_row() {
     let norm = prefill_prepare_aux::input::pack_i32s(&[ONE; W]);
     let activation = prefill_prepare_aux::input::ActivationSequence {
+        model: Default::default(),
         rows: List::from(vec![prefill_prepare_aux::input::ActivationRow {
             token_id: 0,
             values: prefill_prepare_aux::input::pack_i32s(&wide_rows(&[&[ONE]])),
@@ -434,6 +479,7 @@ fn prefill_prepare_aux_preserves_prompt_row_order() {
     let run = |rows| {
         routines::prefill_prepare_aux::run_direct(&routines::prefill_prepare_aux::Inputs::eager(
             prefill_prepare_aux::input::ActivationSequence {
+                model: Default::default(),
                 rows: List::from(rows),
                 errors: List::new(),
                 kv: List::new(),
@@ -536,6 +582,7 @@ fn sequence_check_matches_a_greedy_oracle_at_every_position() {
     // second range's first token is predicted by the first range's last row,
     // and its transcript continues the first's.
     let sequence = |range: std::ops::Range<usize>| check::ActivationSequence {
+        model: Default::default(),
         rows: List::from(
             range
                 .clone()
@@ -598,7 +645,10 @@ fn sequence_check_matches_a_greedy_oracle_at_every_position() {
     assert_eq!(late_first.claim_mismatches, 0);
     assert_eq!(late_first.first_claim_mismatch_position, 0);
     assert_eq!(late_edge.claim_mismatches, 1);
-    assert_eq!(late_edge.first_claim_mismatch_position, prompt_len as u32 + 2);
+    assert_eq!(
+        late_edge.first_claim_mismatch_position,
+        prompt_len as u32 + 2
+    );
 
     // An honest claim publishes a clean verdict and direct generation's edge.
     let honest = prior
@@ -609,10 +659,13 @@ fn sequence_check_matches_a_greedy_oracle_at_every_position() {
     let (_, honest_edge) = run_check(&honest);
     assert_eq!(honest_edge.claim_mismatches, 0);
     assert_eq!(honest_edge.first_claim_mismatch_position, 0);
-    assert_eq!(
-        serde_json::to_value(&honest_edge).unwrap(),
-        serde_json::to_value(&prior).unwrap()
-    );
+    // This numerical oracle deliberately has no model descriptor.
+    assert_ne!(honest_edge.model.fault, 0);
+    let mut actual = serde_json::to_value(&honest_edge).unwrap();
+    let mut expected = serde_json::to_value(&prior).unwrap();
+    actual.as_object_mut().unwrap().remove("model");
+    expected.as_object_mut().unwrap().remove("model");
+    assert_eq!(actual, expected);
 
     assert_eq!(edge.has_selected, prior.has_selected);
     assert_eq!(edge.decode_position, prior.decode_position);
@@ -626,6 +679,7 @@ fn sequence_check_matches_a_greedy_oracle_at_every_position() {
     // A check that cannot stand behind its edge finishes and says why.
     let start = check::DecodeEdge::default();
     let empty = |start_position| check::ActivationSequence {
+        model: Default::default(),
         rows: List::new(),
         errors: List::new(),
         kv: List::new(),
@@ -660,4 +714,89 @@ fn sequence_check_matches_a_greedy_oracle_at_every_position() {
     let (_, wrong) = run_check(&claimed);
     assert_eq!(fault(&wrong), (check::CHECK_FAULT_NONE, 0));
     assert_eq!(wrong.claim_mismatches, 1);
+}
+
+fn authenticate_decoder_inputs(
+    mut inputs: routines::output_finalize::Inputs,
+) -> routines::output_finalize::Inputs {
+    let d = model_identity::ModelDescriptor {
+        version: 1,
+        tokenizer: [1; 32],
+        decoder: raster::core::tree::value_root(&inputs.decoder).unwrap(),
+        embedding: [2; 32],
+        head: [3; 32],
+        auxiliary: vec![[4; 32]],
+        transformer: vec![[5; 32]],
+    };
+    inputs.context.model_id = hex::encode(d.model_id().unwrap());
+    inputs.descriptor = raster::BytesPage::__from_parts(0, 0, d.encode().unwrap());
+    inputs.context.model =
+        model_identity::ModelContext::bind(inputs.descriptor.as_slice(), &inputs.context.model_id);
+    inputs.edge.model = inputs.context.model.clone();
+    inputs.edge.model.producer = model_identity::context::DECODE;
+    inputs.edge.model.completed_layers = inputs.edge.model.layers;
+    inputs.witness = output_finalize::decoder_witness(&inputs.decoder).unwrap();
+    inputs
+}
+
+#[test]
+fn decoder_substitution_publishes_sticky_fault_and_preserves_statement_identity() {
+    let token = DecoderToken {
+        token: "hello".into(),
+        special: false,
+        terminal: false,
+    };
+    let mut inputs = authenticate_decoder_inputs(routines::output_finalize::Inputs {
+        edge: output_finalize::input::DecodeEdge {
+            has_selected: true,
+            generated_token_ids: vec![0, 0].into(),
+            ..Default::default()
+        },
+        decoder: DecoderTable {
+            tokens: vec![token].into(),
+        },
+        context: output_finalize::prompt::PromptContext {
+            max_new_tokens: 2,
+            complete: true,
+            ..Default::default()
+        },
+        descriptor: raster::BytesPage::__from_parts(0, 0, vec![]),
+        witness: output_finalize::input::DecoderWitness {
+            token_count: 0,
+            paths: List::new(),
+        },
+    });
+    let id = inputs.context.model_id.clone();
+    assert_eq!(
+        routines::output_finalize::run_direct(&inputs)
+            .unwrap()
+            .model_fault,
+        0
+    );
+    inputs.decoder = DecoderTable {
+        tokens: vec![DecoderToken {
+            token: "substituted".into(),
+            special: false,
+            terminal: true,
+        }]
+        .into(),
+    };
+    let result = routines::output_finalize::run_direct(&inputs).unwrap();
+    assert_eq!(result.model_fault, 1);
+    assert_eq!(result.model_id, id);
+    assert!(result.generated_text.is_empty());
+    assert_eq!(result.generated_token_ids.as_slice(), &[0, 0]);
+    // An honestly rebuilt witness for the wrong data still fails the old model.
+    inputs.context.model =
+        model_identity::ModelContext::bind(inputs.descriptor.as_slice(), &inputs.context.model_id);
+    inputs.edge.model = inputs.context.model.clone();
+    inputs.edge.model.producer = model_identity::context::DECODE;
+    inputs.edge.model.completed_layers = inputs.edge.model.layers;
+    inputs.witness = output_finalize::decoder_witness(&inputs.decoder).unwrap();
+    assert_eq!(
+        routines::output_finalize::run_direct(&inputs)
+            .unwrap()
+            .model_fault,
+        1
+    );
 }

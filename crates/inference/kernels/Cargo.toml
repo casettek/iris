@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+model-identity = { path = "../../model/identity", default-features = false }
 anyhow = "1.0"
 det-num = { path = "../../det-num" }
 input-embedding = { path = "../../../raster-stages/input-embedding" }

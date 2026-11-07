@@ -1,6 +1,7 @@
 //! Selective PLE loading for the staged host only. Raster remains the oracle.
 use std::{collections::BTreeMap, sync::Arc};
 
+use crate::verified_weights::{fields, VerifiedSelections};
 use anyhow::{bail, ensure, Context, Result};
 use inference_kernels::{
     tensor::{matvec_from_source, Matrix},
@@ -14,7 +15,6 @@ use raster::{Bytes, BytesPage, List};
 use raster_core::input::{SelectorPath, SelectorSegment};
 use raster_runtime::EntryArgumentsBinding;
 use rayon::prelude::*;
-use crate::verified_weights::{fields, VerifiedSelections};
 
 use crate::cache::{MaterializationCache, MaterializationCacheKey};
 
@@ -237,6 +237,7 @@ pub(crate) fn run(
             .collect::<Result<Vec<_>>>()?
     };
     Ok(PleLayerInputs {
+        model: embedded.model.auxiliary(params.layer_idx),
         layer_idx: params.layer_idx,
         rows: List::from(rows),
         errors: List::new(),
@@ -245,3 +246,53 @@ pub(crate) fn run(
 
 #[cfg(test)]
 mod tests;
+
+impl SelectedWeights {
+    pub(crate) fn identity(&self, source: &VerifiedSelections) -> Result<(BytesPage, bool)> {
+        use model_identity::{
+            sparse::{SparseHeader, SparsePath},
+            stream,
+        };
+        let header: SparseHeader = source.select(fields(&["witness", "header"]))?;
+        let root = ple_identity_root(
+            &self.weights.params,
+            &self.weights.projection,
+            self.weights.embedding_byte_len,
+            self.weights.embedding_page_size,
+            &header,
+        );
+        let mut valid = true;
+        for (&index, page) in &self.pages {
+            let mut path = fields(&["witness", "paths"]);
+            path.segments.push(SelectorSegment::Index(index));
+            let proof: SparsePath = source.select(path)?;
+            valid &= model_identity::sparse::verify(
+                &header.root,
+                header.count,
+                index,
+                &proof,
+                &stream::digest(page),
+            );
+        }
+        Ok((root, valid))
+    }
+}
+pub(crate) fn ple_identity_root(
+    params: &PleLayerParams,
+    projection: &Bytes<PAGE_SIZE>,
+    byte_len: u64,
+    page_size: u64,
+    header: &model_identity::sparse::SparseHeader,
+) -> BytesPage {
+    use model_identity::stream;
+    let embeddings = stream::structure(&[
+        ("byte_len", stream::digest(&byte_len)),
+        ("page_size", stream::digest(&page_size)),
+        ("pages", header.root.clone()),
+    ]);
+    stream::structure(&[
+        ("params", stream::digest(params)),
+        ("embeddings", embeddings),
+        ("projection", stream::digest(projection)),
+    ])
+}

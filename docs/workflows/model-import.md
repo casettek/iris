@@ -78,3 +78,24 @@ Useful partial modes:
 Partial external refreshes do not refresh model identity. Run a full import before using changed bundle files in a claim or challenge.
 
 `model import` no longer accepts `--prompt`, `--raw-prompt`, or `--tokens`. Runtime prompt text and token count live in `inference.toml`.
+
+## Model identity artifacts
+
+Full imports now write a v5 model manifest, `model-descriptor.bin`, and Raster
+descriptor externals for prompt binding and output finalization, plus decoder
+membership witnesses. The descriptor travels in the authenticated model context
+through the intervening stages. The descriptor is
+`136 + 64 × layers` bytes (2,376 bytes for 35 layers). Component roots and the
+derived model ID retain their previous encoding. Decoder proofs are separate
+from that package and do not change the decoder's root.
+
+Reimport models and prepare new runs after this schema change. v4 model/run
+artifacts are rejected; replay historical claims with their original Iris
+revision and Raster identities. Direct-only imports still support discovery,
+but cannot produce a verified claim package.
+
+All component roles are checked by their consuming stages. Imports include separate
+reusable membership witnesses for tokenizer buckets, embedding pages, auxiliary
+embedding pages, and decoder tokens. Sparse reads verify their selected objects;
+dense projections and transformer weights use bounded complete sweeps. See the
+[validation report](../proposals/model-identity-validation.md) for test coverage and costs.

@@ -4,13 +4,14 @@
 //! Q16.16 fixed-point throughout. Tiles must replay bit-identically inside the
 //! zkVM, so floats are out — see SKILL.md §3.
 
+pub use model_identity::ModelContext;
 extern crate alloc;
 
 use alloc::string::String;
 use alloc::vec::Vec;
-use raster::{Bytes, BytesPage, List};
 use det_num::ops::{mac_bits, mul_sat, requantize, rms_norm_in_place};
 use det_num::{Acc, Act, Wgt};
+use raster::{Bytes, BytesPage, List};
 use serde::{Deserialize, Serialize};
 
 /// Fractional bits in the Q16.16 representation.
@@ -44,6 +45,7 @@ pub struct ActivationRow {
 /// MUST match `ActivationSequence` in `input-embedding` and `prefill-range`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
 pub struct ActivationSequence {
+    pub model: ModelContext,
     pub rows: List<ActivationRow>,
     pub errors: List<String>,
     /// This layer's K/V cache after this stage: everything it was handed as
@@ -144,6 +146,7 @@ pub struct PleRow {
 /// The stage's authorized output.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
 pub struct PleLayerInputs {
+    pub model: ModelContext,
     pub layer_idx: u32,
     pub rows: List<PleRow>,
     pub errors: List<String>,
@@ -227,7 +230,6 @@ pub fn scale_row(row: &mut [i32], scalar: i32) {
     }
 }
 
-
 pub fn dot(a: &[i32], b: &[i32]) -> core::result::Result<i32, String> {
     if a.len() != b.len() {
         return Err(alloc::format!(
@@ -278,3 +280,5 @@ pub fn rms_norm(row: &mut [i32], weights: &[i32], eps: i64) -> core::result::Res
     }
     Ok(())
 }
+
+pub use model_identity::sparse::{SparseHeader, SparsePath, SparseWitness};

@@ -25,6 +25,10 @@ pub fn run_input_embedding_view(
         });
     }
     Ok(ActivationSequence {
+        model: model_identity::ModelContext::embedding(
+            &bound_model_context(model),
+            &Default::default(),
+        ),
         rows: List::from(rows),
         errors: List::new(),
         kv: List::new(),
@@ -40,6 +44,10 @@ pub fn run_decode_embed_view(
         bail!("decode-embed received the empty decode edge with no selected token");
     }
     Ok(ActivationSequence {
+        model: model_identity::ModelContext::embedding(
+            &bound_model_context(model),
+            &Default::default(),
+        ),
         rows: List::from(vec![ActivationRow {
             token_id: edge.token_id,
             values: prefill_range::input::pack_i32s(&model.scaled_embedding_row(edge.token_id)?),
@@ -85,6 +93,7 @@ pub fn run_ple_prepare_view(
         });
     }
     Ok(PleLayerInputs {
+        model: embedded.model.auxiliary(layer.params.layer_idx),
         layer_idx: layer.params.layer_idx,
         rows: List::from(rows),
         errors: List::new(),
@@ -103,6 +112,16 @@ pub fn run_prefill_range_view(
     let input_rows = activation_rows(activations, params.hidden_size as usize)?;
     if input_rows.rows() == 0 {
         return Ok(ActivationSequence {
+            model: activations.model.layer(
+                params.layer_idx,
+                &ple.model,
+                &prior_kv.model,
+                &donor_a_kv.model,
+                &donor_b_kv.model,
+                params.kv_donor_layer,
+                params.donor_a_layer,
+                params.donor_b_layer,
+            ),
             rows: List::new(),
             errors: List::new(),
             kv: List::new(),
@@ -128,6 +147,16 @@ pub fn run_prefill_range_view(
         params.sliding_window,
     );
     Ok(ActivationSequence {
+        model: activations.model.layer(
+            params.layer_idx,
+            &ple.model,
+            &prior_kv.model,
+            &donor_a_kv.model,
+            &donor_b_kv.model,
+            params.kv_donor_layer,
+            params.donor_a_layer,
+            params.donor_b_layer,
+        ),
         rows: List::from(output_rows),
         errors: List::new(),
         kv: List::from(output_kv),
@@ -632,4 +661,14 @@ fn finish_layer(xs: &[i32], mut projected: Vec<i32>, params: &LayerParams) -> Re
 
 fn unpack(page: &raster::BytesPage) -> Result<Vec<i32>> {
     prefill_range::input::unpack_i32s(page).map_err(anyhow::Error::msg)
+}
+
+pub(crate) fn bound_model_context(model: &DirectInferenceModel) -> model_identity::ModelContext {
+    let bytes = model
+        .manifest()
+        .descriptor()
+        .ok()
+        .and_then(|d| d.encode().ok())
+        .unwrap_or_default();
+    model_identity::ModelContext::bind(&bytes, &model.manifest().model_id)
 }

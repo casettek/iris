@@ -11,19 +11,17 @@ use raster::prelude::*;
 use sha2::{Digest, Sha256};
 
 pub mod input;
+pub mod model;
+pub use model::*;
 pub mod prompt;
 
 use input::*;
 use prompt::PromptContext;
 
-#[tile(kind = iter, description = "Initialize generated output finalization")]
-pub fn begin_finalize_state() -> FinalizeState {
-    initial_finalize_state()
-}
-
 /// The empty state, as a plain function — see [`advance_finalize_state`].
 pub fn initial_finalize_state() -> FinalizeState {
     FinalizeState {
+        model_fault: 0,
         count: 0,
         json: String::from("["),
         text: String::new(),
@@ -60,22 +58,7 @@ fn flush_pending(state: &mut FinalizeState) {
     state.pending_bytes = BytesPage::__from_parts(0, 0, Vec::new());
 }
 
-/// Adds one token to the JSON commitment stream and decoder state.
-#[tile(kind = iter, description = "Consume one generated token")]
-pub fn consume_decoder_token(
-    state: FinalizeState,
-    token_id: u32,
-    token: DecoderToken,
-) -> FinalizeState {
-    advance_finalize_state(state, token_id, token)
-}
-
-/// The step [`consume_decoder_token`] is, as a plain function.
-///
-/// Called from the tile body, so it is inside that tile's image id and replays
-/// in the guest with it. Split out because a tile can only be entered from a
-/// sequence, and the terminal-token branch is worth pinning with a test rather
-/// than with a chain run long enough for a real model to close its turn.
+/// Adds one authenticated token to the JSON commitment stream and decoder state.
 pub fn advance_finalize_state(
     state: FinalizeState,
     token_id: u32,
@@ -171,6 +154,7 @@ pub fn begin_generated_output(
     context: PromptContext,
 ) -> Draft<GeneratedOutput> {
     let mut output = Draft::<GeneratedOutput>::new();
+    output.model_fault().set(state.model_fault);
     output
         .output_fault()
         .set(output_fault_of(&state, has_selected, &context));

@@ -19,6 +19,7 @@ use sequence_check::prompt::{PromptContext, PromptState};
 use std::{path::Path, sync::Arc};
 
 pub struct Inputs {
+    component_root: raster::BytesPage,
     pub activations: ActivationSequence,
     pub previous: ActivationSequence,
     pub claimed: ClaimedOutput,
@@ -42,6 +43,7 @@ impl Inputs {
         context: PromptContext,
     ) -> Self {
         Self {
+            component_root: model_identity::stream::digest(head.as_ref()),
             activations,
             previous,
             claimed,
@@ -88,7 +90,7 @@ pub fn load_inputs_from_paths_with_cache(
     })
 }
 pub fn run_direct(inputs: &Inputs) -> Result<DecodeEdge> {
-    let edge = match &inputs.head {
+    let mut edge = match &inputs.head {
         Weights::Eager(head) => run_sequence_check_direct(SequenceCheckDirectInputs {
             activations: &inputs.activations,
             previous: &inputs.previous,
@@ -99,6 +101,18 @@ pub fn run_direct(inputs: &Inputs) -> Result<DecodeEdge> {
         })?,
         Weights::Paged(head) => run_paged(inputs, head)?,
     };
+    edge.model = inputs.activations.model.head(
+        &inputs.previous.model,
+        &inputs.context.model,
+        &inputs.prior.model,
+    );
+    edge.model = model_identity::stream::verify(
+        edge.model,
+        &inputs.component_root,
+        model_identity::Role::Head,
+    );
+    edge.model
+        .require(!inputs.prior.model.is_origin() || inputs.prior.generated_token_ids.is_empty());
     Ok(edge)
 }
 fn run_paged(inputs: &Inputs, head: &PagedHead) -> Result<DecodeEdge> {
@@ -116,7 +130,7 @@ fn run_paged(inputs: &Inputs, head: &PagedHead) -> Result<DecodeEdge> {
         },
     )?;
     let selections = head::select_positions(&scorable(&positions), head)?;
-    let edge = decode_edge(
+    let mut edge = decode_edge(
         &positions,
         &selections,
         &inputs.prior,
@@ -128,6 +142,11 @@ fn run_paged(inputs: &Inputs, head: &PagedHead) -> Result<DecodeEdge> {
             edge.claim_mismatches, edge.first_claim_mismatch_position
         );
     }
+    edge.model = inputs.activations.model.head(
+        &inputs.previous.model,
+        &inputs.context.model,
+        &inputs.prior.model,
+    );
     Ok(edge)
 }
 fn load_inputs_from_initialized_runtime(
@@ -145,6 +164,14 @@ fn load_inputs_from_initialized_runtime(
         raster::entry_argument_spec::<FinalHead>("head"),
         raster::entry_argument_spec::<PromptState>("prompt"),
     ])?;
+    let component_root = model_identity::stream::page(
+        &binding
+            .arguments
+            .iter()
+            .find(|v| v.name == "head")
+            .expect("declared component input")
+            .commitment,
+    );
     let activations = match cached_inputs.get("activations") {
         Some(value) => value.as_check_activation_sequence()?,
         None => raster::materialize_auth_return(raster::entry_argument_auth_ref::<
@@ -169,11 +196,13 @@ fn load_inputs_from_initialized_runtime(
     );
     let context = match cached_inputs.get("prompt") {
         Some(value) => value.as_check_prompt_context()?,
-        None => raster::materialize_auth_return(raster::entry_argument_auth_ref::<PromptState>(
-            binding.reference.clone(),
-            "prompt",
-        ))
-        .context,
+        None => {
+            raster::materialize_auth_return(raster::entry_argument_auth_ref::<PromptState>(
+                binding.reference.clone(),
+                "prompt",
+            ))
+            .context
+        }
     };
     let head = if raster_inputs(&binding) {
         Weights::Paged(head::load(
@@ -196,6 +225,7 @@ fn load_inputs_from_initialized_runtime(
         })?)
     };
     Ok(Inputs {
+        component_root,
         activations,
         previous,
         claimed,

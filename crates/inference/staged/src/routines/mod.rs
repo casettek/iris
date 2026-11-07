@@ -763,6 +763,8 @@ mod tests {
             StageKind::from_stage_spec("raster-stages/sequence-check", "check_c1").unwrap(),
             StageKind::SequenceCheck
         );
-        assert!(StageKind::from_stage_spec("raster-stages/decode-embed", "decode_embed_t0").is_err());
+        assert!(
+            StageKind::from_stage_spec("raster-stages/decode-embed", "decode_embed_t0").is_err()
+        );
     }
 }

@@ -15,6 +15,7 @@ use input::*;
 #[tile(kind = iter, description = "Initialize an empty decode transcript")]
 pub fn initialize_decode_edge() -> Draft<DecodeEdge> {
     let mut output = Draft::<DecodeEdge>::new();
+    output.model().set(ModelContext::default());
     output.has_selected().set(false);
     output.decode_position().set(0);
     output.token_id().set(0);

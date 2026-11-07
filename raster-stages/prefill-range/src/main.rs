@@ -251,7 +251,34 @@ fn main(
 ) -> Result<ActivationSequence> {
     let declared_params = select!(LayerParams, layer.clone().params);
     let params = call!(validate_layer_params, declared_params)?;
+    let input_model = select!(ModelContext, activations.clone().model);
+    let aux_model = select!(ModelContext, ple.clone().model);
+    let prior_model = select!(ModelContext, prior_kv.clone().model);
+    let donor_a_model = select!(ModelContext, donor_a_kv.clone().model);
+    let donor_b_model = select!(ModelContext, donor_b_kv.clone().model);
+    let model = call!(
+        layer_model_context,
+        input_model,
+        aux_model,
+        prior_model.clone(),
+        donor_a_model,
+        donor_b_model,
+        params.clone()
+    );
 
+    let cache_keys = select!(List<KeyRow>, prior_kv.clone().kv);
+    let zero = call!(identity_zero_count);
+    let count = call_recur!(
+        tile = identity_count_keys,
+        input = cache_keys,
+        chunk = 64,
+        state = zero,
+        args = ()
+    );
+    let model = call!(identity_prior_guard, model, prior_model, count);
+    let root = call_seq!(identity_root, layer.clone());
+    let layer_idx = select!(u32, params.clone().layer_idx);
+    let model = call!(identity_verify, model, root, layer_idx);
     let hidden = select!(u32, params.clone().hidden_size);
     let q_len = call!(q_out_len, params.clone());
     let kv_len = call!(kv_out_len, params.clone());
@@ -317,7 +344,7 @@ fn main(
     // `attend_token` appends one row and one key per token. Each derivation is
     // a new object extending its base — `rows` ends up 1 entry on a decode
     // stage while `kv` ends up `prior + 1`, which no single sweep could build.
-    let base = call!(begin_layer_output, clone!(start_position));
+    let base = call!(begin_layer_output, clone!(start_position), model);
     let carried = call_recur!(
         tile = carry_cached_key,
         input = prior_keys.clone(),
@@ -376,4 +403,61 @@ fn main(
     )?;
 
     Ok(prepared)
+}
+
+#[sequence]
+fn identity_bytes_195_840(value: Bytes<195_840>) -> BytesPage {
+    let len = select!(u64, value.clone().byte_len);
+    let size = select!(u64, value.clone().page_size);
+    let pages = select!(List<BytesPage>, value.pages);
+    let seed = call!(identity_empty);
+    let folded = call_recur!(tile = identity_page, input = pages, state = seed, args = ());
+    let root = call!(identity_finish, folded);
+    call!(identity_bytes, len, size, root)
+}
+#[sequence]
+fn identity_bytes_196_608(value: Bytes<196_608>) -> BytesPage {
+    let len = select!(u64, value.clone().byte_len);
+    let size = select!(u64, value.clone().page_size);
+    let pages = select!(List<BytesPage>, value.pages);
+    let seed = call!(identity_empty);
+    let folded = call_recur!(tile = identity_page, input = pages, state = seed, args = ());
+    let root = call!(identity_finish, folded);
+    call!(identity_bytes, len, size, root)
+}
+#[sequence]
+fn identity_root(value: TransformerLayer) -> BytesPage {
+    let params = select!(LayerParams, value.clone().params);
+    let params = call!(identity_hash_layerparams, params);
+    let w_q = select!(Bytes<195_840>, value.clone().w_q);
+    let w_q = call_seq!(identity_bytes_195_840, w_q);
+    let w_k = select!(Bytes<195_840>, value.clone().w_k);
+    let w_k = call_seq!(identity_bytes_195_840, w_k);
+    let w_v = select!(Bytes<195_840>, value.clone().w_v);
+    let w_v = call_seq!(identity_bytes_195_840, w_v);
+    let w_o = select!(Bytes<195_840>, value.clone().w_o);
+    let w_o = call_seq!(identity_bytes_195_840, w_o);
+    let w_gate = select!(Bytes<195_840>, value.clone().w_gate);
+    let w_gate = call_seq!(identity_bytes_195_840, w_gate);
+    let w_up = select!(Bytes<195_840>, value.clone().w_up);
+    let w_up = call_seq!(identity_bytes_195_840, w_up);
+    let w_down = select!(Bytes<195_840>, value.clone().w_down);
+    let w_down = call_seq!(identity_bytes_195_840, w_down);
+    let ple_input_gate = select!(Bytes<196_608>, value.clone().ple_input_gate);
+    let ple_input_gate = call_seq!(identity_bytes_196_608, ple_input_gate);
+    let ple_layer_projection = select!(Bytes<196_608>, value.clone().ple_layer_projection);
+    let ple_layer_projection = call_seq!(identity_bytes_196_608, ple_layer_projection);
+    call!(
+        identity_component,
+        params,
+        w_q,
+        w_k,
+        w_v,
+        w_o,
+        w_gate,
+        w_up,
+        w_down,
+        ple_input_gate,
+        ple_layer_projection
+    )
 }

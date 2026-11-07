@@ -61,6 +61,7 @@ pub fn finish_ranked_step(step: RankedStep, hit: MergeMatch) -> MergeScan {
     // The scan runs left to right; retaining equal ranks implements the tie break.
     if hit.matched && (!best.matched || hit.rank < best.rank) {
         best = MergeCandidate {
+            model_fault: best.model_fault,
             matched: true,
             rank: hit.rank,
             left: step
@@ -131,10 +132,7 @@ pub fn scan_vocab_chunk(
 }
 
 #[tile(kind = iter)]
-pub fn append_token_id(
-    output: Draft<PromptState>,
-    hit: VocabMatch,
-) -> Draft<PromptState> {
+pub fn append_token_id(output: Draft<PromptState>, hit: VocabMatch) -> Draft<PromptState> {
     assert!(
         hit.found,
         "prepared or merged piece is absent from vocabulary"
@@ -143,3 +141,6 @@ pub fn append_token_id(
     output.token_ids().push(hit.token_id);
     output
 }
+
+pub mod identity;
+pub use identity::*;

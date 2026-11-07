@@ -22,6 +22,7 @@ Start with the workflow docs when you want to run the repo, and the internals do
 
 - [Issues](issues/README.md)
 - [Proposals](proposals/)
+- [Model identity implementation plan](proposals/model-identity.md): bind consumed model data to component commitments inside Iris stages.
 - [Ranked BPE tokenizer](proposals/ranked-bpe-tokenizer.md): implemented fixed-count
   staging, input preparation, and replay contract.
 - [Ranked BPE validation](validation/ranked-bpe-2026-09-10.md): reference and parity

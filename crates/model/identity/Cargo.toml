@@ -1,0 +1,14 @@
+[package]
+name = "model-identity"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+default = []
+std = ["raster-core/std"]
+
+[dependencies]
+raster = { path = "../../../../raster/crates/raster", default-features = false }
+raster-core = { path = "../../../../raster/crates/raster-core", default-features = false }
+serde = { version = "1", default-features = false, features = ["derive", "alloc"] }
+sha2 = { version = "0.10", default-features = false }

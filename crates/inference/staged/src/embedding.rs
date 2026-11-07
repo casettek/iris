@@ -92,3 +92,57 @@ impl SelectedEmbedding {
             .collect())
     }
 }
+
+impl SelectedEmbedding {
+    /// Read current witness inputs even when numerical metadata came from cache.
+    pub(crate) fn identity(&self, source: &VerifiedSelections) -> Result<(BytesPage, bool)> {
+        use model_identity::{
+            sparse::{SparseHeader, SparsePath},
+            stream,
+        };
+        use raster_core::input::{SelectorPath, SelectorSegment};
+        let header: SparseHeader = source.select(fields(&["witness", "header"]))?;
+        let root = embedding_identity_root(
+            self.metadata.hidden_size,
+            self.metadata.scale,
+            self.metadata.region.byte_len,
+            self.metadata.region.page_size,
+            &header,
+        );
+        let mut valid = true;
+        for (&index, page) in &self.pages {
+            let path: SparsePath = source.select(SelectorPath::new(vec![
+                SelectorSegment::Field("witness".into()),
+                SelectorSegment::Field("paths".into()),
+                SelectorSegment::Index(index),
+            ]))?;
+            valid &= model_identity::sparse::verify(
+                &header.root,
+                header.count,
+                index,
+                &path,
+                &stream::digest(page),
+            );
+        }
+        Ok((root, valid))
+    }
+}
+pub(crate) fn embedding_identity_root(
+    hidden_size: u32,
+    scale: i32,
+    byte_len: u64,
+    page_size: u64,
+    header: &model_identity::sparse::SparseHeader,
+) -> BytesPage {
+    use model_identity::stream;
+    let values = stream::structure(&[
+        ("byte_len", stream::digest(&byte_len)),
+        ("page_size", stream::digest(&page_size)),
+        ("pages", header.root.clone()),
+    ]);
+    stream::structure(&[
+        ("hidden_size", stream::digest(&hidden_size)),
+        ("embedding_scale", stream::digest(&scale)),
+        ("values", values),
+    ])
+}
