@@ -204,7 +204,7 @@ count = 0
   [[chain.repeat.stage]]
 name = "embed_c{k}"
 project = "/home/amcas/Development/iris/raster-stages/input-embedding"
-inputs.prompt = { external = { path = "/home/amcas/Development/iris/runtime/model-artifacts/gemma-4-E2B-q8/raster/input-embedding/no_prompt.rastered", index_path = "/home/amcas/Development/iris/runtime/model-artifacts/gemma-4-E2B-q8/raster/input-embedding/no_prompt.rindex", commitment = "6eb2dfd74572dedc2d86c72264d2a2474a1ea0a0e00f8223e40df9099853c567" } }
+inputs.prompt = { external = { path = "/home/amcas/Development/iris/runtime/model-artifacts/gemma-4-E2B-q8/raster/input-embedding/no_prompt.rastered", index_path = "/home/amcas/Development/iris/runtime/model-artifacts/gemma-4-E2B-q8/raster/input-embedding/no_prompt.rindex", commitment = "5ca1093dc7e835b5c96a1e7f54679914aeec58f9cc3318a207f7373c906f4092" } }
 inputs.claimed = { input = "claimed_ids_{k}" }
 inputs.previous = { from = "embed_c{k-1}", first = "embed_p@LAST_PROMPT_RANGE@" }
 inputs.embedding = { external = { path = "/home/amcas/Development/iris/runtime/model-artifacts/gemma-4-E2B-q8/raster/input-embedding/embedding.rastered", index_path = "/home/amcas/Development/iris/runtime/model-artifacts/gemma-4-E2B-q8/raster/input-embedding/embedding.rindex", commitment = "51b0dc3926f8d2f4937fb3ab5a8db77f9d009d9fd1361bf03eccd448a09c0bc1" } }
@@ -320,7 +320,6 @@ name = "check_c{k}"
 project = "/home/amcas/Development/iris/raster-stages/sequence-check"
 inputs.activations = { from = "range_c{k}_l34" }
 inputs.previous = { from = "range_c{k-1}_l34", first = "range_p@LAST_PROMPT_RANGE@_l34" }
-inputs.claimed = { input = "claimed_ids_{k}" }
 inputs.prior = { from = "check_c{k-1}", first = "decode_init" }
 inputs.prompt = { from = "prompt_prepare_p@LAST_PROMPT_RANGE@" }
 inputs.head = { external = { path = "/home/amcas/Development/iris/runtime/model-artifacts/gemma-4-E2B-q8/raster/sequence-check/head.rastered", index_path = "/home/amcas/Development/iris/runtime/model-artifacts/gemma-4-E2B-q8/raster/sequence-check/head.rindex", commitment = "de3eb4cfb172f17814a26b080f78ce85a2861c51e144e95f76614bdc3971eba1" } }

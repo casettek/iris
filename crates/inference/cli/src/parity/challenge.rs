@@ -316,10 +316,9 @@ pub(super) fn run_challenge_leg(leg: &Leg) -> Result<Value> {
 
     for (name, _, manifest) in substituted
         .iter()
-        .take(11)
         .filter(|(name, _, _)| *name != "other-decoder")
     {
-        replays.push(expect_model_fault(
+        replays.push(expect_semantic_rejection(
             leg,
             &format!("{name}-self-replay"),
             manifest,
@@ -332,21 +331,20 @@ pub(super) fn run_challenge_leg(leg: &Leg) -> Result<Value> {
         &honest_manifest,
         &leg.dir.join("decoder-substitution-inputs"),
     )?;
-    replays.push(expect_model_fault(
+    replays.push(expect_semantic_rejection(
         leg,
         "decoder-self-replay",
         &changed_decoder,
     )?);
-    replays.push(expect_model_fault(
+    replays.push(expect_semantic_rejection(
         leg,
         "decoder-and-proof-self-replay",
         &changed_proof,
     )?);
 
-    // Positions that no longer line up with the cache stop the layer stage, in
-    // Raster and natively, so the claimer has no output to post. Only a manifest
-    // the claimer rewired reaches this; a challenger's template cannot.
-    let stopped = [
+    // Execute the dishonest wiring itself in both engines. Agreement must end
+    // in a committed invalid verdict, even when the altered pipeline runs honestly.
+    let rewired = [
         (
             "restarted-positions",
             wire("embed_p{j}", "previous", r#"{ from = "range_origin" }"#)?,
@@ -359,9 +357,33 @@ pub(super) fn run_challenge_leg(leg: &Leg) -> Result<Value> {
                 r#"{ from = "range_origin" }"#,
             )?,
         ),
+        (
+            "wrong-auxiliary-range",
+            wire("range_c{k}_l{l}", "ple", r#"{ from = "aux_p0_l{l}" }"#)?,
+        ),
+        (
+            "stale-cache-range",
+            wire(
+                "range_c{k}_l{l}",
+                "prior_kv",
+                r#"{ from = "range_p0_l{l}" }"#,
+            )?,
+        ),
+        (
+            "stale-predicting-row",
+            wire("check_c{k}", "previous", r#"{ from = "range_p0_l3" }"#)?,
+        ),
+        (
+            "claim-embedding-reset",
+            wire("embed_c{k}", "previous", r#"{ from = "embed_p0" }"#)?,
+        ),
     ];
-    for (name, manifest) in &stopped {
-        expect_stop(leg, name, manifest)?;
+    for (name, manifest) in &rewired {
+        replays.push(expect_semantic_rejection(
+            leg,
+            &format!("{name}-self-replay"),
+            manifest,
+        )?);
     }
 
     Ok(json!(replays))
@@ -567,33 +589,6 @@ fn claimed_run(leg: &Leg, name: &str, manifest: &str) -> Result<(PathBuf, Checkp
     let hashes = dir.join("checkpoints.txt");
     write_checkpoint_hashes(&hashes, &checkpoint_hashes(&trace)?)?;
     Ok((hashes, trace))
-}
-
-/// Both implementations must stop in a layer stage on this manifest.
-fn expect_stop(leg: &Leg, name: &str, manifest: &str) -> Result<()> {
-    let native = claimed_run(leg, name, manifest).expect_err("a rewired chain finished");
-    ensure!(
-        format!("{native:#}").contains("prefill_range execution failed"),
-        "`{name}` stopped somewhere other than a layer stage: {native:#}"
-    );
-    let dir = leg.dir.join(name);
-    let raster_dir = dir.join("raster");
-    fs::create_dir(&raster_dir)?;
-    let mut run = command(leg.raster, leg.root);
-    run.args(["raster", "chain", "run"])
-        .arg(dir.join("Raster.toml"))
-        .args(["--no-auth", "--run"])
-        .arg(&raster_dir);
-    let log = dir.join("raster.log");
-    ensure!(
-        logged(run, &log).is_err(),
-        "`{name}` finished through Raster but not natively"
-    );
-    ensure!(
-        fs::read_to_string(&log)?.contains("stage 'prefill-range' exited unsuccessfully"),
-        "`{name}` stopped somewhere other than a layer stage through Raster"
-    );
-    Ok(())
 }
 
 /// Imports the pinned bundle with its weights and tokenizer changed, so every
@@ -919,8 +914,8 @@ fn decoder_substitution_manifests(manifest: &str, dir: &Path) -> Result<(String,
     Ok((changed, changed_proof))
 }
 
-fn expect_model_fault(leg: &Leg, name: &str, manifest: &str) -> Result<Value> {
-    replay_model_fault(
+fn expect_semantic_rejection(leg: &Leg, name: &str, manifest: &str) -> Result<Value> {
+    replay_semantic_rejection(
         leg.root,
         leg.dir.join(name),
         leg.exe,
@@ -931,7 +926,7 @@ fn expect_model_fault(leg: &Leg, name: &str, manifest: &str) -> Result<Value> {
     )
 }
 
-fn replay_model_fault(
+fn replay_semantic_rejection(
     root: &Path,
     dir: PathBuf,
     exe: &Path,
@@ -970,16 +965,22 @@ fn replay_model_fault(
         result.model_id == expected_model_id,
         "substitution replaced the statement model ID"
     );
-    ensure!(
-        result.model_fault != 0,
-        "substitution produced a clean model verdict"
-    );
+    // Only truncating an otherwise honest checked transcript may preserve
+    // model/history integrity; it must fail the explicit completion rule.
+    if name == "unchecked-range-self-replay" {
+        ensure!(
+            result.output_fault == run_prep::OUTPUT_FAULT_SHORT_WITHOUT_EOS,
+            "truncated checked history was not rejected as incomplete"
+        );
+    } else {
+        ensure!(
+            result.model_fault != 0,
+            "substitution produced a clean model/execution binding verdict"
+        );
+    }
     let rejection = crate::challenge::claimed_output_rejection(Some(&result))?
         .context("matching dishonest execution was accepted")?;
-    ensure!(
-        rejection.contains("model data failed authentication"),
-        "{rejection}"
-    );
+    ensure!(!rejection.is_empty(), "missing semantic rejection");
     Ok(
         json!({"name": name, "matching_checkpoints": order.len(), "model_fault": result.model_fault, "rejected": true}),
     )
@@ -1017,13 +1018,56 @@ mod tests {
         ];
         for (name, manifest) in cases {
             let dir = base.join(format!("{name}-{}", std::process::id()));
-            let result = super::replay_model_fault(
+            let result = super::replay_semantic_rejection(
                 &root,
                 dir,
                 &root.join("target/release/iris"),
                 &root.join("target/parity-tools/release/cargo-raster"),
                 &model.model_id,
                 name,
+                &manifest,
+            )
+            .unwrap();
+            assert_eq!(result["rejected"], true);
+        }
+    }
+
+    #[test]
+    #[ignore = "replays retained pipeline attacks through native and Raster; set IRIS_PARITY_RUN"]
+    fn pipeline_wiring_self_replays_reject_matching_execution() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../..")
+            .canonicalize()
+            .unwrap();
+        let base = PathBuf::from(std::env::var_os("IRIS_PARITY_RUN").expect("set IRIS_PARITY_RUN"));
+        let model: ModelManifest =
+            read_json(&base.join("model-artifacts/parity-gemma/manifest.json")).unwrap();
+        for case in [
+            "repeated-context",
+            "dropped-verdict",
+            "unchecked-range",
+            "first-prompt-context",
+            "restarted-positions",
+            "dropped-cache",
+            "wrong-auxiliary-range",
+            "stale-cache-range",
+            "stale-predicting-row",
+            "claim-embedding-reset",
+        ] {
+            let name = format!("{case}-self-replay");
+            let manifest = fs::read_to_string(
+                base.join("over-window/challenges")
+                    .join(&name)
+                    .join("Raster.toml"),
+            )
+            .unwrap();
+            let result = replay_semantic_rejection(
+                &root,
+                base.join(format!("binding-{case}-{}", std::process::id())),
+                &root.join("target/release/iris"),
+                &root.join("target/parity-tools/release/cargo-raster"),
+                &model.model_id,
+                &name,
                 &manifest,
             )
             .unwrap();

@@ -53,6 +53,12 @@ pub fn run_direct(inputs: &Inputs) -> Result<PromptState> {
         &inputs.text,
         &inputs.config,
     ));
+    output.context.model.bind_statement(
+        &output.context.input_text_sha256,
+        output.context.raw_prompt,
+        output.context.max_new_tokens,
+        output.context.range_size,
+    );
     Ok(output)
 }
 

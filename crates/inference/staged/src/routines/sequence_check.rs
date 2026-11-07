@@ -12,9 +12,7 @@ use inference_kernels::kernels::sequence_check::{
     check_frame, check_positions, decode_edge, run_sequence_check_direct, scorable,
     CheckHeadParams, SequenceCheckDirectInputs,
 };
-use sequence_check::input::{
-    unpack_i32s, ActivationSequence, ClaimedOutput, DecodeEdge, FinalHead,
-};
+use sequence_check::input::{unpack_i32s, ActivationSequence, DecodeEdge, FinalHead};
 use sequence_check::prompt::{PromptContext, PromptState};
 use std::{path::Path, sync::Arc};
 
@@ -22,7 +20,6 @@ pub struct Inputs {
     component_root: raster::BytesPage,
     pub activations: ActivationSequence,
     pub previous: ActivationSequence,
-    pub claimed: ClaimedOutput,
     pub prior: DecodeEdge,
     /// The last prompt range's context: the range limit and the prompt's length.
     pub context: PromptContext,
@@ -37,7 +34,6 @@ impl Inputs {
     pub fn eager(
         activations: ActivationSequence,
         previous: ActivationSequence,
-        claimed: ClaimedOutput,
         prior: DecodeEdge,
         head: Arc<FinalHead>,
         context: PromptContext,
@@ -46,7 +42,6 @@ impl Inputs {
             component_root: model_identity::stream::digest(head.as_ref()),
             activations,
             previous,
-            claimed,
             prior,
             context,
             head: Weights::Eager(head),
@@ -94,14 +89,18 @@ pub fn run_direct(inputs: &Inputs) -> Result<DecodeEdge> {
         Weights::Eager(head) => run_sequence_check_direct(SequenceCheckDirectInputs {
             activations: &inputs.activations,
             previous: &inputs.previous,
-            claimed: &inputs.claimed,
             prior: &inputs.prior,
             head,
             context: &inputs.context,
         })?,
         Weights::Paged(head) => run_paged(inputs, head)?,
     };
-    edge.model = inputs.activations.model.head(
+    let mut checked_model = inputs.activations.model.clone();
+    checked_model.validate_rows(
+        inputs.activations.start_position,
+        inputs.activations.rows.len() as u64,
+    );
+    edge.model = checked_model.head(
         &inputs.previous.model,
         &inputs.context.model,
         &inputs.prior.model,
@@ -121,7 +120,6 @@ fn run_paged(inputs: &Inputs, head: &PagedHead) -> Result<DecodeEdge> {
     let positions = check_positions(
         &inputs.activations,
         &inputs.previous,
-        &inputs.claimed,
         &CheckHeadParams {
             hidden_size: params.hidden_size,
             norm_eps: params.norm_eps,
@@ -142,7 +140,12 @@ fn run_paged(inputs: &Inputs, head: &PagedHead) -> Result<DecodeEdge> {
             edge.claim_mismatches, edge.first_claim_mismatch_position
         );
     }
-    edge.model = inputs.activations.model.head(
+    let mut checked_model = inputs.activations.model.clone();
+    checked_model.validate_rows(
+        inputs.activations.start_position,
+        inputs.activations.rows.len() as u64,
+    );
+    edge.model = checked_model.head(
         &inputs.previous.model,
         &inputs.context.model,
         &inputs.prior.model,
@@ -159,7 +162,6 @@ fn load_inputs_from_initialized_runtime(
     let binding = raster::start_program(&[
         raster::entry_argument_spec::<ActivationSequence>("activations"),
         raster::entry_argument_spec::<ActivationSequence>("previous"),
-        raster::entry_argument_spec::<ClaimedOutput>("claimed"),
         raster::entry_argument_spec::<DecodeEdge>("prior"),
         raster::entry_argument_spec::<FinalHead>("head"),
         raster::entry_argument_spec::<PromptState>("prompt"),
@@ -191,9 +193,6 @@ fn load_inputs_from_initialized_runtime(
             "prior",
         )),
     };
-    let claimed = raster::materialize_auth_return(
-        raster::entry_argument_auth_ref::<ClaimedOutput>(binding.reference.clone(), "claimed"),
-    );
     let context = match cached_inputs.get("prompt") {
         Some(value) => value.as_check_prompt_context()?,
         None => {
@@ -228,7 +227,6 @@ fn load_inputs_from_initialized_runtime(
         component_root,
         activations,
         previous,
-        claimed,
         prior,
         context,
         head,

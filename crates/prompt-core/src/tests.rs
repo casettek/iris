@@ -199,3 +199,46 @@ fn the_first_fault_is_the_one_kept() {
     let next = finish_token_context(&PromptContext::default(), &MergeCandidate::default(), 3);
     assert_eq!(next.fault, FAULT_NONE);
 }
+
+#[test]
+fn prompt_join_rejects_same_model_different_statement_fields() {
+    let bound = PromptContext {
+        input_text_sha256: "input-a".into(),
+        model_id: "model-a".into(),
+        raw_prompt: false,
+        max_new_tokens: 8,
+        range_size: 4,
+        ..Default::default()
+    };
+    let mut variants = [
+        bound.clone(),
+        bound.clone(),
+        bound.clone(),
+        bound.clone(),
+        bound.clone(),
+    ];
+    variants[0].input_text_sha256 = "input-b".into();
+    variants[1].model_id = "model-b".into();
+    variants[2].raw_prompt = true;
+    variants[3].max_new_tokens = 9;
+    variants[4].range_size = 5;
+    for previous in variants {
+        assert_eq!(
+            join_prompt_models(previous, &bound).fault,
+            FAULT_CONTEXT_MISMATCH
+        );
+    }
+}
+#[test]
+fn prompt_join_retains_faults_from_both_branches() {
+    let mut bound = PromptContext::default();
+    bound.fault = FAULT_NO_TEXT;
+    bound.fault_position = 12;
+    let joined = join_prompt_models(PromptContext::default(), &bound);
+    assert_eq!((joined.fault, joined.fault_position), (FAULT_NO_TEXT, 12));
+    let mut previous = PromptContext::default();
+    previous.fault = FAULT_UNSAFE_CUT;
+    previous.fault_position = 3;
+    let joined = join_prompt_models(previous, &bound);
+    assert_eq!((joined.fault, joined.fault_position), (FAULT_UNSAFE_CUT, 3));
+}

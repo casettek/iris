@@ -524,3 +524,22 @@ pub fn head_model_context(
 
 pub mod identity;
 pub use identity::*;
+
+/// The claim is the token that actually entered the transformer pipeline.
+#[tile(kind = iter, description = "Read the consumed token from its activation row")]
+pub fn checked_row_token(row: ActivationRow) -> u32 {
+    row.token_id
+}
+
+#[tile(kind=recur)]
+pub fn binding_count_rows(
+    input: RecurInput<Block<ActivationRow>>,
+    state: RecurState<u64>,
+) -> RecurState<u64> {
+    RecurState::new(*state + input.into_value().len() as u64)
+}
+#[tile(kind=iter)]
+pub fn binding_validate_rows(mut model: ModelContext, start: u32, count: u64) -> ModelContext {
+    model.validate_rows(start, count);
+    model
+}

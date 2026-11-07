@@ -183,7 +183,8 @@ pub fn finalize_prompt(inputs: PromptPrepareDirectInputs<'_>) -> Result<PromptTo
         .cloned()
         .collect::<Vec<_>>();
     let best = best_merge(&pieces, inputs.tokenizer)?;
-    let context = finish_token_context(&inputs.initial_pieces.context, &best, pieces.len() as u64);
+    let mut context =
+        finish_token_context(&inputs.initial_pieces.context, &best, pieces.len() as u64);
     ensure!(
         inputs.tokenizer.vocab_bucket_count > 0
             && inputs.tokenizer.vocab_bucket_count as usize == inputs.tokenizer.vocab_buckets.len(),
@@ -206,6 +207,12 @@ pub fn finalize_prompt(inputs: PromptPrepareDirectInputs<'_>) -> Result<PromptTo
                 })
         })
         .collect::<Result<Vec<_>>>()?;
+    for id in &token_ids {
+        context.model.append_consumed_token(*id);
+    }
+    context
+        .model
+        .finish_prompt_range(context.complete, context.prompt_tokens, context.fault);
     Ok(PromptTokenization {
         pieces: List::new(),
         token_ids: List::from(token_ids),

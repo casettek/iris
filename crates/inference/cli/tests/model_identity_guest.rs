@@ -116,10 +116,14 @@ fn component_roles_and_sticky_context_are_enforced_in_guests() {
         auxiliary: vec![[5; 32], [6; 32]],
         transformer: vec![[7; 32], [8; 32]],
     };
-    let context = model_identity::ModelContext::bind(
+    let mut context = model_identity::ModelContext::bind(
         &d.encode().unwrap(),
         &hex::encode(d.model_id().unwrap()),
     );
+    context.bind_statement(&"11".repeat(32), false, 4, 4);
+    context.begin_prompt_range();
+    context.append_consumed_token(1);
+    context.finish_prompt_range(true, 1, 0);
     for (stage, role, root, indexed) in [
         (
             "prompt-merge",
@@ -304,14 +308,18 @@ fn page_bytes_and_final_context_are_checked_in_guests() {
     };
     let descriptor = page(d.encode().unwrap());
     let id = hex::encode(d.model_id().unwrap());
+    let (p, previous, current) = execution_fixture();
     let prompt = output_finalize::prompt::PromptContext {
-        model: model_identity::ModelContext::bind(descriptor.as_slice(), &id),
+        model: p,
         model_id: id.clone(),
+        input_text_sha256: "11".repeat(32),
+        max_new_tokens: 4,
+        range_size: 4,
+        prompt_tokens: 2,
+        complete: true,
         ..Default::default()
     };
-    let mut honest = prompt.model.clone();
-    honest.producer = model_identity::context::DECODE;
-    honest.completed_layers = 1;
+    let honest = current.head(&previous, &prompt.model, &Default::default());
     for case in 0..4 {
         let mut edge = honest.clone();
         match case {
@@ -323,7 +331,8 @@ fn page_bytes_and_final_context_are_checked_in_guests() {
         let state = output_finalize::authenticated_finalize_state(&descriptor, &id);
         let execution = runner
             .run(
-                &postcard::to_allocvec(&(&state, &edge, &prompt, &descriptor)).unwrap(),
+                &postcard::to_allocvec(&(&state, &edge, &prompt, &descriptor, true, 2u32, 3u32))
+                    .unwrap(),
                 ExecutionMode::Estimate,
             )
             .unwrap();
@@ -455,5 +464,198 @@ fn sparse_membership_is_checked_by_production_guests() {
                 execution.cycles
             );
         }
+    }
+}
+
+#[test]
+#[ignore = "builds and executes the production prompt-seed guest"]
+fn prompt_statement_substitution_is_rejected_in_guest() {
+    use output_finalize::prompt::{join_prompt_models, PromptContext, FAULT_CONTEXT_MISMATCH};
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../../raster-stages/prompt-seed")
+        .canonicalize()
+        .unwrap();
+    let project = Project::new(path.clone()).unwrap();
+    let backend = raster_compiler::backend::BackendImpl::Risc0(
+        Risc0Backend::new(path.join("target/raster"))
+            .with_user_crate(path)
+            .with_guest_stdout(false),
+    );
+    let discovery = TileDiscovery::new(&project);
+    let runner = Builder::new(&project, &backend)
+        .build_tile_runner(&discovery.get("join_prompt_contexts").unwrap())
+        .unwrap();
+    let descriptor = ModelDescriptor {
+        version: 1,
+        tokenizer: [1; 32],
+        decoder: [2; 32],
+        embedding: [3; 32],
+        head: [4; 32],
+        auxiliary: vec![[5; 32]],
+        transformer: vec![[6; 32]],
+    };
+    let model_id = hex::encode(descriptor.model_id().unwrap());
+    let mut model = model_identity::ModelContext::bind(&descriptor.encode().unwrap(), &model_id);
+    model.bind_statement(&"11".repeat(32), false, 8, 4);
+    let bound = PromptContext {
+        input_text_sha256: "11".repeat(32),
+        model,
+        model_id,
+        max_new_tokens: 8,
+        range_size: 4,
+        ..Default::default()
+    };
+    let mut changed = bound.clone();
+    changed.input_text_sha256 = "substituted".into();
+    let mut config = bound.clone();
+    config.max_new_tokens += 1;
+    for (previous, fault) in [
+        (bound.clone(), 0),
+        (changed, FAULT_CONTEXT_MISMATCH),
+        (config, FAULT_CONTEXT_MISMATCH),
+    ] {
+        let expected = join_prompt_models(previous.clone(), &bound);
+        let execution = runner
+            .run(
+                &postcard::to_allocvec(&(previous, &bound)).unwrap(),
+                ExecutionMode::Estimate,
+            )
+            .unwrap();
+        let actual: PromptContext = postcard::from_bytes(&execution.output).unwrap();
+        assert_eq!(actual, expected);
+        assert_eq!(actual.fault, fault);
+        assert_eq!(actual.model.fault, 0);
+    }
+}
+
+fn execution_fixture() -> (
+    model_identity::ModelContext,
+    model_identity::ModelContext,
+    model_identity::ModelContext,
+) {
+    use model_identity::ModelContext;
+    let d = ModelDescriptor {
+        version: 1,
+        tokenizer: [1; 32],
+        decoder: [2; 32],
+        embedding: [3; 32],
+        head: [4; 32],
+        auxiliary: vec![[5; 32]],
+        transformer: vec![[6; 32]],
+    };
+    let mut p = ModelContext::bind(&d.encode().unwrap(), &hex::encode(d.model_id().unwrap()));
+    p.bind_statement(&"11".repeat(32), false, 4, 4);
+    p.begin_prompt_range();
+    p.append_consumed_token(1);
+    p.append_consumed_token(2);
+    p.finish_prompt_range(true, 2, 0);
+    let empty = ModelContext::default();
+    let mut e = ModelContext::embedding(&p, &empty);
+    e.append_consumed_token(1);
+    e.append_consumed_token(2);
+    e.finish_embedding_execution(0, 2, 0);
+    let prev = e.layer(0, &e.auxiliary(0), &empty, &empty, &empty, -1, -1, -1);
+    let mut c = ModelContext::embedding(&empty, &e);
+    c.append_consumed_token(3);
+    c.finish_embedding_execution(2, 0, 1);
+    let current = c.layer(0, &c.auxiliary(0), &prev, &empty, &empty, -1, -1, -1);
+    assert_eq!(current.fault, 0);
+    (p, prev, current)
+}
+
+#[test]
+#[ignore = "builds and executes production sequence-check and finalization guests"]
+fn pipeline_history_and_transcript_substitutions_match_native_in_guest() {
+    use model_identity::ModelContext;
+    let (prompt, previous, current) = execution_fixture();
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../../raster-stages/sequence-check")
+        .canonicalize()
+        .unwrap();
+    let project = Project::new(path.clone()).unwrap();
+    let backend = raster_compiler::backend::BackendImpl::Risc0(
+        Risc0Backend::new(path.join("target/raster"))
+            .with_user_crate(path)
+            .with_guest_stdout(false),
+    );
+    let discovery = TileDiscovery::new(&project);
+    let runner = Builder::new(&project, &backend)
+        .build_tile_runner(&discovery.get("head_model_context").unwrap())
+        .unwrap();
+    let empty = ModelContext::default();
+    let mut foreign = previous.clone();
+    let mut history = foreign.execution_context().unwrap();
+    history.end.digest[0] ^= 1;
+    foreign.set_execution(&history);
+    let mut foreign_prompt = prompt.clone();
+    let mut statement = foreign_prompt.execution_context().unwrap();
+    statement.statement.max_new_tokens += 1;
+    foreign_prompt.set_execution(&statement);
+    let mut late = current.clone();
+    let mut history = late.execution_context().unwrap();
+    history.before = history.end;
+    history.end.append(4).unwrap();
+    late.set_execution(&history);
+    for (c, p, s, clean) in [
+        (current.clone(), previous.clone(), prompt.clone(), true),
+        (current.clone(), foreign, prompt.clone(), false),
+        (current.clone(), previous.clone(), foreign_prompt, false),
+        (late, current.clone(), prompt.clone(), false),
+    ] {
+        let expected = c.head(&p, &s, &empty);
+        let actual = runner
+            .run(
+                &postcard::to_allocvec(&(c, p, s, &empty)).unwrap(),
+                ExecutionMode::Estimate,
+            )
+            .unwrap();
+        let actual: ModelContext = postcard::from_bytes(&actual.output).unwrap();
+        assert_eq!(actual, expected);
+        assert_eq!(actual.fault == 0, clean);
+    }
+    let checked = current.head(&previous, &prompt, &empty);
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../../raster-stages/output-finalize")
+        .canonicalize()
+        .unwrap();
+    let project = Project::new(path.clone()).unwrap();
+    let backend = raster_compiler::backend::BackendImpl::Risc0(
+        Risc0Backend::new(path.join("target/raster"))
+            .with_user_crate(path)
+            .with_guest_stdout(false),
+    );
+    let discovery = TileDiscovery::new(&project);
+    let runner = Builder::new(&project, &backend)
+        .build_tile_runner(&discovery.get("finish_finalize_state").unwrap())
+        .unwrap();
+    for (ids, clean) in [
+        (vec![3], true),
+        (vec![], false),
+        (vec![4], false),
+        (vec![3, 3], false),
+    ] {
+        let mut state = output_finalize::initial_finalize_state();
+        output_finalize::begin_final_history(&mut state, &checked, true, 2, 3);
+        for id in ids {
+            state = output_finalize::advance_finalize_state(
+                state,
+                id,
+                DecoderToken {
+                    token: "a".into(),
+                    special: false,
+                    terminal: false,
+                },
+            );
+        }
+        let expected = output_finalize::finished_state(state.clone());
+        let actual = runner
+            .run(
+                &postcard::to_allocvec(&(state,)).unwrap(),
+                ExecutionMode::Estimate,
+            )
+            .unwrap();
+        let actual: FinalizeState = postcard::from_bytes(&actual.output).unwrap();
+        assert_eq!(actual, expected);
+        assert_eq!(actual.model_fault == 0, clean);
     }
 }

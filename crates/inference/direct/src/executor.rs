@@ -74,6 +74,36 @@ impl DirectInferenceExecutor {
         let prepared_prompt = model.prepare_prompt(run_spec_dir, &run_spec)?;
         trace.configure(model.shape().num_hidden_layers, run_spec.tokens);
         let prompt = model.prompt_inputs(&prepared_prompt)?;
+        // Direct inference is the independent numerical oracle; construct its
+        // diagnostic statement/history from the actual prompt and selected IDs.
+        let execution_context = |generated: Option<&[u32]>| {
+            let mut context = crate::view_kernels::bound_model_context(&model);
+            context.bind_statement(
+                &output_finalize::sha256_hex(prepared_prompt.resolved_prompt.as_bytes()),
+                run_spec.raw_prompt,
+                run_spec.tokens,
+                model.manifest().range_size,
+            );
+            if let Some(mut e) = context.execution_context() {
+                for id in prompt.token_ids.iter() {
+                    context.require_execution(e.end.append(*id).is_ok());
+                }
+                e.prompt = Some(e.end);
+                e.phase = model_identity::pipeline_core::PREPARED;
+                if let Some(ids) = generated {
+                    e.before = e.end;
+                    e.claimed = true;
+                    for id in ids {
+                        context.require_execution(e.end.append(*id).is_ok());
+                    }
+                    e.phase = model_identity::pipeline_core::CHECKED;
+                    context.completed_layers = context.layers;
+                    context.producer = model_identity::context::DECODE;
+                }
+                context.set_execution(&e);
+            }
+            context
+        };
         trace.record("prompt_prepare", &prompt)?;
         timings.push(phase_timing("prompt_prepare", prompt_started.elapsed()));
 
@@ -101,11 +131,7 @@ impl DirectInferenceExecutor {
         trace.record("decode_init", &edge)?;
         for token_idx in 0..run_spec.tokens {
             edge = crate::generation::select_next_token(&logits, &edge)?;
-            edge.model = prior_layers
-                .last()
-                .map(|layer| layer.model.clone())
-                .unwrap_or_else(|| crate::view_kernels::bound_model_context(&model));
-            edge.model.producer = model_identity::context::DECODE;
+            edge.model = execution_context(Some(edge.generated_token_ids.as_slice()));
             trace.record(&format!("decode_select_t{token_idx}"), &edge)?;
             if prepared_prompt.eos_token_ids.contains(&edge.token_id) {
                 // Keep EOS in the result, but never run another decode pass.
@@ -169,7 +195,7 @@ impl DirectInferenceExecutor {
                 // The record the chain publishes for this run: a direct result
                 // and an honest claim's final record are the same bytes.
                 context: &output_finalize::prompt::PromptContext {
-                    model: crate::view_kernels::bound_model_context(&model),
+                    model: execution_context(None),
                     input_text_sha256: output_finalize::sha256_hex(
                         prepared_prompt.resolved_prompt.as_bytes(),
                     ),

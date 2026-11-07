@@ -144,3 +144,29 @@ pub fn append_token_id(output: Draft<PromptState>, hit: VocabMatch) -> Draft<Pro
 
 pub mod identity;
 pub use identity::*;
+
+#[tile(kind=recur)]
+pub fn bind_prompt_token(
+    input: RecurInput<u32>,
+    state: RecurState<PromptContext>,
+) -> RecurState<PromptContext> {
+    let mut state = state;
+    state.model.append_consumed_token(input.into_value());
+    state
+}
+#[tile(kind=iter)]
+pub fn finish_prompt_binding(mut context: PromptContext) -> PromptContext {
+    context
+        .model
+        .finish_prompt_range(context.complete, context.prompt_tokens, context.fault);
+    context
+}
+#[tile(kind=recur)]
+pub fn copy_bound_token(
+    input: RecurInput<u32>,
+    output: RecurOutput<PromptState>,
+) -> RecurOutput<PromptState> {
+    let mut output = output;
+    output.token_ids().push(input.into_value());
+    output
+}

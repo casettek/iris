@@ -14,6 +14,8 @@ pub const DECODE: u32 = 5;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, raster::Selectable)]
 pub struct ModelContext {
     pub model_id: String,
+    pub execution: raster::BytesPage,
+    pub execution_fault: u32,
     pub descriptor: raster::BytesPage,
     pub fault: u32,
     pub layers: u32,
@@ -50,6 +52,7 @@ impl ModelContext {
     }
     pub fn same_model(&mut self, other: &Self) {
         self.fault |= other.fault;
+        self.execution_fault |= other.execution_fault;
         self.require(
             self.model_id == other.model_id
                 && self.descriptor == other.descriptor
@@ -77,6 +80,7 @@ impl ModelContext {
             out.same_model(previous);
             out.require(previous.producer == EMBEDDING && previous.completed_layers == 0);
         }
+        out.begin_embedding_execution(prompt, previous);
         out.producer = EMBEDDING;
         out.completed_layers = 0;
         out
@@ -133,6 +137,15 @@ impl ModelContext {
             }
         }
         out.require(donor < 0 || donor == donor_a_layer || donor == donor_b_layer);
+        out.layer_execution(
+            aux,
+            prior,
+            donor_a,
+            donor_b,
+            donor,
+            donor_a_layer,
+            donor_b_layer,
+        );
         out.producer = TRANSFORMER;
         out.completed_layers = layer.saturating_add(1);
         out
@@ -150,6 +163,7 @@ impl ModelContext {
             out.same_model(prior);
             out.require(prior.producer == DECODE && prior.completed_layers == self.layers);
         }
+        out.head_execution(previous, prompt, prior);
         out.producer = DECODE;
         out
     }
@@ -161,6 +175,7 @@ impl ModelContext {
             self.valid() && self.producer == DECODE && self.completed_layers == self.layers,
         );
         out.require(prompt.producer == PROMPT && prompt.completed_layers == 0);
+        out.final_execution(prompt);
         out.fault
     }
 }
@@ -184,6 +199,8 @@ impl Default for ModelContext {
     fn default() -> Self {
         Self {
             model_id: String::new(),
+            execution: raster::BytesPage::__from_parts(0, 0, alloc::vec![]),
+            execution_fault: 0,
             descriptor: raster::BytesPage::__from_parts(0, 0, alloc::vec![]),
             fault: 0,
             layers: 0,
@@ -213,7 +230,20 @@ mod tests {
             .iter()
             .map(|b| format!("{b:02x}"))
             .collect::<String>();
-        ModelContext::bind(&d.encode().unwrap(), &id)
+        let mut p = ModelContext::bind(&d.encode().unwrap(), &id);
+        p.bind_statement(&"11".repeat(32), false, 4, 4);
+        p.begin_prompt_range();
+        p.append_consumed_token(7);
+        p.append_consumed_token(8);
+        p.finish_prompt_range(true, 2, 0);
+        p
+    }
+    fn embedded(p: &ModelContext) -> ModelContext {
+        let mut e = ModelContext::embedding(p, &ModelContext::default());
+        e.append_consumed_token(7);
+        e.append_consumed_token(8);
+        e.finish_embedding_execution(0, 2, 0);
+        e
     }
     fn layer(input: &ModelContext, embedding: &ModelContext, index: u32) -> ModelContext {
         input.layer(
@@ -230,10 +260,33 @@ mod tests {
     #[test]
     fn honest_context_progresses_and_faults_are_sticky() {
         let p = prompt(1);
-        let e = ModelContext::embedding(&p, &ModelContext::default());
+        let e = embedded(&p);
         let a = layer(&e, &e, 0);
         let b = layer(&a, &e, 1);
-        let h = b.head(&b, &p, &ModelContext::default());
+        let mut c = ModelContext::embedding(&ModelContext::default(), &e);
+        c.append_consumed_token(9);
+        c.finish_embedding_execution(2, 0, 1);
+        let ca = c.layer(
+            0,
+            &c.auxiliary(0),
+            &a,
+            &ModelContext::default(),
+            &ModelContext::default(),
+            -1,
+            -1,
+            -1,
+        );
+        let cb = ca.layer(
+            1,
+            &c.auxiliary(1),
+            &b,
+            &ModelContext::default(),
+            &ModelContext::default(),
+            -1,
+            -1,
+            -1,
+        );
+        let h = cb.head(&b, &p, &ModelContext::default());
         assert_eq!(h.final_fault(&p, &p), 0);
         let mut bad = e.clone();
         bad.fault = 8;
@@ -248,7 +301,7 @@ mod tests {
     fn mixed_models_skipped_repeated_swapped_layers_and_short_head_fail() {
         let p = prompt(1);
         let other = prompt(9);
-        let e = ModelContext::embedding(&p, &ModelContext::default());
+        let e = embedded(&p);
         let a = layer(&e, &e, 0);
         let b = layer(&a, &e, 1);
         assert_ne!(ModelContext::embedding(&other, &e).fault, 0);
@@ -270,10 +323,23 @@ mod tests {
     #[test]
     fn donor_and_prior_cache_roles_are_checked() {
         let p = prompt(1);
-        let e = ModelContext::embedding(&p, &ModelContext::default());
+        let e = embedded(&p);
         let a = layer(&e, &e, 0);
         let b = layer(&a, &e, 1);
-        assert_eq!(a.layer(1, &e.auxiliary(1), &b, &a, &e, 0, 0, -1).fault, 0);
+        assert_eq!(
+            a.layer(
+                1,
+                &e.auxiliary(1),
+                &ModelContext::default(),
+                &a,
+                &e,
+                0,
+                0,
+                -1
+            )
+            .fault,
+            0
+        );
         assert_ne!(a.layer(1, &e.auxiliary(1), &a, &a, &e, 0, 0, -1).fault, 0);
         assert_ne!(a.layer(1, &e.auxiliary(1), &b, &b, &e, 0, 0, -1).fault, 0);
         assert_ne!(a.layer(1, &e.auxiliary(1), &b, &e, &e, 0, 0, -1).fault, 0);

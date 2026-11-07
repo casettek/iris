@@ -126,6 +126,14 @@ pub fn run_direct(inputs: &Inputs) -> Result<ActivationSequence> {
         }
     };
     output.model = inputs.model.clone();
+    for id in inputs.token_ids() {
+        output.model.append_consumed_token(id);
+    }
+    output.model.finish_embedding_execution(
+        inputs.start_position,
+        inputs.prompt.token_ids.len() as u64,
+        inputs.claimed.token_ids.len() as u64,
+    );
     output.start_position = inputs.start_position;
     output.model = model_identity::stream::verify(
         output.model,

@@ -143,6 +143,12 @@ pub fn identity_bound_context(
     let mut context = open_prompt_context(&fold, &config);
     context.model = model_identity::ModelContext::bind(descriptor.as_slice(), &config.model_id);
     context.model = stream::verify(context.model, &root, model_identity::Role::Tokenizer);
+    context.model.bind_statement(
+        &context.input_text_sha256,
+        context.raw_prompt,
+        context.max_new_tokens,
+        context.range_size,
+    );
     context
 }
 #[tile(kind=iter)]

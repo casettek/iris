@@ -21,6 +21,9 @@ use prompt::PromptContext;
 /// The empty state, as a plain function — see [`advance_finalize_state`].
 pub fn initial_finalize_state() -> FinalizeState {
     FinalizeState {
+        history: ModelContext::default(),
+        expected_token: 0,
+        last_token: 0,
         model_fault: 0,
         count: 0,
         json: String::from("["),
@@ -65,6 +68,10 @@ pub fn advance_finalize_state(
     token: DecoderToken,
 ) -> FinalizeState {
     let mut state = state;
+    if !state.history.is_origin() {
+        state.history.append_consumed_token(token_id);
+    }
+    state.last_token = token_id;
     if state.count > 0 {
         state.json.push(',');
     }
@@ -111,6 +118,7 @@ pub fn finish_finalize_state(state: FinalizeState) -> FinalizeState {
 /// kernel.
 pub fn finished_state(state: FinalizeState) -> FinalizeState {
     let mut state = state;
+    finish_final_history(&mut state);
     flush_pending(&mut state);
     state.json.push(']');
     state

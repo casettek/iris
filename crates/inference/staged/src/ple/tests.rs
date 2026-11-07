@@ -527,8 +527,20 @@ fn auxiliary_sparse_witness_is_rechecked_after_cache_hit() {
         .iter()
         .map(|b| format!("{b:02x}"))
         .collect::<String>();
-    let prompt = model_identity::ModelContext::bind(&d.encode().unwrap(), &id);
+    let mut prompt = model_identity::ModelContext::bind(&d.encode().unwrap(), &id);
+    prompt.bind_statement(&"11".repeat(32), false, 8, 128);
+    prompt.begin_prompt_range();
+    for row in f.embedded.rows.iter() {
+        prompt.append_consumed_token(row.token_id);
+    }
+    prompt.finish_prompt_range(true, f.embedded.rows.len() as u32, 0);
     f.embedded.model = model_identity::ModelContext::embedding(&prompt, &Default::default());
+    for row in f.embedded.rows.iter() {
+        f.embedded.model.append_consumed_token(row.token_id);
+    }
+    f.embedded
+        .model
+        .finish_embedding_execution(0, f.embedded.rows.len() as u64, 0);
     f.write(false);
     let cache = MaterializationCache::with_budget(Arc::new(WeightBudget::new(1 << 20)));
     let run = || {

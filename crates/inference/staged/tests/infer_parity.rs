@@ -49,11 +49,21 @@ fn infer_final_result_matches_checkpointed_claim_path() {
         auxiliary: vec![[4; 32]],
         transformer: vec![[5; 32]],
     };
-    let model = model_identity::ModelContext::bind(
+    let mut model = model_identity::ModelContext::bind(
         &descriptor.encode().unwrap(),
         &hex::encode(descriptor.model_id().unwrap()),
     );
+    model.bind_statement(&"11".repeat(32), false, 1, 1);
+    model.begin_prompt_range();
+    model.append_consumed_token(0);
+    model.finish_prompt_range(true, 1, 0);
     edge.model = model.clone();
+    let mut history = model.execution_context().unwrap();
+    history.before = history.end;
+    history.end.append(1).unwrap();
+    history.claimed = true;
+    history.phase = model_identity::pipeline_core::CHECKED;
+    edge.model.set_execution(&history);
     edge.model.producer = model_identity::context::DECODE;
     edge.model.completed_layers = edge.model.layers;
     let witness = output_finalize::decoder_witness(&decoder).unwrap();
@@ -67,6 +77,8 @@ fn infer_final_result_matches_checkpointed_claim_path() {
         context: PromptContext {
             model,
             model_id: hex::encode(descriptor.model_id().unwrap()),
+            input_text_sha256: "11".repeat(32),
+            prompt_tokens: 1,
             max_new_tokens: 1,
             range_size: 1,
             complete: true,

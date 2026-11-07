@@ -85,6 +85,12 @@ pub fn open_bound_prompt(
         &root,
         model_identity::Role::Tokenizer,
     );
+    context.model.bind_statement(
+        &context.input_text_sha256,
+        context.raw_prompt,
+        context.max_new_tokens,
+        context.range_size,
+    );
     output.context().set(context);
     output
 }

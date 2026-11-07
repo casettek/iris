@@ -105,7 +105,7 @@ fn main(
         previous_model,
         root,
         previous_count,
-        prompt_count
+        prompt_count.clone()
     );
     let model = call_recur_seq!(
         sequence = verify_token_page,
@@ -132,6 +132,33 @@ fn main(
             header,
             paths
         )
+    );
+    let model = call_recur!(
+        tile = bind_embedding_token,
+        input = token_ids.clone(),
+        state = model,
+        args = ()
+    );
+    let model = call_recur!(
+        tile = bind_embedding_token,
+        input = claimed_ids.clone(),
+        state = model,
+        args = ()
+    );
+    let zero = call!(identity_zero_count);
+    let claimed_count = call_recur!(
+        tile = identity_count_tokens,
+        input = claimed_ids.clone(),
+        chunk = 256,
+        state = zero,
+        args = ()
+    );
+    let model = call!(
+        finish_embedding_binding,
+        model,
+        start_position.clone(),
+        prompt_count,
+        claimed_count
     );
     let draft = call!(begin_prompt_activations, start_position, model);
     let prompt_rows = call_recur_seq!(

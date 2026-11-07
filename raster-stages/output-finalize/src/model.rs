@@ -218,7 +218,26 @@ pub fn final_context_fault(
     descriptor: &BytesPage,
 ) -> u32 {
     let expected = model_identity::ModelContext::bind(descriptor.as_slice(), &prompt.model_id);
-    edge.final_fault(&prompt.model, &expected)
+    let mut checked = edge.clone();
+    let mut statement = expected.clone();
+    statement.bind_statement(
+        &prompt.input_text_sha256,
+        prompt.raw_prompt,
+        prompt.max_new_tokens,
+        prompt.range_size,
+    );
+    checked.require_execution(
+        statement
+            .execution_context()
+            .zip(edge.execution_context())
+            .is_some_and(|(s, e)| {
+                s.same_statement(&e)
+                    && e.prompt.is_some_and(|p| p.position == prompt.prompt_tokens)
+                    && prompt.complete
+                    && prompt.fault == 0
+            }),
+    );
+    checked.final_fault(&prompt.model, &expected)
 }
 
 #[tile(kind = iter, description = "Retain model faults and check final model lineage")]
@@ -227,7 +246,49 @@ pub fn verify_final_model_context(
     edge: model_identity::ModelContext,
     prompt: crate::prompt::PromptContext,
     descriptor: BytesPage,
+    has_selected: bool,
+    position: u32,
+    token: u32,
 ) -> crate::input::FinalizeState {
     state.model_fault |= final_context_fault(&edge, &prompt, &descriptor);
+    begin_final_history(&mut state, &edge, has_selected, position, token);
     state
+}
+
+/// Fold the emitted transcript from the checked prompt anchor, independently of
+/// the teacher-forced tokens that produced the checked execution endpoint.
+pub fn begin_final_history(
+    state: &mut crate::input::FinalizeState,
+    edge: &model_identity::ModelContext,
+    selected: bool,
+    position: u32,
+    token: u32,
+) {
+    state.history = edge.clone();
+    state.expected_token = token;
+    if let Some(mut e) = edge.execution_context() {
+        state
+            .history
+            .require_execution(selected && position.checked_add(1) == Some(e.end.position));
+        e.expected = Some(e.end);
+        e.end = e.before;
+        state.history.set_execution(&e);
+    } else {
+        state.history.require_execution(false);
+    }
+    state.model_fault |= state.history.fault;
+}
+pub fn finish_final_history(state: &mut crate::input::FinalizeState) {
+    if state.history.is_origin() {
+        return;
+    }
+    let valid = state.history.execution_context().is_some_and(|e| {
+        Some(e.end) == e.expected
+            && e.end.position.checked_sub(e.before.position) == Some(state.count)
+            && state.count > 0
+            && state.count <= e.statement.max_new_tokens
+            && state.last_token == state.expected_token
+    });
+    state.history.require_execution(valid);
+    state.model_fault |= state.history.fault;
 }

@@ -275,7 +275,18 @@ fn main(
         state = zero,
         args = ()
     );
-    let model = call!(identity_prior_guard, model, prior_model, count);
+    let model = call!(identity_prior_guard, model, prior_model.clone(), count);
+    let window = select!(u32, params.clone().sliding_window);
+    let coverage = call!(begin_cache_coverage, prior_model, window);
+    let prior_positions = select!(List<KeyRow>, prior_kv.clone().kv);
+    let coverage = call_recur!(
+        tile = check_cache_positions,
+        input = prior_positions,
+        chunk = 64,
+        state = coverage,
+        args = ()
+    );
+    let model = call!(finish_cache_coverage, model, coverage);
     let root = call_seq!(identity_root, layer.clone());
     let layer_idx = select!(u32, params.clone().layer_idx);
     let model = call!(identity_verify, model, root, layer_idx);
@@ -314,6 +325,40 @@ fn main(
     let sliding_window = select!(u32, params.clone().sliding_window);
 
     let rows = select!(List<ActivationRow>, activations.rows);
+    let zero = call!(identity_zero_count);
+    let row_count = call_recur!(
+        tile = binding_count_rows,
+        input = rows.clone(),
+        chunk = 64,
+        state = zero,
+        args = ()
+    );
+    let model = call!(
+        binding_validate_rows,
+        model,
+        start_position.clone(),
+        row_count.clone()
+    );
+    let aux_rows = select!(List<PleRow>, ple.clone().rows);
+    let aux_layer = select!(u32, ple.clone().layer_idx);
+    let zero = call!(identity_zero_count);
+    let aux_count = call_recur!(
+        tile = binding_count_aux,
+        input = aux_rows,
+        chunk = 64,
+        state = zero,
+        args = ()
+    );
+    let model = call!(binding_validate_aux, model, aux_layer, aux_count, row_count);
+    let filtered = call!(begin_layer_output, start_position.clone(), model.clone());
+    let valid_rows = call_recur!(
+        tile = binding_copy_rows,
+        input = rows,
+        chunk = 64,
+        output = filtered,
+        args = (model.clone(),)
+    );
+    let rows = select!(List<ActivationRow>, valid_rows.rows);
     let cursor0 = call!(begin_cursor, clone!(start_position));
     let kv = call_recur_seq!(
         sequence = project_token,

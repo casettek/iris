@@ -97,12 +97,27 @@ fn main(
             vocab_paths
         )
     );
-    let opened = call!(open_tokens, context);
-    call_recur_seq!(
+    let opened = call!(open_tokens, context.clone());
+    let resolved = call_recur_seq!(
         sequence = resolve_piece,
         input = pieces,
         output = opened,
         args = (vocab, vocab_count)
+    );
+    let ids = select!(List<u32>, resolved.token_ids);
+    let context = call_recur!(
+        tile = bind_prompt_token,
+        input = ids.clone(),
+        state = context,
+        args = ()
+    );
+    let context = call!(finish_prompt_binding, context);
+    let opened = call!(open_tokens, context);
+    call_recur!(
+        tile = copy_bound_token,
+        input = ids,
+        output = opened,
+        args = ()
     )
 }
 

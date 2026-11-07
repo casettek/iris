@@ -772,7 +772,6 @@ fn chain_template(
          project = \"raster-stages/sequence-check\"\n\
          inputs.activations = {{ from = \"range_c{{k}}_l{last_layer}\" }}\n\
          inputs.previous = {{ from = \"range_c{{k-1}}_l{last_layer}\", first = \"range_p{LAST_PROMPT_RANGE}_l{last_layer}\" }}\n\
-         inputs.claimed = {{ input = \"claimed_ids_{{k}}\" }}\n\
          inputs.prior = {{ from = \"check_c{{k-1}}\", first = \"decode_init\" }}\n\
          inputs.prompt = {{ from = \"prompt_prepare_p{LAST_PROMPT_RANGE}\" }}\n\
          {}",

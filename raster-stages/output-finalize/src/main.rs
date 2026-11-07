@@ -49,6 +49,8 @@ fn main(
     let paths = select!(List<DecoderProof>, witness.paths);
     let edge_model = select!(ModelContext, edge.clone().model);
     let has_selected = select!(bool, edge.clone().has_selected);
+    let position = select!(u32, edge.clone().decode_position);
+    let token = select!(u32, edge.clone().token_id);
     let ids = select!(List<u32>, edge.clone().generated_token_ids);
     let ids_for_decode = clone!(ids);
     let tokens = select!(List<DecoderToken>, decoder.tokens);
@@ -63,7 +65,10 @@ fn main(
         state,
         edge_model,
         context.clone(),
-        descriptor.clone()
+        descriptor.clone(),
+        has_selected.clone(),
+        position,
+        token
     );
     let state = call_recur_seq!(
         sequence = decode_generated_token,

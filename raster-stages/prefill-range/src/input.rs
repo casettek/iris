@@ -526,3 +526,11 @@ pub fn rms_norm(row: &mut [i32], weights: &[i32], eps: i64) -> core::result::Res
     }
     Ok(())
 }
+
+/// Bounded verifier for the ordered cache positions emitted by one range.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
+pub struct CacheCoverage {
+    pub next: u32,
+    pub end: u32,
+    pub fault: u32,
+}

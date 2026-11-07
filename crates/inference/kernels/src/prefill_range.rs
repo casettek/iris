@@ -84,6 +84,47 @@ pub fn run_prefill_range_direct_with_weight_cache(
     weight_cache: Option<&PrefillRangeWeightCache>,
 ) -> Result<ActivationSequence> {
     let params = validate_layer_params(&inputs.layer.params)?;
+    let mut checked_model = inputs.activations.model.layer(
+        params.layer_idx,
+        &inputs.ple.model,
+        &inputs.prior_kv.model,
+        &inputs.donor_a_kv.model,
+        &inputs.donor_b_kv.model,
+        params.kv_donor_layer,
+        params.donor_a_layer,
+        params.donor_b_layer,
+    );
+    checked_model.validate_rows(
+        inputs.activations.start_position,
+        inputs.activations.rows.len() as u64,
+    );
+    let mut coverage =
+        ::prefill_range::cache_coverage(&inputs.prior_kv.model, params.sliding_window);
+    for key in inputs.prior_kv.kv.iter() {
+        ::prefill_range::consume_cache_position(&mut coverage, key.position);
+    }
+    checked_model = ::prefill_range::validate_cache_coverage(checked_model, coverage);
+    checked_model = ::prefill_range::validate_aux_coverage(
+        checked_model,
+        inputs.ple.layer_idx,
+        inputs.ple.rows.len() as u64,
+        inputs.activations.rows.len() as u64,
+    );
+    if checked_model.execution_fault != 0 && !checked_model.execution.as_slice().is_empty() {
+        return Ok(ActivationSequence {
+            model: checked_model,
+            rows: List::new(),
+            errors: List::new(),
+            kv: List::from(output_kv(
+                inputs.prior_kv.kv.as_slice(),
+                &[],
+                inputs.activations.start_position,
+                params.sliding_window,
+            )),
+            start_position: inputs.activations.start_position,
+        });
+    }
+
     let weights = match (weight_cache, inputs.layer_cache_key) {
         (Some(cache), Some(key)) => cache.get_or_prepare(inputs.layer, &params, key)?,
         _ => Arc::new(LayerWeights::from_layer(inputs.layer, &params)?),
@@ -94,16 +135,7 @@ pub fn run_prefill_range_direct_with_weight_cache(
     // the stage's push-only K/V site does: the next range's keys come through it.
     if input_rows.rows() == 0 {
         return Ok(ActivationSequence {
-            model: inputs.activations.model.layer(
-                params.layer_idx,
-                &inputs.ple.model,
-                &inputs.prior_kv.model,
-                &inputs.donor_a_kv.model,
-                &inputs.donor_b_kv.model,
-                params.kv_donor_layer,
-                params.donor_a_layer,
-                params.donor_b_layer,
-            ),
+            model: checked_model,
             rows: List::new(),
             errors: List::new(),
             kv: List::from(output_kv(
@@ -141,16 +173,7 @@ pub fn run_prefill_range_direct_with_weight_cache(
     );
 
     Ok(ActivationSequence {
-        model: inputs.activations.model.layer(
-            params.layer_idx,
-            &inputs.ple.model,
-            &inputs.prior_kv.model,
-            &inputs.donor_a_kv.model,
-            &inputs.donor_b_kv.model,
-            params.kv_donor_layer,
-            params.donor_a_layer,
-            params.donor_b_layer,
-        ),
+        model: checked_model,
         rows: List::from(output_rows),
         errors: List::new(),
         kv: List::from(output_kv),

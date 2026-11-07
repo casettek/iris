@@ -566,7 +566,6 @@ fn eager_check(head: &FinalHead, activations: &ActivationSequence) -> DecodeEdge
         inference_kernels::kernels::sequence_check::SequenceCheckDirectInputs {
             activations,
             previous: &head_previous(head.params.hidden_size),
-            claimed: &head_claimed(),
             prior: &DecodeEdge::default(),
             head,
             context: &head_context(),
@@ -1064,6 +1063,13 @@ fn sparse_embedding_checks_current_proofs_with_warm_cache() {
     prompt.context.model = model_identity::ModelContext::bind(&descriptor.encode().unwrap(), &id);
     prompt.context.model_id = id;
     prompt.token_ids = vec![0].into();
+    prompt
+        .context
+        .model
+        .bind_statement(&"11".repeat(32), false, 8, 4);
+    prompt.context.model.begin_prompt_range();
+    prompt.context.model.append_consumed_token(0);
+    prompt.context.model.finish_prompt_range(true, 1, 0);
     f.write("prompt", &prompt);
     let witness = model_identity::sparse::witness(table.values.pages.as_slice()).unwrap();
     let cache = MaterializationCache::with_budget(Arc::new(WeightBudget::new(1 << 20)));

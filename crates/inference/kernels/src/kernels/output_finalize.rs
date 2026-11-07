@@ -37,6 +37,13 @@ pub fn run_output_finalize_direct(
         output_finalize::authenticated_finalize_state(inputs.descriptor, &inputs.context.model_id);
     state.model_fault |=
         output_finalize::final_context_fault(&inputs.edge.model, inputs.context, inputs.descriptor);
+    output_finalize::begin_final_history(
+        &mut state,
+        &inputs.edge.model,
+        inputs.edge.has_selected,
+        inputs.edge.decode_position,
+        inputs.edge.token_id,
+    );
     for token_id in inputs.edge.generated_token_ids.iter().copied() {
         let token = inputs
             .decoder

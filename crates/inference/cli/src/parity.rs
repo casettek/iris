@@ -489,8 +489,8 @@ fn run_chain_fault_leg(
     let unknown = [model.shape.vocab_size as u32, u32::MAX];
     let ends = |ends: &[u64]| ends.iter().map(|&end| RangeCut { end }).collect::<Vec<_>>();
     let positions = case.input_token_ids.len() as u32;
-    // Name, cuts, claimed ids, budget, then what the record must say. An empty
-    // last range leaves the first claimed token with no predicting row.
+    // Name, cuts, claimed ids, budget, then what the record must say.
+    // Invalid prompt histories suppress downstream rows and retain the fault.
     let cases = [
         (
             "empty-middle-range",
@@ -498,8 +498,8 @@ fn run_chain_fault_leg(
             greedy,
             2,
             true,
-            0,
-            0,
+            run_prep::CHECK_FAULT_NO_CLAIMED_TOKENS,
+            positions,
         ),
         (
             "empty-last-range",
@@ -507,7 +507,7 @@ fn run_chain_fault_leg(
             greedy,
             2,
             true,
-            run_prep::CHECK_FAULT_UNSCORED,
+            run_prep::CHECK_FAULT_NO_CLAIMED_TOKENS,
             positions,
         ),
         (
@@ -594,6 +594,12 @@ fn run_chain_fault_leg(
                 && record["check_fault_position"] == json!(check_position),
             "chain fault `{name}`: expected check fault {check_fault} at {check_position}; got {record}"
         );
+        if prompt_fault {
+            ensure!(
+                record["model_fault"] != json!(0),
+                "chain fault `{name}` lost its execution fault"
+            );
+        }
         match name {
             "not-greedy" => ensure!(
                 record["claim_mismatches"].as_u64().unwrap_or(0) > 0

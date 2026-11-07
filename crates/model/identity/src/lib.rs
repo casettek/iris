@@ -429,3 +429,6 @@ pub use context::ModelContext;
 pub mod stream;
 
 pub mod sparse;
+
+mod pipeline;
+pub use pipeline_core;

@@ -104,7 +104,7 @@ order made the layer stages 3× slower than one stage per layer.
 `sequence-check` scores the previous range's last row followed by this range's
 rows against the head, takes the first-maximum argmax at each position exactly as
 direct generation would, and appends the selections to the previous check's transcript. It also compares each selection
-with the claimed id at that position and commits the result as the edge's claim
+with the consumed token id retained in that position's activation row and commits the result as the edge's claim
 verdict: `claim_mismatches`, the previous check's count plus this range's, and
 `first_claim_mismatch_position`, the earliest one. It reads the last prompt
 range's context for the range size and the prompt's token count, and publishes
@@ -149,6 +149,10 @@ A claim chooses its own ids, and indexing past a table would abort a stage with 
 output. So `input-embedding` and `prefill-prepare-aux` read the first row for an id
 outside their tables, and keep the id on the row. The chain finishes, and the
 verdict rejects the claim: such an id can never be the greedy selection.
+
+`sequence-check` has no independent claimed-token input: it checks the token IDs
+carried by the final-layer activation rows. The embedding stages are the only
+consumers of the host-provided claimed-ID ranges.
 
 `sequence-check` publishes the verdict rather than aborting on a disagreement,
 because an aborting stage has no output to hash or replay. False claims are
@@ -204,3 +208,41 @@ produce exactly the same stage outputs as Raster. To group pages, add
 `chunk = N` to the corresponding `call_recur!` sites, take
 `RecurInput<Block<BytesPage>>` in the step tile, and rebuild and verify the
 three affected program identities as described in [development](development.md).
+
+
+### Statement and token-history binding
+
+Every nonempty stage boundary carries a versioned `Execution` record inside
+`ModelContext.execution`. The shared `pipeline-core` crate defines the canonical
+statement hash and position-sensitive token-prefix hash; `model-identity` checks
+stage transitions. The record binds the input-text hash, model ID, raw-prompt
+flag, generation budget, and range size. Embedding folds the actual consumed
+IDs, so changing a token while keeping the same length and final token changes
+the authenticated history.
+
+Prompt preparation can advance only an unfinished prompt. Prompt embeddings
+must reproduce the prepared range exactly; claimed embeddings begin only after
+the completed prompt and extend the preceding embedding history. Transformer
+inputs and auxiliary rows must name the same range, and each layer's prior
+cache must end at that range's start. Cache positions are checked for exact,
+ordered coverage, including sliding-window retention. Donors must name the
+same range and the authorized donor layer. Layer-completion metadata remains
+part of the model-identity check.
+
+The initializer programs publish canonical empty sentinels. Consumers accept
+an empty prompt/cache predecessor only at position zero, and an empty check
+predecessor only at the completed prompt anchor. Reusing those sentinels later
+sets a sticky execution fault; they cannot reset an existing statement/history.
+Sequence checking reads claim IDs from the activation rows and carries a
+cumulative checked endpoint. Finalization checks the supplied prompt against
+that statement and anchor, then folds the emitted transcript independently and
+requires the exact checked endpoint, position, final token, and budget.
+
+These checks rely on authenticated predecessor provenance and approved stage
+program identities. They do not authorize arbitrary externally fabricated
+boundary records or replace the protocol's stage-program approval rules. A
+model/execution fault makes the final claim invalid even if native and Raster
+honestly execute the same malicious wiring. `test-parity` exercises that case
+as well as divergence from the honest template; production RISC Zero tests in
+`model_identity_guest.rs` cover the corresponding guest checks. Model imports
+and prepared runs use version 6; older boundary encodings must be regenerated.

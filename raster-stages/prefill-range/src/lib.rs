@@ -1355,3 +1355,116 @@ pub fn layer_model_context(
 
 pub mod identity;
 pub use identity::*;
+
+#[tile(kind=recur)]
+pub fn binding_count_rows(
+    input: RecurInput<Block<ActivationRow>>,
+    state: RecurState<u64>,
+) -> RecurState<u64> {
+    RecurState::new(*state + input.into_value().len() as u64)
+}
+#[tile(kind=iter)]
+pub fn binding_validate_rows(mut model: ModelContext, start: u32, count: u64) -> ModelContext {
+    model.validate_rows(start, count);
+    model
+}
+#[tile(kind=recur)]
+pub fn binding_copy_rows(
+    input: RecurInput<Block<ActivationRow>>,
+    output: RecurOutput<ActivationSequence>,
+    model: ModelContext,
+) -> RecurOutput<ActivationSequence> {
+    let mut output = output;
+    if model.execution_fault == 0 || model.execution.as_slice().is_empty() {
+        for row in input.into_value() {
+            output.rows().push(row);
+        }
+    }
+    output
+}
+
+#[tile(kind=iter)]
+pub fn begin_cache_coverage(context: ModelContext, window: u32) -> CacheCoverage {
+    cache_coverage(&context, window)
+}
+pub fn cache_coverage(context: &ModelContext, window: u32) -> CacheCoverage {
+    if context.is_origin() || context.producer == model_identity::context::EMBEDDING {
+        return CacheCoverage {
+            next: 0,
+            end: 0,
+            fault: 0,
+        };
+    }
+    match context.execution_context() {
+        Some(e) => CacheCoverage {
+            next: if window == 0 {
+                0
+            } else {
+                e.before.position.saturating_add(1).saturating_sub(window)
+            },
+            end: e.end.position,
+            fault: 0,
+        },
+        None => CacheCoverage {
+            next: 0,
+            end: 0,
+            fault: 1,
+        },
+    }
+}
+pub fn consume_cache_position(state: &mut CacheCoverage, position: u32) {
+    if position != state.next || state.next >= state.end {
+        state.fault = 1;
+    }
+    state.next = state.next.saturating_add(1);
+}
+#[tile(kind=recur)]
+pub fn check_cache_positions(
+    input: RecurInput<Block<KeyRow>>,
+    state: RecurState<CacheCoverage>,
+) -> RecurState<CacheCoverage> {
+    let mut state = (*state).clone();
+    for key in input.into_value() {
+        consume_cache_position(&mut state, key.position);
+    }
+    RecurState::new(state)
+}
+#[tile(kind=iter)]
+pub fn finish_cache_coverage(model: ModelContext, coverage: CacheCoverage) -> ModelContext {
+    validate_cache_coverage(model, coverage)
+}
+pub fn validate_cache_coverage(mut model: ModelContext, coverage: CacheCoverage) -> ModelContext {
+    if !model.execution.as_slice().is_empty() {
+        model.require_execution(coverage.fault == 0 && coverage.next == coverage.end);
+    }
+    model
+}
+#[tile(kind=recur)]
+pub fn binding_count_aux(
+    input: RecurInput<Block<PleRow>>,
+    state: RecurState<u64>,
+) -> RecurState<u64> {
+    RecurState::new(*state + input.into_value().len() as u64)
+}
+#[tile(kind=iter)]
+pub fn binding_validate_aux(
+    model: ModelContext,
+    layer: u32,
+    rows: u64,
+    expected: u64,
+) -> ModelContext {
+    validate_aux_coverage(model, layer, rows, expected)
+}
+pub fn validate_aux_coverage(
+    mut model: ModelContext,
+    layer: u32,
+    rows: u64,
+    expected: u64,
+) -> ModelContext {
+    if !model.execution.as_slice().is_empty() {
+        model.require_execution(
+            layer.checked_add(1) == Some(model.completed_layers) && rows == expected,
+        );
+    }
+    model
+}

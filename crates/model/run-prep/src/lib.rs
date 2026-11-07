@@ -18,7 +18,9 @@ pub use prompt_prepare::input::{
 };
 use prompt_prepare::input::{BpePiece, BpePieces, PromptTokenizer, TokenEntry, VocabBucket};
 use raster::List;
-pub use sequence_check::input::{check_fault_description, CHECK_FAULT_UNSCORED};
+pub use sequence_check::input::{
+    check_fault_description, CHECK_FAULT_NO_CLAIMED_TOKENS, CHECK_FAULT_UNSCORED,
+};
 
 const BOS_TOKEN: &str = "<bos>";
 const TURN_OPEN: &str = "<|turn>";

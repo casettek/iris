@@ -2,7 +2,7 @@ use anyhow::{ensure, Result};
 use raster::List;
 use sequence_check::input::{
     empty_row, rms_norm, softcap, unpack_i32s, ActivationRow, ActivationSequence, CheckFrame,
-    ClaimedOutput, DecodeEdge, ErrorSummary, FinalHead, PositionSelection, SelectionSummary,
+    DecodeEdge, ErrorSummary, FinalHead, PositionSelection, SelectionSummary,
 };
 use sequence_check::prompt::PromptContext;
 use sequence_check::{check_fault_of, observe_selection};
@@ -88,7 +88,6 @@ pub fn score_row(normalized: &[i32], row: &[u8], cap: i32) -> Result<i32> {
 pub fn check_positions(
     activations: &ActivationSequence,
     previous: &ActivationSequence,
-    claimed: &ClaimedOutput,
     params: &CheckHeadParams<'_>,
 ) -> Result<Vec<CheckPosition>> {
     let empty = empty_row();
@@ -96,11 +95,11 @@ pub fn check_positions(
     let predicting = std::iter::once(boundary)
         .chain(activations.rows.iter())
         .collect::<Vec<_>>();
-    claimed
-        .token_ids
+    activations
+        .rows
         .iter()
         .enumerate()
-        .map(|(k, claimed_token_id)| {
+        .map(|(k, consumed)| {
             let row = predicting.get(k).ok_or_else(|| {
                 anyhow::anyhow!(
                     "claimed token {k} has no predicting row: the range has {} rows",
@@ -109,7 +108,7 @@ pub fn check_positions(
             })?;
             Ok(CheckPosition {
                 decode_position: activations.start_position + k as u32,
-                claimed_token_id: *claimed_token_id,
+                claimed_token_id: consumed.token_id,
                 normalized: normalize_row(row, params),
             })
         })
@@ -220,7 +219,6 @@ pub fn scorable(positions: &[CheckPosition]) -> Vec<&[i32]> {
 pub struct SequenceCheckDirectInputs<'a> {
     pub activations: &'a ActivationSequence,
     pub previous: &'a ActivationSequence,
-    pub claimed: &'a ClaimedOutput,
     pub prior: &'a DecodeEdge,
     pub head: &'a FinalHead,
     pub context: &'a PromptContext,
@@ -249,7 +247,7 @@ pub fn run_sequence_check_direct(inputs: SequenceCheckDirectInputs<'_>) -> Resul
         softcap: head.softcap,
         norm_weights: &norm_weights,
     };
-    let positions = check_positions(inputs.activations, inputs.previous, inputs.claimed, &params)?;
+    let positions = check_positions(inputs.activations, inputs.previous, &params)?;
 
     let stride = det_num::q8::row_bytes(head.hidden_size as usize).unwrap_or(0) as u64;
     let byte_len = inputs.head.projection.byte_len();
@@ -284,7 +282,12 @@ pub fn run_sequence_check_direct(inputs: SequenceCheckDirectInputs<'_>) -> Resul
         inputs.prior,
         &check_frame(inputs.activations, inputs.prior, inputs.context),
     )?;
-    edge.model = inputs.activations.model.head(
+    let mut checked_model = inputs.activations.model.clone();
+    checked_model.validate_rows(
+        inputs.activations.start_position,
+        inputs.activations.rows.len() as u64,
+    );
+    edge.model = checked_model.head(
         &inputs.previous.model,
         &inputs.context.model,
         &inputs.prior.model,

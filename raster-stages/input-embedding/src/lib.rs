@@ -181,3 +181,23 @@ pub fn assert_all_tokens_embedded(error_count: u32, first_error: String) -> Resu
 
 pub mod identity;
 pub use identity::*;
+
+#[tile(kind=recur)]
+pub fn bind_embedding_token(
+    input: RecurInput<u32>,
+    state: RecurState<ModelContext>,
+) -> RecurState<ModelContext> {
+    let mut state = state;
+    state.append_consumed_token(input.into_value());
+    state
+}
+#[tile(kind=iter)]
+pub fn finish_embedding_binding(
+    mut model: ModelContext,
+    start: u32,
+    prompt: u64,
+    claimed: u64,
+) -> ModelContext {
+    model.finish_embedding_execution(start, prompt, claimed);
+    model
+}

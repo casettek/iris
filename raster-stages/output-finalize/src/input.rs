@@ -46,6 +46,9 @@ pub struct DecoderTable {
 /// static repeat count pins that bound.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
 pub struct FinalizeState {
+    pub history: ModelContext,
+    pub expected_token: u32,
+    pub last_token: u32,
     pub model_fault: u32,
     pub count: u32,
     pub json: String,

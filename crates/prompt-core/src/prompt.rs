@@ -51,11 +51,14 @@ pub const FAULT_UNSAFE_CUT: u32 = 4;
 pub const FAULT_RANGE_TOO_LARGE: u32 = 5;
 /// A range's pieces could still merge: too few tokenizer batches ran.
 pub const FAULT_MERGES_INCOMPLETE: u32 = 6;
+/// A prompt range continues another statement or loses an inherited fault.
+pub const FAULT_CONTEXT_MISMATCH: u32 = 7;
 
 /// What a `PromptContext::fault` value means.
 pub fn fault_description(fault: u32) -> &'static str {
     match fault {
         FAULT_NONE => "no fault",
+        FAULT_CONTEXT_MISMATCH => "prompt predecessors describe different statements",
         FAULT_NO_TEXT => "the committed text has no chunks",
         FAULT_EMPTY_RANGE => "a range's cut does not move past the previous range's",
         FAULT_CUT_BEYOND_TEXT => "a range's cut is past the end of the prompt's pieces",
@@ -921,6 +924,18 @@ pub fn finish_token_context(
 }
 
 pub fn join_prompt_models(mut previous: PromptContext, bound: &PromptContext) -> PromptContext {
+    if previous.input_text_sha256 != bound.input_text_sha256
+        || previous.model_id != bound.model_id
+        || previous.raw_prompt != bound.raw_prompt
+        || previous.max_new_tokens != bound.max_new_tokens
+        || previous.range_size != bound.range_size
+    {
+        let position = previous.next_piece;
+        record_fault(&mut previous, FAULT_CONTEXT_MISMATCH, position);
+    }
+    if bound.fault != FAULT_NONE {
+        record_fault(&mut previous, bound.fault, bound.fault_position);
+    }
     previous.model.same_model(&bound.model);
     let valid = previous.model.valid()
         && previous.model.producer == model_identity::context::PROMPT
@@ -928,6 +943,13 @@ pub fn join_prompt_models(mut previous: PromptContext, bound: &PromptContext) ->
         && previous.model.model_id == previous.model_id
         && bound.model.model_id == bound.model_id;
     previous.model.require(valid);
+    previous.model.require_execution(
+        bound
+            .model
+            .execution_context()
+            .is_some_and(|e| e.phase == model_identity::pipeline_core::BOUND),
+    );
+    previous.model.begin_prompt_range();
     previous
 }
 

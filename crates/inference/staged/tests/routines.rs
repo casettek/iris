@@ -275,9 +275,9 @@ fn output_finalize_commits_the_exact_text_it_emits() {
 #[test]
 fn output_finalize_reports_what_the_chain_consumed() {
     let output = finalize(&[0], 1);
-    assert_eq!(output.input_text_sha256, "input-hash");
+    assert_eq!(output.input_text_sha256, "11".repeat(32));
     assert_eq!(output.model_id.len(), 64);
-    assert_eq!(output.model_fault, 0);
+    assert_ne!(output.model_fault, 0); // The deliberately faulty prompt cannot authorize a claim.
     assert!(output.raw_prompt);
     assert_eq!(output.max_new_tokens, 1);
     assert_eq!(output.range_size, 4);
@@ -596,25 +596,33 @@ fn sequence_check_matches_a_greedy_oracle_at_every_position() {
         kv: List::new(),
         start_position: range.start as u32,
     };
-    let claimed_range = |ids: &[u32]| check::ClaimedOutput {
-        token_ids: List::from(ids.to_vec()),
-    };
     let context = sequence_check::prompt::PromptContext {
         range_size: 4,
         prompt_tokens: 3,
         ..Default::default()
     };
-    let check_range = |activations, previous, claimed: &[u32], prior| {
-        routines::sequence_check::run_direct(&routines::sequence_check::Inputs::eager(
-            activations,
-            previous,
-            claimed_range(claimed),
-            prior,
-            check_head.clone(),
-            context.clone(),
-        ))
-        .unwrap()
-    };
+    let check_range =
+        |mut activations: check::ActivationSequence, previous, claimed: &[u32], prior| {
+            activations.rows = List::from(
+                activations
+                    .rows
+                    .iter()
+                    .zip(claimed)
+                    .map(|(row, id)| check::ActivationRow {
+                        token_id: *id,
+                        values: row.values.clone(),
+                    })
+                    .collect::<Vec<_>>(),
+            );
+            routines::sequence_check::run_direct(&routines::sequence_check::Inputs::eager(
+                activations,
+                previous,
+                prior,
+                check_head.clone(),
+                context.clone(),
+            ))
+            .unwrap()
+        };
     let run_check = |claimed: &[u32]| {
         let first = check_range(
             sequence(3..5),
@@ -656,6 +664,31 @@ fn sequence_check_matches_a_greedy_oracle_at_every_position() {
         .iter()
         .copied()
         .collect::<Vec<_>>();
+    // The check derives its claim from the actual consumed tokens. There is
+    // no separate argument through which a caller can substitute greedy IDs.
+    let mut consumed = sequence(3..5);
+    consumed.rows = List::from(
+        consumed
+            .rows
+            .iter()
+            .zip(&claimed[..2])
+            .map(|(row, id)| check::ActivationRow {
+                token_id: *id,
+                values: row.values.clone(),
+            })
+            .collect::<Vec<_>>(),
+    );
+    let substituted =
+        routines::sequence_check::run_direct(&routines::sequence_check::Inputs::eager(
+            consumed,
+            sequence(0..3),
+            check::DecodeEdge::default(),
+            check_head.clone(),
+            context.clone(),
+        ))
+        .unwrap();
+    assert_eq!(substituted.claim_mismatches, 1);
+
     let (_, honest_edge) = run_check(&honest);
     assert_eq!(honest_edge.claim_mismatches, 0);
     assert_eq!(honest_edge.first_claim_mismatch_position, 0);
@@ -732,7 +765,37 @@ fn authenticate_decoder_inputs(
     inputs.descriptor = raster::BytesPage::__from_parts(0, 0, d.encode().unwrap());
     inputs.context.model =
         model_identity::ModelContext::bind(inputs.descriptor.as_slice(), &inputs.context.model_id);
+    inputs.context.input_text_sha256 = "11".repeat(32);
+    inputs.context.range_size = inputs.context.range_size.max(4);
+    inputs.context.prompt_tokens = inputs.context.prompt_tokens.max(1);
+    inputs.context.model.bind_statement(
+        &inputs.context.input_text_sha256,
+        inputs.context.raw_prompt,
+        inputs.context.max_new_tokens,
+        inputs.context.range_size,
+    );
+    for start in (0..inputs.context.prompt_tokens).step_by(inputs.context.range_size as usize) {
+        inputs.context.model.begin_prompt_range();
+        let end = (start + inputs.context.range_size).min(inputs.context.prompt_tokens);
+        for _ in start..end {
+            inputs.context.model.append_consumed_token(0);
+        }
+        inputs
+            .context
+            .model
+            .finish_prompt_range(end == inputs.context.prompt_tokens, end, 0);
+    }
     inputs.edge.model = inputs.context.model.clone();
+    let mut e = inputs.edge.model.execution_context().unwrap();
+    e.before = e.end;
+    for &id in inputs.edge.generated_token_ids.iter() {
+        e.end.append(id).unwrap();
+    }
+    e.claimed = true;
+    e.phase = model_identity::pipeline_core::CHECKED;
+    inputs.edge.decode_position = e.end.position.saturating_sub(1);
+    inputs.edge.token_id = inputs.edge.generated_token_ids.last().copied().unwrap_or(0);
+    inputs.edge.model.set_execution(&e);
     inputs.edge.model.producer = model_identity::context::DECODE;
     inputs.edge.model.completed_layers = inputs.edge.model.layers;
     inputs.witness = output_finalize::decoder_witness(&inputs.decoder).unwrap();

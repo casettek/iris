@@ -22,7 +22,7 @@ use sequence_check::*;
 /// the head into an argmax, and record the selection beside the claim.
 #[sequence(kind = recur)]
 fn check_position(
-    input: RecurSequenceInput<u32>,
+    input: RecurSequenceInput<ActivationRow>,
     state: RecurSequenceState<CheckCursor>,
     output: RecurSequenceOutput<CheckedPositions>,
     rows: List<ActivationRow>,
@@ -32,7 +32,8 @@ fn check_position(
     RecurSequenceState<CheckCursor>,
     RecurSequenceOutput<CheckedPositions>,
 ) {
-    let step = call!(begin_check_step, state, input);
+    let token = call!(checked_row_token, input);
+    let step = call!(begin_check_step, state, token);
     let row_index = select!(u32, step.clone().row_index);
     let row = select!(ActivationRow, rows[row_index]);
     let normalized = call!(normalize_position, row, params.clone());
@@ -52,7 +53,7 @@ fn check_position(
 ///
 /// `activations` is the last transformer layer's output for this range;
 /// `previous` is its output for the range before, whose last row predicts
-/// this range's first token; `claimed` is this range's claimed ids; `prior`
+/// this range's first token; each activation row carries its consumed ID; `prior`
 /// is the previous range's check (or the empty `decode_init` edge); `head` is
 /// the committed output head; `prompt` is the last prompt range's output, whose
 /// context says how many tokens the prompt became and how large a range may be.
@@ -60,12 +61,23 @@ fn check_position(
 fn main(
     activations: ActivationSequence,
     previous: ActivationSequence,
-    claimed: ClaimedOutput,
     prior: DecodeEdge,
     head: FinalHead,
     prompt: PromptState,
 ) -> Result<DecodeEdge> {
     let input_model = select!(ModelContext, activations.clone().model);
+    let checked_rows = select!(List<ActivationRow>, activations.clone().rows);
+    let zero = call!(identity_zero_count);
+    let row_count = call_recur!(
+        tile = binding_count_rows,
+        input = checked_rows,
+        chunk = 64,
+        state = zero,
+        args = ()
+    );
+    let input_start = select!(u32, activations.clone().start_position);
+    let input_model = call!(binding_validate_rows, input_model, input_start, row_count);
+
     let previous_model = select!(ModelContext, previous.clone().model);
     let prompt_model = select!(ModelContext, prompt.clone().context.model);
     let prior_model = select!(ModelContext, prior.clone().model);
@@ -104,7 +116,7 @@ fn main(
     let range_rows = select!(List<ActivationRow>, activations.clone().rows);
     let predicting = call_recur!(
         tile = append_predicting_rows,
-        input = range_rows,
+        input = range_rows.clone(),
         chunk = 64,
         output = opened,
         args = ()
@@ -114,10 +126,9 @@ fn main(
     let cursor = call!(begin_check_cursor, start_position.clone());
     let rows = select!(List<ActivationRow>, predicting.rows);
     let pages = select!(List<BytesPage>, head.projection.pages);
-    let claimed_ids = select!(List<u32>, claimed.token_ids);
     let checked = call_recur_seq!(
         sequence = check_position,
-        input = claimed_ids,
+        input = range_rows,
         state = cursor,
         output,
         args = (rows, pages, params)
