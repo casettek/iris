@@ -61,6 +61,7 @@ pub fn run_direct(inputs: &Inputs) -> Result<BpePieces> {
         .context
         .model
         .require(output.context.model.model_id == output.context.model_id);
+    output.context.model.continue_prompt_range();
     output.context.model.require(crate::prompt_identity::batch(
         &inputs.tokenizer,
         &inputs.witness,

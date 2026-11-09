@@ -121,7 +121,13 @@ fn component_roles_and_sticky_context_are_enforced_in_guests() {
         &hex::encode(d.model_id().unwrap()),
     );
     context.bind_statement(&"11".repeat(32), false, 4, 4);
+    context.bind_schedule(model_identity::pipeline_core::StageSchedule {
+        prompt_ranges: 1,
+        merge_batches: 1,
+        claimed_ranges: 1,
+    });
     context.begin_prompt_range();
+    context.continue_prompt_range();
     context.append_consumed_token(1);
     context.finish_prompt_range(true, 1, 0);
     for (stage, role, root, indexed) in [
@@ -497,6 +503,11 @@ fn prompt_statement_substitution_is_rejected_in_guest() {
     let model_id = hex::encode(descriptor.model_id().unwrap());
     let mut model = model_identity::ModelContext::bind(&descriptor.encode().unwrap(), &model_id);
     model.bind_statement(&"11".repeat(32), false, 8, 4);
+    model.bind_schedule(model_identity::pipeline_core::StageSchedule {
+        prompt_ranges: 1,
+        merge_batches: 1,
+        claimed_ranges: 1,
+    });
     let bound = PromptContext {
         input_text_sha256: "11".repeat(32),
         model,
@@ -528,6 +539,96 @@ fn prompt_statement_substitution_is_rejected_in_guest() {
     }
 }
 
+#[test]
+#[ignore = "builds and executes the production prompt-bind guest"]
+fn stage_schedule_is_checked_and_stored_in_guest() {
+    use model_identity::pipeline_core::MAX_MERGE_BATCHES;
+    use output_finalize::prompt::{bind_run_schedule, PromptContext, RunSchedule};
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../../raster-stages/prompt-bind")
+        .canonicalize()
+        .unwrap();
+    let project = Project::new(path.clone()).unwrap();
+    let backend = raster_compiler::backend::BackendImpl::Risc0(
+        Risc0Backend::new(path.join("target/raster"))
+            .with_user_crate(path)
+            .with_guest_stdout(false),
+    );
+    let discovery = TileDiscovery::new(&project);
+    let runner = Builder::new(&project, &backend)
+        .build_tile_runner(&discovery.get("bind_schedule").unwrap())
+        .unwrap();
+    let descriptor = ModelDescriptor {
+        version: 1,
+        tokenizer: [1; 32],
+        decoder: [2; 32],
+        embedding: [3; 32],
+        head: [4; 32],
+        auxiliary: vec![[5; 32]],
+        transformer: vec![[6; 32]],
+    };
+    let model_id = hex::encode(descriptor.model_id().unwrap());
+    let mut model = model_identity::ModelContext::bind(&descriptor.encode().unwrap(), &model_id);
+    model.bind_statement(&"11".repeat(32), false, 8, 4);
+    let bound = PromptContext {
+        input_text_sha256: "11".repeat(32),
+        model,
+        model_id,
+        max_new_tokens: 8,
+        range_size: 4,
+        ..Default::default()
+    };
+    // Eight tokens in ranges of four allow two claimed ranges.
+    let honest = RunSchedule {
+        prompt_ranges: 2,
+        merge_batches: 3,
+        claimed_ranges: 2,
+    };
+    let over_budget = RunSchedule {
+        claimed_ranges: 3,
+        ..honest.clone()
+    };
+    let no_ranges = RunSchedule {
+        prompt_ranges: 0,
+        ..honest.clone()
+    };
+    let past_limit = RunSchedule {
+        merge_batches: MAX_MERGE_BATCHES + 1,
+        ..honest.clone()
+    };
+    for (schedule, faulted) in [
+        (honest, false),
+        (over_budget, true),
+        (no_ranges, true),
+        (past_limit, true),
+    ] {
+        let expected = bind_run_schedule(bound.clone(), &schedule);
+        let execution = runner
+            .run(
+                &postcard::to_allocvec(&(&bound, &schedule)).unwrap(),
+                ExecutionMode::Estimate,
+            )
+            .unwrap();
+        let actual: PromptContext = postcard::from_bytes(&execution.output).unwrap();
+        assert_eq!(actual, expected);
+        assert_eq!(actual.model.execution_fault != 0, faulted);
+        // The stage finishes and keeps the schedule it was given either way.
+        let stored = actual.model.execution_context().unwrap().schedule;
+        assert_eq!(
+            (
+                stored.prompt_ranges,
+                stored.merge_batches,
+                stored.claimed_ranges
+            ),
+            (
+                schedule.prompt_ranges,
+                schedule.merge_batches,
+                schedule.claimed_ranges
+            )
+        );
+    }
+}
+
 fn execution_fixture() -> (
     model_identity::ModelContext,
     model_identity::ModelContext,
@@ -545,7 +646,13 @@ fn execution_fixture() -> (
     };
     let mut p = ModelContext::bind(&d.encode().unwrap(), &hex::encode(d.model_id().unwrap()));
     p.bind_statement(&"11".repeat(32), false, 4, 4);
+    p.bind_schedule(model_identity::pipeline_core::StageSchedule {
+        prompt_ranges: 1,
+        merge_batches: 1,
+        claimed_ranges: 1,
+    });
     p.begin_prompt_range();
+    p.continue_prompt_range();
     p.append_consumed_token(1);
     p.append_consumed_token(2);
     p.finish_prompt_range(true, 2, 0);

@@ -32,7 +32,7 @@ struct Case {
     input_token_ids: Vec<u32>,
 }
 
-pub fn run() -> Result<()> {
+pub fn run(skip_challenges: bool) -> Result<()> {
     ensure!(
         !cfg!(debug_assertions),
         "test-parity requires a release build; run `just test-parity`"
@@ -49,7 +49,8 @@ pub fn run() -> Result<()> {
     println!("Three-path parity artifacts: {}", run_dir.display());
     let started = Instant::now();
     let mut report = json!({"version": 1, "mode": "host_no_auth", "passed": false, "cases": []});
-    let result = run_suite(&root, &run_dir, &mut report);
+    report["challenge_leg"] = json!(if skip_challenges { "skipped" } else { "run" });
+    let result = run_suite(&root, &run_dir, &mut report, skip_challenges);
     report["elapsed_seconds"] = json!(started.elapsed().as_secs_f64());
     report["passed"] = json!(result.is_ok());
     if let Err(error) = &result {
@@ -65,7 +66,7 @@ pub fn run() -> Result<()> {
     Ok(())
 }
 
-fn run_suite(root: &Path, run_dir: &Path, report: &mut Value) -> Result<()> {
+fn run_suite(root: &Path, run_dir: &Path, report: &mut Value, skip_challenges: bool) -> Result<()> {
     let model_bundle = root.join("model-bundles/parity-gemma");
     let checksums: BTreeMap<String, String> = read_json(&model_bundle.join("checksums.json"))?;
     ensure!(
@@ -197,6 +198,7 @@ fn run_suite(root: &Path, run_dir: &Path, report: &mut Value) -> Result<()> {
             &mut case_report,
             &mut selected,
             &mut logit_vectors,
+            skip_challenges,
         );
         case_report["passed"] = json!(result.is_ok());
         if let Err(error) = &result {
@@ -231,6 +233,7 @@ fn run_case(
     report: &mut Value,
     selected: &mut BTreeSet<u32>,
     logit_vectors: &mut BTreeSet<String>,
+    skip_challenges: bool,
 ) -> Result<()> {
     let started = Instant::now();
     let spec = dir.join("inference.toml");
@@ -413,6 +416,10 @@ fn run_case(
         comparison["chain_faults"] = run_chain_fault_leg(
             root, dir, exe, raster, model_path, model, case, &prepared, &claimed,
         )?;
+    }
+    if !case.raw_prompt && skip_challenges {
+        comparison["challenges"] = json!("skipped");
+    } else if !case.raw_prompt {
         comparison["challenges"] = challenge::run_challenge_leg(&challenge::Leg {
             root,
             dir: dir.join("challenges"),
@@ -489,7 +496,8 @@ fn run_chain_fault_leg(
     let unknown = [model.shape.vocab_size as u32, u32::MAX];
     let ends = |ends: &[u64]| ends.iter().map(|&end| RangeCut { end }).collect::<Vec<_>>();
     let positions = case.input_token_ids.len() as u32;
-    // Name, cuts, claimed ids, budget, then what the record must say.
+    // Name, cuts, claimed ids, budget, what the record must say, then what to
+    // add to the schedule's three counts.
     // Invalid prompt histories suppress downstream rows and retain the fault.
     let cases = [
         (
@@ -500,6 +508,7 @@ fn run_chain_fault_leg(
             true,
             run_prep::CHECK_FAULT_NO_CLAIMED_TOKENS,
             positions,
+            [0, 0, 0],
         ),
         (
             "empty-last-range",
@@ -509,6 +518,7 @@ fn run_chain_fault_leg(
             true,
             run_prep::CHECK_FAULT_NO_CLAIMED_TOKENS,
             positions,
+            [0, 0, 0],
         ),
         (
             "not-greedy",
@@ -518,6 +528,7 @@ fn run_chain_fault_leg(
             false,
             0,
             0,
+            [0, 0, 0],
         ),
         (
             "unknown-ids",
@@ -527,16 +538,60 @@ fn run_chain_fault_leg(
             false,
             0,
             0,
+            [0, 0, 0],
         ),
-        ("short-of-budget", canonical, greedy, 8, false, 0, 0),
+        (
+            "short-of-budget",
+            canonical.clone(),
+            greedy,
+            8,
+            false,
+            0,
+            0,
+            [0, 0, 0],
+        ),
+        // A run that does not follow its schedule: the schedule names counts the
+        // manifest's stages do not run. The last is refused when it is bound, the
+        // others by the stages that reach the difference.
+        (
+            "schedule-extra-prompt-range",
+            canonical.clone(),
+            greedy,
+            2,
+            false,
+            0,
+            0,
+            [1, 0, 0],
+        ),
+        (
+            "schedule-extra-merge-batch",
+            canonical.clone(),
+            greedy,
+            2,
+            false,
+            0,
+            0,
+            [0, 1, 0],
+        ),
+        (
+            "schedule-extra-claimed-range",
+            canonical,
+            greedy,
+            2,
+            false,
+            0,
+            0,
+            [0, 0, 1_i64],
+        ),
     ];
 
     let mut report = Vec::new();
-    for (name, cuts, ids, budget, prompt_fault, check_fault, check_position) in cases {
+    for (name, cuts, ids, budget, prompt_fault, check_fault, check_position, skew) in cases {
         let dir = case_dir.join("chain-faults").join(name);
         let files = dir.join("prompt");
         let manifest = dir.join("Raster.toml");
         let cut_files = run_prep::write_cuts(&cuts, &files)?;
+        let claimed_files = run_prep::write_claimed_ranges(ids, range_size as usize, &files)?;
         let rendered = crate::claim::render_ranged_manifest(
             &template,
             template_dir,
@@ -550,8 +605,14 @@ fn run_chain_fault_leg(
                 },
                 &files,
             )?,
+            &run_prep::write_run_schedule(
+                (cut_files.len() as i64 + skew[0]) as usize,
+                (i64::from(merge_repeats) + skew[1]) as u32,
+                (claimed_files.len() as i64 + skew[2]) as usize,
+                &files,
+            )?,
             &cut_files,
-            &run_prep::write_claimed_ranges(ids, range_size as usize, &files)?,
+            &claimed_files,
             merge_repeats,
         )?;
         fs::write(&manifest, rendered)?;
@@ -589,11 +650,18 @@ fn run_chain_fault_leg(
             (record["prompt_fault"] != json!(0)) == prompt_fault,
             "chain fault `{name}`: expected a prompt fault: {prompt_fault}; got {record}"
         );
-        ensure!(
-            record["check_fault"] == json!(check_fault)
-                && record["check_fault_position"] == json!(check_position),
-            "chain fault `{name}`: expected check fault {check_fault} at {check_position}; got {record}"
-        );
+        if skew == [0, 0, 0] {
+            ensure!(
+                record["check_fault"] == json!(check_fault)
+                    && record["check_fault_position"] == json!(check_position),
+                "chain fault `{name}`: expected check fault {check_fault} at {check_position}; got {record}"
+            );
+        } else {
+            ensure!(
+                record["model_fault"] != json!(0),
+                "chain fault `{name}`: a run that left its schedule kept a clean record: {record}"
+            );
+        }
         if prompt_fault {
             ensure!(
                 record["model_fault"] != json!(0),
@@ -626,6 +694,7 @@ fn run_chain_fault_leg(
         report.push(json!({
             "case": name,
             "stages": order.len(),
+            "model_fault": record["model_fault"],
             "prompt_fault": record["prompt_fault"],
             "check_fault": record["check_fault"],
             "claim_mismatches": record["claim_mismatches"],

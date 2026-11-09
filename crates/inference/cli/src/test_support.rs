@@ -35,6 +35,7 @@ name = "prompt_bind"
 project = "raster-stages/prompt-bind"
 inputs.text = {{ external = {{ path = "target/iris/run-prompt-placeholder/text.rastered", index_path = "target/iris/run-prompt-placeholder/text.rindex", commitment = "0" }} }}
 inputs.config = {{ external = {{ path = "target/iris/run-prompt-placeholder/config.rastered", index_path = "target/iris/run-prompt-placeholder/config.rindex", commitment = "0" }} }}
+inputs.schedule = {{ external = {{ path = "target/iris/run-prompt-placeholder/schedule.rastered", index_path = "target/iris/run-prompt-placeholder/schedule.rindex", commitment = "0" }} }}
 
 [[chain.repeat]]
 name = "prompt"

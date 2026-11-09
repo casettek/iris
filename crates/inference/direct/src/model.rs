@@ -189,6 +189,24 @@ impl DirectInferenceModel {
         run_prep::prepare_prompt(&self.tokenizer, spec_dir, spec, &self.manifest)
     }
 
+    /// The prompt's part of the run's stage schedule: its range count and the
+    /// merge batches each range runs after its seed, as run preparation counts
+    /// them. `None` when the prompt cannot be cut into ranges, which only a
+    /// chain needs.
+    pub fn prompt_schedule(&self, prompt: &PreparedPrompt) -> Option<(u32, u32)> {
+        let ranges = run_prep::prompt_ranges(
+            &prompt.initial_pieces,
+            self.manifest.range_size as usize,
+            &run_prep::vocabulary_pairs(&self.tokenizer).ok()?,
+            &run_prep::prompt_tokenizer(&self.tokenizer).ok()?,
+        )
+        .ok()?;
+        Some((
+            u32::try_from(ranges.len()).ok()?,
+            run_prep::range_tokenizer_repeat_count(&ranges).ok()?,
+        ))
+    }
+
     fn matrix_view(&self, name: &str, rows: usize, cols: usize) -> Result<DirectMatrixView<'_>> {
         Ok(DirectMatrixView::new(self.detwgt.matrix(name, rows, cols)?))
     }

@@ -93,6 +93,7 @@ impl ModelContext {
                 && self.completed_layers == 0
                 && layer < self.layers,
         );
+        out.auxiliary_execution(layer);
         out.producer = AUXILIARY;
         out.completed_layers = layer;
         out
@@ -138,6 +139,16 @@ impl ModelContext {
         }
         out.require(donor < 0 || donor == donor_a_layer || donor == donor_b_layer);
         out.layer_execution(
+            aux,
+            prior,
+            donor_a,
+            donor_b,
+            donor,
+            donor_a_layer,
+            donor_b_layer,
+        );
+        out.layer_step(
+            layer,
             aux,
             prior,
             donor_a,
@@ -232,7 +243,13 @@ mod tests {
             .collect::<String>();
         let mut p = ModelContext::bind(&d.encode().unwrap(), &id);
         p.bind_statement(&"11".repeat(32), false, 4, 4);
+        p.bind_schedule(pipeline_core::StageSchedule {
+            prompt_ranges: 1,
+            merge_batches: 1,
+            claimed_ranges: 1,
+        });
         p.begin_prompt_range();
+        p.continue_prompt_range();
         p.append_consumed_token(7);
         p.append_consumed_token(8);
         p.finish_prompt_range(true, 2, 0);
@@ -249,7 +266,7 @@ mod tests {
         input.layer(
             index,
             &embedding.auxiliary(index),
-            embedding,
+            &ModelContext::default(),
             &ModelContext::default(),
             &ModelContext::default(),
             -1,

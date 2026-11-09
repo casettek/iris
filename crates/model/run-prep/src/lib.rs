@@ -13,8 +13,8 @@ use prompt_prepare::input::{
     TokenizerProfile, PROMPT_PREFIX, PROMPT_SUFFIX,
 };
 pub use prompt_prepare::input::{
-    fault_description, RangeCut, RunConfig, FAULT_CUT_BEYOND_TEXT, FAULT_EMPTY_RANGE, FAULT_NONE,
-    FAULT_UNSAFE_CUT,
+    fault_description, RangeCut, RunConfig, RunSchedule, FAULT_CUT_BEYOND_TEXT, FAULT_EMPTY_RANGE,
+    FAULT_NONE, FAULT_UNSAFE_CUT,
 };
 use prompt_prepare::input::{BpePiece, BpePieces, PromptTokenizer, TokenEntry, VocabBucket};
 use raster::List;
@@ -335,6 +335,22 @@ pub fn write_prompt_text(prompt: &str, dir: &Path) -> Result<RunFile> {
 /// Writes the run's configuration as `config`.
 pub fn write_run_config(config: &RunConfig, dir: &Path) -> Result<RunFile> {
     write_run_file(config, dir, "config")
+}
+
+/// Writes the run's stage schedule as `schedule`, from the counts the chain
+/// manifest is filled in with.
+pub fn write_run_schedule(
+    prompt_ranges: usize,
+    merge_batches: u32,
+    claimed_ranges: usize,
+    dir: &Path,
+) -> Result<RunFile> {
+    let schedule = RunSchedule {
+        prompt_ranges: u32::try_from(prompt_ranges).context("prompt range count exceeds u32")?,
+        merge_batches,
+        claimed_ranges: u32::try_from(claimed_ranges).context("claimed range count exceeds u32")?,
+    };
+    write_run_file(&schedule, dir, "schedule")
 }
 
 /// A claim's output ids cut into ranges of at most `range_size`.

@@ -8,6 +8,10 @@ just test-parity
 cargo run --release --locked -p iris-cli -- test-parity
 ```
 
+Add `--skip-challenges` to leave out the [challenge leg](#challenge-leg), whose
+authenticated replays take about an hour. The report records that it was skipped,
+so such a run is not the full gate.
+
 The command runs the pinned synthetic Gemma model through the complete Raster
 chain (`--no-auth`), the checkpointed native-staged chain, and native-direct
 generation. Each execution owns its intermediate outputs and runtime state.
@@ -66,6 +70,10 @@ the chain then checks it.
 - Over empty prompt ranges, non-greedy claimed ids, claimed ids outside the
   vocabulary and an output short of its budget, on the templated case: the whole chain finishes through both Raster and
   native-staged, agrees byte for byte, and the final record names the failure.
+- Over a stage schedule that disagrees with the run, on the templated case (one
+  prompt range, one merge batch or one claimed range more than the manifest runs):
+  the whole chain finishes through both, agrees byte for byte, and the final record
+  carries a model fault.
 - Missing, duplicate, unexpected, malformed, or error-bearing outputs fail.
 
 Raster's ordered stage inventory comes from its public `chain-commitment` file;
@@ -95,7 +103,7 @@ challenger runs, under `<case>/challenges/`:
   every tensor and two vocabulary ids exchanged, is found at `prompt_bind` and
   replays. The challenger never reads that model.
 - A claim of the honest run whose checkpoints came from elsewhere must first differ
-  at the stage named: other text or configuration (`prompt_bind`), other cuts
+  at the stage named: other text, configuration or stage schedule (`prompt_bind`), other cuts
   (`prompt_seed_p0`), other ids (`embed_c0`), that model's tokenizer at each prompt
   stage, its embedding, PLE, weights, head and decoder at the first stage reading
   each, PLE layers exchanged, and stages wired to the wrong predecessor.

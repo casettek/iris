@@ -112,6 +112,15 @@ pub fn apply_ranked_merge(
 }
 
 /// Opens the stage's output with the range's context, carried unchanged.
+/// Records this batch's place in the stage schedule: the first batch follows
+/// the range's seed, each later one the batch before. A batch out of place
+/// sets a fault, and the stage finishes.
+#[tile(kind = iter, description = "Check this merge batch against the stage schedule")]
+pub fn continue_range(mut context: PromptContext) -> PromptContext {
+    context.model.continue_prompt_range();
+    context
+}
+
 #[tile(kind = iter, description = "Open the merged range with its context")]
 pub fn open_pieces(context: PromptContext) -> Draft<PromptState> {
     let mut output = Draft::<PromptState>::new();

@@ -612,7 +612,8 @@ fn chain_template(
          \n[[chain.stage]]\nname = \"decode_init\"\nproject = \"raster-stages/decode-init\"\n",
     );
 
-    // Bind the text and the configuration, and split the text into pieces.
+    // Bind the text, the configuration and the stage schedule, and split the
+    // text into pieces.
     let run_external = |param: &str| {
         external_line(
             param,
@@ -629,9 +630,11 @@ fn chain_template(
          {descriptor_line}\n\
          {tokenizer_line}\
          {}\
+         {}\
          {}",
         run_external("text"),
         run_external("config"),
+        run_external("schedule"),
     ));
 
     // Tokenize and embed every range first.

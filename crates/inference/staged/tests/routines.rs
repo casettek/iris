@@ -774,8 +774,21 @@ fn authenticate_decoder_inputs(
         inputs.context.max_new_tokens,
         inputs.context.range_size,
     );
+    // One merge batch per prompt range, and the claimed ids in whole ranges.
+    let schedule = model_identity::pipeline_core::StageSchedule {
+        prompt_ranges: inputs
+            .context
+            .prompt_tokens
+            .div_ceil(inputs.context.range_size),
+        merge_batches: 1,
+        claimed_ranges: (inputs.edge.generated_token_ids.len() as u32)
+            .div_ceil(inputs.context.range_size)
+            .max(1),
+    };
+    inputs.context.model.bind_schedule(schedule);
     for start in (0..inputs.context.prompt_tokens).step_by(inputs.context.range_size as usize) {
         inputs.context.model.begin_prompt_range();
+        inputs.context.model.continue_prompt_range();
         let end = (start + inputs.context.range_size).min(inputs.context.prompt_tokens);
         for _ in start..end {
             inputs.context.model.append_consumed_token(0);
@@ -793,6 +806,7 @@ fn authenticate_decoder_inputs(
     }
     e.claimed = true;
     e.phase = model_identity::pipeline_core::CHECKED;
+    e.step = model_identity::pipeline_core::Step::check(schedule.claimed_ranges - 1);
     inputs.edge.decode_position = e.end.position.saturating_sub(1);
     inputs.edge.token_id = inputs.edge.generated_token_ids.last().copied().unwrap_or(0);
     inputs.edge.model.set_execution(&e);

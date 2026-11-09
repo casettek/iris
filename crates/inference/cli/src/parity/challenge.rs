@@ -68,6 +68,8 @@ struct RunInputs {
     cuts: Vec<RangeCut>,
     ids: Vec<u32>,
     merge_repeats: u32,
+    /// Added to the schedule's three counts. Zero for a schedule matching the run.
+    schedule_skew: [i64; 3],
 }
 
 pub(super) fn run_challenge_leg(leg: &Leg) -> Result<Value> {
@@ -175,6 +177,14 @@ pub(super) fn run_challenge_leg(leg: &Leg) -> Result<Value> {
             "prompt_bind",
             RunInputs {
                 config: other_budget,
+                ..inputs.clone()
+            },
+        ),
+        (
+            "other-schedule",
+            "prompt_bind",
+            RunInputs {
+                schedule_skew: [0, 1, 0],
                 ..inputs.clone()
             },
         ),
@@ -541,6 +551,7 @@ fn honest_inputs(leg: &Leg) -> Result<RunInputs> {
         cuts: run_prep::range_cuts(&ranges),
         ids: leg.claimed.to_vec(),
         merge_repeats: run_prep::range_tokenizer_repeat_count(&ranges)?,
+        schedule_skew: [0; 3],
     })
 }
 
@@ -557,6 +568,8 @@ fn not_greedy_ids(leg: &Leg) -> Result<Vec<u32>> {
 fn render(model_path: &Path, model: &ModelManifest, run: &RunInputs, dir: &Path) -> Result<String> {
     let (template_path, template) = model.verified_raster_template(model_path)?;
     let range_size = run.config.range_size as usize;
+    let cut_files = run_prep::write_cuts(&run.cuts, dir)?;
+    let claimed_files = run_prep::write_claimed_ranges(&run.ids, range_size, dir)?;
     render_ranged_manifest(
         &template,
         template_path
@@ -564,8 +577,14 @@ fn render(model_path: &Path, model: &ModelManifest, run: &RunInputs, dir: &Path)
             .context("manifest template has no parent directory")?,
         &run_prep::write_prompt_text(&run.text, dir)?,
         &run_prep::write_run_config(&run.config, dir)?,
-        &run_prep::write_cuts(&run.cuts, dir)?,
-        &run_prep::write_claimed_ranges(&run.ids, range_size, dir)?,
+        &run_prep::write_run_schedule(
+            (cut_files.len() as i64 + run.schedule_skew[0]) as usize,
+            (i64::from(run.merge_repeats) + run.schedule_skew[1]) as u32,
+            (claimed_files.len() as i64 + run.schedule_skew[2]) as usize,
+            dir,
+        )?,
+        &cut_files,
+        &claimed_files,
         run.merge_repeats,
     )
 }

@@ -22,6 +22,10 @@ Start with the workflow docs when you want to run the repo, and the internals do
 
 - [Issues](issues/README.md)
 - [Proposals](proposals/)
+- [Verifying the stage schedule inside the Raster stages](proposals/verified-stage-implementation.md): implementation order, code targets, and completion checks.
+- [Enforcing the right stage](proposals/stage-progression.md): one check per stage execution, authenticated progression, and persistent faults.
+- [Claim protocol Phase 1 specification](proposals/claim-protocol-phase-one-spec.md): review draft defining the statement, registered pipeline, package, and acceptance rules.
+- [Contract claim pipeline implementation plan](proposals/contract-claim-pipeline-plan.md): phased work for canonical preparation, portable claims, anchored disputes, and verifier contracts.
 - [Model identity implementation plan](proposals/model-identity.md): bind consumed model data to component commitments inside Iris stages.
 - [Ranked BPE tokenizer](proposals/ranked-bpe-tokenizer.md): implemented fixed-count
   staging, input preparation, and replay contract.

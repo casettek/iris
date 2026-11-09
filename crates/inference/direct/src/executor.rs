@@ -76,7 +76,8 @@ impl DirectInferenceExecutor {
         let prompt = model.prompt_inputs(&prepared_prompt)?;
         // Direct inference is the independent numerical oracle; construct its
         // diagnostic statement/history from the actual prompt and selected IDs.
-        let execution_context = |generated: Option<&[u32]>| {
+        let prompt_schedule = model.prompt_schedule(&prepared_prompt);
+        let execution_context = |generated: Option<&[u32]>, claimed_tokens: usize| {
             let mut context = crate::view_kernels::bound_model_context(&model);
             context.bind_statement(
                 &output_finalize::sha256_hex(prepared_prompt.resolved_prompt.as_bytes()),
@@ -84,12 +85,26 @@ impl DirectInferenceExecutor {
                 run_spec.tokens,
                 model.manifest().range_size,
             );
+            // The schedule the chain runs this output under, so the two final
+            // records agree byte for byte.
+            if let Some((prompt_ranges, merge_batches)) = prompt_schedule {
+                let claimed_ranges = claimed_tokens.div_ceil(model.manifest().range_size as usize);
+                context.bind_schedule(model_identity::pipeline_core::StageSchedule {
+                    prompt_ranges,
+                    merge_batches,
+                    claimed_ranges: u32::try_from(claimed_ranges).unwrap_or(u32::MAX),
+                });
+            }
             if let Some(mut e) = context.execution_context() {
                 for id in prompt.token_ids.iter() {
                     context.require_execution(e.end.append(*id).is_ok());
                 }
                 e.prompt = Some(e.end);
                 e.phase = model_identity::pipeline_core::PREPARED;
+                // The steps the chain's last prompt range and last check record.
+                e.step = model_identity::pipeline_core::Step::prepare(
+                    e.schedule.prompt_ranges.saturating_sub(1),
+                );
                 if let Some(ids) = generated {
                     e.before = e.end;
                     e.claimed = true;
@@ -97,6 +112,9 @@ impl DirectInferenceExecutor {
                         context.require_execution(e.end.append(*id).is_ok());
                     }
                     e.phase = model_identity::pipeline_core::CHECKED;
+                    e.step = model_identity::pipeline_core::Step::check(
+                        e.schedule.claimed_ranges.saturating_sub(1),
+                    );
                     context.completed_layers = context.layers;
                     context.producer = model_identity::context::DECODE;
                 }
@@ -131,7 +149,10 @@ impl DirectInferenceExecutor {
         trace.record("decode_init", &edge)?;
         for token_idx in 0..run_spec.tokens {
             edge = crate::generation::select_next_token(&logits, &edge)?;
-            edge.model = execution_context(Some(edge.generated_token_ids.as_slice()));
+            edge.model = execution_context(
+                Some(edge.generated_token_ids.as_slice()),
+                edge.generated_token_ids.len(),
+            );
             trace.record(&format!("decode_select_t{token_idx}"), &edge)?;
             if prepared_prompt.eos_token_ids.contains(&edge.token_id) {
                 // Keep EOS in the result, but never run another decode pass.
@@ -195,7 +216,7 @@ impl DirectInferenceExecutor {
                 // The record the chain publishes for this run: a direct result
                 // and an honest claim's final record are the same bytes.
                 context: &output_finalize::prompt::PromptContext {
-                    model: execution_context(None),
+                    model: execution_context(None, output_edge.generated_token_ids.len()),
                     input_text_sha256: output_finalize::sha256_hex(
                         prepared_prompt.resolved_prompt.as_bytes(),
                     ),

@@ -529,7 +529,13 @@ fn auxiliary_sparse_witness_is_rechecked_after_cache_hit() {
         .collect::<String>();
     let mut prompt = model_identity::ModelContext::bind(&d.encode().unwrap(), &id);
     prompt.bind_statement(&"11".repeat(32), false, 8, 128);
+    prompt.bind_schedule(model_identity::pipeline_core::StageSchedule {
+        prompt_ranges: 1,
+        merge_batches: 1,
+        claimed_ranges: 1,
+    });
     prompt.begin_prompt_range();
+    prompt.continue_prompt_range();
     for row in f.embedded.rows.iter() {
         prompt.append_consumed_token(row.token_id);
     }

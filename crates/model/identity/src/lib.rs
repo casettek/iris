@@ -431,4 +431,6 @@ pub mod stream;
 pub mod sparse;
 
 mod pipeline;
+#[cfg(test)]
+mod schedule_tests;
 pub use pipeline_core;

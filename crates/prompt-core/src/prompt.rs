@@ -251,6 +251,30 @@ pub struct RunConfig {
     pub range_size: u32,
 }
 
+/// The run's stage schedule, as one committed value: which stages run.
+///
+/// Run preparation chooses it. `prompt-bind` checks it and stores it in the
+/// context, and it travels from there with the statement.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
+pub struct RunSchedule {
+    pub prompt_ranges: u32,
+    /// Merge batches each prompt range runs after its seed.
+    pub merge_batches: u32,
+    pub claimed_ranges: u32,
+}
+
+/// The context after the run's schedule has been checked and stored.
+pub fn bind_run_schedule(mut context: PromptContext, schedule: &RunSchedule) -> PromptContext {
+    context
+        .model
+        .bind_schedule(model_identity::pipeline_core::StageSchedule {
+            prompt_ranges: schedule.prompt_ranges,
+            merge_batches: schedule.merge_batches,
+            claimed_ranges: schedule.claimed_ranges,
+        });
+    context
+}
+
 /// Where one prompt range ends, as an index into the prompt's pieces.
 ///
 /// Run preparation chooses it. The chain checks it rather than trusting it.
@@ -950,6 +974,7 @@ pub fn join_prompt_models(mut previous: PromptContext, bound: &PromptContext) ->
             .is_some_and(|e| e.phase == model_identity::pipeline_core::BOUND),
     );
     previous.model.begin_prompt_range();
+    previous.model.require_bound(&bound.model);
     previous
 }
 

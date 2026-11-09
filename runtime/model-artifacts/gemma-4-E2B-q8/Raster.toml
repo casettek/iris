@@ -156,6 +156,7 @@ inputs.tokenizer = { external = { path = "/home/amcas/Development/iris/runtime/m
 inputs.witness = { external = { path = "/home/amcas/Development/iris/runtime/model-artifacts/gemma-4-E2B-q8/raster/prompt-prepare/witness.rastered", index_path = "/home/amcas/Development/iris/runtime/model-artifacts/gemma-4-E2B-q8/raster/prompt-prepare/witness.rindex", commitment = "355a1953b4d871e24f6777012a809c501d9edca4faf1197d5253eae05fb4b741" } }
 inputs.text = { external = { path = "/home/amcas/Development/iris/target/iris/run-prompt-placeholder/text.rastered", index_path = "/home/amcas/Development/iris/target/iris/run-prompt-placeholder/text.rindex", commitment = "0000000000000000000000000000000000000000000000000000000000000000" } }
 inputs.config = { external = { path = "/home/amcas/Development/iris/target/iris/run-prompt-placeholder/config.rastered", index_path = "/home/amcas/Development/iris/target/iris/run-prompt-placeholder/config.rindex", commitment = "0000000000000000000000000000000000000000000000000000000000000000" } }
+inputs.schedule = { external = { path = "/home/amcas/Development/iris/target/iris/run-prompt-placeholder/schedule.rastered", index_path = "/home/amcas/Development/iris/target/iris/run-prompt-placeholder/schedule.rindex", commitment = "0000000000000000000000000000000000000000000000000000000000000000" } }
 
 [[chain.repeat]]
 name = "prompt"

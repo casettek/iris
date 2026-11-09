@@ -175,6 +175,7 @@ fn main(
     let buckets = select!(List<MergeBucket>, tokenizer.merge_buckets);
     let context = select!(PromptContext, initial_pieces.clone().context);
     let context = call!(identity_prompt, context, identity);
+    let context = call!(continue_range, context);
     let pieces0 = select!(List<BpePiece>, initial_pieces.pieces);
     let merge_header = select!(SparseHeader, witness.clone().merges);
     let merge_paths = select!(List<SparsePath>, witness.clone().merge_paths);

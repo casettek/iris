@@ -47,7 +47,8 @@ fn resolve_atom(
 }
 
 /// Stage entrypoint: `text` is the original prompt, `config` the run's
-/// configuration, `tokenizer` the committed tokenizer.
+/// configuration, `schedule` its stage schedule, `tokenizer` the committed
+/// tokenizer.
 #[sequence]
 fn main(
     tokenizer: PromptTokenizer,
@@ -55,6 +56,7 @@ fn main(
     text: PromptText,
     config: RunConfig,
     descriptor: BytesPage,
+    schedule: RunSchedule,
 ) -> PromptState {
     let profile = select!(TokenizerProfile, tokenizer.clone().profile);
     let count = select!(u32, tokenizer.clone().vocab_bucket_count);
@@ -82,6 +84,7 @@ fn main(
 
     let root = call_seq!(identity_root, tokenizer, witness.clone());
     let context = call!(identity_bound_context, fold, config, descriptor, root);
+    let context = call!(bind_schedule, context, schedule);
     let vocab_header = select!(SparseHeader, witness.clone().vocab);
     let vocab_paths = select!(List<SparsePath>, witness.vocab_paths);
     let context = call_recur_seq!(

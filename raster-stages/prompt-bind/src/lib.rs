@@ -95,6 +95,13 @@ pub fn open_bound_prompt(
     output
 }
 
+/// Checks the run's stage schedule and stores it in the context. A schedule
+/// that fails is kept with a fault, and the stage finishes.
+#[tile(kind = iter, description = "Check and store the run's stage schedule")]
+pub fn bind_schedule(context: PromptContext, schedule: RunSchedule) -> PromptContext {
+    bind_run_schedule(context, &schedule)
+}
+
 /// The split before any atom.
 #[tile(kind = iter, description = "Open the split at the first segment")]
 pub fn begin_split() -> SplitState {

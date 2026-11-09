@@ -35,7 +35,10 @@ pub enum Fault {
     RangeLimit,
     Statement,
     History,
+    Schedule,
 }
+mod schedule;
+pub use schedule::*;
 impl Prefix {
     pub fn empty(statement: &Statement) -> Self {
         let mut h = Sha256::new();
@@ -172,7 +175,12 @@ pub struct Execution {
     pub phase: u8,
     pub claimed: bool,
     pub expected: Option<Prefix>,
+    /// The run's stage schedule, all zero until `prompt-bind` verifies one.
+    pub schedule: StageSchedule,
+    /// The stage that produced this record.
+    pub step: Step,
 }
+pub const EXECUTION_VERSION: u32 = 2;
 pub const BOUND: u8 = 0;
 pub const TOKENIZING: u8 = 1;
 pub const PREPARED: u8 = 2;
@@ -182,7 +190,7 @@ impl Execution {
     pub fn bind(statement: Statement) -> Self {
         let before = Prefix::empty(&statement);
         Self {
-            version: 1,
+            version: EXECUTION_VERSION,
             statement,
             before,
             end: before,
@@ -190,6 +198,8 @@ impl Execution {
             phase: BOUND,
             claimed: false,
             expected: None,
+            schedule: StageSchedule::default(),
+            step: Step::bind(),
         }
     }
     pub fn encode(&self) -> alloc::vec::Vec<u8> {
@@ -197,7 +207,9 @@ impl Execution {
     }
     pub fn decode(bytes: &[u8]) -> Option<Self> {
         let (value, rest): (Self, &[u8]) = postcard::take_from_bytes(bytes).ok()?;
-        (rest.is_empty() && value.version == 1 && value.before.position <= value.end.position)
+        (rest.is_empty()
+            && value.version == EXECUTION_VERSION
+            && value.before.position <= value.end.position)
             .then_some(value)
     }
     pub fn same_statement(&self, other: &Self) -> bool {

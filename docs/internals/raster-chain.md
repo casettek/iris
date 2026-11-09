@@ -42,11 +42,13 @@ Autoregressive generation is not a chain. It lives in `direct-infer`, which disc
 
 ## Ranges
 
-`prompt_bind` runs once, before any range. It takes the original UTF-8 prompt
-and the run's configuration as committed inputs, folds SHA-256 over the text in
-chunks of at most 256 bytes, renders it through the chat template unless the run is
-raw, and splits it into pieces. Its output is every piece of the prompt and a
-`PromptContext` holding the text's hash, the model id and the configuration.
+`prompt_bind` runs once, before any range. It takes the original UTF-8 prompt,
+the run's configuration and its stage schedule as committed inputs, folds SHA-256
+over the text in chunks of at most 256 bytes, renders it through the chat template
+unless the run is raw, and splits it into pieces. It checks the schedule and stores
+it in the context (see [Stage schedule](#stage-schedule)). Its output is every piece
+of the prompt and a `PromptContext` holding the text's hash, the model id and the
+configuration.
 Every prompt stage publishes `PromptState`, so the context travels with the
 pieces, and the last range's `prompt_prepare` holds the record for the whole
 prompt.
@@ -125,8 +127,8 @@ chain ran under (`input_text_sha256`, `model_id`, `raw_prompt`, `max_new_tokens`
 `prompt_fault_position`). The host copies this record into `InferenceResult` and
 computes none of it.
 
-The repeat counts, the last prompt range's index, the text and configuration, and
-the per-range externals (`cut_{j}`, `claimed_{k}`) are filled in by run preparation
+The repeat counts, the last prompt range's index, the text, configuration and
+stage schedule, and the per-range externals (`cut_{j}`, `claimed_{k}`) are filled in by run preparation
 into the frozen run
 manifest. `range-origin` is the empty sequence at position 0 that the first
 range of each binding starts from, because a repeat's `first` fallback must name a
@@ -245,4 +247,53 @@ model/execution fault makes the final claim invalid even if native and Raster
 honestly execute the same malicious wiring. `test-parity` exercises that case
 as well as divergence from the honest template; production RISC Zero tests in
 `model_identity_guest.rs` cover the corresponding guest checks. Model imports
-and prepared runs use version 6; older boundary encodings must be regenerated.
+and prepared runs use version 7; older boundary encodings must be regenerated.
+
+### Stage schedule
+
+The stage schedule is which stages a run executes and in what order. It is three
+counts, chosen by run preparation and committed as the `schedule` input of
+`prompt_bind`: the prompt ranges `P`, the merge batches `B` each range runs after
+its seed, and the claimed ranges `C`. With the model's layer count `L` they fix
+every stage:
+
+1. `prompt_bind`
+2. for each prompt range `j`: `prompt_seed`, `prompt_merge` batches `0..B`,
+   `prompt_prepare`, `embed_p{j}`
+3. for each claimed range `k`: `embed_c{k}`
+4. for each layer: the auxiliary stage of every range, then the transformer
+   stage of every range
+5. for each claimed range `k`: `check_c{k}`
+6. `output_finalize`
+
+`prompt_bind` checks that each count is at least one and within its limit, and
+that `C` fits the token budget at this range size. It stores the schedule in the
+`Execution` record beside the statement, so it reaches every later stage through
+the inputs they already take. A schedule that fails is kept with the execution
+fault set. `P` and `B` depend on tokenization, so they are held to by the stages
+that follow.
+
+Every stage records its step in `Execution`: its operation, range, layer and
+batch. In a tile it works out that step from its committed inputs, requires the
+schedule to contain it, and requires each input to carry the step the schedule
+puts before it, under the same statement and schedule. The rules are in
+`pipeline-core`'s `schedule.rs` and applied by `model-identity`'s `pipeline.rs`.
+
+| Stage | Its step must be | Its inputs must carry |
+| --- | --- | --- |
+| `prompt_seed` | range `j < P` | `prompt_prepare` of range `j-1`, or `prompt_bind` when `j = 0`; and `prompt_bind` |
+| `prompt_merge` | batch `b < B` of range `j` | batch `b-1`, or the range's `prompt_seed` when `b = 0` |
+| `prompt_prepare` | range `j` | batch `B-1` of range `j`. The prompt is complete exactly when `j = P-1`. |
+| `embed_p{j}` | range `j` | `prompt_prepare` of range `j`, and `embed_p{j-1}` or the origin |
+| `embed_c{k}` | range `k < C` | `embed_c{k-1}`, or `embed_p{P-1}` when `k = 0` |
+| `aux_*_l{l}` | layer `l < L` of its range | that range's embedding |
+| `range_*_l{l}` | layer `l < L` of its range | layer `l-1` of the range (or its embedding), layer `l` of the range before (or the origin), the range's auxiliary stage for layer `l`, and the donor layer of the same range |
+| `check_c{k}` | claimed range `k` | layer `L-1` of range `k` and of the range before, `check_c{k-1}` or the empty edge, and `prompt_prepare` of range `P-1` |
+| `output_finalize` | last | `check_c{C-1}` and `prompt_prepare` of range `P-1` |
+
+A failed requirement sets the execution fault, which is sticky and reaches
+`model_fault` in the final record. A valid record therefore means every scheduled
+stage ran, each after the stages the schedule puts before it. Two stages that do
+not feed each other, such as the auxiliary stages of two layers, are not ordered
+against each other. A chain with no `prompt_bind`, such as the tokenizer fixture
+chain, has no schedule, and its prompt stages publish the execution fault.

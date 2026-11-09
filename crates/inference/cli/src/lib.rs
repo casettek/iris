@@ -79,7 +79,12 @@ enum Commands {
     #[cfg(feature = "replay-profile")]
     ReplayProfile(ReplayProfileArgs),
     /// Run the pinned three-path end-to-end parity suite.
-    TestParity,
+    TestParity {
+        /// Leave out the challenge leg, whose authenticated replays take about an
+        /// hour. The report records that it was skipped.
+        #[arg(long)]
+        skip_challenges: bool,
+    },
     /// Compare a chain run with direct generation of the same prompt and
     /// output, position by position.
     #[command(hide = true)]
@@ -321,8 +326,8 @@ fn execute(cli: Cli) -> Result<ExitCode> {
             })?;
             Ok(ExitCode::SUCCESS)
         }
-        Some(Commands::TestParity) => {
-            parity::run()?;
+        Some(Commands::TestParity { skip_challenges }) => {
+            parity::run(skip_challenges)?;
             Ok(ExitCode::SUCCESS)
         }
         Some(Commands::CompareTeacherForced {

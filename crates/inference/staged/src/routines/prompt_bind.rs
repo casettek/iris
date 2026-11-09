@@ -2,7 +2,9 @@ use std::path::Path;
 use std::sync::Arc;
 
 use anyhow::Result;
-use prompt_prepare::input::{PromptState, PromptText, PromptTokenizer, RunConfig};
+use prompt_prepare::input::{
+    bind_run_schedule, PromptState, PromptText, PromptTokenizer, RunConfig, RunSchedule,
+};
 
 use crate::artifact_io::{with_main_sequence_scope, with_stage_sequence_scope};
 use crate::cache::{
@@ -17,6 +19,7 @@ pub struct Inputs {
     pub text: PromptText,
     pub config: RunConfig,
     pub descriptor: raster::BytesPage,
+    pub schedule: RunSchedule,
 }
 
 pub fn load_inputs_from_args() -> Result<Inputs> {
@@ -59,6 +62,7 @@ pub fn run_direct(inputs: &Inputs) -> Result<PromptState> {
         output.context.max_new_tokens,
         output.context.range_size,
     );
+    output.context = bind_run_schedule(output.context, &inputs.schedule);
     Ok(output)
 }
 
@@ -72,6 +76,7 @@ fn load_inputs_with_cache(
         raster::entry_argument_spec::<PromptText>("text"),
         raster::entry_argument_spec::<RunConfig>("config"),
         raster::entry_argument_spec::<raster::BytesPage>("descriptor"),
+        raster::entry_argument_spec::<RunSchedule>("schedule"),
     ])?;
     let witness = raster::materialize_auth_return(raster::entry_argument_auth_ref::<
         prompt_prepare::input::TokenizerWitness,
@@ -92,10 +97,15 @@ fn load_inputs_with_cache(
     ));
     let descriptor = raster::materialize_auth_return(raster::entry_argument_auth_ref::<
         raster::BytesPage,
-    >(binding.reference, "descriptor"));
+    >(binding.reference.clone(), "descriptor"));
+    let schedule = raster::materialize_auth_return(raster::entry_argument_auth_ref::<RunSchedule>(
+        binding.reference,
+        "schedule",
+    ));
     Ok(Inputs {
         witness,
         descriptor,
+        schedule,
         tokenizer,
         text,
         config,
