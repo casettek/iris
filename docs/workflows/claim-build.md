@@ -136,6 +136,9 @@ Missing verification inputs or model context cannot produce an accepted record.
 
 Sparse tokenizer/embedding reads authenticate selected complete buckets or pages.
 Their separate witness files are inputs to the authorized stage programs; cache
-hits do not bypass current witness checks. Dense projections and transformer
+hits do not bypass current witness checks. The tokenizer witness is kept for
+the run beside the tokenizer, keyed by its commitment. Within one stage a merge
+bucket is checked against the witness the first time it is read, and later
+reads of that bucket in the same stage reuse the answer. Dense projections and transformer
 weights retain complete sweeps. See the
 [validation report](../proposals/model-identity-validation.md).

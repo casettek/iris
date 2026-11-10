@@ -12,7 +12,7 @@ use crate::cache::{
 use inference_kernels::kernels::prompt_prepare::{run_merge_batch, PromptPrepareDirectInputs};
 
 pub struct Inputs {
-    pub witness: prompt_prepare::input::TokenizerWitness,
+    pub witness: Arc<prompt_prepare::input::TokenizerWitness>,
     pub tokenizer: Arc<PromptTokenizer>,
     pub initial_pieces: BpePieces,
 }
@@ -42,8 +42,12 @@ pub fn load_inputs_from_paths_with_cache(
         input_manifest,
         "tokenizer",
     )?;
+    // The witness is the same committed input for every prompt stage of a run.
+    let witness_key = materialization_key_from_stage_files::<
+        prompt_prepare::input::TokenizerWitness,
+    >(input, input_manifest, "witness")?;
     with_stage_sequence_scope(input, input_manifest, || {
-        load_inputs_with_cache(cached_inputs, materialization_cache, key)
+        load_inputs_with_cache(cached_inputs, materialization_cache, key, witness_key)
     })
 }
 
@@ -71,22 +75,25 @@ pub fn run_direct(inputs: &Inputs) -> Result<BpePieces> {
 }
 
 fn load_inputs_from_initialized_runtime() -> Result<Inputs> {
-    load_inputs_with_cache(&CachedInputs::new(), None, None)
+    load_inputs_with_cache(&CachedInputs::new(), None, None, None)
 }
 
 fn load_inputs_with_cache(
     cached: &CachedInputs,
     materialization_cache: Option<&MaterializationCache>,
     key: Option<MaterializationCacheKey>,
+    witness_key: Option<MaterializationCacheKey>,
 ) -> Result<Inputs> {
     let binding = raster::start_program(&[
         raster::entry_argument_spec::<PromptTokenizer>("tokenizer"),
         raster::entry_argument_spec::<prompt_prepare::input::TokenizerWitness>("witness"),
         raster::entry_argument_spec::<BpePieces>("initial_pieces"),
     ])?;
-    let witness = raster::materialize_auth_return(raster::entry_argument_auth_ref::<
-        prompt_prepare::input::TokenizerWitness,
-    >(binding.reference.clone(), "witness"));
+    let witness = materialize_with_cache(materialization_cache, witness_key, || {
+        raster::materialize_auth_return(raster::entry_argument_auth_ref::<
+            prompt_prepare::input::TokenizerWitness,
+        >(binding.reference.clone(), "witness"))
+    })?;
     let tokenizer = materialize_with_cache(materialization_cache, key, || {
         raster::materialize_auth_return(raster::entry_argument_auth_ref::<PromptTokenizer>(
             binding.reference.clone(),

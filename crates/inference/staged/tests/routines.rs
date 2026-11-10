@@ -344,7 +344,9 @@ fn prompt_prepare_resolves_vocab_bucket() {
         ..Default::default()
     };
     let mut inputs = routines::prompt_prepare::Inputs {
-        witness: prompt_prepare::input::tokenizer_witness(&tokenizer).unwrap(),
+        witness: prompt_prepare::input::tokenizer_witness(&tokenizer)
+            .unwrap()
+            .into(),
         tokenizer: tokenizer.into(),
         initial_pieces: BpePieces {
             pieces: List::from(vec![prompt_prepare::input::BpePiece {

@@ -104,6 +104,25 @@ impl RetainedWeightBytes for prompt_prepare::input::PromptTokenizer {
     }
 }
 
+impl RetainedWeightBytes for prompt_prepare::input::TokenizerWitness {
+    fn retained_weight_bytes(&self) -> usize {
+        let paths = |paths: &raster::List<prompt_prepare::input::SparsePath>| {
+            paths.len() * std::mem::size_of::<prompt_prepare::input::SparsePath>()
+                + paths
+                    .iter()
+                    .map(|path| path.siblings.allocated_bytes())
+                    .sum::<usize>()
+        };
+        std::mem::size_of::<Self>()
+            + self.vocab.root.allocated_bytes()
+            + self.merges.root.allocated_bytes()
+            + self.boundaries.root.allocated_bytes()
+            + paths(&self.vocab_paths)
+            + paths(&self.merge_paths)
+            + paths(&self.boundary_paths)
+    }
+}
+
 impl RetainedWeightBytes for sequence_check::input::FinalHead {
     fn retained_weight_bytes(&self) -> usize {
         std::mem::size_of::<Self>()
