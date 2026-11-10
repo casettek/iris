@@ -371,6 +371,18 @@ pub fn matvec_from_source(matrix: &impl MatrixSource, input: &[i32]) -> Result<V
     matrix.matvec(input)
 }
 
+/// Activation values one block of tokens may hold while a matrix is swept:
+/// about 256 KiB, so the block stays in cache beside a thread's share of rows.
+const SLAB_BLOCK_VALUES: usize = 65_536;
+
+/// A matrix applied to every row of `input`: output row `t` is the matrix
+/// times input row `t`.
+///
+/// Each output value is `matrix.row_dot(row, input.row(t))`, exactly as a
+/// per-token product computes it, so the result does not depend on the order
+/// used here. The matrix is swept once per block of tokens rather than once
+/// per token, and its rows are shared out among the threads. This is the one
+/// place the layer kernel multiplies by a weight matrix.
 pub fn linear_slab_from_source(input: &Slab, matrix: &impl MatrixSource) -> Result<Slab> {
     if input.cols() != matrix.cols() {
         bail!(
@@ -379,19 +391,75 @@ pub fn linear_slab_from_source(input: &Slab, matrix: &impl MatrixSource) -> Resu
             matrix.cols()
         );
     }
-    let mut output = Slab::zeroed(input.rows(), matrix.rows());
-    if use_parallel() {
-        output
-            .as_flat_mut()
-            .par_chunks_mut(matrix.rows().max(1))
-            .enumerate()
-            .try_for_each(|(row_idx, out_row)| matrix.matvec_into(input.row(row_idx), out_row))?;
+    let out_cols = matrix.rows();
+    let mut output = Slab::zeroed(input.rows(), out_cols);
+    if input.rows() == 0 || out_cols == 0 {
+        return Ok(output);
+    }
+    let block_tokens = (SLAB_BLOCK_VALUES / input.cols().max(1)).clamp(1, input.rows());
+    let block_len = block_tokens * out_cols;
+    let parallel = use_parallel();
+    let share_rows = parallel && out_cols >= DET_GEMV_MIN_PAR_ROWS;
+    let rows_per_task = if share_rows {
+        DET_GEMV_MIN_ROWS_PER_CHUNK.max(out_cols.div_ceil(rayon::current_num_threads()))
     } else {
+        out_cols
+    };
+
+    // Each block's products, matrix row by matrix row: within a block,
+    // `by_row[row * tokens + token]`. A task is a run of matrix rows against
+    // one block of tokens, so its weights and activations both stay in cache.
+    let mut by_row = vec![0_i32; input.rows() * out_cols];
+    let sweep_block = |(block_idx, block): (usize, &mut [i32])| -> Result<()> {
+        let first_token = block_idx * block_tokens;
+        let tokens = block.len() / out_cols;
+        let sweep_rows = |(task_idx, task): (usize, &mut [i32])| -> Result<()> {
+            let first_row = task_idx * rows_per_task;
+            for (local_row, products) in task.chunks_mut(tokens).enumerate() {
+                for (token, product) in products.iter_mut().enumerate() {
+                    *product =
+                        matrix.row_dot(first_row + local_row, input.row(first_token + token))?;
+                }
+            }
+            Ok(())
+        };
+        if share_rows {
+            block
+                .par_chunks_mut(rows_per_task * tokens)
+                .enumerate()
+                .try_for_each(sweep_rows)
+        } else {
+            sweep_rows((0, block))
+        }
+    };
+    let by_token = |(out_block, block): (&mut [i32], &[i32])| {
+        let tokens = block.len() / out_cols;
+        for (token, out_row) in out_block.chunks_mut(out_cols).enumerate() {
+            for (row, value) in out_row.iter_mut().enumerate() {
+                *value = block[row * tokens + token];
+            }
+        }
+    };
+    if parallel {
+        by_row
+            .par_chunks_mut(block_len)
+            .enumerate()
+            .try_for_each(sweep_block)?;
         output
             .as_flat_mut()
-            .chunks_mut(matrix.rows().max(1))
-            .zip(input.iter_rows())
-            .try_for_each(|(out_row, in_row)| matrix.matvec_into(in_row, out_row))?;
+            .par_chunks_mut(block_len)
+            .zip(by_row.par_chunks(block_len))
+            .for_each(by_token);
+    } else {
+        by_row
+            .chunks_mut(block_len)
+            .enumerate()
+            .try_for_each(sweep_block)?;
+        output
+            .as_flat_mut()
+            .chunks_mut(block_len)
+            .zip(by_row.chunks(block_len))
+            .for_each(by_token);
     }
     Ok(output)
 }
@@ -479,4 +547,105 @@ pub(crate) fn pack_i32_page(values: &[i32]) -> BytesPage {
         bytes.extend_from_slice(&value.to_le_bytes());
     }
     BytesPage::__from_parts(0, 0, bytes)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn pseudo_random(seed: &mut u64) -> i32 {
+        *seed = seed
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1_442_695_040_888_963_407);
+        (*seed >> 32) as i32
+    }
+
+    /// A `Q8_0` matrix with varied finite scales of either sign and varied weights.
+    fn q8_matrix(rows: usize, cols: usize) -> Q8Matrix {
+        let mut bytes = Vec::new();
+        for row in 0..rows {
+            for block in 0..cols / det_num::q8::BLOCK {
+                let sign = ((row * 7 + block) % 2) as u16;
+                let exponent = 6 + ((row + block) % 4) as u16;
+                let mantissa = ((row * 131 + block * 17) % 1024) as u16;
+                bytes.extend_from_slice(&(sign << 15 | exponent << 10 | mantissa).to_le_bytes());
+                bytes.extend(
+                    (0..det_num::q8::BLOCK)
+                        .map(|col| ((row * 37 + block * 11 + col * 5) % 256) as u8),
+                );
+            }
+        }
+        Q8Matrix::from_bytes("test", bytes, rows, cols).unwrap()
+    }
+
+    fn slab(rows: usize, cols: usize, seed: &mut u64) -> Slab {
+        let mut slab = Slab::zeroed(rows, cols);
+        for value in slab.as_flat_mut() {
+            *value = pseudo_random(seed);
+        }
+        slab
+    }
+
+    /// Shapes chosen to cross every boundary of the slab product: several
+    /// token blocks with a short last one, rows shared among threads with a
+    /// short last share, a matrix too small to share, and a single token.
+    const SHAPES: [(usize, usize, usize); 5] = [
+        (200, 64, 1100),
+        (130, 96, 700),
+        (64, 64, 3),
+        (300, 32, 1),
+        (1, 32, 5),
+    ];
+
+    #[test]
+    fn slab_product_equals_one_q8_dot_per_value() {
+        let mut seed = 7;
+        for (rows, cols, tokens) in SHAPES {
+            let matrix = q8_matrix(rows, cols);
+            let input = slab(tokens, cols, &mut seed);
+            let output = linear_slab_from_source(&input, &matrix).unwrap();
+            assert_eq!((output.rows(), output.cols()), (tokens, rows));
+            for token in 0..tokens {
+                for row in 0..rows {
+                    assert_eq!(
+                        output.row(token)[row],
+                        det_num::q8::dot_row(input.row(token), matrix.row(row)).unwrap(),
+                        "{rows}x{cols}, token {token}, row {row}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn slab_product_equals_one_fixed_point_dot_per_value() {
+        let mut seed = 11;
+        for (rows, cols, tokens) in SHAPES {
+            let weights = slab(rows, cols, &mut seed);
+            let matrix = Matrix {
+                values: weights.data.clone(),
+                rows,
+                cols,
+            };
+            let input = slab(tokens, cols, &mut seed);
+            let output = linear_slab_from_source(&input, &matrix).unwrap();
+            for token in 0..tokens {
+                for row in 0..rows {
+                    assert_eq!(
+                        output.row(token)[row],
+                        dot_bits(input.row(token), weights.row(row)),
+                        "{rows}x{cols}, token {token}, row {row}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn slab_product_of_no_tokens_is_empty() {
+        let matrix = q8_matrix(4, 32);
+        let output = linear_slab_from_source(&Slab::zeroed(0, 32), &matrix).unwrap();
+        assert_eq!(output.rows(), 0);
+        assert!(linear_slab_from_source(&Slab::zeroed(2, 64), &matrix).is_err());
+    }
 }

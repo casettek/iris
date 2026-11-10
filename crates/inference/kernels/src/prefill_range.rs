@@ -129,11 +129,19 @@ pub fn run_prefill_range_direct_with_weight_cache(
         (Some(cache), Some(key)) => cache.get_or_prepare(inputs.layer, &params, key)?,
         _ => Arc::new(LayerWeights::from_layer(inputs.layer, &params)?),
     };
-    let input_rows = activation_rows(inputs.activations, params.hidden_size as usize)?;
+    let computed = layer_rows_and_keys(
+        inputs.activations,
+        inputs.prior_kv.kv.as_slice(),
+        inputs.donor_a_kv.kv.as_slice(),
+        inputs.donor_b_kv.kv.as_slice(),
+        inputs.ple.rows.as_slice(),
+        &weights.matrices(),
+        &params,
+    )?;
 
     // A range with no rows attends to nothing but still carries the cache, as
     // the stage's push-only K/V site does: the next range's keys come through it.
-    if input_rows.rows() == 0 {
+    let Some((output_rows, own_keys)) = computed else {
         return Ok(ActivationSequence {
             model: checked_model,
             rows: List::new(),
@@ -146,25 +154,7 @@ pub fn run_prefill_range_direct_with_weight_cache(
             )),
             start_position: inputs.activations.start_position,
         });
-    }
-
-    let (queries, own_keys) = project_tokens(
-        &input_rows,
-        &weights,
-        &params,
-        inputs.activations.start_position,
-    )?;
-    let ple_rows = inputs.ple.rows.as_slice();
-    let output_rows = attend_tokens(
-        &queries,
-        inputs.prior_kv.kv.as_slice(),
-        &own_keys,
-        inputs.donor_a_kv.kv.as_slice(),
-        inputs.donor_b_kv.kv.as_slice(),
-        ple_rows,
-        &weights,
-        &params,
-    )?;
+    };
     let output_kv = output_kv(
         inputs.prior_kv.kv.as_slice(),
         &own_keys,
@@ -297,7 +287,66 @@ struct LayerWeights {
     ple_layer_projection: Matrix,
 }
 
+/// One layer's matrices, wherever their bytes live: prepared in memory for
+/// the staged pass, memory-mapped for direct inference.
+pub struct LayerMatrices<'a, Q: MatrixSource, D: MatrixSource> {
+    pub w_q: &'a Q,
+    pub w_k: &'a Q,
+    pub w_v: &'a Q,
+    pub w_o: &'a Q,
+    pub w_gate: &'a Q,
+    pub w_up: &'a Q,
+    pub w_down: &'a Q,
+    pub ple_input_gate: &'a D,
+    pub ple_layer_projection: &'a D,
+}
+
+/// The activation rows and keys one layer produces for one range, or `None`
+/// for a range with no rows. The staged pass and direct inference both
+/// compute a layer here, so the two cannot disagree.
+pub fn layer_rows_and_keys<Q: MatrixSource, D: MatrixSource>(
+    activations: &ActivationSequence,
+    prior_keys: &[KeyRow],
+    donor_a_keys: &[KeyRow],
+    donor_b_keys: &[KeyRow],
+    ple_rows: &[PleRow],
+    weights: &LayerMatrices<'_, Q, D>,
+    params: &LayerParams,
+) -> Result<Option<(Vec<ActivationRow>, Vec<KeyRow>)>> {
+    let input_rows = activation_rows(activations, params.hidden_size as usize)?;
+    if input_rows.rows() == 0 {
+        return Ok(None);
+    }
+    let (queries, own_keys) =
+        project_tokens(&input_rows, weights, params, activations.start_position)?;
+    let output_rows = attend_tokens(
+        &queries,
+        prior_keys,
+        &own_keys,
+        donor_a_keys,
+        donor_b_keys,
+        ple_rows,
+        weights,
+        params,
+    )?;
+    Ok(Some((output_rows, own_keys)))
+}
+
 impl LayerWeights {
+    fn matrices(&self) -> LayerMatrices<'_, Q8Matrix, Matrix> {
+        LayerMatrices {
+            w_q: &self.w_q,
+            w_k: &self.w_k,
+            w_v: &self.w_v,
+            w_o: &self.w_o,
+            w_gate: &self.w_gate,
+            w_up: &self.w_up,
+            w_down: &self.w_down,
+            ple_input_gate: &self.ple_input_gate,
+            ple_layer_projection: &self.ple_layer_projection,
+        }
+    }
+
     fn retained_bytes(&self) -> usize {
         std::mem::size_of::<Self>()
             + [
@@ -445,9 +494,9 @@ fn activation_rows(activations: &ActivationSequence, hidden: usize) -> Result<In
     })
 }
 
-fn project_tokens(
+fn project_tokens<Q: MatrixSource, D: MatrixSource>(
     rows: &InputRows,
-    weights: &LayerWeights,
+    weights: &LayerMatrices<'_, Q, D>,
     params: &LayerParams,
     start_position: u32,
 ) -> Result<(Vec<QueryState>, Vec<KeyRow>)> {
@@ -456,22 +505,43 @@ fn project_tokens(
     let k_norm = unpack_page_i32s(&params.k_norm)?;
     let hidden = params.hidden_size as usize;
     let normed = normed_input_slab(rows, &norm_input, params.norm_eps, hidden)?;
-    let mut q = linear_slab_from_source(&normed, &weights.w_q)?;
-    let mut k = linear_slab_from_source(&normed, &weights.w_k)?;
-    let mut v = linear_slab_from_source(&normed, &weights.w_v)?;
+    let mut q = linear_slab_from_source(&normed, weights.w_q)?;
+    let mut k = linear_slab_from_source(&normed, weights.w_k)?;
+    let mut v = linear_slab_from_source(&normed, weights.w_v)?;
 
     let head_dim = params.head_dim as usize;
-    for row_idx in 0..rows.rows() {
-        // RoPE follows the absolute Raster cursor, including during decode.
-        finish_qkv_row(
-            start_position + row_idx as u32,
-            q.row_mut(row_idx),
-            k.row_mut(row_idx),
-            v.row_mut(row_idx),
-            &q_norm,
-            &k_norm,
-            params,
-        )?;
+    // RoPE follows the absolute Raster cursor, including during decode. A row
+    // is finished from its own values only, so rows run in parallel.
+    let (q_cols, k_cols, v_cols) = (q.cols().max(1), k.cols().max(1), v.cols().max(1));
+    if crate::tensor::use_parallel() {
+        q.as_flat_mut()
+            .par_chunks_mut(q_cols)
+            .zip(k.as_flat_mut().par_chunks_mut(k_cols))
+            .zip(v.as_flat_mut().par_chunks_mut(v_cols))
+            .enumerate()
+            .try_for_each(|(row_idx, ((q_row, k_row), v_row))| {
+                finish_qkv_row(
+                    start_position + row_idx as u32,
+                    q_row,
+                    k_row,
+                    v_row,
+                    &q_norm,
+                    &k_norm,
+                    params,
+                )
+            })?;
+    } else {
+        for row_idx in 0..rows.rows() {
+            finish_qkv_row(
+                start_position + row_idx as u32,
+                q.row_mut(row_idx),
+                k.row_mut(row_idx),
+                v.row_mut(row_idx),
+                &q_norm,
+                &k_norm,
+                params,
+            )?;
+        }
     }
 
     let mut queries = Vec::with_capacity(rows.rows());
@@ -576,67 +646,29 @@ fn apply_rope(head: &mut [i32], params: &LayerParams, position: u32) {
     }
 }
 
-fn attend_tokens(
+/// Tokens attended together. Bounds the working memory of a pass over a long
+/// prompt; the gate and up products hold `ffn_size` values per token.
+const ATTEND_CHUNK_ROWS: usize = 256;
+
+fn attend_tokens<Q: MatrixSource, D: MatrixSource>(
     queries: &[QueryState],
     prior_keys: &[KeyRow],
     own_keys: &[KeyRow],
     donor_a_keys: &[KeyRow],
     donor_b_keys: &[KeyRow],
     ple_rows: &[PleRow],
-    weights: &LayerWeights,
+    weights: &LayerMatrices<'_, Q, D>,
     params: &LayerParams,
 ) -> Result<Vec<ActivationRow>> {
-    if crate::tensor::use_parallel() {
-        queries
-            .par_iter()
-            .map(|query| {
-                attend_token(
-                    query,
-                    prior_keys,
-                    own_keys,
-                    donor_a_keys,
-                    donor_b_keys,
-                    ple_rows,
-                    weights,
-                    params,
-                )
-            })
-            .collect()
-    } else {
-        queries
-            .iter()
-            .map(|query| {
-                attend_token(
-                    query,
-                    prior_keys,
-                    own_keys,
-                    donor_a_keys,
-                    donor_b_keys,
-                    ple_rows,
-                    weights,
-                    params,
-                )
-            })
-            .collect()
-    }
-}
-
-fn attend_token(
-    query: &QueryState,
-    prior_keys: &[KeyRow],
-    own_keys: &[KeyRow],
-    donor_a_keys: &[KeyRow],
-    donor_b_keys: &[KeyRow],
-    ple_rows: &[PleRow],
-    weights: &LayerWeights,
-    params: &LayerParams,
-) -> Result<ActivationRow> {
-    let context = if params.kv_donor_layer == -1 {
-        attention_context(query, &[prior_keys, own_keys], params)?
+    let own_sources = [prior_keys, own_keys];
+    let donor_a_sources = [donor_a_keys];
+    let donor_b_sources = [donor_b_keys];
+    let key_sources: &[&[KeyRow]] = if params.kv_donor_layer == -1 {
+        &own_sources
     } else if params.kv_donor_layer == params.donor_a_layer {
-        attention_context(query, &[donor_a_keys], params)?
+        &donor_a_sources
     } else if params.kv_donor_layer == params.donor_b_layer {
-        attention_context(query, &[donor_b_keys], params)?
+        &donor_b_sources
     } else {
         bail!(
             "layer {} borrows K/V from {}, outside committed candidates {} and {}",
@@ -646,25 +678,78 @@ fn attend_token(
             params.donor_b_layer
         );
     };
-    let attn_proj = MatrixSource::matvec(&weights.w_o, &context)?;
-    let residual = attn_residual(query, attn_proj, params)?;
-    let ff_in = pre_ff_norm(&residual, params)?;
-    let gate = MatrixSource::matvec(&weights.w_gate, &ff_in)?;
-    let up = MatrixSource::matvec(&weights.w_up, &ff_in)?;
-    let gated = gelu_mul(gate, up)?;
-    let ff = MatrixSource::matvec(&weights.w_down, &gated)?;
-    let xs = finish_mlp(&residual, &ff_in, ff, params)?;
-    let ple_row = ple_rows
-        .get(query.local as usize)
-        .ok_or_else(|| anyhow::anyhow!("missing PLE row at local position {}", query.local))?;
-    let ple_gate = weights.ple_input_gate.matvec(&xs)?;
-    let ple_gated = ple_gate_mul(ple_gate, ple_row)?;
-    let projected = weights.ple_layer_projection.matvec(&ple_gated)?;
-    let values = finish_layer(&xs, projected, params)?;
-    Ok(ActivationRow {
-        token_id: query.token_id,
-        values: pack_i32_page(&values),
-    })
+    let mut output = Vec::with_capacity(queries.len());
+    for chunk in queries.chunks(ATTEND_CHUNK_ROWS) {
+        attend_chunk(chunk, key_sources, ple_rows, weights, params, &mut output)?;
+    }
+    Ok(output)
+}
+
+/// One token's layer, step by step, for a chunk of tokens at once: each step
+/// runs for every token before the next begins, so each weight matrix is
+/// applied to the whole chunk in one product. A token's values never depend
+/// on another token's within a step.
+fn attend_chunk<Q: MatrixSource, D: MatrixSource>(
+    queries: &[QueryState],
+    key_sources: &[&[KeyRow]],
+    ple_rows: &[PleRow],
+    weights: &LayerMatrices<'_, Q, D>,
+    params: &LayerParams,
+    output: &mut Vec<ActivationRow>,
+) -> Result<()> {
+    let count = queries.len();
+    let contexts = map_rows(count, |idx| {
+        attention_context(&queries[idx], key_sources, params)
+    })?;
+    let attn_proj = linear_slab_from_source(&contexts, weights.w_o)?;
+    let residual = map_rows(count, |idx| {
+        attn_residual(&queries[idx], attn_proj.row(idx).to_vec(), params)
+    })?;
+    let ff_in = map_rows(count, |idx| pre_ff_norm(residual.row(idx), params))?;
+    let gate = linear_slab_from_source(&ff_in, weights.w_gate)?;
+    let up = linear_slab_from_source(&ff_in, weights.w_up)?;
+    let gated = map_rows(count, |idx| {
+        gelu_mul(gate.row(idx).to_vec(), up.row(idx).to_vec())
+    })?;
+    let ff = linear_slab_from_source(&gated, weights.w_down)?;
+    let xs = map_rows(count, |idx| {
+        finish_mlp(
+            residual.row(idx),
+            ff_in.row(idx),
+            ff.row(idx).to_vec(),
+            params,
+        )
+    })?;
+    let ple_gate = linear_slab_from_source(&xs, weights.ple_input_gate)?;
+    let ple_gated = map_rows(count, |idx| {
+        let local = queries[idx].local;
+        let ple_row = ple_rows
+            .get(local as usize)
+            .ok_or_else(|| anyhow::anyhow!("missing PLE row at local position {local}"))?;
+        ple_gate_mul(ple_gate.row(idx).to_vec(), ple_row)
+    })?;
+    let projected = linear_slab_from_source(&ple_gated, weights.ple_layer_projection)?;
+    for (idx, query) in queries.iter().enumerate() {
+        let values = finish_layer(xs.row(idx), projected.row(idx).to_vec(), params)?;
+        output.push(ActivationRow {
+            token_id: query.token_id,
+            values: pack_i32_page(&values),
+        });
+    }
+    Ok(())
+}
+
+/// One row per token from a per-token step, in token order.
+fn map_rows(count: usize, step: impl Fn(usize) -> Result<Vec<i32>> + Sync) -> Result<Slab> {
+    let rows = if crate::tensor::use_parallel() {
+        (0..count)
+            .into_par_iter()
+            .map(&step)
+            .collect::<Result<Vec<_>>>()?
+    } else {
+        (0..count).map(&step).collect::<Result<Vec<_>>>()?
+    };
+    Slab::from_rows(rows)
 }
 
 fn attention_context(
@@ -759,7 +844,9 @@ fn attention_context(
     Ok(acc.into_iter().map(requantize_acc).collect())
 }
 
-fn output_kv(
+/// The keys a range hands to the next one: what the window still holds of
+/// the keys it inherited, then its own.
+pub fn output_kv(
     prior_keys: &[KeyRow],
     own_keys: &[KeyRow],
     start_position: u32,
@@ -969,7 +1056,7 @@ mod tests {
                     slab: Slab::from_rows(vec![vec![ONE; N]; row_count]).unwrap(),
                 };
                 let (queries, keys) =
-                    project_tokens(&rows, &weights, params, positions[0]).unwrap();
+                    project_tokens(&rows, &weights.matrices(), params, positions[0]).unwrap();
                 for (local, (query, key)) in queries.iter().zip(&keys).enumerate() {
                     let position = positions[local];
                     let mut expected = [Act::from_bits(0); N];
