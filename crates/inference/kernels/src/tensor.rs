@@ -4,6 +4,7 @@ use det_num::Acc;
 use prefill_range::input::PAGE_SIZE;
 use raster::{Bytes, BytesPage};
 use rayon::prelude::*;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 const DET_GEMV_MIN_PAR_ROWS: usize = 128;
 const DET_GEMV_MIN_ROWS_PER_CHUNK: usize = 64;
@@ -79,12 +80,49 @@ impl Slab {
     pub fn as_flat_mut(&mut self) -> &mut [i32] {
         &mut self.data
     }
+
+    /// Every value, row after row.
+    pub fn as_flat(&self) -> &[i32] {
+        &self.data
+    }
+}
+
+/// Names the bytes of one `Q8_0` matrix for as long as they exist. Keys are
+/// never reused, so weights cached under a key cannot be mistaken for another
+/// matrix's.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct Q8Key(u64, u64);
+
+impl Q8Key {
+    /// A key no other matrix in this process has.
+    pub fn unique() -> Self {
+        static NEXT: AtomicU64 = AtomicU64::new(1);
+        Self(0, NEXT.fetch_add(1, Ordering::Relaxed))
+    }
+
+    /// The key of a tensor at `offset` in a mapped model file. `mapping` is
+    /// non-zero and unique to that mapping.
+    pub fn mapped(mapping: u64, offset: u64) -> Option<Self> {
+        (mapping != 0).then_some(Self(mapping, offset))
+    }
+}
+
+/// A matrix's committed `Q8_0` rows: `rows` rows of 34-byte blocks.
+pub struct Q8Source<'a> {
+    pub bytes: &'a [u8],
+    pub key: Q8Key,
 }
 
 pub trait MatrixSource: Sync {
     fn rows(&self) -> usize;
     fn cols(&self) -> usize;
     fn row_values_into(&self, row_idx: usize, out: &mut Vec<i32>) -> Result<()>;
+
+    /// The matrix as committed `Q8_0` rows, when it is one. A product over it
+    /// may then run on a GPU; `row_dot` stays the definition of every value.
+    fn q8_source(&self) -> Option<Q8Source<'_>> {
+        None
+    }
 
     fn row_dot(&self, row_idx: usize, input: &[i32]) -> Result<i32> {
         if input.len() != self.cols() {
@@ -292,6 +330,8 @@ pub struct Q8Matrix {
     rows: usize,
     cols: usize,
     row_bytes: usize,
+    /// Names these bytes. A clone shares it: its bytes are the same.
+    key: Q8Key,
 }
 
 impl Q8Matrix {
@@ -325,6 +365,7 @@ impl Q8Matrix {
             rows,
             cols,
             row_bytes,
+            key: Q8Key::unique(),
         })
     }
 
@@ -356,6 +397,13 @@ impl MatrixSource for Q8Matrix {
         bail!("Q8_0 rows have no Q16.16 values; products use row_dot")
     }
 
+    fn q8_source(&self) -> Option<Q8Source<'_>> {
+        Some(Q8Source {
+            bytes: &self.bytes,
+            key: self.key,
+        })
+    }
+
     fn row_dot(&self, row_idx: usize, input: &[i32]) -> Result<i32> {
         if row_idx >= self.rows {
             bail!(
@@ -382,7 +430,9 @@ const SLAB_BLOCK_VALUES: usize = 65_536;
 /// per-token product computes it, so the result does not depend on the order
 /// used here. The matrix is swept once per block of tokens rather than once
 /// per token, and its rows are shared out among the threads. This is the one
-/// place the layer kernel multiplies by a weight matrix.
+/// place the layer kernel multiplies by a weight matrix. With the
+/// `gpu-kernels` feature, a large enough product over a `Q8_0` matrix runs on
+/// the GPU instead, with the same values.
 pub fn linear_slab_from_source(input: &Slab, matrix: &impl MatrixSource) -> Result<Slab> {
     if input.cols() != matrix.cols() {
         bail!(
@@ -390,6 +440,10 @@ pub fn linear_slab_from_source(input: &Slab, matrix: &impl MatrixSource) -> Resu
             input.cols(),
             matrix.cols()
         );
+    }
+    #[cfg(feature = "gpu-kernels")]
+    if let Some(output) = crate::gpu::slab_product(input, matrix)? {
+        return Ok(output);
     }
     let out_cols = matrix.rows();
     let mut output = Slab::zeroed(input.rows(), out_cols);

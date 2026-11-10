@@ -37,6 +37,33 @@ would give different bits from the exact product.
 Q16.16 products accumulate in wrapping Q32.32 and requantize once, as before.
 Norms, softmax, RoPE and GELU are `det_num`'s fixed-point routines.
 
+## `Q8_0` products on a GPU
+
+Built with the `gpu-kernels` feature, native-direct and native-staged run the
+transformer layer's `Q8_0` matrix products on an NVIDIA GPU
+(`crates/inference/kernels/cuda/q8_product.cu`). The kernel computes the same
+integers as `det_num::q8::dot_row`, with no floating point:
+
+- An activation is split into `v >> 16` and `v & 0xFFFF`. With weights in
+  `[-128, 127]`, thirty-two products of either half stay below `2^31`, so each
+  block sums exactly in 32-bit arithmetic and the halves recombine to the exact
+  block sum.
+- Each block sum times its scale is added to a 128-bit total held as two 64-bit
+  words, then rounded once to Q16.16 (ties to even) and saturated.
+
+`row_dot` remains the definition of every value. The layer kernel has one place
+that multiplies by a weight matrix, `linear_slab_from_source`, and the GPU sits
+behind it. After each product, 66 of its outputs (the first, the last and 64
+chosen pseudo-randomly) are recomputed with `row_dot`; a disagreement fails the
+stage instead of publishing its output.
+
+The GPU is never required. A product stays on the CPU when it is small (a
+decode step's single token), when the matrix is not `Q8_0`, when a block's scale
+is not finite (the CPU reports that error), or when the device cannot be used.
+A device failure is reported once on stderr and the rest of the run stays on the
+CPU. Attention, norms, RoPE, GELU and the per-layer-embedding products stay on
+the CPU, as do Raster stages: nothing a stage commits to changes.
+
 ## Weight files
 
 `model.detwgt` v3 holds both encodings. A tensor's `element_width` is 16 or 32

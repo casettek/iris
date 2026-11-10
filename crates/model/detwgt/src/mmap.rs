@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 use std::fs::File;
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::{bail, Context, Result};
 use memmap2::Mmap;
@@ -20,6 +21,8 @@ pub const Q8_0_WIDTH: u32 = 8;
 pub struct MmapDetwgt {
     mmap: Mmap,
     tensors: BTreeMap<String, TensorEntry>,
+    /// Unique to this mapping, and never zero.
+    mapping: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -53,7 +56,12 @@ impl MmapDetwgt {
         let mmap = unsafe { Mmap::map(&file) }
             .with_context(|| format!("failed to mmap {}", path.display()))?;
         let tensors = parse_directory(&mmap, path)?;
-        Ok(Self { mmap, tensors })
+        static NEXT_MAPPING: AtomicU64 = AtomicU64::new(1);
+        Ok(Self {
+            mmap,
+            tensors,
+            mapping: NEXT_MAPPING.fetch_add(1, Ordering::Relaxed),
+        })
     }
 
     pub fn tensor(&self, name: &str) -> Result<&TensorEntry> {
@@ -76,8 +84,10 @@ impl MmapDetwgt {
             .mmap
             .get(tensor.payload_offset..tensor.payload_offset + tensor.payload_len)
             .ok_or_else(|| anyhow::anyhow!("tensor payload range is outside mmap"))?;
-        Q8MatrixView::new(bytes, rows, cols)
-            .with_context(|| format!("invalid Q8_0 matrix for tensor '{name}'"))
+        let mut view = Q8MatrixView::new(bytes, rows, cols)
+            .with_context(|| format!("invalid Q8_0 matrix for tensor '{name}'"))?;
+        view.place = Some((self.mapping, tensor.payload_offset as u64));
+        Ok(view)
     }
 
     /// Rows `start..end` of a `Q8_0` tensor's blocks, contiguous.
@@ -386,6 +396,7 @@ pub struct Q8MatrixView<'a> {
     rows: usize,
     cols: usize,
     row_bytes: usize,
+    place: Option<(u64, u64)>,
 }
 
 impl<'a> Q8MatrixView<'a> {
@@ -404,6 +415,7 @@ impl<'a> Q8MatrixView<'a> {
             rows,
             cols,
             row_bytes,
+            place: None,
         })
     }
 
@@ -413,6 +425,18 @@ impl<'a> Q8MatrixView<'a> {
 
     pub fn cols(&self) -> usize {
         self.cols
+    }
+
+    /// Every row's blocks, contiguous.
+    pub fn bytes(&self) -> &'a [u8] {
+        self.bytes
+    }
+
+    /// For a whole tensor of a mapped file: a number unique to the mapping
+    /// (never zero) and the tensor's offset in it. Together they name these
+    /// bytes for as long as the mapping lives.
+    pub fn place(&self) -> Option<(u64, u64)> {
+        self.place
     }
 
     pub fn row(&self, row_idx: usize) -> Result<&'a [u8]> {

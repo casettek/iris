@@ -3,6 +3,10 @@ name = "direct-infer"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+# Layer matrix products on an NVIDIA GPU; see inference-kernels.
+gpu-kernels = ["inference-kernels/gpu-kernels"]
+
 [dependencies]
 model-identity = { path = "../../model/identity", default-features = false }
 inference-kernels = { path = "../kernels" }

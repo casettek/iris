@@ -1,4 +1,6 @@
 pub mod cache_key;
+#[cfg(feature = "gpu-kernels")]
+pub mod gpu;
 pub mod kernels;
 pub mod prefill_range;
 pub mod tensor;

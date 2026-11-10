@@ -11,6 +11,9 @@ path = "src/main.rs"
 [features]
 # NVIDIA acceleration for local RISC0 proof generation.
 cuda = ["risc0-zkvm/cuda", "raster-backend-risc0/cuda"]
+# NVIDIA acceleration for native inference: the layer's Q8_0 matrix products run
+# on the GPU with results identical to the CPU's. Independent of `cuda`.
+gpu-kernels = ["direct-infer/gpu-kernels", "staged-infer/gpu-kernels"]
 # Optional standalone stage profiling command; challenge profiling is always available.
 replay-profile = []
 

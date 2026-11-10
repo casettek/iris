@@ -6,7 +6,7 @@ use prompt_check::input::BpePieces;
 use raster::{Bytes, List};
 
 use detwgt::{DetwgtMatrixView, DetwgtSlice, MmapDetwgt, Q8MatrixView};
-use inference_kernels::tensor::MatrixSource;
+use inference_kernels::tensor::{MatrixSource, Q8Key, Q8Source};
 
 const ONE: i32 = 1 << 16;
 pub const MISSING_DIRECT_MANIFEST: &str = "run iris model import ... to generate a model manifest";
@@ -109,6 +109,14 @@ impl MatrixSource for DirectQ8View<'_> {
 
     fn row_values_into(&self, _row_idx: usize, _out: &mut Vec<i32>) -> Result<()> {
         bail!("Q8_0 rows have no Q16.16 values; products use row_dot")
+    }
+
+    fn q8_source(&self) -> Option<Q8Source<'_>> {
+        let (mapping, offset) = self.inner.place()?;
+        Some(Q8Source {
+            bytes: self.inner.bytes(),
+            key: Q8Key::mapped(mapping, offset)?,
+        })
     }
 
     fn row_dot(&self, row_idx: usize, input: &[i32]) -> Result<i32> {

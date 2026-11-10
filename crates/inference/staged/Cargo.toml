@@ -8,6 +8,10 @@ default-run = "staged-infer"
 name = "staged-infer"
 path = "src/main.rs"
 
+[features]
+# Layer matrix products on an NVIDIA GPU; see inference-kernels.
+gpu-kernels = ["inference-kernels/gpu-kernels"]
+
 [dependencies]
 model-identity = { path = "../../model/identity", default-features = false }
 inference-kernels = { path = "../kernels" }

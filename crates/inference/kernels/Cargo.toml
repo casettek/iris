@@ -3,6 +3,11 @@ name = "inference-kernels"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+# Runs the layer's Q8_0 matrix products on an NVIDIA GPU, with results
+# identical to the CPU's. Building it needs the CUDA toolkit (see build.rs).
+gpu-kernels = []
+
 [dependencies]
 model-identity = { path = "../../model/identity", default-features = false }
 anyhow = "1.0"
