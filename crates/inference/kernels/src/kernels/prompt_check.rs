@@ -1,0 +1,581 @@
+//! Checks claimed prompt tokens against the ranked merge without replaying it
+//! over the whole prompt.
+//!
+//! Native prototype for `docs/proposals/claimed-prompt-tokens.md`. No stage
+//! uses it yet. It exists so the rule can be tested against real merge tables
+//! before a stage is authored.
+//!
+//! The rule: every claimed token is merged together with its left neighbour
+//! in the segment, on those two tokens' pieces alone, and the result must be
+//! exactly the two tokens, split where the claim says. A token with no left
+//! neighbour in its segment is merged alone and must become one piece.
+
+use anyhow::{ensure, Result};
+use prompt_prepare::input::{vocab_bucket_of, BpePiece, PromptTokenizer};
+
+use super::prompt_prepare::best_merge;
+
+/// One claimed token: its id, and how many of `prompt-bind`'s pieces it spans.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ClaimedToken {
+    pub id: u32,
+    pub pieces: u32,
+}
+
+/// Why a claim was refused, and at which token of the range.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TokenFault {
+    /// The token has no pieces, runs past the prompt, or spans two segments.
+    DoesNotFit { token: usize },
+    /// Merging the token with its left neighbour, or alone, does not give it.
+    NotTheMerge { token: usize },
+    /// The merge gives a piece that is not the vocabulary entry for the id.
+    WrongId { token: usize },
+}
+
+/// A group of consecutive pieces: where it starts and how many it holds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Group {
+    start: usize,
+    len: usize,
+}
+
+/// Runs the ranked merge over `pieces` alone and returns each resulting
+/// piece's text with the number of original pieces it was made from.
+pub fn merge_with_spans(
+    pieces: &[BpePiece],
+    tokenizer: &PromptTokenizer,
+) -> Result<Vec<(String, usize)>> {
+    let mut current = pieces.to_vec();
+    let mut spans = vec![1_usize; pieces.len()];
+    loop {
+        let best = best_merge(&current, tokenizer)?;
+        if !best.matched {
+            break;
+        }
+        let left = best.left as usize;
+        current[left].text = best.merged;
+        current.remove(left + 1);
+        spans[left] += spans.remove(left + 1);
+    }
+    Ok(current
+        .into_iter()
+        .map(|piece| piece.text)
+        .zip(spans)
+        .collect())
+}
+
+fn vocab_id(tokenizer: &PromptTokenizer, text: &str) -> Result<Option<u32>> {
+    ensure!(
+        tokenizer.vocab_bucket_count > 0
+            && tokenizer.vocab_bucket_count as usize == tokenizer.vocab_buckets.len(),
+        "invalid vocabulary bucket count"
+    );
+    let index = vocab_bucket_of(text, tokenizer.vocab_bucket_count) as usize;
+    Ok(tokenizer.vocab_buckets[index]
+        .entries
+        .iter()
+        .find(|entry| entry.token == text)
+        .map(|entry| entry.id))
+}
+
+/// The tokens the full merge produces for `pieces`: what run preparation
+/// would supply as the claim.
+pub fn merged_tokens(
+    pieces: &[BpePiece],
+    tokenizer: &PromptTokenizer,
+) -> Result<Vec<ClaimedToken>> {
+    let mut tokens = Vec::new();
+    let mut start = 0;
+    while start < pieces.len() {
+        let segment = pieces[start].segment;
+        let end = start
+            + pieces[start..]
+                .iter()
+                .take_while(|piece| piece.segment == segment)
+                .count();
+        for (text, span) in merge_with_spans(&pieces[start..end], tokenizer)? {
+            let id = vocab_id(tokenizer, &text)?.ok_or_else(|| {
+                anyhow::anyhow!("merged piece is absent from vocabulary: {text:?}")
+            })?;
+            tokens.push(ClaimedToken {
+                id,
+                pieces: u32::try_from(span)?,
+            });
+        }
+        start = end;
+    }
+    Ok(tokens)
+}
+
+/// The texts of the groups `counts` describes, if every group passes the rule.
+///
+/// `previous` is the piece count of the token just before `start`, when the
+/// range does not begin the prompt. That token is not re-checked here; it is
+/// only the left neighbour of the range's first token.
+fn check_groups(
+    tokenizer: &PromptTokenizer,
+    pieces: &[BpePiece],
+    start: usize,
+    previous: Option<usize>,
+    counts: &[usize],
+) -> Result<std::result::Result<Vec<String>, TokenFault>> {
+    let mut left = match previous {
+        Some(len) if len >= 1 && len <= start => Some(Group {
+            start: start - len,
+            len,
+        }),
+        Some(_) => return Ok(Err(TokenFault::DoesNotFit { token: 0 })),
+        None => None,
+    };
+    let mut texts = Vec::with_capacity(counts.len());
+    let mut cursor = start;
+    for (token, &len) in counts.iter().enumerate() {
+        let fits = len >= 1
+            && cursor
+                .checked_add(len)
+                .is_some_and(|end| end <= pieces.len());
+        if !fits {
+            return Ok(Err(TokenFault::DoesNotFit { token }));
+        }
+        let group = Group { start: cursor, len };
+        let segment = pieces[cursor].segment;
+        if pieces[cursor..cursor + len]
+            .iter()
+            .any(|piece| piece.segment != segment)
+        {
+            return Ok(Err(TokenFault::DoesNotFit { token }));
+        }
+        let neighbour = left.filter(|left| pieces[left.start].segment == segment);
+        let text = match neighbour {
+            // Merged with its left neighbour: exactly the two tokens, split
+            // where the claim says.
+            Some(left) => {
+                let merged =
+                    merge_with_spans(&pieces[left.start..group.start + group.len], tokenizer)?;
+                match merged.as_slice() {
+                    [(_, first), (text, second)] if *first == left.len && *second == group.len => {
+                        text.clone()
+                    }
+                    _ => return Ok(Err(TokenFault::NotTheMerge { token })),
+                }
+            }
+            // No left neighbour in the segment: alone it must become one piece.
+            None => {
+                let merged =
+                    merge_with_spans(&pieces[group.start..group.start + group.len], tokenizer)?;
+                match merged.as_slice() {
+                    [(text, _)] => text.clone(),
+                    _ => return Ok(Err(TokenFault::NotTheMerge { token })),
+                }
+            }
+        };
+        texts.push(text);
+        left = Some(group);
+        cursor += len;
+    }
+    Ok(Ok(texts))
+}
+
+/// Checks one range of claimed tokens. `start` is the first piece the range
+/// covers and `previous` the last token of the range before it, if any.
+/// Returns the first fault, or `None` when the tokens are the merge's result
+/// for the pieces they cover.
+pub fn check_range(
+    tokenizer: &PromptTokenizer,
+    pieces: &[BpePiece],
+    start: usize,
+    previous: Option<ClaimedToken>,
+    tokens: &[ClaimedToken],
+) -> Result<Option<TokenFault>> {
+    let counts = tokens
+        .iter()
+        .map(|token| token.pieces as usize)
+        .collect::<Vec<_>>();
+    let texts = match check_groups(
+        tokenizer,
+        pieces,
+        start,
+        previous.map(|token| token.pieces as usize),
+        &counts,
+    )? {
+        Ok(texts) => texts,
+        Err(fault) => return Ok(Some(fault)),
+    };
+    for (token, (claimed, text)) in tokens.iter().zip(&texts).enumerate() {
+        if vocab_id(tokenizer, text)? != Some(claimed.id) {
+            return Ok(Some(TokenFault::WrongId { token }));
+        }
+    }
+    Ok(None)
+}
+
+/// Checks tokens claimed for the whole prompt: they must also cover every piece.
+pub fn check_prompt(
+    tokenizer: &PromptTokenizer,
+    pieces: &[BpePiece],
+    tokens: &[ClaimedToken],
+) -> Result<Option<TokenFault>> {
+    if let Some(fault) = check_range(tokenizer, pieces, 0, None, tokens)? {
+        return Ok(Some(fault));
+    }
+    let covered: usize = tokens.iter().map(|token| token.pieces as usize).sum();
+    Ok((covered != pieces.len()).then_some(TokenFault::DoesNotFit {
+        token: tokens.len(),
+    }))
+}
+
+/// Whether grouping `pieces` by `counts` passes the rule, ignoring ids.
+/// For tests that enumerate every grouping.
+pub fn grouping_passes(
+    tokenizer: &PromptTokenizer,
+    pieces: &[BpePiece],
+    counts: &[usize],
+) -> Result<bool> {
+    Ok(counts.iter().sum::<usize>() == pieces.len()
+        && check_groups(tokenizer, pieces, 0, None, counts)?.is_ok())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use prompt_prepare::input::{merge_bucket_of, BpeMerge, MergeBucket, TokenEntry, VocabBucket};
+    use std::collections::BTreeSet;
+
+    struct Rng(u64);
+    impl Rng {
+        fn below(&mut self, bound: usize) -> usize {
+            self.0 = self
+                .0
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            ((self.0 >> 33) as usize) % bound
+        }
+    }
+
+    /// A tokenizer over `letters` with the given `(left, right)` rules, ranked
+    /// in the order given.
+    fn tokenizer(letters: &[&str], rules: &[(String, String)]) -> PromptTokenizer {
+        const BUCKETS: u32 = 8;
+        let mut vocab: Vec<String> = letters.iter().map(|letter| letter.to_string()).collect();
+        let mut merges = vec![MergeBucket::default(); BUCKETS as usize];
+        for (rank, (left, right)) in rules.iter().enumerate() {
+            let merged = format!("{left}{right}");
+            if !vocab.contains(&merged) {
+                vocab.push(merged.clone());
+            }
+            let index = merge_bucket_of(left, right, BUCKETS) as usize;
+            let mut bucket = merges[index].rules.as_slice().to_vec();
+            bucket.push(BpeMerge {
+                rank: rank as u32,
+                left: left.clone(),
+                right: right.clone(),
+                merged,
+            });
+            merges[index].rules = bucket.into();
+        }
+        let mut vocab_buckets = vec![VocabBucket::default(); BUCKETS as usize];
+        for (id, token) in vocab.into_iter().enumerate() {
+            let index = vocab_bucket_of(&token, BUCKETS) as usize;
+            let mut bucket = vocab_buckets[index].entries.as_slice().to_vec();
+            bucket.push(TokenEntry {
+                token,
+                id: id as u32,
+            });
+            vocab_buckets[index].entries = bucket.into();
+        }
+        PromptTokenizer {
+            vocab_bucket_count: BUCKETS,
+            merge_bucket_count: BUCKETS,
+            boundary_bucket_count: 0,
+            vocab_buckets: vocab_buckets.into(),
+            merge_buckets: merges.into(),
+            ..Default::default()
+        }
+    }
+
+    /// A random merge table. Each rule joins two tokens that already exist, as
+    /// training would produce. With `shuffled`, ranks are then assigned in a
+    /// random order, so a rule may outrank the rules that build its parts.
+    fn random_rules(
+        rng: &mut Rng,
+        letters: &[&str],
+        count: usize,
+        shuffled: bool,
+    ) -> Vec<(String, String)> {
+        let mut tokens: Vec<String> = letters.iter().map(|letter| letter.to_string()).collect();
+        let mut seen = BTreeSet::new();
+        let mut rules = Vec::new();
+        let mut attempts = 0;
+        while rules.len() < count && attempts < count * 20 {
+            attempts += 1;
+            let left = tokens[rng.below(tokens.len())].clone();
+            let right = tokens[rng.below(tokens.len())].clone();
+            if left.len() + right.len() > 5 || !seen.insert((left.clone(), right.clone())) {
+                continue;
+            }
+            let merged = format!("{left}{right}");
+            if !tokens.contains(&merged) {
+                tokens.push(merged);
+            }
+            rules.push((left, right));
+        }
+        if shuffled {
+            for index in (1..rules.len()).rev() {
+                rules.swap(index, rng.below(index + 1));
+            }
+        }
+        rules
+    }
+
+    fn pieces_of(text: &str, segment_break: Option<usize>) -> Vec<BpePiece> {
+        text.chars()
+            .enumerate()
+            .map(|(index, letter)| BpePiece {
+                text: letter.to_string(),
+                segment: u32::from(segment_break.is_some_and(|at| index >= at)),
+            })
+            .collect()
+    }
+
+    /// Every way of cutting `len` pieces into consecutive groups.
+    fn groupings(len: usize) -> impl Iterator<Item = Vec<usize>> {
+        (0..1_usize << (len - 1)).map(move |cuts| {
+            let mut counts = Vec::new();
+            let mut run = 1;
+            for gap in 0..len - 1 {
+                if cuts >> gap & 1 == 1 {
+                    counts.push(run);
+                    run = 1;
+                } else {
+                    run += 1;
+                }
+            }
+            counts.push(run);
+            counts
+        })
+    }
+
+    fn strings(letters: &[&str], max_len: usize) -> Vec<String> {
+        let mut all = Vec::new();
+        let mut frontier = vec![String::new()];
+        for _ in 0..max_len {
+            frontier = frontier
+                .iter()
+                .flat_map(|prefix| {
+                    letters
+                        .iter()
+                        .map(move |letter| format!("{prefix}{letter}"))
+                })
+                .collect();
+            all.extend(frontier.iter().cloned());
+        }
+        all
+    }
+
+    #[test]
+    fn a_grouping_that_spells_the_text_but_is_not_the_merge_is_refused() {
+        let rules = [
+            ("a".to_string(), "b".to_string()),
+            ("b".to_string(), "c".to_string()),
+        ];
+        let tokenizer = tokenizer(&["a", "b", "c"], &rules);
+        let pieces = pieces_of("abc", None);
+        let id = |text: &str| vocab_id(&tokenizer, text).unwrap().unwrap();
+        // The merge joins `a b` first, so the result is [ab, c].
+        let merged = merged_tokens(&pieces, &tokenizer).unwrap();
+        assert_eq!(
+            merged,
+            [
+                ClaimedToken {
+                    id: id("ab"),
+                    pieces: 2
+                },
+                ClaimedToken {
+                    id: id("c"),
+                    pieces: 1
+                }
+            ]
+        );
+        assert_eq!(check_prompt(&tokenizer, &pieces, &merged).unwrap(), None);
+        // [a, bc] spells the text, uses vocabulary tokens and has no pair left
+        // to merge. It is still not the merge's result.
+        let other = [
+            ClaimedToken {
+                id: id("a"),
+                pieces: 1,
+            },
+            ClaimedToken {
+                id: id("bc"),
+                pieces: 2,
+            },
+        ];
+        assert_eq!(
+            check_prompt(&tokenizer, &pieces, &other).unwrap(),
+            Some(TokenFault::NotTheMerge { token: 1 })
+        );
+        // The right grouping under a wrong id, and tokens that stop short.
+        let wrong_id = [
+            merged[0],
+            ClaimedToken {
+                id: id("b"),
+                pieces: 1,
+            },
+        ];
+        assert_eq!(
+            check_prompt(&tokenizer, &pieces, &wrong_id).unwrap(),
+            Some(TokenFault::WrongId { token: 1 })
+        );
+        assert_eq!(
+            check_prompt(&tokenizer, &pieces, &merged[..1]).unwrap(),
+            Some(TokenFault::DoesNotFit { token: 1 })
+        );
+    }
+
+    /// For every string up to `max_len` over the letters and every grouping of
+    /// it, the grouping passes exactly when it is the full merge's. Returns
+    /// how many groupings were examined and how many wrong ones had no pair
+    /// left to merge, the kind a weaker check would accept.
+    fn exhaust(tokenizer: &PromptTokenizer, letters: &[&str], max_len: usize) -> (usize, usize) {
+        let mut examined = 0;
+        let mut stable_but_wrong = 0;
+        for text in strings(letters, max_len) {
+            for segment_break in [None, Some(text.len() / 2)] {
+                if segment_break == Some(0) {
+                    continue;
+                }
+                let pieces = pieces_of(&text, segment_break);
+                let truth = merged_tokens(&pieces, tokenizer)
+                    .unwrap()
+                    .iter()
+                    .map(|token| token.pieces as usize)
+                    .collect::<Vec<_>>();
+                for counts in groupings(pieces.len()) {
+                    examined += 1;
+                    let passes = grouping_passes(tokenizer, &pieces, &counts).unwrap();
+                    assert_eq!(
+                        passes,
+                        counts == truth,
+                        "text {text:?}, break {segment_break:?}, grouping {counts:?}, merge {truth:?}"
+                    );
+                    if counts != truth && spells_stable_tokens(tokenizer, &pieces, &counts) {
+                        stable_but_wrong += 1;
+                    }
+                }
+            }
+        }
+        (examined, stable_but_wrong)
+    }
+
+    /// Every group joins to a vocabulary token inside one segment, and no two
+    /// neighbouring tokens have a rule: all a check of the final state sees.
+    fn spells_stable_tokens(
+        tokenizer: &PromptTokenizer,
+        pieces: &[BpePiece],
+        counts: &[usize],
+    ) -> bool {
+        let mut tokens = Vec::new();
+        let mut cursor = 0;
+        for &len in counts {
+            let group = &pieces[cursor..cursor + len];
+            if group.iter().any(|piece| piece.segment != group[0].segment) {
+                return false;
+            }
+            let text: String = group.iter().map(|piece| piece.text.as_str()).collect();
+            if vocab_id(tokenizer, &text).unwrap().is_none() {
+                return false;
+            }
+            tokens.push(BpePiece {
+                text,
+                segment: group[0].segment,
+            });
+            cursor += len;
+        }
+        !best_merge(&tokens, tokenizer).unwrap().matched
+    }
+
+    fn exhaust_random_tables(tables: usize, max_len: usize) -> (usize, usize) {
+        let letters = ["a", "b", "c"];
+        let mut rng = Rng(0x5eed);
+        let mut totals = (0, 0);
+        for table in 0..tables {
+            let count = 2 + rng.below(14);
+            let rules = random_rules(&mut rng, &letters, count, table % 2 == 1);
+            let (examined, stable) = exhaust(&tokenizer(&letters, &rules), &letters, max_len);
+            totals = (totals.0 + examined, totals.1 + stable);
+        }
+        totals
+    }
+
+    #[test]
+    fn exactly_the_merge_grouping_passes_on_small_random_tables() {
+        let (examined, stable_but_wrong) = exhaust_random_tables(12, 5);
+        assert!(examined > 10_000 && stable_but_wrong > 0);
+    }
+
+    #[test]
+    #[ignore = "exhaustive; run in release: cargo test --release -p inference-kernels -- --ignored exhaust"]
+    fn exactly_the_merge_grouping_passes_exhaustive() {
+        let (examined, stable_but_wrong) = exhaust_random_tables(400, 7);
+        println!(
+            "groupings examined: {examined}; wrong but stable, and refused: {stable_but_wrong}"
+        );
+        assert!(stable_but_wrong > 0);
+    }
+
+    #[test]
+    fn ranges_cut_anywhere_agree_with_the_whole_prompt() {
+        let letters = ["a", "b", "c"];
+        let mut rng = Rng(0xca7);
+        for table in 0..20 {
+            let rules = random_rules(&mut rng, &letters, 10, table % 2 == 1);
+            let tokenizer = tokenizer(&letters, &rules);
+            for text in strings(&letters, 5) {
+                let pieces = pieces_of(&text, Some(text.len() / 2).filter(|at| *at > 0));
+                let truth = merged_tokens(&pieces, &tokenizer).unwrap();
+                // The merge's tokens pass range by range wherever the cut falls.
+                for cut in 0..=truth.len() {
+                    let (first, second) = truth.split_at(cut);
+                    let start: usize = first.iter().map(|token| token.pieces as usize).sum();
+                    assert_eq!(
+                        check_range(&tokenizer, &pieces, 0, None, first).unwrap(),
+                        None
+                    );
+                    assert_eq!(
+                        check_range(&tokenizer, &pieces, start, first.last().copied(), second)
+                            .unwrap(),
+                        None,
+                        "text {text:?}, cut {cut}"
+                    );
+                }
+                // A wrong grouping fails in one of its two ranges wherever the
+                // cut falls, because the first token of the second range is
+                // checked against the last token of the first.
+                for counts in groupings(pieces.len()) {
+                    if counts
+                        .iter()
+                        .copied()
+                        .eq(truth.iter().map(|token| token.pieces as usize))
+                    {
+                        continue;
+                    }
+                    for cut in 0..=counts.len() {
+                        let (first, second) = counts.split_at(cut);
+                        let start: usize = first.iter().sum();
+                        let first_ok = check_groups(&tokenizer, &pieces, 0, None, first)
+                            .unwrap()
+                            .is_ok();
+                        let second_ok =
+                            check_groups(&tokenizer, &pieces, start, first.last().copied(), second)
+                                .unwrap()
+                                .is_ok();
+                        assert!(
+                            !(first_ok && second_ok),
+                            "text {text:?}, grouping {counts:?}, cut {cut}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+}

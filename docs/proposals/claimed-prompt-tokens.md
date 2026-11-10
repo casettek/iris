@@ -1,6 +1,7 @@
 # Checking claimed prompt tokens instead of recomputing them
 
-Draft for review. November 9, 2026. Nothing here is implemented. The soundness argument in
+Draft for review. November 9, 2026. No stage is implemented. A native version of the check
+exists and its tests pass ([Tests of the rule](#tests-of-the-rule)). The soundness argument in
 [Why the pair check is enough](#why-the-pair-check-is-enough) is the part to review first.
 
 ## Goal
@@ -58,16 +59,18 @@ and `tokens_{j}`. The tokens of a range cover consecutive pieces, starting where
 previous range ended. For each token it requires:
 
 1. **It lies inside one segment.** Pieces of different segments never merge.
-2. **The pair run with its right neighbour gives back the two tokens.** Take the pieces of
-   this token and of the next token in the same segment, and run the ranked merge on those
-   pieces alone. The result must be exactly two pieces: the first made of exactly this
-   token's pieces, the second of exactly the next token's.
-3. **A token alone in its segment merges to one piece** when its pieces are run alone.
+2. **With a left neighbour in its segment, the pair run gives back the two tokens.** The
+   left neighbour is the token before it, which for the first token of a range is the last
+   token of the previous range. Run the ranked merge on the two tokens' pieces alone. The
+   result must be exactly two pieces: the first made of exactly the neighbour's pieces, the
+   second of exactly this token's.
+3. **With no left neighbour in its segment, it merges to one piece** when its pieces are
+   run alone.
 4. **The resulting text is the vocabulary entry for the claimed id.**
 
-The first token of a range is also paired with the last token of the previous range, so
-the check does not stop at a range boundary. The stage publishes the range's ids and the
-context, as `prompt_prepare` does today.
+Every neighbouring pair inside a segment is therefore run once, including pairs that
+straddle two ranges, and every token is covered by at least one run. The stage publishes
+the range's ids and the context, as `prompt_prepare` does today.
 
 A failed requirement records a fault in `PromptContext.fault` and the stage finishes. Two
 new fault codes would cover it: tokens that do not fit the pieces, and tokens that are not
@@ -144,27 +147,44 @@ and the full run stopped, so no rule joins them (A3, A4) and the pair run stops 
 
 - It is an argument, not a machine-checked proof, and it is mine. It should be read
   critically, especially steps 2 and 4 where ties in rank are decided by position.
-- A token that is alone in its segment has no neighbour, which is why requirement 3 exists.
+- A token that starts its segment has no left neighbour, which is why requirement 3 exists.
 - The stage must tie the result to the claimed group boundary, not only to the two texts.
   Otherwise a wrong `pieces` count could pass when the texts happen to match.
 - Byte fallback, unknown-token fusing and special tokens are decided in `prompt_bind`,
   before any merge. The argument starts from its pieces and segments and does not cover
   that step, which this proposal leaves as it is.
 
-## Backing the argument before any stage code
+## Tests of the rule
 
-A native version of the check is needed in any case, as the stage's native twin. Writing
-it first lets the rule be tested against the real tokenizer before a stage exists:
+The check is written natively in `inference-kernels`
+([prompt_check.rs](../../crates/inference/kernels/src/kernels/prompt_check.rs)). No stage
+uses it. Each test below compares it with the current full merge.
 
-1. **Agreement.** On many texts, including ones built from the merge table's own entries,
-   the current full merge's result must pass the check.
-2. **Exhaustion.** For short piece sequences drawn from the real vocabulary, enumerate
-   every way of grouping them into vocabulary tokens. Exactly one grouping must pass, and
-   it must be the full merge's result.
-3. **Ranges.** The same with the tokens cut into ranges at every possible point.
+| Test | Scope | Result |
+| --- | --- | --- |
+| Random merge tables | 400 tables over three letters, every string up to 7 letters, every grouping, with and without a segment break: 134,367,600 groupings | A grouping passes exactly when it is the full merge's |
+| Same, wrong but plausible | The 994,168 of those groupings that spell vocabulary tokens with no pair left to merge | All refused |
+| Production Gemma table, agreement | 12 pinned reference cases and 3,000 texts built by joining vocabulary entries, whole and cut into two ranges at every token | The full merge's tokens always pass |
+| Production Gemma table, exhaustion | 20,000 short built texts, every grouping: 14,507,984 groupings | A grouping passes exactly when it is the full merge's |
+| Same, wrong but plausible | The 27,269 of those groupings that spell vocabulary tokens with no pair left to merge | All refused |
+| Wrong id | The right grouping with one id changed, 20,000 times | All refused |
+| Ranges | On random tables, a wrong grouping cut into two ranges at any point | One of the two ranges always fails |
 
-If test 2 finds a second passing grouping, the argument is wrong and the design stops
-there.
+Half of the random tables have their ranks shuffled, so a rule can outrank the rules that
+build its parts. The production table has 514,906 rules for 236,339 distinct results, so
+most tokens can be formed from more than one pair of pieces.
+
+What the tests do not cover: texts longer than 12 pieces are not exhausted, only checked
+for agreement; every tested rule's result is its two texts joined, as import enforces; and
+the tests start from `prompt_bind`'s pieces, like the argument.
+
+Run them with:
+
+```sh
+cargo test -p inference-kernels prompt_check
+cargo test --release -p inference-kernels -- --ignored exactly_the_merge_grouping_passes_exhaustive
+cargo test --release -p staged-infer --test prompt_check -- --ignored --nocapture
+```
 
 ## Authoring the stage: open
 
@@ -182,8 +202,10 @@ sits, as distinct from the risk to soundness.
 Shapes to evaluate, none yet checked against the authoring rules in detail:
 
 - **Unrolled pair runs.** A fixed number of rounds per pair, sized for the longest token.
-  Simple, but the cost per pair is set by the worst case, and the vocabulary's longest
-  token decides whether it is affordable.
+  Simple, but the cost per pair is set by the worst case. The production vocabulary's
+  longest entry is 31 characters, so a pair can hold 62 pieces and need 60 rounds, while
+  only 45 of its 262,144 entries are longer than 16 characters (runs of spaces, tabs and
+  newlines).
 - **One pass over the pieces.** A recur over the range's pieces that carries the current
   pair's small window as state. Work proportional to the pieces, but the state has to stay
   small enough for the recur rules.
@@ -209,12 +231,12 @@ assumes a shape whose cost follows the actual token lengths.
 ## Suggested order
 
 1. Review this argument.
-2. Native check and the three tests above. No stage, lock or format changes.
-3. Measure token lengths in the real vocabulary and pick the stage shape.
+2. Native check and tests. Done; see [Tests of the rule](#tests-of-the-rule).
+3. Pick the stage shape, using the token lengths above.
 4. Author the stage and take it through the check ladder.
 5. Formats, re-import, parity cases, full gate.
 
-Steps 1 and 2 decide whether the idea is sound. Nothing before step 4 touches the chain.
+Nothing before step 4 touches the chain.
 
 ## Questions for you
 
