@@ -1,6 +1,9 @@
 //! The claimed-token check against the production Gemma merge table.
 //! See `docs/proposals/claimed-prompt-tokens.md`.
 
+use inference_kernels::kernels::prompt_check::rounds::{
+    check_range_in_rounds, full_merge_scan_steps, marks_of,
+};
 use inference_kernels::kernels::prompt_check::{
     check_prompt, check_range, grouping_passes, merged_tokens, ClaimedToken,
 };
@@ -193,6 +196,13 @@ fn claimed_tokens_on_the_production_vocabulary() {
         for counts in groupings(pieces.len()) {
             examined += 1;
             let passes = grouping_passes(&table, &pieces, &counts).unwrap();
+            let staged =
+                check_range_in_rounds(&table, &pieces, 0, None, &marks_of(&counts)).unwrap();
+            assert_eq!(
+                staged.fault.is_none(),
+                passes,
+                "staged rounds, text {text:?}, grouping {counts:?}"
+            );
             assert_eq!(
                 passes,
                 counts == truth,
@@ -209,6 +219,26 @@ fn claimed_tokens_on_the_production_vocabulary() {
         assert!(check_prompt(&table, &pieces, &altered).unwrap().is_some());
         wrong_id_refused += 1;
         texts += 1;
+    }
+
+    // 4. The work a stage would do on a long prompt, in ranges of 512 tokens,
+    //    beside today's merge stages over the same ranges.
+    let long = text_of(&mut rng, 2_000, 6_000);
+    let long_pieces = pieces(&long, &profile, &vocab);
+    let long_tokens = merged_tokens(&long_pieces, &table).unwrap();
+    let (mut staged_steps, mut today_steps, mut start, mut previous) = (0_u64, 0_u64, 0, None);
+    for range in long_tokens.chunks(512) {
+        let counts: Vec<usize> = range.iter().map(|token| token.pieces as usize).collect();
+        let len: usize = counts.iter().sum();
+        let staged =
+            check_range_in_rounds(&table, &long_pieces, start, previous, &marks_of(&counts))
+                .unwrap();
+        assert_eq!(staged.fault, None);
+        assert_eq!(staged.texts.len(), range.len());
+        staged_steps += staged.scan_steps;
+        today_steps += full_merge_scan_steps(&long_pieces[start..start + len], &table).unwrap();
+        start += len;
+        previous = counts.last().copied();
     }
 
     let vocabulary_longest = vocab
@@ -228,6 +258,13 @@ fn claimed_tokens_on_the_production_vocabulary() {
     );
     println!("  right grouping with one wrong id, refused: {wrong_id_refused}");
     println!("pieces per token in built texts: longest {longest_token}; counts {token_lengths:?}");
+    println!(
+        "long prompt: {} pieces, {} tokens, {} ranges; merge lookups today {today_steps}, as staged rounds {staged_steps} ({:.1}x fewer)",
+        long_pieces.len(),
+        long_tokens.len(),
+        long_tokens.len().div_ceil(512),
+        today_steps as f64 / staged_steps as f64
+    );
     println!(
         "vocabulary: longest entry {vocabulary_longest} characters; {over_16} entries over 16"
     );

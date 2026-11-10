@@ -1,16 +1,18 @@
 # Checking claimed prompt tokens instead of recomputing them
 
 Draft for review. November 9, 2026. No stage is implemented. A native version of the check
-exists and its tests pass ([Tests of the rule](#tests-of-the-rule)). The soundness argument in
+exists and its tests pass ([Tests of the rule](#tests-of-the-rule)), and the stage is
+designed but not authored ([The stage](#the-stage)). The soundness argument in
 [Why the pair check is enough](#why-the-pair-check-is-enough) is the part to review first.
 
 ## Goal
 
-**Give the pipeline the prompt's token ids as an input and have one stage per range check
-them, in place of the stages that recompute them by replaying every merge.**
+**Give the pipeline the prompt's tokenization as an input and have one stage per range
+check it, in place of the stages that recompute it by replaying every merge.**
 
 The chain already treats the output this way: the claimed output ids are an input, and
-`sequence-check` verifies them. This proposal does the same for the prompt.
+`sequence-check` verifies them. This proposal does the same for the prompt. What the claim
+supplies is where each token starts; the stage looks the ids up itself.
 
 It is about the number of stages and the cost of a challenge. It is not needed for
 time-to-claim; the native tokenizer fix of the same day covers that without a stage change.
@@ -37,26 +39,22 @@ lookups, and a range needs about 1,500 rounds.
 
 ## The design
 
-### The token ids become an input
+### The token boundaries become an input
 
 Run preparation already tokenizes the prompt natively to choose the ranges. It would write,
-for each range `j`, a committed input `tokens_{j}`:
+for each range `j`, a committed input `marks_{j}`: one number per piece of the range, 1
+where the piece starts a token and 0 elsewhere.
 
-```text
-ClaimedToken {
-    id,       // the token id
-    pieces,   // how many of prompt_bind's pieces this token is made of
-}
-```
-
-`pieces` tells the stage where each token starts without matching strings. It is a hint
-and is not trusted: a wrong count fails the check below.
+The claim supplies no ids and no text. The stage looks each token's id up in the
+vocabulary, as `prompt_prepare` does today, so a claim cannot name a wrong id. The marks
+are plain numbers, so nothing the claim supplies has a size it controls except the length
+of the list, which the stage only iterates.
 
 ### One stage per range checks them
 
 `prompt_check_p{j}` (name open) takes `prompt_bind`'s pieces, the previous range's context
-and `tokens_{j}`. The tokens of a range cover consecutive pieces, starting where the
-previous range ended. For each token it requires:
+and `marks_{j}`. The marks cover consecutive pieces, starting where the previous range
+ended, and cut them into tokens. For each token the stage requires:
 
 1. **It lies inside one segment.** Pieces of different segments never merge.
 2. **With a left neighbour in its segment, the pair run gives back the two tokens.** The
@@ -66,7 +64,7 @@ previous range ended. For each token it requires:
    second of exactly this token's.
 3. **With no left neighbour in its segment, it merges to one piece** when its pieces are
    run alone.
-4. **The resulting text is the vocabulary entry for the claimed id.**
+4. **The resulting text is a vocabulary entry.** Its id is the token's id.
 
 Every neighbouring pair inside a segment is therefore run once, including pairs that
 straddle two ranges, and every token is covered by at least one run. The stage publishes
@@ -147,9 +145,12 @@ and the full run stopped, so no rule joins them (A3, A4) and the pair run stops 
 
 - It is an argument, not a machine-checked proof, and it is mine. It should be read
   critically, especially steps 2 and 4 where ties in rank are decided by position.
+- A neighbour is a token whose last piece is in the same segment. The first native version
+  looked at the neighbour's first piece, which differs only when the previous range's last
+  token is itself malformed; modelling the stage exposed it.
 - A token that starts its segment has no left neighbour, which is why requirement 3 exists.
-- The stage must tie the result to the claimed group boundary, not only to the two texts.
-  Otherwise a wrong `pieces` count could pass when the texts happen to match.
+- The stage must tie the result to the claimed token boundary, not only to the two texts.
+  Otherwise wrong marks could pass when the texts happen to match.
 - Byte fallback, unknown-token fusing and special tokens are decided in `prompt_bind`,
   before any merge. The argument starts from its pieces and segments and does not cover
   that step, which this proposal leaves as it is.
@@ -169,6 +170,8 @@ uses it. Each test below compares it with the current full merge.
 | Same, wrong but plausible | The 27,269 of those groupings that spell vocabulary tokens with no pair left to merge | All refused |
 | Wrong id | The right grouping with one id changed, 20,000 times | All refused |
 | Ranges | On random tables, a wrong grouping cut into two ranges at any point | One of the two ranges always fails |
+| Staged rounds, random tables | The stage's rounds as modelled natively, on every grouping of every string up to 5 letters over 30 tables, whole and as a second range at every cut | Accepts and refuses exactly as the pair check does |
+| Staged rounds, production table | The same model on all 14,507,984 groupings above | Accepts and refuses exactly as the pair check does |
 
 Half of the random tables have their ranks shuffled, so a rule can outrank the rules that
 build its parts. The production table has 514,906 rules for 236,339 distinct results, so
@@ -186,53 +189,120 @@ cargo test --release -p inference-kernels -- --ignored exactly_the_merge_groupin
 cargo test --release -p staged-infer --test prompt_check -- --ignored --nocapture
 ```
 
-## Authoring the stage: open
+## The stage
 
-I have not designed the Raster program, and this is where the remaining risk to the plan
-sits, as distinct from the risk to soundness.
+Designed against the Raster authoring rules and modelled natively
+(`prompt_check::rounds`). Not authored: no tile or sequence exists, and the check ladder
+has not been run. The first authoring attempt may force changes.
 
-- A sequence cannot loop on data, and a tile cannot look anything up; lookups are
-  authenticated selections made by the sequence. Today's merge stage handles this by
-  unrolling 64 rounds, each a recur over the range's pieces.
-- A pair run is small, but its length depends on the two tokens. The stage needs a bound
-  on pieces per token, or a shape whose work items are the pieces themselves.
-- The recur rules forbid driving a loop with a counter list and require loop state to stay
-  small, which rules out the most direct translations.
+### What the rules allow
 
-Shapes to evaluate, none yet checked against the authoring rules in detail:
+- A sequence cannot loop on data. The recur reference gives one honest way to run a merge
+  to its end: unroll a fixed number of rounds and finish with a check that nothing is left
+  to merge. `prompt-merge` does this today with 64 rounds.
+- A loop driven by a list of merge steps from the claim is the pattern the reference
+  forbids: the trip count would be an input.
+- A tile cannot look anything up, and a sequence cannot select a range whose bounds are
+  computed. So a pair of tokens cannot be handed to a tile as a window, and each merge
+  lookup has to be one step of a recur over pieces.
 
-- **Unrolled pair runs.** A fixed number of rounds per pair, sized for the longest token.
-  Simple, but the cost per pair is set by the worst case. The production vocabulary's
-  longest entry is 31 characters, so a pair can hold 62 pieces and need 60 rounds, while
-  only 45 of its 262,144 entries are longer than 16 characters (runs of spaces, tabs and
-  newlines).
-- **One pass over the pieces.** A recur over the range's pieces that carries the current
-  pair's small window as state. Work proportional to the pieces, but the state has to stay
-  small enough for the recur rules.
-- **Per-token facts committed at import.** A token's solo run depends only on the
-  vocabulary, so whether it merges to itself could be a committed table, as the boundary
-  table is today. That would leave only the crossing check per pair.
+### Windows are marks on the pieces, not separate lists
 
-By my rough count the check needs 50 to 100 times fewer authenticated lookups per range
-than today, because each run covers a few pieces instead of the range. That estimate
-assumes a shape whose cost follows the actual token lengths.
+Number the range's tokens in order. Two passes pair them differently:
+
+| Pass | Windows |
+| --- | --- |
+| A | tokens (0, 1), (2, 3), (4, 5), ... |
+| B | token 0 alone, then (1, 2), (3, 4), ... |
+
+Every neighbouring pair shares a window in exactly one pass. Within a pass the pieces stay
+one list in their original order, and a piece may merge only with a piece of the same
+window and segment. Merging a window in isolation is the pair run of the rule, so the two
+passes together run every pair once. No piece is duplicated and no window is ever built.
+
+### The steps
+
+1. **Count the marks.** A fold over `marks_{j}` gives the number of pieces the range covers
+   and the number of tokens it claims.
+2. **Copy and number the pieces.** A recur over `prompt_bind`'s pieces copies that many,
+   starting at the previous range's last token when it is a neighbour, and reads each
+   piece's mark to give it a token number.
+3. **Pass A, then pass B, 64 rounds each.** A round is two recurs over the pieces:
+   - *Scan.* One merge-table lookup per piece, for the pair it forms with the piece before
+     it, as `scan_pair` does today. The best pair of each window is appended to a list as
+     the window ends.
+   - *Apply.* Each piece reads its window's best pair from that list and is copied, merged
+     or dropped. Merging two pieces of different tokens records a fault.
+4. **Check the end state**, once per pass. One more scan must find no pair to merge, and
+   every token must be exactly one piece.
+5. **Look up the ids** of pass A's pieces in the vocabulary and publish them with the
+   context, leaving out the previous range's token.
+
+Loop state stays small throughout: the previous piece's text, a few counters, and one best
+candidate. Everything that grows is a recur output.
+
+### Nothing a claim supplies can abort the stage
+
+- The marks are numbers. A wrong mark changes the token numbering and the check fails.
+- The only indexed read of a claim list is a piece reading its mark. The stage copies at
+  most as many pieces as it counted marks, so that index is below the list's length by
+  construction. With no marks, no piece is copied and nothing is read.
+- The list of best pairs is built by the scan with one entry per window, and the apply
+  step reads it by window number.
+- Marks that run past the prompt, a token spanning two segments, more tokens than the
+  range size and an empty range are recorded as faults.
+
+### The round count is a limit on token length
+
+A window of two tokens needs two merges fewer than it has pieces. 64 rounds therefore
+cover tokens of up to 33 pieces each. The production vocabulary's longest entry is 31
+characters, and only 45 of its 262,144 entries are longer than 16 (runs of spaces, tabs
+and newlines). A window that is still merging after the last round is a fault, so the
+limit can refuse a true tokenization but never accept a false one. Import should reject a
+vocabulary with a longer entry, so that no honest claim meets the limit.
+
+### Measured on the native model
+
+For a 6,000-piece prompt of 1,148 tokens in three ranges, on the production table:
+
+| | Today | As designed |
+| --- | --- | --- |
+| Tokenizer stages per range | about 27 | 1 |
+| Merge-table lookups, whole prompt | 7,275,202 | 206,509 |
+
+That is 35 times fewer lookups. One new stage does about 69,000 of them, comparable to one of
+today's merge batches. Most are spent in rounds after every window has finished; dropping
+finished windows from the list would cut them further and is left out for now.
+
+The apply step reads one list entry per piece, where today's apply walks 256 pieces per
+step. Its cost in the guest is not measured.
+
+### Open points for authoring
+
+- Whether the scan can append a window's best pair as the window ends, and the apply step
+  read it back by number, as cleanly as described. This is the part with no precedent in
+  the current stages.
+- The length of one stage's trace, and whether the two passes should be two stages.
+- Whether to keep `prompt_bind` unchanged, which costs a full pass over its pieces in
+  every range as `prompt_seed` does today, or have it publish a piece count.
 
 ## What would change in the repository
 
 - Three stage programs replaced by one; nine programs in place of eleven.
 - `StageSchedule` loses `merge_batches`, so the `Execution` record's version changes.
-- Run preparation writes `tokens_{j}` and stops writing cuts and the batch count.
+- Run preparation writes `marks_{j}` and stops writing cuts and the batch count.
 - Import and prepared-run formats move to version 8, the model is re-imported, and the
   backend's pinned version follows.
-- `test-parity` gains a case whose tokens spell the prompt but are not the merge's result,
-  and the cut-fault cases are replaced.
+- `test-parity` gains a case whose marks cut the prompt into vocabulary tokens that are not
+  the merge's result, and the cut-fault cases are replaced.
+- Import rejects a vocabulary with an entry longer than the rounds can check.
 - `raster-chain.md`, `claim-build.md` and `test-parity.md`.
 
 ## Suggested order
 
 1. Review this argument.
 2. Native check and tests. Done; see [Tests of the rule](#tests-of-the-rule).
-3. Pick the stage shape, using the token lengths above.
+3. Stage design and native model. Done; see [The stage](#the-stage).
 4. Author the stage and take it through the check ladder.
 5. Formats, re-import, parity cases, full gate.
 
@@ -244,5 +314,5 @@ Nothing before step 4 touches the chain.
   time-to-claim no longer depends on it?
 - Should the boundary table and range-cut rules be retired in the same change, or kept
   until the new stage has been through a full gate?
-- Is a committed per-token table derived at import acceptable, as the boundary table is
-  today, or should the stage establish everything from the merge table itself?
+- The design needs no table derived at import. Is one stage of 128 rounds acceptable, or
+  should the two passes be separate stages from the start?

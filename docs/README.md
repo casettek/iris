@@ -22,7 +22,7 @@ Start with the workflow docs when you want to run the repo, and the internals do
 
 - [Issues](issues/README.md)
 - [Proposals](proposals/)
-- [Checking claimed prompt tokens instead of recomputing them](proposals/claimed-prompt-tokens.md): draft for review; token ids as an input, one checking stage per range, and the argument for why a pair check is enough.
+- [Checking claimed prompt tokens instead of recomputing them](proposals/claimed-prompt-tokens.md): draft for review; token boundaries as an input, one checking stage per range, the argument for why a pair check is enough, and the stage design.
 - [Verifying the stage schedule inside the Raster stages](proposals/verified-stage-implementation.md): implementation order, code targets, and completion checks.
 - [Enforcing the right stage](proposals/stage-progression.md): one check per stage execution, authenticated progression, and persistent faults.
 - [Claim protocol Phase 1 specification](proposals/claim-protocol-phase-one-spec.md): review draft defining the statement, registered pipeline, package, and acceptance rules.

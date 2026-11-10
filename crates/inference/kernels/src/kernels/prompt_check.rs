@@ -146,7 +146,8 @@ fn check_groups(
         {
             return Ok(Err(TokenFault::DoesNotFit { token }));
         }
-        let neighbour = left.filter(|left| pieces[left.start].segment == segment);
+        // A neighbour is a token whose last piece is in this token's segment.
+        let neighbour = left.filter(|left| pieces[left.start + left.len - 1].segment == segment);
         let text = match neighbour {
             // Merged with its left neighbour: exactly the two tokens, split
             // where the claim says.
@@ -234,6 +235,193 @@ pub fn grouping_passes(
 ) -> Result<bool> {
     Ok(counts.iter().sum::<usize>() == pieces.len()
         && check_groups(tokenizer, pieces, 0, None, counts)?.is_ok())
+}
+
+/// The check as a stage would run it: a fixed number of rounds, each merging
+/// at most one pair in every window, with no loop that depends on the data.
+///
+/// The claim marks which pieces start a token. Tokens are numbered in order,
+/// and two passes pair them up differently: one pairs tokens (0,1), (2,3), …
+/// and the other (1,2), (3,4), …, so every neighbouring pair shares a window
+/// in exactly one pass. A window is merged on its own, which is the pair run
+/// of `check_range`. A merge that joins pieces of two tokens, a token left in
+/// more than one piece, or a window still merging after the last round is a
+/// fault.
+pub mod rounds {
+    use super::*;
+
+    /// Merge rounds per pass. A window of two tokens needs two merges fewer
+    /// than it has pieces, so this covers tokens of up to 33 pieces each.
+    pub const ROUNDS: usize = 64;
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub struct Outcome {
+        pub fault: Option<TokenFault>,
+        /// The range's tokens as text, when there is no fault.
+        pub texts: Vec<String>,
+        /// Pieces visited by merge scans over both passes: one authenticated
+        /// merge-table lookup each in the stage.
+        pub scan_steps: u64,
+    }
+
+    /// `marks[i]` is non-zero when piece `start + i` starts a token; the first
+    /// piece of a range always does. `previous` is the piece count of the
+    /// token just before `start`, as for `check_range`.
+    pub fn check_range_in_rounds(
+        tokenizer: &PromptTokenizer,
+        pieces: &[BpePiece],
+        start: usize,
+        previous: Option<usize>,
+        marks: &[u32],
+    ) -> Result<Outcome> {
+        let mut fault = None;
+        let lead = match previous {
+            Some(len) if len >= 1 && len <= start => len,
+            Some(_) => {
+                fault = Some(TokenFault::DoesNotFit { token: 0 });
+                0
+            }
+            None => 0,
+        };
+        let end = start.saturating_add(marks.len()).min(pieces.len());
+        if start.saturating_add(marks.len()) > pieces.len() {
+            fault = fault.or(Some(TokenFault::DoesNotFit { token: 0 }));
+        }
+        // Number the tokens. The previous range's last token, when present,
+        // is token 0 and only serves as the first token's left neighbour.
+        let from = start.min(pieces.len());
+        // The previous token matters only as a left neighbour, so it is left
+        // out when the range starts a new segment.
+        let neighbours = from > 0
+            && from < pieces.len()
+            && !marks.is_empty()
+            && pieces[from - 1].segment == pieces[from].segment;
+        let lead = if neighbours { lead.min(from) } else { 0 };
+        let first = usize::from(lead > 0);
+        let mut list = pieces[from - lead..from].to_vec();
+        let mut tokens = vec![0_usize; list.len()];
+        let mut token = first;
+        for (offset, piece) in pieces[start.min(end)..end].iter().enumerate() {
+            if offset > 0 && marks[offset] != 0 {
+                token += 1;
+            }
+            list.push(piece.clone());
+            tokens.push(token);
+        }
+        for index in 1..list.len() {
+            if tokens[index] == tokens[index - 1] && list[index].segment != list[index - 1].segment
+            {
+                fault = fault.or(Some(TokenFault::DoesNotFit {
+                    token: tokens[index].saturating_sub(first),
+                }));
+            }
+        }
+
+        let mut scan_steps = 0;
+        let mut texts = Vec::new();
+        for pass in 0..2 {
+            let mut current = list.clone();
+            let mut owner = tokens.clone();
+            for round in 0..=ROUNDS {
+                scan_steps += current.len() as u64;
+                // The best pair of every window, found in one scan.
+                let mut merges = Vec::new();
+                let mut run_start = 0;
+                while run_start < current.len() {
+                    let window = (owner[run_start] + pass) / 2;
+                    let run_end = run_start
+                        + owner[run_start..]
+                            .iter()
+                            .take_while(|token| (**token + pass) / 2 == window)
+                            .count();
+                    let best = best_merge(&current[run_start..run_end], tokenizer)?;
+                    if best.matched {
+                        merges.push((run_start + best.left as usize, best.merged));
+                    }
+                    run_start = run_end;
+                }
+                if round == ROUNDS {
+                    // The convergence check after the last round.
+                    if let Some((left, _)) = merges.first() {
+                        fault = fault.or(Some(TokenFault::NotTheMerge {
+                            token: owner[*left].saturating_sub(first),
+                        }));
+                    }
+                    break;
+                }
+                if merges.is_empty() {
+                    // The stage still runs its remaining rounds and the
+                    // convergence check over the unchanged list.
+                    scan_steps += ((ROUNDS - round) * current.len()) as u64;
+                    break;
+                }
+                for (left, merged) in merges.into_iter().rev() {
+                    if owner[left] != owner[left + 1] {
+                        fault = fault.or(Some(TokenFault::NotTheMerge {
+                            token: owner[left + 1].saturating_sub(first),
+                        }));
+                    }
+                    current[left].text = merged;
+                    current.remove(left + 1);
+                    owner.remove(left + 1);
+                }
+            }
+            // Every token must have become exactly one piece.
+            for index in 1..owner.len() {
+                if owner[index] == owner[index - 1] {
+                    fault = fault.or(Some(TokenFault::NotTheMerge {
+                        token: owner[index].saturating_sub(first),
+                    }));
+                }
+            }
+            if pass == 0 {
+                texts = current
+                    .iter()
+                    .zip(&owner)
+                    .filter(|(_, token)| **token >= first)
+                    .map(|(piece, _)| piece.text.clone())
+                    .collect();
+            }
+        }
+        if fault.is_some() {
+            texts.clear();
+        }
+        Ok(Outcome {
+            fault,
+            texts,
+            scan_steps,
+        })
+    }
+
+    /// The marks for a list of per-token piece counts.
+    pub fn marks_of(counts: &[usize]) -> Vec<u32> {
+        counts
+            .iter()
+            .flat_map(|count| (0..*count).map(|offset| u32::from(offset == 0)))
+            .collect()
+    }
+
+    /// Pieces visited by merge scans when today's stages tokenize `pieces` as
+    /// one range: every round scans the whole range, rounds come in batches
+    /// of 64, and `prompt-prepare` scans once more.
+    pub fn full_merge_scan_steps(pieces: &[BpePiece], tokenizer: &PromptTokenizer) -> Result<u64> {
+        let mut current = pieces.to_vec();
+        let mut steps = 0_u64;
+        let mut rounds = 0_u64;
+        loop {
+            steps += current.len() as u64;
+            rounds += 1;
+            let best = best_merge(&current, tokenizer)?;
+            if !best.matched {
+                break;
+            }
+            let left = best.left as usize;
+            current[left].text = best.merged;
+            current.remove(left + 1);
+        }
+        let padded = rounds.div_ceil(ROUNDS as u64) * ROUNDS as u64;
+        Ok(steps + (padded - rounds + 1) * current.len() as u64)
+    }
 }
 
 #[cfg(test)]
@@ -577,5 +765,82 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// The rounds a stage would run accept and refuse exactly what the pair
+    /// check does, for a whole prompt and for a second range at every cut.
+    #[test]
+    fn the_staged_rounds_agree_with_the_pair_check() {
+        let letters = ["a", "b", "c"];
+        let mut rng = Rng(0xbeef);
+        for table in 0..30 {
+            let count = 2 + rng.below(14);
+            let rules = random_rules(&mut rng, &letters, count, table % 2 == 1);
+            let tokenizer = tokenizer(&letters, &rules);
+            for text in strings(&letters, 5) {
+                for segment_break in [None, Some(text.len() / 2)] {
+                    if segment_break == Some(0) {
+                        continue;
+                    }
+                    let pieces = pieces_of(&text, segment_break);
+                    for counts in groupings(pieces.len()) {
+                        let mut ranges = vec![(0, None, &counts[..])];
+                        for cut in 1..counts.len() {
+                            let (first, second) = counts.split_at(cut);
+                            ranges.push((first.iter().sum(), first.last().copied(), second));
+                        }
+                        for (start, previous, range) in ranges {
+                            let expected =
+                                check_groups(&tokenizer, &pieces, start, previous, range).unwrap();
+                            let staged = rounds::check_range_in_rounds(
+                                &tokenizer,
+                                &pieces,
+                                start,
+                                previous,
+                                &rounds::marks_of(range),
+                            )
+                            .unwrap();
+                            assert_eq!(
+                                staged.fault.is_none(),
+                                expected.is_ok(),
+                                "text {text:?}, break {segment_break:?}, grouping {counts:?}, from {start}"
+                            );
+                            if let Ok(texts) = expected {
+                                assert_eq!(staged.texts, texts);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_window_still_merging_after_the_last_round_is_refused() {
+        // Longer rules rank first, so a run of `a` grows from the left into
+        // one token of up to 40 letters. Two such tokens side by side need 78
+        // merges, more than the rounds allow.
+        let rules: Vec<(String, String)> = (1..40)
+            .rev()
+            .map(|len| ("a".repeat(len), "a".to_string()))
+            .collect();
+        let tokenizer = tokenizer(&["a", "b"], &rules);
+        let pieces = pieces_of(&format!("{}b{}", "a".repeat(40), "a".repeat(40)), None);
+        let counts = [40, 1, 40];
+        assert!(check_groups(&tokenizer, &pieces, 0, None, &counts)
+            .unwrap()
+            .is_ok());
+        let staged =
+            rounds::check_range_in_rounds(&tokenizer, &pieces, 0, None, &rounds::marks_of(&counts))
+                .unwrap();
+        // 40 + 1 pieces need 39 merges and fit; the bound is on a window of
+        // two long tokens, which this grouping does not contain.
+        assert_eq!(staged.fault, None);
+        let pieces = pieces_of(&"a".repeat(80), None);
+        let long = [40, 40];
+        let staged =
+            rounds::check_range_in_rounds(&tokenizer, &pieces, 0, None, &rounds::marks_of(&long))
+                .unwrap();
+        assert!(staged.fault.is_some());
     }
 }
