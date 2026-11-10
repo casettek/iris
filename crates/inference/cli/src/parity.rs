@@ -491,7 +491,6 @@ fn run_chain_fault_leg(
     let template_dir = template_path
         .parent()
         .context("manifest template has no parent directory")?;
-    let merge_repeats = run_prep::CHECK_MERGE_BATCHES;
 
     let greedy = claimed
         .get(..2)
@@ -516,7 +515,7 @@ fn run_chain_fault_leg(
             true,
             run_prep::CHECK_FAULT_NO_CLAIMED_TOKENS,
             positions,
-            [0, 0, 0],
+            [0, 0],
         ),
         (
             "empty-last-range",
@@ -526,7 +525,7 @@ fn run_chain_fault_leg(
             true,
             run_prep::CHECK_FAULT_NO_CLAIMED_TOKENS,
             positions,
-            [0, 0, 0],
+            [0, 0],
         ),
         (
             "not-greedy",
@@ -536,7 +535,7 @@ fn run_chain_fault_leg(
             false,
             0,
             0,
-            [0, 0, 0],
+            [0, 0],
         ),
         (
             "unknown-ids",
@@ -546,7 +545,7 @@ fn run_chain_fault_leg(
             false,
             0,
             0,
-            [0, 0, 0],
+            [0, 0],
         ),
         (
             "short-of-budget",
@@ -556,7 +555,7 @@ fn run_chain_fault_leg(
             false,
             0,
             0,
-            [0, 0, 0],
+            [0, 0],
         ),
         // A run that does not follow its schedule: the schedule names counts the
         // manifest's stages do not run. The last is refused when it is bound, the
@@ -569,17 +568,7 @@ fn run_chain_fault_leg(
             false,
             0,
             0,
-            [1, 0, 0],
-        ),
-        (
-            "schedule-extra-merge-batch",
-            canonical.clone(),
-            greedy,
-            2,
-            false,
-            0,
-            0,
-            [0, 1, 0],
+            [1, 0],
         ),
         (
             "schedule-extra-claimed-range",
@@ -589,7 +578,7 @@ fn run_chain_fault_leg(
             false,
             0,
             0,
-            [0, 0, 1_i64],
+            [0, 1_i64],
         ),
     ];
 
@@ -598,7 +587,7 @@ fn run_chain_fault_leg(
         let dir = case_dir.join("chain-faults").join(name);
         let files = dir.join("prompt");
         let manifest = dir.join("Raster.toml");
-        let cut_files = run_prep::write_marks(&marks, &files)?;
+        let mark_files = run_prep::write_marks(&marks, &files)?;
         let claimed_files = run_prep::write_claimed_ranges(ids, range_size as usize, &files)?;
         let rendered = crate::claim::render_ranged_manifest(
             &template,
@@ -614,14 +603,12 @@ fn run_chain_fault_leg(
                 &files,
             )?,
             &run_prep::write_run_schedule(
-                (cut_files.len() as i64 + skew[0]) as usize,
-                (i64::from(merge_repeats) + skew[1]) as u32,
-                (claimed_files.len() as i64 + skew[2]) as usize,
+                (mark_files.len() as i64 + skew[0]) as usize,
+                (claimed_files.len() as i64 + skew[1]) as usize,
                 &files,
             )?,
-            &cut_files,
+            &mark_files,
             &claimed_files,
-            merge_repeats,
         )?;
         fs::write(&manifest, rendered)?;
 
@@ -658,7 +645,7 @@ fn run_chain_fault_leg(
             (record["prompt_fault"] != json!(0)) == prompt_fault,
             "chain fault `{name}`: expected a prompt fault: {prompt_fault}; got {record}"
         );
-        if skew == [0, 0, 0] {
+        if skew == [0, 0] {
             ensure!(
                 record["check_fault"] == json!(check_fault)
                     && record["check_fault_position"] == json!(check_position),

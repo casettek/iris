@@ -14,50 +14,11 @@ use prompt_check::check::{
     range_end, range_piece, ApplyState, CheckPiece, MarkCount, PassSummary, ScanSummary,
     WindowBest, WindowScan, ROUNDS_PER_PASS,
 };
-use prompt_check::input as check_input;
-use prompt_prepare::input::{
-    merge_bucket_of, vocab_bucket_of, BpePiece, PromptContext, PromptState, PromptTokenizer,
+use prompt_check::input::{
+    join_prompt_models, merge_bucket_of, vocab_bucket_of, BpePiece, MergeMatch, PromptState,
+    PromptTokenizer,
 };
 use raster::{BytesPage, List};
-
-fn to_check_context(context: &PromptContext) -> check_input::PromptContext {
-    check_input::PromptContext {
-        model: context.model.clone(),
-        input_text_sha256: context.input_text_sha256.clone(),
-        model_id: context.model_id.clone(),
-        raw_prompt: context.raw_prompt,
-        max_new_tokens: context.max_new_tokens,
-        range_size: context.range_size,
-        next_piece: context.next_piece,
-        prompt_tokens: context.prompt_tokens,
-        complete: context.complete,
-        fault: context.fault,
-        fault_position: context.fault_position,
-    }
-}
-
-fn from_check_context(context: check_input::PromptContext) -> PromptContext {
-    PromptContext {
-        model: context.model,
-        input_text_sha256: context.input_text_sha256,
-        model_id: context.model_id,
-        raw_prompt: context.raw_prompt,
-        max_new_tokens: context.max_new_tokens,
-        range_size: context.range_size,
-        next_piece: context.next_piece,
-        prompt_tokens: context.prompt_tokens,
-        complete: context.complete,
-        fault: context.fault,
-        fault_position: context.fault_position,
-    }
-}
-
-fn to_check_piece(piece: &BpePiece) -> check_input::BpePiece {
-    check_input::BpePiece {
-        text: piece.text.clone(),
-        segment: piece.segment,
-    }
-}
 
 /// What the stage's proofs of the tokenizer buckets it reads come to. The
 /// staged pass checks each bucket against the witness; a caller with nothing
@@ -95,7 +56,7 @@ fn scan(
             &step.query.piece,
             tokenizer.merge_bucket_count,
         );
-        let mut hit = check_input::MergeMatch::default();
+        let mut hit = MergeMatch::default();
         for rule in tokenizer.merge_buckets[index as usize].rules.iter() {
             if step.query.has_pending
                 && rule.left == step.query.pending
@@ -179,16 +140,12 @@ pub fn run_prompt_check(
             && tokenizer.vocab_bucket_count as usize == tokenizer.vocab_buckets.len(),
         "invalid vocabulary bucket count"
     );
-    let mut context = check_input::join_prompt_models(
-        to_check_context(&previous.context),
-        &to_check_context(&bound.context),
-    );
+    let mut context = join_prompt_models(previous.context.clone(), &bound.context);
     context.model =
         model_identity::stream::verify(context.model, root, model_identity::Role::Tokenizer);
     context
         .model
         .require(context.model_id == context.model.model_id);
-    context.model.continue_prompt_range();
 
     // Which pieces the range takes.
     let mut marked = MarkCount::default();
@@ -199,15 +156,10 @@ pub fn run_prompt_check(
     // The range's pieces after the previous range's last token, numbered.
     let mut range = Vec::new();
     if plan.lead {
-        range.extend(
-            previous
-                .pieces
-                .iter()
-                .map(|piece| lead_piece(&to_check_piece(piece))),
-        );
+        range.extend(previous.pieces.iter().map(|piece| lead_piece(piece)));
     }
     for (index, piece) in bound.pieces.iter().enumerate() {
-        if let Some((piece, last)) = range_piece(&to_check_piece(piece), index as u64, &plan) {
+        if let Some((piece, last)) = range_piece(piece, index as u64, &plan) {
             range.push(piece);
             if last {
                 range.push(end_range_piece());
@@ -274,7 +226,7 @@ pub fn run_prompt_check(
     Ok(PromptState {
         pieces: List::from(carried),
         token_ids: List::from(token_ids),
-        context: from_check_context(context),
+        context,
     })
 }
 

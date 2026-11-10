@@ -123,16 +123,14 @@ fn component_roles_and_sticky_context_are_enforced_in_guests() {
     context.bind_statement(&"11".repeat(32), false, 4, 4);
     context.bind_schedule(model_identity::pipeline_core::StageSchedule {
         prompt_ranges: 1,
-        merge_batches: 1,
         claimed_ranges: 1,
     });
     context.begin_prompt_range();
-    context.continue_prompt_range();
     context.append_consumed_token(1);
     context.finish_prompt_range(true, 1, 0);
     for (stage, role, root, indexed) in [
         (
-            "prompt-merge",
+            "prompt-check",
             model_identity::Role::Tokenizer,
             [1; 32],
             false,
@@ -171,7 +169,7 @@ fn component_roles_and_sticky_context_are_enforced_in_guests() {
         let discovery = TileDiscovery::new(&project);
         let builder = Builder::new(&project, &backend);
         let tile_name = match stage {
-            "prompt-merge" => "identity_prompt",
+            "prompt-check" => "identity_prompt",
             "input-embedding" => "identity_embedding_context",
             _ => "identity_verify",
         };
@@ -194,7 +192,7 @@ fn component_roles_and_sticky_context_are_enforced_in_guests() {
             };
             let bytes = if indexed {
                 postcard::to_allocvec(&(&input, &root, index)).unwrap()
-            } else if stage == "prompt-merge" {
+            } else if stage == "prompt-check" {
                 postcard::to_allocvec(&(&prompt, &root)).unwrap()
             } else if stage == "input-embedding" {
                 postcard::to_allocvec(&(
@@ -209,7 +207,7 @@ fn component_roles_and_sticky_context_are_enforced_in_guests() {
                 postcard::to_allocvec(&(&input, &root)).unwrap()
             };
             let execution = runner.run(&bytes, ExecutionMode::Estimate).unwrap();
-            let output: model_identity::ModelContext = if stage == "prompt-merge" {
+            let output: model_identity::ModelContext = if stage == "prompt-check" {
                 postcard::from_bytes::<output_finalize::prompt::PromptContext>(&execution.output)
                     .unwrap()
                     .model
@@ -356,7 +354,7 @@ fn page_bytes_and_final_context_are_checked_in_guests() {
 }
 
 #[test]
-#[ignore = "executes sparse membership checks in the six production Raster guests"]
+#[ignore = "executes sparse membership checks in the four production Raster guests"]
 fn sparse_membership_is_checked_by_production_guests() {
     use model_identity::{sparse, stream, ModelContext};
     let values = vec![
@@ -369,9 +367,7 @@ fn sparse_membership_is_checked_by_production_guests() {
         "input-embedding",
         "prefill-prepare-aux",
         "prompt-bind",
-        "prompt-seed",
-        "prompt-merge",
-        "prompt-prepare",
+        "prompt-check",
     ] {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../../raster-stages")
@@ -474,11 +470,11 @@ fn sparse_membership_is_checked_by_production_guests() {
 }
 
 #[test]
-#[ignore = "builds and executes the production prompt-seed guest"]
+#[ignore = "builds and executes the production prompt-check guest"]
 fn prompt_statement_substitution_is_rejected_in_guest() {
     use output_finalize::prompt::{join_prompt_models, PromptContext, FAULT_CONTEXT_MISMATCH};
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../../raster-stages/prompt-seed")
+        .join("../../../raster-stages/prompt-check")
         .canonicalize()
         .unwrap();
     let project = Project::new(path.clone()).unwrap();
@@ -505,7 +501,6 @@ fn prompt_statement_substitution_is_rejected_in_guest() {
     model.bind_statement(&"11".repeat(32), false, 8, 4);
     model.bind_schedule(model_identity::pipeline_core::StageSchedule {
         prompt_ranges: 1,
-        merge_batches: 1,
         claimed_ranges: 1,
     });
     let bound = PromptContext {
@@ -542,7 +537,7 @@ fn prompt_statement_substitution_is_rejected_in_guest() {
 #[test]
 #[ignore = "builds and executes the production prompt-bind guest"]
 fn stage_schedule_is_checked_and_stored_in_guest() {
-    use model_identity::pipeline_core::MAX_MERGE_BATCHES;
+    use model_identity::pipeline_core::MAX_RANGES;
     use output_finalize::prompt::{bind_run_schedule, PromptContext, RunSchedule};
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../../raster-stages/prompt-bind")
@@ -581,7 +576,6 @@ fn stage_schedule_is_checked_and_stored_in_guest() {
     // Eight tokens in ranges of four allow two claimed ranges.
     let honest = RunSchedule {
         prompt_ranges: 2,
-        merge_batches: 3,
         claimed_ranges: 2,
     };
     let over_budget = RunSchedule {
@@ -593,7 +587,7 @@ fn stage_schedule_is_checked_and_stored_in_guest() {
         ..honest.clone()
     };
     let past_limit = RunSchedule {
-        merge_batches: MAX_MERGE_BATCHES + 1,
+        prompt_ranges: MAX_RANGES + 1,
         ..honest.clone()
     };
     for (schedule, faulted) in [
@@ -615,16 +609,8 @@ fn stage_schedule_is_checked_and_stored_in_guest() {
         // The stage finishes and keeps the schedule it was given either way.
         let stored = actual.model.execution_context().unwrap().schedule;
         assert_eq!(
-            (
-                stored.prompt_ranges,
-                stored.merge_batches,
-                stored.claimed_ranges
-            ),
-            (
-                schedule.prompt_ranges,
-                schedule.merge_batches,
-                schedule.claimed_ranges
-            )
+            (stored.prompt_ranges, stored.claimed_ranges),
+            (schedule.prompt_ranges, schedule.claimed_ranges)
         );
     }
 }
@@ -648,11 +634,9 @@ fn execution_fixture() -> (
     p.bind_statement(&"11".repeat(32), false, 4, 4);
     p.bind_schedule(model_identity::pipeline_core::StageSchedule {
         prompt_ranges: 1,
-        merge_batches: 1,
         claimed_ranges: 1,
     });
     p.begin_prompt_range();
-    p.continue_prompt_range();
     p.append_consumed_token(1);
     p.append_consumed_token(2);
     p.finish_prompt_range(true, 2, 0);

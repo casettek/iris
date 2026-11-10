@@ -17,8 +17,8 @@ chain (`--no-auth`), the checkpointed native-staged chain, and native-direct
 generation. Each execution owns its intermediate outputs and runtime state.
 All three fixed cases run every time. There are no numerical tolerances.
 
-Independent exact-ID tokenizer fixtures and authenticated tokenizer-chain checks
-are described in [ranked BPE](../proposals/ranked-bpe-tokenizer.md).
+Independent exact-ID tokenizer references are in `tests/tokenizer/`, checked by
+`crates/inference/staged/tests/tokenizer.rs`.
 
 The sibling `../raster` checkout and its normal Rust/RISC Zero build prerequisites
 must be available, as required by this workspace's path dependencies. The gate
@@ -75,7 +75,7 @@ the chain then checks it.
   vocabulary and an output short of its budget, on the templated case: the whole chain finishes through both Raster and
   native-staged, agrees byte for byte, and the final record names the failure.
 - Over a stage schedule that disagrees with the run, on the templated case (one
-  prompt range, one merge batch or one claimed range more than the manifest runs):
+  prompt range or one claimed range more than the manifest runs):
   the whole chain finishes through both, agrees byte for byte, and the final record
   carries a model fault.
 - Missing, duplicate, unexpected, malformed, or error-bearing outputs fail.
@@ -136,8 +136,8 @@ Build/import logs are at the run root. Files are retained on success and failure
 The command exits nonzero on any failed build, execution, coverage assertion, or
 comparison. Numerical differences identify the execution pair, case, semantic
 stage, first differing value where available, and byte offset. Execution failures
-identify the corresponding log. Tests never rewrite manual stage fixtures, existing
-model imports, or `Raster.lock` files.
+identify the corresponding log. Tests never rewrite existing model imports or
+`Raster.lock` files.
 
 Normal `infer` remains free of diagnostic serialization. Library users can opt
 into `DirectInferenceExecutor::run_with_diagnostics` to receive canonical boundary

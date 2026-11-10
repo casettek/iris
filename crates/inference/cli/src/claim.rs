@@ -293,7 +293,6 @@ fn prepare_run(
         .ok_or_else(|| anyhow::anyhow!("manifest template has no parent directory"))?;
     let mark_files = run_prep::write_range_marks(&ranges, &prompt_dir)?;
     let claimed_files = run_prep::write_claimed_ranges(&ids, range_size as usize, &prompt_dir)?;
-    let merge_repeats = run_prep::CHECK_MERGE_BATCHES;
     let run_manifest = render_ranged_manifest(
         &template,
         template_dir,
@@ -307,15 +306,9 @@ fn prepare_run(
             },
             &prompt_dir,
         )?,
-        &run_prep::write_run_schedule(
-            mark_files.len(),
-            merge_repeats,
-            claimed_files.len(),
-            &prompt_dir,
-        )?,
+        &run_prep::write_run_schedule(mark_files.len(), claimed_files.len(), &prompt_dir)?,
         &mark_files,
         &claimed_files,
-        merge_repeats,
     )?;
     let manifest_path = run_dir.join("Raster.toml");
     fs::create_dir_all(&run_dir)
@@ -350,13 +343,9 @@ const RUN_PLACEHOLDER_DIR: &str = "target/iris/run-prompt-placeholder/";
 /// Marks where the template names the last prompt range.
 const LAST_PROMPT_RANGE: &str = "@LAST_PROMPT_RANGE@";
 
-/// Marks where the template names each range's last tokenizer batch.
-const LAST_MERGE_BATCH: &str = "@LAST_MERGE_BATCH@";
-
 /// Fills the template for one run: the original text, the configuration
-/// and the stage schedule, the range counts, the last prompt range's index, the
-/// tokenizer batches after each range's seed, and each range's committed cut or
-/// claimed ids.
+/// and the stage schedule, the range counts, the last prompt range's index,
+/// and each range's committed marks or claimed ids.
 pub(crate) fn render_ranged_manifest(
     template: &str,
     template_dir: &Path,
@@ -365,26 +354,20 @@ pub(crate) fn render_ranged_manifest(
     schedule: &run_prep::RunFile,
     prompt: &[run_prep::RunFile],
     claimed: &[run_prep::RunFile],
-    merge_repeats: u32,
 ) -> Result<String> {
     anyhow::ensure!(
         !prompt.is_empty() && !claimed.is_empty(),
         "a run needs at least one prompt range and one claimed range"
     );
-    anyhow::ensure!(
-        merge_repeats > 0,
-        "a prompt range needs at least one tokenizer batch after its seed"
-    );
     let template = inference_artifacts::resolve_raster_manifest_paths(template, template_dir)?;
     let last_prompt = (prompt.len() - 1).to_string();
-    let last_merge = (merge_repeats - 1).to_string();
     let mut table = String::new();
     let mut name = String::new();
     let mut fan_index = String::new();
     // Prompt repeats, claimed repeats, prompt externals, claimed externals,
-    // per-layer prompt fans, per-layer claimed fans, tokenizer batch fans,
-    // text bindings, configuration bindings, schedule bindings.
-    let mut replaced = [0_usize; 10];
+    // per-layer prompt fans, per-layer claimed fans, text bindings,
+    // configuration bindings, schedule bindings.
+    let mut replaced = [0_usize; 9];
     let mut out = Vec::new();
     for line in template.lines() {
         let trimmed = line.trim();
@@ -409,11 +392,11 @@ pub(crate) fn render_ranged_manifest(
         }
         if table == "[[chain.stage]]" && name == "prompt_bind" {
             let binding = if trimmed.starts_with("inputs.text =") {
-                Some(("text", text, 7))
+                Some(("text", text, 6))
             } else if trimmed.starts_with("inputs.config =") {
-                Some(("config", config, 8))
+                Some(("config", config, 7))
             } else if trimmed.starts_with("inputs.schedule =") {
-                Some(("schedule", schedule, 9))
+                Some(("schedule", schedule, 8))
             } else {
                 None
             };
@@ -426,9 +409,7 @@ pub(crate) fn render_ranged_manifest(
             }
         }
         let files = match table.as_str() {
-            // A template either checks each range against marks, or cuts it
-            // and replays its merges.
-            "[chain.input.prompt_marks]" | "[chain.input.prompt_cuts]" => Some((prompt, 2)),
+            "[chain.input.prompt_marks]" => Some((prompt, 2)),
             "[chain.input.claimed_ids]" => Some((claimed, 3)),
             _ => None,
         };
@@ -437,7 +418,7 @@ pub(crate) fn render_ranged_manifest(
                 .into_iter()
                 .find(|key| trimmed.starts_with(&format!("{key} =")))
             {
-                // Keep the indexed file name (`cut_{j}.rastered`), move it
+                // Keep the indexed file name (`marks_{j}.rastered`), move it
                 // from the placeholder directory to this run's.
                 let value: toml::Value = toml::from_str(trimmed)?;
                 let placeholder = value[key].as_str().context("invalid input path")?;
@@ -487,7 +468,6 @@ pub(crate) fn render_ranged_manifest(
             let range_count = match fan_index.as_str() {
                 "j" => Some((4, prompt.len())),
                 "k" => Some((5, claimed.len())),
-                "b" => Some((6, merge_repeats as usize)),
                 _ => None,
             };
             if let Some((slot, count)) = range_count {
@@ -496,18 +476,14 @@ pub(crate) fn render_ranged_manifest(
                 continue;
             }
         }
-        out.push(
-            line.replace(LAST_PROMPT_RANGE, &last_prompt)
-                .replace(LAST_MERGE_BATCH, &last_merge),
-        );
+        out.push(line.replace(LAST_PROMPT_RANGE, &last_prompt));
     }
     if replaced[..4] != [1, 2, 1, 1]
         || replaced[4] == 0
         || replaced[4] != replaced[5]
-        || replaced[6] > 1
-        || replaced[7..] != [1, 1, 1]
+        || replaced[6..] != [1, 1, 1]
     {
-        anyhow::bail!("incompatible chain template: expected [prompt repeats, claimed repeats, prompt commitments, claimed commitments] = [1, 2, 1, 1], matching per-layer range fans, one tokenizer batch fan and one text, one configuration and one schedule binding; found {replaced:?}");
+        anyhow::bail!("incompatible chain template: expected [prompt repeats, claimed repeats, prompt commitments, claimed commitments] = [1, 2, 1, 1], matching per-layer range fans, and one text, one configuration and one schedule binding; found {replaced:?}");
     }
     out.push(String::new());
     Ok(out.join("\n"))
@@ -861,10 +837,10 @@ mod tests {
         let template = r#"[chain]
 name = "iris"
 
-[chain.input.prompt_cuts]
+[chain.input.prompt_marks]
 index = "j"
-path = "/repo/target/iris/run-prompt-placeholder/cut_{j}.rastered"
-index_path = "/repo/target/iris/run-prompt-placeholder/cut_{j}.rindex"
+path = "/repo/target/iris/run-prompt-placeholder/marks_{j}.rastered"
+index_path = "/repo/target/iris/run-prompt-placeholder/marks_{j}.rindex"
 commitments = []
 
 [chain.input.claimed_ids]
@@ -885,13 +861,9 @@ index = "j"
 count = 0
 
   [[chain.repeat.stage]]
-name = "prompt_merge_p{j}_b{b}"
-index = "b"
-count = 0
-
-  [[chain.repeat.stage]]
-name = "prompt_prepare_p{j}"
-inputs.merged_pieces = { from = "prompt_merge_p{j}_b@LAST_MERGE_BATCH@" }
+name = "prompt_check_p{j}"
+inputs.previous = { from = "prompt_check_p{j-1}", first = "prompt_bind" }
+inputs.marks = { input = "prompt_marks_{j}" }
 
 [[chain.repeat]]
 name = "claimed_embed"
@@ -932,12 +904,12 @@ count = 0
         let config = file("config", "g0");
         let schedule = file("schedule", "s0");
         let prompt = [
-            file("cut_0", "a0"),
-            file("cut_1", "a1"),
-            file("cut_2", "a2"),
+            file("marks_0", "a0"),
+            file("marks_1", "a1"),
+            file("marks_2", "a2"),
         ];
         let claimed = [file("claimed_0", "c0")];
-        let render = |claimed: &[run_prep::RunFile], merge_repeats| {
+        let render = |template: &str, claimed: &[run_prep::RunFile]| {
             render_ranged_manifest(
                 template,
                 Path::new("/repo"),
@@ -946,22 +918,21 @@ count = 0
                 &schedule,
                 &prompt,
                 claimed,
-                merge_repeats,
             )
         };
-        let manifest = render(&claimed, 5).unwrap();
+        let manifest = render(template, &claimed).unwrap();
         let parsed: toml::Value = toml::from_str(&manifest).unwrap();
         let inputs = &parsed["chain"]["input"];
         assert_eq!(
-            inputs["prompt_cuts"]["path"].as_str(),
-            Some("/tmp/run/prompt/cut_{j}.rastered")
+            inputs["prompt_marks"]["path"].as_str(),
+            Some("/tmp/run/prompt/marks_{j}.rastered")
         );
         assert_eq!(
             inputs["claimed_ids"]["index_path"].as_str(),
             Some("/tmp/run/prompt/claimed_{k}.rindex")
         );
         assert_eq!(
-            inputs["prompt_cuts"]["commitments"],
+            inputs["prompt_marks"]["commitments"],
             toml::Value::try_from(["a0", "a1", "a2"]).unwrap()
         );
         assert_eq!(
@@ -971,8 +942,6 @@ count = 0
         let repeats = parsed["chain"]["repeat"].as_array().unwrap();
         let count = |value: &toml::Value| value["count"].as_integer();
         assert_eq!(count(&repeats[0]), Some(3));
-        assert_eq!(count(&repeats[0]["stage"][0]), Some(5));
-        assert!(manifest.contains(r#"from = "prompt_merge_p{j}_b4""#));
         assert_eq!(count(&repeats[1]), Some(1));
         // The layer block keeps its count; its fans run once per range.
         assert_eq!(count(&repeats[2]), Some(4));
@@ -985,8 +954,10 @@ count = 0
         assert!(manifest.contains(r#"commitment = "g0""#));
         assert!(manifest.contains(r#"commitment = "s0""#));
         assert!(!manifest.contains("run-prompt-placeholder"));
-        assert!(render(&[], 5).is_err());
-        assert!(render(&claimed, 0).is_err());
+        assert!(render(template, &[]).is_err());
+        // A template for the removed cut-and-merge stages is not this chain's.
+        let cuts = template.replace("prompt_marks", "prompt_cuts");
+        assert!(render(&cuts, &claimed).is_err());
     }
 
     fn write_stage(base: &PathBuf, stage: &str, commitment: &str, output: &[u8]) {

@@ -1131,7 +1131,7 @@ dependencies = [
  "output-finalize",
  "prefill-prepare-aux",
  "prefill-range",
- "prompt-prepare",
+ "prompt-check",
  "raster",
  "run-prep",
  "sequence-check",
@@ -2069,7 +2069,6 @@ dependencies = [
  "prefill-prepare-aux",
  "prefill-range",
  "prompt-check",
- "prompt-prepare",
  "range-origin",
  "raster",
  "rayon",
@@ -2562,7 +2561,7 @@ dependencies = [
  "inference-artifacts",
  "model-identity",
  "output-finalize",
- "prompt-prepare",
+ "prompt-check",
  "raster",
  "run-prep",
  "serde",
@@ -2993,36 +2992,6 @@ dependencies = [
 
 [[package]]
 name = "prompt-core"
-version = "0.1.0"
-dependencies = [
- "model-identity",
- "raster",
- "serde",
- "sha2",
-]
-
-[[package]]
-name = "prompt-merge"
-version = "0.1.0"
-dependencies = [
- "model-identity",
- "raster",
- "serde",
- "sha2",
-]
-
-[[package]]
-name = "prompt-prepare"
-version = "0.1.0"
-dependencies = [
- "model-identity",
- "raster",
- "serde",
- "sha2",
-]
-
-[[package]]
-name = "prompt-seed"
 version = "0.1.0"
 dependencies = [
  "model-identity",
@@ -3977,7 +3946,6 @@ dependencies = [
  "input-embedding",
  "output-finalize",
  "prompt-check",
- "prompt-prepare",
  "raster",
  "sequence-check",
  "serde",
@@ -4419,7 +4387,6 @@ dependencies = [
  "prefill-prepare-aux",
  "prefill-range",
  "prompt-check",
- "prompt-prepare",
  "range-origin",
  "raster",
  "raster-core",

@@ -122,13 +122,13 @@ mod tests {
         use raster_core::chain::{ChainCommitment, ChainShape, StageCheckpoint};
         let base = temp_dir("chain-commitment-order");
         fs::create_dir_all(&base).unwrap();
-        for name in ["prompt_merge_seed", "prompt_merge_b0", "prompt_prepare"] {
+        for name in ["prompt_bind", "prompt_check_p0", "embed_p0"] {
             write_stage(&base, name, "abc", name.as_bytes());
         }
         let expected = vec![
-            "prompt_merge_seed".to_string(),
-            "prompt_merge_b0".to_string(),
-            "prompt_prepare".to_string(),
+            "prompt_bind".to_string(),
+            "prompt_check_p0".to_string(),
+            "embed_p0".to_string(),
         ];
         let chain = ChainCommitment {
             stages: expected
@@ -167,7 +167,7 @@ mod tests {
         // A present but damaged commitment must not be hidden by legacy timing data.
         fs::write(
             base.join(EXECUTION_TIMES_JSON),
-            r#"{"stages":[{"name":"prompt_prepare"}]}"#,
+            r#"{"stages":[{"name":"embed_p0"}]}"#,
         )
         .unwrap();
         fs::write(base.join("chain-commitment"), b"invalid").unwrap();
@@ -228,7 +228,7 @@ mod tests {
             version: 1,
             checkpoint_trace_path: PathBuf::from("checkpoint_trace.json"),
             input: ClaimEndpoint {
-                stage: String::from("prompt_prepare"),
+                stage: String::from("prompt_bind"),
                 commitment: String::from("input"),
             },
             output: ClaimEndpoint {

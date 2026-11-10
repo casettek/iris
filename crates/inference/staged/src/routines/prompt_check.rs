@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use prompt_check::check::TokenMarks;
-use prompt_prepare::input::{PromptState, PromptTokenizer, TokenizerWitness};
+use prompt_check::input::{PromptState, PromptTokenizer, TokenizerWitness};
 
 use crate::artifact_io::{with_main_sequence_scope, with_stage_sequence_scope};
 use crate::cache::{

@@ -387,7 +387,6 @@ fn main(
     let bound_context = select!(PromptContext, bound.clone().context);
     let context = call!(join_prompt_contexts, previous_context, bound_context);
     let context = call!(identity_prompt, context, identity);
-    let context = call!(continue_range, context);
 
     // Which pieces the range takes.
     let starts = select!(List<u32>, marks.starts);
@@ -576,25 +575,19 @@ fn identity_root(value: PromptTokenizer, witness: TokenizerWitness) -> BytesPage
     let vocab_bucket_count = call!(identity_hash_u32, vocab_bucket_count);
     let merge_bucket_count = select!(u32, value.clone().merge_bucket_count);
     let merge_bucket_count = call!(identity_hash_u32, merge_bucket_count);
-    let boundary_bucket_count = select!(u32, value.clone().boundary_bucket_count);
-    let boundary_bucket_count = call!(identity_hash_u32, boundary_bucket_count);
     let profile = select!(TokenizerProfile, value.clone().profile);
     let profile = call!(identity_hash_tokenizerprofile, profile);
     let vocab_header = select!(SparseHeader, witness.clone().vocab);
     let vocab_buckets = call!(identity_sparse_root, vocab_header);
-    let merge_header = select!(SparseHeader, witness.clone().merges);
+    let merge_header = select!(SparseHeader, witness.merges);
     let merge_buckets = call!(identity_sparse_root, merge_header);
-    let boundary_header = select!(SparseHeader, witness.boundaries);
-    let boundary_buckets = call!(identity_sparse_root, boundary_header);
     call!(
         identity_component,
         vocab_bucket_count,
         merge_bucket_count,
-        boundary_bucket_count,
         profile,
         vocab_buckets,
-        merge_buckets,
-        boundary_buckets
+        merge_buckets
     )
 }
 

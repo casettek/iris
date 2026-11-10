@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
 use inference_artifacts::{DirectInferShape, InferenceRunSpec, ModelManifest, PreparedPrompt};
-use prompt_prepare::input::BpePieces;
+use prompt_check::input::BpePieces;
 use raster::{Bytes, List};
 
 use detwgt::{DetwgtMatrixView, DetwgtSlice, MmapDetwgt, Q8MatrixView};
@@ -189,21 +189,17 @@ impl DirectInferenceModel {
         run_prep::prepare_prompt(&self.tokenizer, spec_dir, spec, &self.manifest)
     }
 
-    /// The prompt's part of the run's stage schedule: its range count and the
-    /// merge batches each range runs after its seed, as run preparation counts
-    /// them. `None` when the prompt cannot be cut into ranges, which only a
-    /// chain needs.
-    pub fn prompt_schedule(&self, prompt: &PreparedPrompt) -> Option<(u32, u32)> {
+    /// The prompt's part of the run's stage schedule: its range count, as run
+    /// preparation counts it. `None` when the prompt cannot be cut into ranges,
+    /// which only a chain needs.
+    pub fn prompt_ranges(&self, prompt: &PreparedPrompt) -> Option<u32> {
         let ranges = run_prep::marked_ranges(
             &prompt.initial_pieces,
             self.manifest.range_size as usize,
             &run_prep::prompt_tokenizer(&self.tokenizer).ok()?,
         )
         .ok()?;
-        Some((
-            u32::try_from(ranges.len()).ok()?,
-            run_prep::CHECK_MERGE_BATCHES,
-        ))
+        u32::try_from(ranges.len()).ok()
     }
 
     fn matrix_view(&self, name: &str, rows: usize, cols: usize) -> Result<DirectMatrixView<'_>> {
@@ -235,14 +231,14 @@ impl DirectInferenceModel {
     pub fn prompt_inputs(
         &self,
         prompt: &PreparedPrompt,
-    ) -> Result<prompt_prepare::input::PromptTokenization> {
+    ) -> Result<prompt_check::input::PromptTokenization> {
         let tokenizer = run_prep::prompt_tokenizer(&self.tokenizer)?;
         let pieces = BpePieces {
             pieces: List::from(
                 prompt
                     .initial_pieces
                     .iter()
-                    .map(|p| prompt_prepare::input::BpePiece {
+                    .map(|p| prompt_check::input::BpePiece {
                         text: p.text.clone(),
                         segment: p.segment,
                     })

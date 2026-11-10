@@ -13,9 +13,8 @@ import subprocess
 import time
 
 
-STAGES = ["prompt-bind", "prompt-seed", "prompt-merge", "prompt-prepare", "range-origin",
-          "decode-init", "input-embedding", "prefill-prepare-aux", "prefill-range",
-          "sequence-check", "output-finalize"]
+STAGES = ["prompt-bind", "prompt-check", "range-origin", "decode-init", "input-embedding",
+          "prefill-prepare-aux", "prefill-range", "sequence-check", "output-finalize"]
 
 
 def read(path):
@@ -63,8 +62,7 @@ def invoke(command, cwd, env, log):
 
 
 def project(name):
-    for prefix, program in [("prompt_seed_", "prompt-seed"), ("prompt_merge_", "prompt-merge"),
-                            ("prompt_prepare_", "prompt-prepare"), ("embed_", "input-embedding"),
+    for prefix, program in [("prompt_check_", "prompt-check"), ("embed_", "input-embedding"),
                             ("aux_", "prefill-prepare-aux"), ("range_origin", "range-origin"),
                             ("range_", "prefill-range"), ("check_", "sequence-check")]:
         if name.startswith(prefix):
@@ -73,16 +71,12 @@ def project(name):
 
 
 def expected_names(names):
-    # Independent inventory for the four-layer bundle. The range and tokenizer
-    # batch counts are dynamic.
+    # Independent inventory for the four-layer bundle. The range counts are dynamic.
     prompt = len([n for n in names if re.fullmatch(r"embed_p\d+", n)])
     claimed = len([n for n in names if re.fullmatch(r"embed_c\d+", n)])
-    batches = len([n for n in names if re.fullmatch(r"prompt_merge_p0_b\d+", n)])
     expected = ["range_origin", "decode_init", "prompt_bind"]
     for j in range(prompt):
-        expected += [f"prompt_seed_p{j}"]
-        expected += [f"prompt_merge_p{j}_b{b}" for b in range(batches)]
-        expected += [f"prompt_prepare_p{j}", f"embed_p{j}"]
+        expected += [f"prompt_check_p{j}", f"embed_p{j}"]
     expected += [f"embed_c{k}" for k in range(claimed)]
     for layer in range(4):
         expected += [f"aux_p{j}_l{layer}" for j in range(prompt)]

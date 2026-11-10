@@ -87,9 +87,9 @@ crates/
   det-num/                  # deterministic numeric primitives
 raster-stages/              # verifiable Raster program crates
 model-bundles/              # checked-in source model bundles for local gates
-runtime/                    # imported model artifacts, prompt fixtures, generated manifest examples
+runtime/                    # imported model artifacts, generated manifest examples
 manifests/                  # alternate generated manifests and examples
 docs/                       # workflow, internals, issues, proposals
 ```
 
-`raster-stages/*` are intentionally left outside `crates/`: each directory is a Raster program boundary with its own `Cargo.toml`, `Raster.lock`, no-std tile library, and sequence entry point. Reusable imported model externals live under `runtime/model-artifacts/<model-id>/raster/`, prompt fixtures live under `runtime/prompt-fixtures/`, and generated chain manifests point each stage at the files it needs there. Each full import saves its chain template under `runtime/model-artifacts/<model-id>/Raster.toml`, and run preparation fills it in for each run. Pass `--manifest <path>` to save another copy for manual Raster commands.
+`raster-stages/*` are intentionally left outside `crates/`: each directory is a Raster program boundary with its own `Cargo.toml`, `Raster.lock`, no-std tile library, and sequence entry point. Reusable imported model externals live under `runtime/model-artifacts/<model-id>/raster/`, and generated chain manifests point each stage at the files it needs there. Each full import saves its chain template under `runtime/model-artifacts/<model-id>/Raster.toml`, and run preparation fills it in for each run. Pass `--manifest <path>` to save another copy for manual Raster commands.

@@ -1,5 +1,5 @@
-# A rendered chain for the runner's tests: four layers, two prompt ranges of
-# two tokenizer batches each, and two claimed ranges. Nothing here is executed.
+# A rendered chain for the runner's tests: four layers, two prompt ranges and
+# two claimed ranges. Nothing here is executed.
 [chain]
 name = "iris"
 version = "0.1.0"
@@ -26,10 +26,10 @@ commitments = [
   "230fec6f8369eed481606c51e2cb75fa0c4423715ca264987fb5ebe62b320380", # l3
 ]
 
-[chain.input.prompt_cuts]
+[chain.input.prompt_marks]
 index = "j"
-path = "run/cut_{j}.rastered"
-index_path = "run/cut_{j}.rindex"
+path = "run/marks_{j}.rastered"
+index_path = "run/marks_{j}.rindex"
 commitments = ["0", "1"]
 
 [chain.input.claimed_ids]
@@ -49,7 +49,7 @@ project = "raster-stages/decode-init"
 [[chain.stage]]
 name = "prompt_bind"
 project = "raster-stages/prompt-bind"
-inputs.tokenizer = { external = { path = "model/raster/prompt-prepare/tokenizer.rastered", index_path = "model/raster/prompt-prepare/tokenizer.rindex", commitment = "242796af3dc4a3365a89c7696018953e6eb1b3fd0098475a03be438db8124564" } }
+inputs.tokenizer = { external = { path = "model/raster/prompt-bind/tokenizer.rastered", index_path = "model/raster/prompt-bind/tokenizer.rindex", commitment = "242796af3dc4a3365a89c7696018953e6eb1b3fd0098475a03be438db8124564" } }
 inputs.text = { external = { path = "run/text.rastered", index_path = "run/text.rindex", commitment = "0000000000000000000000000000000000000000000000000000000000000000" } }
 inputs.config = { external = { path = "run/config.rastered", index_path = "run/config.rindex", commitment = "0000000000000000000000000000000000000000000000000000000000000000" } }
 
@@ -59,31 +59,17 @@ index = "j"
 count = 2
 
   [[chain.repeat.stage]]
-name = "prompt_seed_p{j}"
-project = "raster-stages/prompt-seed"
-inputs.tokenizer = { external = { path = "model/raster/prompt-prepare/tokenizer.rastered", index_path = "model/raster/prompt-prepare/tokenizer.rindex", commitment = "242796af3dc4a3365a89c7696018953e6eb1b3fd0098475a03be438db8124564" } }
+name = "prompt_check_p{j}"
+project = "raster-stages/prompt-check"
+inputs.tokenizer = { external = { path = "model/raster/prompt-bind/tokenizer.rastered", index_path = "model/raster/prompt-bind/tokenizer.rindex", commitment = "242796af3dc4a3365a89c7696018953e6eb1b3fd0098475a03be438db8124564" } }
 inputs.bound = { from = "prompt_bind" }
-inputs.previous = { from = "prompt_prepare_p{j-1}", first = "prompt_bind" }
-inputs.cut = { input = "prompt_cuts_{j}" }
-
-  [[chain.repeat.stage]]
-name = "prompt_merge_p{j}_b{b}"
-index = "b"
-count = 2
-project = "raster-stages/prompt-merge"
-inputs.initial_pieces = { from = "prompt_merge_p{j}_b{b-1}", first = "prompt_seed_p{j}" }
-inputs.tokenizer = { external = { path = "model/raster/prompt-prepare/tokenizer.rastered", index_path = "model/raster/prompt-prepare/tokenizer.rindex", commitment = "242796af3dc4a3365a89c7696018953e6eb1b3fd0098475a03be438db8124564" } }
-
-  [[chain.repeat.stage]]
-name = "prompt_prepare_p{j}"
-project = "raster-stages/prompt-prepare"
-inputs.merged_pieces = { from = "prompt_merge_p{j}_b1" }
-inputs.tokenizer = { external = { path = "model/raster/prompt-prepare/tokenizer.rastered", index_path = "model/raster/prompt-prepare/tokenizer.rindex", commitment = "242796af3dc4a3365a89c7696018953e6eb1b3fd0098475a03be438db8124564" } }
+inputs.previous = { from = "prompt_check_p{j-1}", first = "prompt_bind" }
+inputs.marks = { input = "prompt_marks_{j}" }
 
   [[chain.repeat.stage]]
 name = "embed_p{j}"
 project = "raster-stages/input-embedding"
-inputs.prompt = { from = "prompt_prepare_p{j}" }
+inputs.prompt = { from = "prompt_check_p{j}" }
 inputs.claimed = { external = { path = "model/raster/input-embedding/no_claim.rastered", index_path = "model/raster/input-embedding/no_claim.rindex", commitment = "94f6d7424f2abc4846e1e7b1cf592ea061ee6d9841b31ac1e040e6dd917f87b0" } }
 inputs.previous = { from = "embed_p{j-1}", first = "range_origin" }
 inputs.embedding = { external = { path = "model/raster/input-embedding/embedding.rastered", index_path = "model/raster/input-embedding/embedding.rindex", commitment = "3bd19605326c5645eb245619ac6200a48d35a502f42aafa62b35919f611eb814" } }
@@ -209,12 +195,12 @@ inputs.activations = { from = "range_c{k}_l3" }
 inputs.previous = { from = "range_c{k-1}_l3", first = "range_p1_l3" }
 inputs.claimed = { input = "claimed_ids_{k}" }
 inputs.prior = { from = "check_c{k-1}", first = "decode_init" }
-inputs.prompt = { from = "prompt_prepare_p1" }
+inputs.prompt = { from = "prompt_check_p1" }
 inputs.head = { external = { path = "model/raster/sequence-check/head.rastered", index_path = "model/raster/sequence-check/head.rindex", commitment = "b4599037cbac4aed94db1208a39e144c0f732c28ea83120cedbbbc4ba1a24fe6" } }
 
 [[chain.stage]]
 name = "output_finalize"
 project = "raster-stages/output-finalize"
 inputs.edge = { from = "claimed.edge" }
-inputs.prompt = { from = "prompt_prepare_p1" }
+inputs.prompt = { from = "prompt_check_p1" }
 inputs.decoder = { external = { path = "model/raster/output-finalize/decoder.rastered", index_path = "model/raster/output-finalize/decoder.rindex", commitment = "f7c9eb199ab52c3878257a2f21fad6f68ad57c1ed13e6b090b7ff393a92ba8b8" } }

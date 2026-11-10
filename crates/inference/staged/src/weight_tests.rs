@@ -1072,11 +1072,9 @@ fn sparse_embedding_checks_current_proofs_with_warm_cache() {
         .model
         .bind_schedule(model_identity::pipeline_core::StageSchedule {
             prompt_ranges: 1,
-            merge_batches: 1,
             claimed_ranges: 1,
         });
     prompt.context.model.begin_prompt_range();
-    prompt.context.model.continue_prompt_range();
     prompt.context.model.append_consumed_token(0);
     prompt.context.model.finish_prompt_range(true, 1, 0);
     f.write("prompt", &prompt);
@@ -1141,7 +1139,7 @@ fn sparse_embedding_checks_current_proofs_with_warm_cache() {
 
 #[test]
 fn sparse_merge_fault_survives_later_matches_and_cached_tokenizer() {
-    use prompt_prepare::input::*;
+    use prompt_check::input::*;
     let f = Fixture::new();
     let mut buckets = vec![MergeBucket::default(); 16];
     let index = merge_bucket_of("a", "b", 16) as usize;
@@ -1155,10 +1153,19 @@ fn sparse_merge_fault_survives_later_matches_and_cached_tokenizer() {
     let tokenizer = PromptTokenizer {
         vocab_bucket_count: 1,
         merge_bucket_count: 16,
-        boundary_bucket_count: 1,
-        vocab_buckets: vec![VocabBucket::default()].into(),
+        vocab_buckets: vec![VocabBucket {
+            entries: ["a", "b", "ab"]
+                .iter()
+                .enumerate()
+                .map(|(id, token)| TokenEntry {
+                    token: (*token).into(),
+                    id: id as u32,
+                })
+                .collect::<Vec<_>>()
+                .into(),
+        }]
+        .into(),
         merge_buckets: buckets.into(),
-        boundary_buckets: vec![BoundaryBucket::default()].into(),
         ..Default::default()
     };
     let witness = tokenizer_witness(&tokenizer).unwrap();
@@ -1178,7 +1185,9 @@ fn sparse_merge_fault_survives_later_matches_and_cached_tokenizer() {
         .iter()
         .map(|b| format!("{b:02x}"))
         .collect::<String>();
-    let initial = PromptState {
+    // What `prompt-bind` publishes for the text "ab": its pieces, and a context
+    // bound to the statement and to a schedule of one prompt range.
+    let bound = PromptState {
         pieces: vec![
             BpePiece {
                 text: "a".into(),
@@ -1191,56 +1200,60 @@ fn sparse_merge_fault_survives_later_matches_and_cached_tokenizer() {
         ]
         .into(),
         context: PromptContext {
-            // A seeded range: the state a merge batch follows.
             model: {
                 let mut model =
                     model_identity::ModelContext::bind(&descriptor.encode().unwrap(), &id);
                 model.bind_statement(&"11".repeat(32), false, 8, 4);
                 model.bind_schedule(model_identity::pipeline_core::StageSchedule {
                     prompt_ranges: 1,
-                    merge_batches: 1,
                     claimed_ranges: 1,
                 });
-                model.begin_prompt_range();
                 model
             },
+            input_text_sha256: "11".repeat(32),
             model_id: id,
+            max_new_tokens: 8,
+            range_size: 4,
             ..Default::default()
         },
         ..Default::default()
     };
     f.write("tokenizer", &tokenizer);
     f.write("witness", &witness);
-    f.write("initial_pieces", &initial);
+    f.write("bound", &bound);
+    f.write("previous", &bound);
+    // One token, "ab", starting at the first piece.
+    f.write(
+        "marks",
+        &prompt_check::check::TokenMarks {
+            starts: vec![1, 0].into(),
+        },
+    );
     let cache = MaterializationCache::with_budget(Arc::new(WeightBudget::new(1 << 20)));
     let run = || {
-        let inputs = routines::prompt_merge::load_inputs_from_paths_with_cache(
+        let inputs = routines::prompt_check::load_inputs_from_paths_with_cache(
             &f.dir.join("input.json"),
             &f.dir.join("input_manifest.json"),
             &CachedInputs::new(),
             Some(&cache),
         )
         .unwrap();
-        routines::prompt_merge::run_direct(&inputs).unwrap()
+        routines::prompt_check::run_direct(&inputs).unwrap()
     };
-    assert_eq!(run().context.model.fault, 0);
+    let honest = run();
+    assert_eq!(honest.context.model.fault, 0);
+    assert_eq!(honest.context.fault, 0);
+    assert_eq!(honest.token_ids.as_slice(), &[2]);
     let mut bad = witness.clone();
     let mut paths = bad.merge_paths.as_slice().to_vec();
-    paths[merge_bucket_of("", "a", 16) as usize].siblings =
-        BytesPage::__from_parts(0, 0, vec![0; 31]);
+    paths[index].siblings = BytesPage::__from_parts(0, 0, vec![0; 31]);
     bad.merge_paths = paths.into();
     f.write("witness", &bad);
     let output = run();
-    assert_eq!(
-        output.pieces.as_slice(),
-        &[BpePiece {
-            text: "ab".into(),
-            segment: 0
-        }]
-    );
+    assert_eq!(output.token_ids.as_slice(), &[2]);
     assert_ne!(output.context.model.fault, 0);
     if std::env::var_os("STAGED_INFER_REPLAY_BIN_DIR").is_some() {
-        f.compare_raster("prompt-merge", &output, "merge-sticky-fault");
+        f.compare_raster("prompt-check", &output, "merge-sticky-fault");
     }
     f.write("witness", &witness);
     assert_eq!(run().context.model.fault, 0);

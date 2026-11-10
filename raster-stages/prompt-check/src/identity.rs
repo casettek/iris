@@ -44,20 +44,16 @@ pub fn identity_mergebucket_root(root: BytesPage) -> BytesPage {
 pub fn identity_component(
     vocab_bucket_count: BytesPage,
     merge_bucket_count: BytesPage,
-    boundary_bucket_count: BytesPage,
     profile: BytesPage,
     vocab_buckets: BytesPage,
     merge_buckets: BytesPage,
-    boundary_buckets: BytesPage,
 ) -> BytesPage {
     stream::structure(&[
         ("vocab_bucket_count", vocab_bucket_count),
         ("merge_bucket_count", merge_bucket_count),
-        ("boundary_bucket_count", boundary_bucket_count),
         ("profile", profile),
         ("vocab_buckets", vocab_buckets),
         ("merge_buckets", merge_buckets),
-        ("boundary_buckets", boundary_buckets),
     ])
 }
 #[tile(kind=iter)]

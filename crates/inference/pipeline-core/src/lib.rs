@@ -180,7 +180,7 @@ pub struct Execution {
     /// The stage that produced this record.
     pub step: Step,
 }
-pub const EXECUTION_VERSION: u32 = 2;
+pub const EXECUTION_VERSION: u32 = 3;
 pub const BOUND: u8 = 0;
 pub const TOKENIZING: u8 = 1;
 pub const PREPARED: u8 = 2;

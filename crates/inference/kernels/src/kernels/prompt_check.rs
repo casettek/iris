@@ -11,7 +11,7 @@
 //! neighbour in its segment is merged alone and must become one piece.
 
 use anyhow::{ensure, Result};
-use prompt_prepare::input::{vocab_bucket_of, BpePiece, PromptTokenizer};
+use prompt_check::input::{vocab_bucket_of, BpePiece, PromptTokenizer};
 
 use super::prompt_prepare::best_merge;
 
@@ -401,9 +401,9 @@ pub mod rounds {
             .collect()
     }
 
-    /// Pieces visited by merge scans when today's stages tokenize `pieces` as
-    /// one range: every round scans the whole range, rounds come in batches
-    /// of 64, and `prompt-prepare` scans once more.
+    /// Pieces visited by merge scans had the stages this check replaced
+    /// tokenized `pieces` as one range: every round scanned the whole range,
+    /// rounds came in batches of 64, and a last stage scanned once more.
     pub fn full_merge_scan_steps(pieces: &[BpePiece], tokenizer: &PromptTokenizer) -> Result<u64> {
         let mut current = pieces.to_vec();
         let mut steps = 0_u64;
@@ -427,7 +427,7 @@ pub mod rounds {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use prompt_prepare::input::{merge_bucket_of, BpeMerge, MergeBucket, TokenEntry, VocabBucket};
+    use prompt_check::input::{merge_bucket_of, BpeMerge, MergeBucket, TokenEntry, VocabBucket};
     use std::collections::BTreeSet;
 
     struct Rng(u64);
@@ -475,7 +475,6 @@ mod tests {
         PromptTokenizer {
             vocab_bucket_count: BUCKETS,
             merge_bucket_count: BUCKETS,
-            boundary_bucket_count: 0,
             vocab_buckets: vocab_buckets.into(),
             merge_buckets: merges.into(),
             ..Default::default()
@@ -850,7 +849,7 @@ mod tests {
     #[test]
     fn the_stage_twin_accepts_exactly_the_merge_across_ranges() {
         use crate::kernels::prompt_check_stage::{marks_for, run_prompt_check, Trusted};
-        use prompt_prepare::input::PromptState;
+        use prompt_check::input::PromptState;
 
         let letters = ["a", "b", "c"];
         let root = raster::BytesPage::__from_parts(0, 0, Vec::new());
@@ -915,10 +914,10 @@ mod tests {
     #[test]
     fn the_stage_twin_records_what_is_wrong_with_a_range() {
         use crate::kernels::prompt_check_stage::{run_prompt_check, Trusted};
-        use prompt_check::check::{FAULT_NOT_THE_MERGE, FAULT_TOKEN_SPLIT};
-        use prompt_prepare::input::{
+        use prompt_check::input::{
             PromptState, FAULT_CUT_BEYOND_TEXT, FAULT_EMPTY_RANGE, FAULT_RANGE_TOO_LARGE,
         };
+        use prompt_check::input::{FAULT_NOT_THE_MERGE, FAULT_TOKEN_SPLIT};
 
         let rules = [
             ("a".to_string(), "b".to_string()),

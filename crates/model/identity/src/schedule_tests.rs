@@ -3,11 +3,10 @@ use crate::{ModelContext, ModelDescriptor};
 use alloc::{format, string::String, vec, vec::Vec};
 use pipeline_core::{StageSchedule, Step};
 
-/// Two prompt ranges, two merge batches each, two claimed ranges, two layers.
+/// Two prompt ranges, two claimed ranges, two layers.
 fn schedule() -> StageSchedule {
     StageSchedule {
         prompt_ranges: 2,
-        merge_batches: 2,
         claimed_ranges: 2,
     }
 }
@@ -39,23 +38,28 @@ fn bind(schedule: StageSchedule) -> ModelContext {
     context.bind_schedule(schedule);
     context
 }
-fn seed(previous: &ModelContext, bound: &ModelContext) -> ModelContext {
+/// A range's token check as its stage opens it, before it reads a token.
+fn open(previous: &ModelContext, bound: &ModelContext) -> ModelContext {
     let mut context = previous.clone();
     context.begin_prompt_range();
     context.require_bound(bound);
     context
 }
-fn merge(context: &ModelContext) -> ModelContext {
-    let mut context = context.clone();
-    context.continue_prompt_range();
-    context
-}
 /// Every range holds one token: range `j` of the prompt is token `j`.
-fn prepare(merged: &ModelContext, range: u32, complete: bool) -> ModelContext {
-    let mut context = merged.clone();
+fn close(opened: &ModelContext, range: u32, complete: bool) -> ModelContext {
+    let mut context = opened.clone();
     context.append_consumed_token(range);
     context.finish_prompt_range(complete, range + 1, 0);
     context
+}
+/// What a range's token check publishes.
+fn tokens(
+    previous: &ModelContext,
+    bound: &ModelContext,
+    range: u32,
+    complete: bool,
+) -> ModelContext {
+    close(&open(previous, bound), range, complete)
 }
 fn embed(prompt: &ModelContext, previous: &ModelContext, position: u32) -> ModelContext {
     let claimed = prompt.is_origin();
@@ -88,8 +92,7 @@ fn step(context: &ModelContext) -> Step {
 /// The contexts an honest run publishes, stage by stage.
 struct Run {
     bound: ModelContext,
-    seeds: Vec<ModelContext>,
-    merges: Vec<[ModelContext; 2]>,
+    /// Each prompt range's checked tokens.
     prepared: Vec<ModelContext>,
     /// Prompt ranges 0 and 1, then claimed ranges 0 and 1.
     embeds: Vec<ModelContext>,
@@ -100,18 +103,13 @@ struct Run {
 
 fn run() -> Run {
     let bound = bind(schedule());
-    let (mut seeds, mut merges, mut prepared, mut embeds) = (vec![], vec![], vec![], vec![]);
+    let (mut prepared, mut embeds) = (vec![], vec![]);
     let mut previous = bound.clone();
     for range in 0..2 {
-        let seeded = seed(&previous, &bound);
-        let first = merge(&seeded);
-        let second = merge(&first);
-        let ready = prepare(&second, range, range == 1);
+        let ready = tokens(&previous, &bound, range, range == 1);
         let before = embeds.last().cloned().unwrap_or_else(origin);
         embeds.push(embed(&ready, &before, range));
         previous = ready.clone();
-        seeds.push(seeded);
-        merges.push([first, second]);
         prepared.push(ready);
     }
     for range in 0..2 {
@@ -132,8 +130,6 @@ fn run() -> Run {
     let second = layers[3][1].head(&layers[2][1], &prepared[1], &first);
     Run {
         bound,
-        seeds,
-        merges,
         prepared,
         embeds,
         layers,
@@ -146,8 +142,6 @@ fn an_honest_run_follows_its_schedule_and_records_every_step() {
     let r = run();
     let all = [&r.bound]
         .into_iter()
-        .chain(&r.seeds)
-        .chain(r.merges.iter().flatten())
         .chain(&r.prepared)
         .chain(&r.embeds)
         .chain(r.layers.iter().flatten())
@@ -157,9 +151,8 @@ fn an_honest_run_follows_its_schedule_and_records_every_step() {
     }
     assert_eq!(r.checks[1].final_fault(&r.prepared[1], &r.prepared[1]), 0);
     assert_eq!(step(&r.bound), Step::bind());
-    assert_eq!(step(&r.seeds[1]), Step::seed(1));
-    assert_eq!(step(&r.merges[1][1]), Step::merge(1, 1));
-    assert_eq!(step(&r.prepared[1]), Step::prepare(1));
+    assert_eq!(step(&r.prepared[0]), Step::tokens(0));
+    assert_eq!(step(&r.prepared[1]), Step::tokens(1));
     assert_eq!(step(&r.embeds[1]), Step::embed(false, 1));
     assert_eq!(step(&r.embeds[3]), Step::embed(true, 1));
     assert_eq!(step(&r.embeds[2].auxiliary(1)), Step::auxiliary(true, 0, 1));
@@ -168,8 +161,6 @@ fn an_honest_run_follows_its_schedule_and_records_every_step() {
     // The recorded steps are exactly the schedule's, each once.
     let mut recorded: Vec<Step> = [&r.bound]
         .into_iter()
-        .chain(&r.seeds)
-        .chain(r.merges.iter().flatten())
         .chain(&r.prepared)
         .chain(&r.embeds)
         .chain(r.layers.iter().flatten())
@@ -192,24 +183,30 @@ fn an_honest_run_follows_its_schedule_and_records_every_step() {
 fn a_prompt_stage_out_of_place_faults() {
     let r = run();
     for (case, context) in [
-        ("a merge batch skipped", prepare(&r.merges[0][0], 0, false)),
-        ("a merge batch too many", merge(&r.merges[0][1])),
-        ("a merge after the range is prepared", merge(&r.prepared[0])),
-        ("no merge at all", prepare(&r.seeds[0], 0, false)),
-        ("a range seeded twice", seed(&r.seeds[0], &r.bound)),
-        ("a range seeded mid-merge", seed(&r.merges[0][0], &r.bound)),
-        ("a range past the schedule", seed(&r.prepared[1], &r.bound)),
+        (
+            "a range opened twice",
+            open(&open(&r.bound, &r.bound), &r.bound),
+        ),
+        (
+            "a range closed without being opened",
+            close(&r.bound, 0, false),
+        ),
+        ("a range closed twice", close(&r.prepared[0], 1, true)),
+        (
+            "a range past the schedule",
+            tokens(&r.prepared[1], &r.bound, 2, false),
+        ),
         (
             "the first range completing",
-            prepare(&r.merges[0][1], 0, true),
+            tokens(&r.bound, &r.bound, 0, true),
         ),
         (
             "the last range not completing",
-            prepare(&r.merges[1][1], 1, false),
+            tokens(&r.prepared[0], &r.bound, 1, false),
         ),
         (
-            "a seed bound to something else",
-            seed(&r.bound, &r.prepared[0]),
+            "a range bound to something else",
+            open(&r.bound, &r.prepared[0]),
         ),
     ] {
         assert_ne!(context.execution_fault, 0, "{case}");
@@ -229,8 +226,8 @@ fn an_embedding_or_layer_out_of_place_faults() {
             embed(&r.prepared[0], &r.embeds[0], 0),
         ),
         (
-            "a range embedded before it is prepared",
-            embed(&r.merges[0][1], &origin(), 0),
+            "a range embedded before its tokens are checked",
+            embed(&open(&r.bound, &r.bound), &origin(), 0),
         ),
         (
             "a claimed range past the schedule",
@@ -352,32 +349,28 @@ fn a_run_that_disagrees_with_its_counts_faults() {
     };
     // Scheduled for three prompt ranges, the prompt completes in two.
     let bound = with(|s| s.prompt_ranges = 3);
-    let first = prepare(&merge(&merge(&seed(&bound, &bound))), 0, false);
+    let first = tokens(&bound, &bound, 0, false);
     assert_eq!(first.fault, 0);
-    let second = prepare(&merge(&merge(&seed(&first, &bound))), 1, true);
+    let second = tokens(&first, &bound, 1, true);
     assert_ne!(second.execution_fault, 0);
     // Scheduled for one prompt range, the prompt needs two.
     let bound = with(|s| s.prompt_ranges = 1);
-    let first = prepare(&merge(&merge(&seed(&bound, &bound))), 0, false);
+    let first = tokens(&bound, &bound, 0, false);
     assert_ne!(first.execution_fault, 0);
-    // Scheduled for three merge batches, two run.
-    let bound = with(|s| s.merge_batches = 3);
-    let short = prepare(&merge(&merge(&seed(&bound, &bound))), 0, false);
-    assert_ne!(short.execution_fault, 0);
     // Scheduled for one claimed range, two run.
     let r = run();
     let bound = with(|s| s.claimed_ranges = 1);
     let mut previous = bound.clone();
     let mut embedded = origin();
     for range in 0..2 {
-        previous = prepare(&merge(&merge(&seed(&previous, &bound))), range, range == 1);
+        previous = tokens(&previous, &bound, range, range == 1);
         embedded = embed(&previous, &embedded, range);
     }
     let claimed = embed(&origin(), &embedded, 2);
     assert_eq!(claimed.fault, 0);
     assert_ne!(embed(&origin(), &claimed, 3).execution_fault, 0);
     // An input from a run under another schedule, and a run with none.
-    assert_ne!(seed(&r.prepared[0], &bound).execution_fault, 0);
+    assert_ne!(open(&r.prepared[0], &bound).execution_fault, 0);
     let unscheduled = statement();
-    assert_ne!(seed(&unscheduled, &unscheduled).execution_fault, 0);
+    assert_ne!(open(&unscheduled, &unscheduled).execution_fault, 0);
 }

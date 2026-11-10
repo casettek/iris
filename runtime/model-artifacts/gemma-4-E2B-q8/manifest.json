@@ -1,10 +1,10 @@
 {
-  "version": 8,
-  "model_id": "821204991faed2f412e0ec365798da90b8f77f57ad35a472d719a3c58895ef6d",
+  "version": 9,
+  "model_id": "99568bacf6731f64e6c5b11d10cf6890b7e1ec5e538d5aa1f39a9899fc909240",
   "model_commitments": [
     {
       "role": "tokenizer",
-      "commitment": "ea8210c242fd02811cc8dc27a77daaf532bb451aae53ba433d6f8b53311ede71"
+      "commitment": "68e45b7a22eb5b6dea787a8fe2227a0eb0fe9f9dc4f833b1b9b3311e8fb6ceb9"
     },
     {
       "role": "decoder",
@@ -372,6 +372,6 @@
   ],
   "provenance": {
     "raster_manifest_path": "Raster.toml",
-    "raster_manifest_sha256": "1cb0d80156458b936b4df9e63b7d5f51607941ca9bd7dff713e394e3b6646e8b"
+    "raster_manifest_sha256": "35ed4b8c446b2800f1672145b18b06cdbe6d82536372da447d3ea2ce0d3bde58"
   }
 }

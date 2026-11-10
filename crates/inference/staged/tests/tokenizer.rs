@@ -1,8 +1,7 @@
-use prompt_prepare::input::{BpePiece, BpePieces};
+use prompt_check::input::{BpePiece, BpePieces};
 use serde_json::{json, Value};
 use staged_infer::kernels::prompt_prepare::{
-    best_merge, finalize_prompt, run_merge_batch, run_prompt_prepare_direct,
-    PromptPrepareDirectInputs,
+    best_merge, finalize_prompt, run_prompt_prepare_direct, PromptPrepareDirectInputs,
 };
 use std::path::Path;
 
@@ -46,21 +45,7 @@ fn check_reference(tokenizer_path: &Path, corpus_path: &Path) {
             "{}",
             case["name"]
         );
-        let count = run_prep::tokenizer_repeat_count(initial.pieces.len()).unwrap();
-        let mut merged = initial;
-        for _ in 0..=count {
-            merged = run_merge_batch(PromptPrepareDirectInputs {
-                tokenizer: &table,
-                initial_pieces: &merged,
-            })
-            .unwrap();
-        }
-        let final_ids = finalize_prompt(PromptPrepareDirectInputs {
-            tokenizer: &table,
-            initial_pieces: &merged,
-        })
-        .unwrap();
-        assert_eq!(direct, final_ids, "{}", case["name"]);
+        assert_eq!(direct.context.fault, 0, "{}", case["name"]);
     }
 }
 
@@ -128,76 +113,32 @@ fn production_reference_ids() {
 }
 
 #[test]
-fn batch_boundaries_and_recorded_budget_fault() {
-    let batch = run_prep::MERGES_PER_STAGE;
-    for merges_needed in [
-        0,
-        1,
-        batch - 1,
-        batch,
-        batch + 1,
-        2 * batch - 1,
-        2 * batch,
-        2 * batch + 1,
-    ] {
-        // Distinct single-character pieces, more than the ASCII letters.
-        let text = (0..=merges_needed)
-            .map(|i| char::from_u32(0x100 + i as u32).unwrap())
-            .collect::<String>();
-        let mut vocab = serde_json::Map::new();
-        for (i, c) in text.chars().enumerate() {
-            vocab.insert(c.to_string(), json!(i));
-        }
-        let chars = text.chars().collect::<Vec<_>>();
-        let prefix = |len: usize| chars[..len].iter().collect::<String>();
-        let mut merges = vec![];
-        for i in 2..=chars.len() {
-            vocab.insert(prefix(i), json!(1000 + i));
-            merges.push(json!([prefix(i - 1), chars[i - 1].to_string()]));
-        }
-        let tokenizer = json!({"model":{"type":"BPE","vocab":vocab,"merges":merges}});
-        let table = run_prep::prompt_tokenizer(&tokenizer).unwrap();
-        let mut merged = pieces(&text, &tokenizer);
-        let before = best_merge(merged.pieces.as_slice(), &table).unwrap();
-        if merges_needed > 0 {
-            assert!(before.matched);
-            let early = finalize_prompt(PromptPrepareDirectInputs {
-                tokenizer: &table,
-                initial_pieces: &merged,
-            })
-            .unwrap();
-            assert_eq!(
-                early.context.fault,
-                prompt_prepare::input::FAULT_MERGES_INCOMPLETE
-            );
-        }
-        let batches = run_prep::tokenizer_repeat_count(merged.pieces.len()).unwrap() + 1;
-        for index in 0..batches {
-            merged = run_merge_batch(PromptPrepareDirectInputs {
-                tokenizer: &table,
-                initial_pieces: &merged,
-            })
-            .unwrap();
-            assert_eq!(
-                merged.pieces.len(),
-                (merges_needed + 1)
-                    .saturating_sub((index as usize + 1) * batch)
-                    .max(1)
-            );
-        }
-        assert_eq!(merged.pieces.len(), 1);
-        let again = run_merge_batch(PromptPrepareDirectInputs {
-            tokenizer: &table,
-            initial_pieces: &merged,
-        })
-        .unwrap();
-        assert_eq!(again, merged);
-        assert!(finalize_prompt(PromptPrepareDirectInputs {
-            tokenizer: &table,
-            initial_pieces: &merged
-        })
-        .is_ok());
-    }
+fn pieces_that_could_still_merge_are_recorded_and_merging_them_clears_it() {
+    let tokenizer =
+        json!({"model":{"type":"BPE","vocab":{"a":0,"b":1,"ab":2},"merges":[["a","b"]]}});
+    let table = run_prep::prompt_tokenizer(&tokenizer).unwrap();
+    let unmerged = pieces("ab", &tokenizer);
+    assert!(
+        best_merge(unmerged.pieces.as_slice(), &table)
+            .unwrap()
+            .matched
+    );
+    let early = finalize_prompt(PromptPrepareDirectInputs {
+        tokenizer: &table,
+        initial_pieces: &unmerged,
+    })
+    .unwrap();
+    assert_eq!(
+        early.context.fault,
+        prompt_check::input::FAULT_MERGES_INCOMPLETE
+    );
+    let merged = run_prompt_prepare_direct(PromptPrepareDirectInputs {
+        tokenizer: &table,
+        initial_pieces: &unmerged,
+    })
+    .unwrap();
+    assert_eq!(merged.context.fault, 0);
+    assert_eq!(merged.token_ids.as_slice(), &[2]);
 }
 
 #[test]
@@ -230,14 +171,4 @@ fn special_segments_forbid_otherwise_eligible_merges() {
         .as_slice(),
         &[0, 1]
     );
-}
-
-#[test]
-fn repeat_count_is_checked_and_empty_inputs_need_only_seed() {
-    for (pieces, count) in [(0, 0), (1, 0), (65, 0), (66, 1), (129, 1), (130, 2)] {
-        assert_eq!(run_prep::tokenizer_repeat_count(pieces).unwrap(), count);
-    }
-    if usize::BITS > 32 {
-        assert!(run_prep::tokenizer_repeat_count(usize::MAX).is_err());
-    }
 }

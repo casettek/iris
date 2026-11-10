@@ -1,21 +1,22 @@
+//! Native prompt preparation: the split `prompt-bind` runs, the ranked merge
+//! every range's token check is held to, and the whole-prompt tokenization
+//! direct inference uses.
 use anyhow::{ensure, Result};
-use prompt_prepare::input::{
-    apply_atom, begin_scan_state, begin_slice_state, begin_text_fold_state, boundary_bucket_of,
-    boundary_query_of, finish_slice_context, finish_token_context, fold_text, merge_bucket_of,
-    observe_piece, open_prompt_context, scan_chunk_into, scan_plan_of, vocab_bucket_of,
-    BoundaryHit, BpePiece, BpePieces, MergeCandidate, PromptContext, PromptState, PromptText,
-    PromptTokenization, PromptTokenizer, RangeCut, RunConfig, SplitState,
+use prompt_check::input::{
+    apply_atom, begin_scan_state, begin_text_fold_state, fold_text, merge_bucket_of,
+    open_prompt_context, record_fault, scan_chunk_into, scan_plan_of, vocab_bucket_of, BpePiece,
+    BpePieces, MergeCandidate, PromptContext, PromptState, PromptText, PromptTokenization,
+    PromptTokenizer, RunConfig, SplitState, FAULT_MERGES_INCOMPLETE, FAULT_RANGE_TOO_LARGE,
 };
 use raster::List;
-
-/// Merge rounds per `prompt-merge` stage. MUST match its `main`.
-pub const MERGES_PER_BATCH: usize = 64;
 
 pub struct PromptPrepareDirectInputs<'a> {
     pub tokenizer: &'a PromptTokenizer,
     pub initial_pieces: &'a BpePieces,
 }
 
+/// The lowest-ranked merge among neighbouring pieces of one segment, leftmost
+/// on a tie.
 pub fn best_merge(pieces: &[BpePiece], tokenizer: &PromptTokenizer) -> Result<MergeCandidate> {
     ensure!(
         tokenizer.merge_bucket_count as usize == tokenizer.merge_buckets.len()
@@ -51,32 +52,6 @@ fn apply(pieces: &mut Vec<BpePiece>, best: MergeCandidate) {
     let left = best.left as usize;
     pieces[left].text = best.merged;
     pieces.remove(left + 1);
-}
-
-fn merge_batch(pieces: &mut Vec<BpePiece>, tokenizer: &PromptTokenizer) -> Result<()> {
-    for _ in 0..MERGES_PER_BATCH {
-        let best = best_merge(pieces, tokenizer)?;
-        if !best.matched {
-            break;
-        }
-        apply(pieces, best);
-    }
-    Ok(())
-}
-
-pub fn run_merge_batch(inputs: PromptPrepareDirectInputs<'_>) -> Result<BpePieces> {
-    let mut pieces = inputs
-        .initial_pieces
-        .pieces
-        .iter()
-        .cloned()
-        .collect::<Vec<_>>();
-    merge_batch(&mut pieces, inputs.tokenizer)?;
-    Ok(BpePieces {
-        pieces: List::from(pieces),
-        token_ids: List::new(),
-        context: inputs.initial_pieces.context.clone(),
-    })
 }
 
 fn in_vocabulary(tokenizer: &PromptTokenizer, piece: &str) -> Result<bool> {
@@ -126,55 +101,28 @@ pub fn run_prompt_bind(
     })
 }
 
-/// `prompt-seed`: cuts one range out of the prompt's pieces, checks the cut,
-/// and runs the range's first merge batch.
-pub fn run_prompt_seed(
-    tokenizer: &PromptTokenizer,
-    bound: &PromptState,
-    previous: &PromptContext,
-    cut: &RangeCut,
-) -> Result<PromptState> {
-    let joined = ::prompt_prepare::input::join_prompt_models(previous.clone(), &bound.context);
-    let previous = &joined;
-    let mut slice = begin_slice_state(previous, cut.end);
-    for piece in bound.pieces.iter() {
-        observe_piece(&mut slice, piece);
+/// The context after pieces have been merged and counted. Pieces that could
+/// still merge are recorded rather than raised.
+fn finish_token_context(
+    context: &PromptContext,
+    best: &MergeCandidate,
+    tokens: u64,
+) -> PromptContext {
+    let mut next = context.clone();
+    let start = next.prompt_tokens as u64;
+    if best.matched {
+        record_fault(&mut next, FAULT_MERGES_INCOMPLETE, start + best.left);
     }
-    let query = boundary_query_of(&slice);
-    ensure!(
-        tokenizer.boundary_bucket_count > 0
-            && tokenizer.boundary_bucket_count as usize == tokenizer.boundary_buckets.len(),
-        "invalid boundary bucket count"
-    );
-    let index =
-        boundary_bucket_of(query.left, query.right, tokenizer.boundary_bucket_count) as usize;
-    let crossing = BoundaryHit {
-        found: query.active
-            && tokenizer.boundary_buckets[index]
-                .pairs
-                .iter()
-                .any(|pair| pair.left == query.left && pair.right == query.right),
-    };
-    let context = finish_slice_context(previous, &slice, &crossing);
-
-    let mut pieces = bound
-        .pieces
-        .iter()
-        .enumerate()
-        .filter(|(index, _)| (*index as u64) >= slice.start && (*index as u64) < slice.end)
-        .map(|(_, piece)| piece.clone())
-        .collect::<Vec<_>>();
-    merge_batch(&mut pieces, tokenizer)?;
-    Ok(PromptState {
-        pieces: List::from(pieces),
-        token_ids: List::new(),
-        context,
-    })
+    if next.range_size > 0 && tokens > next.range_size as u64 {
+        record_fault(&mut next, FAULT_RANGE_TOO_LARGE, start);
+    }
+    next.prompt_tokens = next
+        .prompt_tokens
+        .saturating_add(u32::try_from(tokens).unwrap_or(u32::MAX));
+    next
 }
 
-/// `prompt-prepare`: resolves the merged pieces to ids and records the range's
-/// outcome in the context. Pieces that could still merge are recorded rather
-/// than raised, so the stage finishes with an output to compare and replay.
+/// Resolves merged pieces to ids and records the outcome in the context.
 pub fn finalize_prompt(inputs: PromptPrepareDirectInputs<'_>) -> Result<PromptTokenization> {
     let pieces = inputs
         .initial_pieces
@@ -234,7 +182,8 @@ pub fn merge_fully(
     }
 }
 
-/// Direct inference has no checkpoint budget, but obeys the same ranked ordering.
+/// The whole prompt's tokens, as direct inference takes them: merged fully,
+/// with no ranges and no checkpoints.
 pub fn run_prompt_prepare_direct(
     inputs: PromptPrepareDirectInputs<'_>,
 ) -> Result<PromptTokenization> {
@@ -250,4 +199,36 @@ pub fn run_prompt_prepare_direct(
             context: inputs.initial_pieces.context.clone(),
         },
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use prompt_check::input::FAULT_NONE;
+
+    #[test]
+    fn unfinished_merges_and_an_oversized_range_are_recorded_first_fault_first() {
+        let context = PromptContext {
+            range_size: 2,
+            ..PromptContext::default()
+        };
+        let best = MergeCandidate {
+            matched: true,
+            left: 1,
+            ..MergeCandidate::default()
+        };
+        let next = finish_token_context(&context, &best, 3);
+        assert_eq!(
+            (next.fault, next.fault_position),
+            (FAULT_MERGES_INCOMPLETE, 1)
+        );
+        assert_eq!(next.prompt_tokens, 3);
+
+        let next = finish_token_context(&context, &MergeCandidate::default(), 3);
+        assert_eq!(next.fault, FAULT_RANGE_TOO_LARGE);
+
+        // With no range size, as in direct inference, no range limit applies.
+        let next = finish_token_context(&PromptContext::default(), &MergeCandidate::default(), 3);
+        assert_eq!(next.fault, FAULT_NONE);
+    }
 }

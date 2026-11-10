@@ -10,7 +10,7 @@ use crate::model::{DirectFinalHead, DirectInferenceModel, DirectPleLayer, Direct
 
 pub fn run_input_embedding_view(
     model: &DirectInferenceModel,
-    prompt: &prompt_prepare::input::PromptTokenization,
+    prompt: &prompt_check::input::PromptTokenization,
 ) -> Result<ActivationSequence> {
     let mut rows = Vec::with_capacity(prompt.token_ids.len());
     for token_id in prompt.token_ids.iter().copied() {

@@ -161,7 +161,7 @@ struct ModelImportArgs {
     only_ple: bool,
     #[arg(long = "only-direct")]
     only_direct: bool,
-    /// Do not overwrite the stage-local manual input fixtures.
+    /// Accepted and ignored: import no longer writes fixtures into stage directories.
     #[arg(long)]
     no_stage_fixtures: bool,
     /// Largest range, in prompt tokens or claimed ids.
@@ -181,7 +181,7 @@ struct InferArgs {
 struct ReplayProfileArgs {
     #[arg(long, default_value = inference_artifacts::INFERENCE_RUN_SPEC_TOML)]
     run: PathBuf,
-    /// Exact expanded stage name, e.g. range_p0_l13 or prompt_merge_p0_b1.
+    /// Exact expanded stage name, e.g. range_p0_l13 or prompt_check_p0.
     #[arg(long)]
     stage: String,
     /// Number of distinct tiles selected by their slowest native invocation.

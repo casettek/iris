@@ -45,14 +45,18 @@ pub const FAULT_NO_TEXT: u32 = 1;
 pub const FAULT_EMPTY_RANGE: u32 = 2;
 /// A range's cut is past the end of the prompt's pieces.
 pub const FAULT_CUT_BEYOND_TEXT: u32 = 3;
-/// A range's cut is at a boundary a merge could cross.
-pub const FAULT_UNSAFE_CUT: u32 = 4;
+// 4 was a cut at a boundary a merge could cross. No stage records it now that
+// a range's tokens are checked against the merge itself; the value stays unused.
 /// A range has more tokens than the run's range size.
 pub const FAULT_RANGE_TOO_LARGE: u32 = 5;
-/// A range's pieces could still merge: too few tokenizer batches ran.
+/// A range's pieces could still merge.
 pub const FAULT_MERGES_INCOMPLETE: u32 = 6;
 /// A prompt range continues another statement or loses an inherited fault.
 pub const FAULT_CONTEXT_MISMATCH: u32 = 7;
+/// A claimed token's pieces are in two segments.
+pub const FAULT_TOKEN_SPLIT: u32 = 8;
+/// The claimed tokens are not what the ranked merge produces.
+pub const FAULT_NOT_THE_MERGE: u32 = 9;
 
 /// What a `PromptContext::fault` value means.
 pub fn fault_description(fault: u32) -> &'static str {
@@ -62,9 +66,10 @@ pub fn fault_description(fault: u32) -> &'static str {
         FAULT_NO_TEXT => "the committed text has no chunks",
         FAULT_EMPTY_RANGE => "a range's cut does not move past the previous range's",
         FAULT_CUT_BEYOND_TEXT => "a range's cut is past the end of the prompt's pieces",
-        FAULT_UNSAFE_CUT => "a range's cut is at a boundary a merge could cross",
         FAULT_RANGE_TOO_LARGE => "a range has more tokens than the run's range size",
         FAULT_MERGES_INCOMPLETE => "a range's pieces could still merge",
+        FAULT_TOKEN_SPLIT => "a claimed token's pieces are in two segments",
+        FAULT_NOT_THE_MERGE => "the claimed tokens are not what the merge produces",
         _ => "an unknown fault",
     }
 }
@@ -109,19 +114,6 @@ pub struct MergeBucket {
     pub rules: List<BpeMerge>,
 }
 
-/// Two characters that sit next to each other inside some vocabulary token.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
-pub struct BoundaryPair {
-    pub left: u32,
-    pub right: u32,
-}
-
-/// One boundary bucket: the pairs that hash to this slot.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
-pub struct BoundaryBucket {
-    pub pairs: List<BoundaryPair>,
-}
-
 /// The tokenizer's text-handling behaviour, as committed data.
 ///
 /// All-scalar and small, so a tile may take it whole.
@@ -144,8 +136,8 @@ pub struct TokenizerProfile {
     pub fallback_bytes: String,
 }
 
-/// Committed tokenizer fixture: the vocabulary, the merge table and the
-/// boundary table, each bucketed by a hash of its key, plus the profile.
+/// Committed tokenizer fixture: the vocabulary and the merge table, each
+/// bucketed by a hash of its key, plus the profile.
 ///
 /// The bucketing is what makes a lookup affordable. A flat `List` can only be
 /// searched by scanning it, and a scan is one replay unit per entry — 262,144
@@ -161,11 +153,9 @@ pub struct TokenizerProfile {
 pub struct PromptTokenizer {
     pub vocab_bucket_count: u32,
     pub merge_bucket_count: u32,
-    pub boundary_bucket_count: u32,
     pub profile: TokenizerProfile,
     pub vocab_buckets: List<VocabBucket>,
     pub merge_buckets: List<MergeBucket>,
-    pub boundary_buckets: List<BoundaryBucket>,
 }
 
 /// FNV-1a offset basis and prime.
@@ -218,16 +208,6 @@ pub fn merge_bucket_of(left: &str, right: &str, bucket_count: u32) -> u32 {
     (hash % bucket_count as u64) as u32
 }
 
-/// Bucket a boundary pair lands in.
-pub fn boundary_bucket_of(left: u32, right: u32, bucket_count: u32) -> u32 {
-    if bucket_count == 0 {
-        return 0;
-    }
-    let hash = fnv1a64_continue(FNV_OFFSET_BASIS, &left.to_le_bytes());
-    let hash = fnv1a64_continue(hash, &right.to_le_bytes());
-    (hash % bucket_count as u64) as u32
-}
-
 // ---------------------------------------------------------------------------
 // The run's committed inputs
 // ---------------------------------------------------------------------------
@@ -258,8 +238,6 @@ pub struct RunConfig {
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
 pub struct RunSchedule {
     pub prompt_ranges: u32,
-    /// Merge batches each prompt range runs after its seed.
-    pub merge_batches: u32,
     pub claimed_ranges: u32,
 }
 
@@ -269,18 +247,9 @@ pub fn bind_run_schedule(mut context: PromptContext, schedule: &RunSchedule) -> 
         .model
         .bind_schedule(model_identity::pipeline_core::StageSchedule {
             prompt_ranges: schedule.prompt_ranges,
-            merge_batches: schedule.merge_batches,
             claimed_ranges: schedule.claimed_ranges,
         });
     context
-}
-
-/// Where one prompt range ends, as an index into the prompt's pieces.
-///
-/// Run preparation chooses it. The chain checks it rather than trusting it.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
-pub struct RangeCut {
-    pub end: u64,
 }
 
 // ---------------------------------------------------------------------------
@@ -323,9 +292,9 @@ pub struct PromptContext {
 
 /// The one output type of every prompt stage, so each may follow any other.
 ///
-/// `prompt-bind` publishes every piece of the prompt. `prompt-seed` and
-/// `prompt-merge` publish one range's pieces. `prompt-prepare` publishes that
-/// range's token ids. Only the last prompt stage's context covers the prompt.
+/// `prompt-bind` publishes every piece of the prompt. `prompt-check` publishes
+/// one range's token ids, with the pieces of the range's last token for the
+/// next range to check against. Only the last range's context covers the prompt.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
 pub struct PromptState {
     pub pieces: List<BpePiece>,
@@ -390,14 +359,6 @@ pub struct MergeStep {
     pub pending: String,
     pub has_pending: bool,
     pub piece: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
-pub struct RankedStep {
-    pub query: MergeStep,
-    pub piece: BpePiece,
-    pub position: u64,
-    pub best: MergeCandidate,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
@@ -847,20 +808,6 @@ pub struct SliceState {
     pub right: BpePiece,
 }
 
-/// The two characters either side of a cut, if a merge could cross it at all.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
-pub struct BoundaryQuery {
-    pub active: bool,
-    pub left: u32,
-    pub right: u32,
-}
-
-/// Whether the boundary table holds the query's pair.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
-pub struct BoundaryHit {
-    pub found: bool,
-}
-
 /// The fold before any piece, for a range ending at `end`.
 pub fn begin_slice_state(context: &PromptContext, end: u64) -> SliceState {
     SliceState {
@@ -881,70 +828,6 @@ pub fn observe_piece(state: &mut SliceState, piece: &BpePiece) {
         state.right = piece.clone();
     }
     state.position += 1;
-}
-
-/// The pair a safe cut must not be able to merge across.
-pub fn boundary_query_of(state: &SliceState) -> BoundaryQuery {
-    let edges = state
-        .left
-        .text
-        .chars()
-        .last()
-        .zip(state.right.text.chars().next());
-    match edges {
-        Some((left, right))
-            if state.has_left && state.has_right && state.left.segment == state.right.segment =>
-        {
-            BoundaryQuery {
-                active: true,
-                left: left as u32,
-                right: right as u32,
-            }
-        }
-        _ => BoundaryQuery::default(),
-    }
-}
-
-/// The context after this range's cut has been checked.
-pub fn finish_slice_context(
-    context: &PromptContext,
-    state: &SliceState,
-    crossing: &BoundaryHit,
-) -> PromptContext {
-    let mut next = context.clone();
-    let total = state.position;
-    if state.end <= state.start {
-        record_fault(&mut next, FAULT_EMPTY_RANGE, state.start);
-    } else if state.end > total {
-        record_fault(&mut next, FAULT_CUT_BEYOND_TEXT, state.end);
-    } else if crossing.found {
-        record_fault(&mut next, FAULT_UNSAFE_CUT, state.end);
-    }
-    if state.end > state.start {
-        next.next_piece = state.end.min(total);
-    }
-    next.complete = next.next_piece >= total;
-    next
-}
-
-/// The context after a range has been merged and counted.
-pub fn finish_token_context(
-    context: &PromptContext,
-    best: &MergeCandidate,
-    tokens: u64,
-) -> PromptContext {
-    let mut next = context.clone();
-    let start = next.prompt_tokens as u64;
-    if best.matched {
-        record_fault(&mut next, FAULT_MERGES_INCOMPLETE, start + best.left);
-    }
-    if next.range_size > 0 && tokens > next.range_size as u64 {
-        record_fault(&mut next, FAULT_RANGE_TOO_LARGE, start);
-    }
-    next.prompt_tokens = next
-        .prompt_tokens
-        .saturating_add(u32::try_from(tokens).unwrap_or(u32::MAX));
-    next
 }
 
 pub fn join_prompt_models(mut previous: PromptContext, bound: &PromptContext) -> PromptContext {
@@ -985,21 +868,16 @@ pub struct TokenizerWitness {
     pub vocab_paths: List<SparsePath>,
     pub merges: SparseHeader,
     pub merge_paths: List<SparsePath>,
-    pub boundaries: SparseHeader,
-    pub boundary_paths: List<SparsePath>,
 }
 pub fn tokenizer_witness(
     tokenizer: &PromptTokenizer,
 ) -> core::result::Result<TokenizerWitness, model_identity::ModelFault> {
     let vocab = model_identity::sparse::witness(tokenizer.vocab_buckets.as_slice())?;
     let merges = model_identity::sparse::witness(tokenizer.merge_buckets.as_slice())?;
-    let boundaries = model_identity::sparse::witness(tokenizer.boundary_buckets.as_slice())?;
     Ok(TokenizerWitness {
         vocab: vocab.header,
         vocab_paths: vocab.paths,
         merges: merges.header,
         merge_paths: merges.paths,
-        boundaries: boundaries.header,
-        boundary_paths: boundaries.paths,
     })
 }

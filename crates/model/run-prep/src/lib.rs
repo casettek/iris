@@ -7,16 +7,15 @@ use inference_artifacts::{InferenceRunSpec, ModelManifest, PreparedPiece, Prepar
 use input_embedding::input::ClaimedOutput;
 pub use output_finalize::input::{output_fault_description, OUTPUT_FAULT_SHORT_WITHOUT_EOS};
 use output_finalize::input::{DecoderTable, DecoderToken};
-use prompt_prepare::input::{
-    boundary_bucket_of, byte_token, fallback_mask, merge_bucket_of, split_rendered,
-    vocab_bucket_of, BoundaryBucket, BoundaryPair, BpeMerge, MergeBucket, PromptText,
-    TokenizerProfile, PROMPT_PREFIX, PROMPT_SUFFIX,
+use prompt_check::input::{
+    byte_token, fallback_mask, merge_bucket_of, split_rendered, vocab_bucket_of, BpeMerge,
+    MergeBucket, PromptText, TokenizerProfile, PROMPT_PREFIX, PROMPT_SUFFIX,
 };
-pub use prompt_prepare::input::{
-    fault_description, RangeCut, RunConfig, RunSchedule, FAULT_CUT_BEYOND_TEXT, FAULT_EMPTY_RANGE,
-    FAULT_NONE, FAULT_UNSAFE_CUT,
+pub use prompt_check::input::{
+    fault_description, RunConfig, RunSchedule, FAULT_CUT_BEYOND_TEXT, FAULT_EMPTY_RANGE,
+    FAULT_NONE, FAULT_NOT_THE_MERGE, FAULT_TOKEN_SPLIT,
 };
-use prompt_prepare::input::{BpePiece, BpePieces, PromptTokenizer, TokenEntry, VocabBucket};
+use prompt_check::input::{BpePiece, PromptTokenizer, TokenEntry, VocabBucket};
 use raster::List;
 pub use sequence_check::input::{
     check_fault_description, CHECK_FAULT_NO_CLAIMED_TOKENS, CHECK_FAULT_UNSCORED,
@@ -89,15 +88,12 @@ pub fn prompt_tokenizer(tokenizer: &serde_json::Value) -> Result<PromptTokenizer
     }
     let (vocab_bucket_count, vocab_buckets) = bucket_vocab(vocab);
     let (merge_bucket_count, merge_buckets) = bucket_merges(merges);
-    let (boundary_bucket_count, boundary_buckets) = bucket_boundaries(vocabulary_pairs(tokenizer)?);
     Ok(PromptTokenizer {
         vocab_bucket_count,
         merge_bucket_count,
-        boundary_bucket_count,
         profile: tokenizer_profile(tokenizer)?,
         vocab_buckets: List::from(vocab_buckets),
         merge_buckets: List::from(merge_buckets),
-        boundary_buckets: List::from(boundary_buckets),
     })
 }
 
@@ -178,130 +174,6 @@ fn write_run_file<T: serde::Serialize>(value: &T, dir: &Path, name: &str) -> Res
     })
 }
 
-/// Every pair of adjacent characters inside some vocabulary token.
-///
-/// A merge always produces a vocabulary token, and a merge across the
-/// boundary between two pieces produces one containing the left piece's last
-/// character followed by the right piece's first. So a boundary whose pair is
-/// not in this set can never be crossed, and the pieces on either side
-/// tokenize independently to the same ids as the whole prompt.
-pub fn vocabulary_pairs(tokenizer: &serde_json::Value) -> Result<BTreeSet<(char, char)>> {
-    let vocab = vocab_map(tokenizer_model(tokenizer)?)?;
-    let mut pairs = BTreeSet::new();
-    for token in vocab.keys() {
-        let chars = token.chars().collect::<Vec<_>>();
-        pairs.extend(chars.windows(2).map(|pair| (pair[0], pair[1])));
-    }
-    Ok(pairs)
-}
-
-fn can_cut(left: &PreparedPiece, right: &PreparedPiece, pairs: &BTreeSet<(char, char)>) -> bool {
-    if left.segment != right.segment {
-        return true;
-    }
-    match (left.text.chars().last(), right.text.chars().next()) {
-        (Some(last), Some(first)) => !pairs.contains(&(last, first)),
-        _ => true,
-    }
-}
-
-/// One prompt range: pieces between two boundaries no merge can cross, and
-/// the number of tokens they merge into.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct PromptRange {
-    pub pieces: Vec<PreparedPiece>,
-    pub tokens: usize,
-}
-
-/// Cuts the prompt's pieces into ranges of at most `range_size` tokens, each
-/// ending at the last boundary no merge can cross.
-///
-/// Each stretch between two such boundaries tokenizes on its own to the same
-/// ids as the whole prompt, so its token count is exact and ranges pack whole
-/// stretches. Fails if one stretch alone is longer than `range_size` tokens.
-pub fn prompt_ranges(
-    pieces: &[PreparedPiece],
-    range_size: usize,
-    pairs: &BTreeSet<(char, char)>,
-    tokenizer: &PromptTokenizer,
-) -> Result<Vec<PromptRange>> {
-    ensure!(
-        !pieces.is_empty(),
-        "a teacher-forced claim needs a non-empty prompt"
-    );
-    ensure!(range_size >= 2, "range size must be at least 2");
-    let empty = || PromptRange {
-        pieces: Vec::new(),
-        tokens: 0,
-    };
-    let mut ranges = Vec::new();
-    let mut current = empty();
-    let mut start = 0;
-    while start < pieces.len() {
-        let end = (start + 1..pieces.len())
-            .find(|&cut| can_cut(&pieces[cut - 1], &pieces[cut], pairs))
-            .unwrap_or(pieces.len());
-        let stretch = &pieces[start..end];
-        let tokens = merged_len(stretch, tokenizer)?;
-        ensure!(
-            tokens <= range_size,
-            "pieces {start}..{end} merge into {tokens} tokens with no boundary a merge cannot \
-             cross; reimport with a --range-size of at least {tokens}"
-        );
-        if current.tokens + tokens > range_size {
-            ranges.push(std::mem::replace(&mut current, empty()));
-        }
-        current.pieces.extend_from_slice(stretch);
-        current.tokens += tokens;
-        start = end;
-    }
-    ranges.push(current);
-    Ok(ranges)
-}
-
-fn merged_len(pieces: &[PreparedPiece], tokenizer: &PromptTokenizer) -> Result<usize> {
-    let pieces = pieces
-        .iter()
-        .map(|piece| BpePiece {
-            text: piece.text.clone(),
-            segment: piece.segment,
-        })
-        .collect();
-    Ok(inference_kernels::kernels::prompt_prepare::merge_fully(pieces, tokenizer)?.len())
-}
-
-/// Ordinary tokenizer repeats per prompt range after the seed batch: enough
-/// for the range needing the most merges, and at least one so the template's
-/// batch fan always exists.
-pub fn range_tokenizer_repeat_count(ranges: &[PromptRange]) -> Result<u32> {
-    let merges = ranges
-        .iter()
-        .map(|range| range.pieces.len() - range.tokens)
-        .max()
-        .unwrap_or(0);
-    let batches = merges.div_ceil(MERGES_PER_STAGE).max(2);
-    u32::try_from(batches - 1).context("tokenizer repeat count exceeds u32")
-}
-
-/// Where each range ends, as an index into the prompt's pieces.
-pub fn range_cuts(ranges: &[PromptRange]) -> Vec<RangeCut> {
-    let mut end = 0;
-    ranges
-        .iter()
-        .map(|range| {
-            end += range.pieces.len() as u64;
-            RangeCut { end }
-        })
-        .collect()
-}
-
-/// Writes each range's cut as `cut_{j}`.
-pub fn write_range_cuts(ranges: &[PromptRange], dir: &Path) -> Result<Vec<RunFile>> {
-    write_cuts(&range_cuts(ranges), dir)
-}
-
-pub use prompt_check::check::{FAULT_NOT_THE_MERGE, FAULT_TOKEN_SPLIT};
-
 /// One prompt range as `prompt-check` takes it: whole tokens, at most the
 /// range size of them, with a mark for each piece saying whether a token
 /// starts there.
@@ -316,10 +188,6 @@ pub struct MarkedRange {
 /// side need two merges fewer than they have pieces, and a pass has
 /// `ROUNDS_PER_PASS` rounds. A piece is at least one character.
 pub const MAX_MERGED_TOKEN_CHARS: usize = prompt_check::check::ROUNDS_PER_PASS / 2 + 1;
-
-/// The merge batches a run's schedule names. `prompt-check` records a range's
-/// seed, one merge step and its prepare step itself.
-pub const CHECK_MERGE_BATCHES: u32 = 1;
 
 /// Tokenizes the prompt's pieces and cuts the tokens into ranges of at most
 /// `range_size`. A range may end between any two tokens: the stage checks the
@@ -383,14 +251,6 @@ pub fn write_marks(marks: &[Vec<u32>], dir: &Path) -> Result<Vec<RunFile>> {
         .collect()
 }
 
-/// Writes these cuts as `cut_{j}`.
-pub fn write_cuts(cuts: &[RangeCut], dir: &Path) -> Result<Vec<RunFile>> {
-    cuts.iter()
-        .enumerate()
-        .map(|(index, cut)| write_run_file(cut, dir, &format!("cut_{index}")))
-        .collect()
-}
-
 /// The most bytes of prompt text in one chunk. `prompt-bind` writes up to one
 /// atom per byte, at about 144 draft bytes an atom, and Raster lets a tile write
 /// 64 KiB per chunk it consumes. A longer chunk stops the stage under Raster,
@@ -431,13 +291,11 @@ pub fn write_run_config(config: &RunConfig, dir: &Path) -> Result<RunFile> {
 /// manifest is filled in with.
 pub fn write_run_schedule(
     prompt_ranges: usize,
-    merge_batches: u32,
     claimed_ranges: usize,
     dir: &Path,
 ) -> Result<RunFile> {
     let schedule = RunSchedule {
         prompt_ranges: u32::try_from(prompt_ranges).context("prompt range count exceeds u32")?,
-        merge_batches,
         claimed_ranges: u32::try_from(claimed_ranges).context("claimed range count exceeds u32")?,
     };
     write_run_file(&schedule, dir, "schedule")
@@ -514,16 +372,6 @@ pub fn supports_gemma_turns(vocab: &BTreeMap<String, u32>) -> bool {
     [BOS_TOKEN, TURN_OPEN, TURN_CLOSE, NEWLINE_TOKEN]
         .iter()
         .all(|token| vocab.contains_key(*token))
-}
-
-/// Merge rounds per `prompt-merge` stage. MUST match its `main`.
-pub const MERGES_PER_STAGE: usize = 64;
-
-/// The number of ordinary repeats after the mandatory seed batch.
-pub fn tokenizer_repeat_count(piece_count: usize) -> Result<u32> {
-    let merges = piece_count.saturating_sub(1);
-    let batches = merges.div_ceil(MERGES_PER_STAGE).max(1);
-    u32::try_from(batches - 1).context("tokenizer repeat count exceeds u32")
 }
 
 /// Splits rendered text the way `prompt-bind` does, by the same code.
@@ -738,24 +586,6 @@ fn bucket_merges(merges: Vec<BpeMerge>) -> (u32, Vec<MergeBucket>) {
     )
 }
 
-fn bucket_boundaries(pairs: BTreeSet<(char, char)>) -> (u32, Vec<BoundaryBucket>) {
-    let count = bucket_count_for(pairs.len());
-    let mut buckets: Vec<Vec<BoundaryPair>> = vec![Vec::new(); count as usize];
-    for (left, right) in pairs {
-        let (left, right) = (left as u32, right as u32);
-        buckets[boundary_bucket_of(left, right, count) as usize].push(BoundaryPair { left, right });
-    }
-    (
-        count,
-        buckets
-            .into_iter()
-            .map(|pairs| BoundaryBucket {
-                pairs: List::from(pairs),
-            })
-            .collect(),
-    )
-}
-
 fn bucket_count_for(len: usize) -> u32 {
     (len / 4).max(1) as u32
 }
@@ -841,79 +671,67 @@ mod tests {
         );
     }
 
+    fn single_pieces(text: &str) -> Vec<PreparedPiece> {
+        text.chars()
+            .map(|c| PreparedPiece {
+                text: c.to_string(),
+                segment: 0,
+            })
+            .collect()
+    }
+
     #[test]
-    fn prompt_ranges_count_tokens_not_pieces() {
+    fn marked_ranges_count_tokens_not_pieces() {
         let tokenizer = serde_json::json!({
             "model": { "type": "BPE", "vocab": {"a": 0, "b": 1, "c": 2, "ab": 3}, "merges": ["a b"] },
             "added_tokens": []
         });
-        let pieces = "abcabcabc"
-            .chars()
-            .map(|c| PreparedPiece {
-                text: c.to_string(),
-                segment: 0,
-            })
-            .collect::<Vec<_>>();
-        let ranges = prompt_ranges(
-            &pieces,
+        let ranges = marked_ranges(
+            &single_pieces("abcabcabc"),
             4,
-            &vocabulary_pairs(&tokenizer).unwrap(),
             &prompt_tokenizer(&tokenizer).unwrap(),
         )
         .unwrap();
-        let texts = ranges
-            .iter()
-            .map(|range| {
-                range
-                    .pieces
-                    .iter()
-                    .map(|p| p.text.as_str())
-                    .collect::<String>()
-            })
-            .collect::<Vec<_>>();
         // "ab" merges, so the first range holds six pieces but four tokens.
-        assert_eq!(texts, ["abcabc", "abc"]);
-        assert_eq!(ranges.iter().map(|r| r.tokens).collect::<Vec<_>>(), [4, 2]);
-        assert_eq!(range_tokenizer_repeat_count(&ranges).unwrap(), 1);
+        assert_eq!(
+            ranges,
+            [
+                MarkedRange {
+                    pieces: 6,
+                    tokens: 4,
+                    marks: vec![1, 0, 1, 1, 0, 1],
+                },
+                MarkedRange {
+                    pieces: 3,
+                    tokens: 2,
+                    marks: vec![1, 0, 1],
+                },
+            ]
+        );
     }
 
     #[test]
-    fn prompt_ranges_reject_an_uncuttable_stretch_over_the_range_size() {
-        // "ba" is in the vocabulary, so no boundary in "ababab" is safe.
+    fn a_range_may_end_where_a_merge_could_cross() {
+        // "ba" is in the vocabulary, so every boundary in "ababab" is one a
+        // merge could cross, and a range still ends between any two tokens.
         let tokenizer = serde_json::json!({
             "model": { "type": "BPE", "vocab": {"a": 0, "b": 1, "ab": 2, "ba": 3}, "merges": ["a b"] },
             "added_tokens": []
         });
-        let pieces = "ababab"
-            .chars()
-            .map(|c| PreparedPiece {
-                text: c.to_string(),
-                segment: 0,
-            })
-            .collect::<Vec<_>>();
-        let pairs = vocabulary_pairs(&tokenizer).unwrap();
-        let prompt = prompt_tokenizer(&tokenizer).unwrap();
-        assert!(prompt_ranges(&pieces, 2, &pairs, &prompt).is_err());
-        assert_eq!(prompt_ranges(&pieces, 3, &pairs, &prompt).unwrap().len(), 1);
-    }
-
-    #[test]
-    fn range_cuts_are_cumulative_piece_counts() {
-        let range = |pieces: usize| PromptRange {
-            pieces: vec![
-                PreparedPiece {
-                    text: String::from("a"),
-                    segment: 0,
-                };
-                pieces
-            ],
-            tokens: 1,
-        };
-        let ends = range_cuts(&[range(3), range(1), range(4)])
-            .iter()
-            .map(|cut| cut.end)
-            .collect::<Vec<_>>();
-        assert_eq!(ends, [3, 4, 8]);
+        let ranges = marked_ranges(
+            &single_pieces("ababab"),
+            2,
+            &prompt_tokenizer(&tokenizer).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            ranges
+                .iter()
+                .map(|r| (r.pieces, r.tokens))
+                .collect::<Vec<_>>(),
+            [(4, 2), (2, 1)]
+        );
+        assert!(marked_ranges(&[], 2, &prompt_tokenizer(&tokenizer).unwrap()).is_err());
     }
 
     #[test]
@@ -991,47 +809,8 @@ mod tests {
     }
 
     #[test]
-    fn prompt_seed_records_a_bad_cut_and_still_finishes() {
-        use inference_kernels::kernels::prompt_prepare::{run_prompt_bind, run_prompt_seed};
-        use prompt_prepare::input::{FAULT_CUT_BEYOND_TEXT, FAULT_EMPTY_RANGE, FAULT_UNSAFE_CUT};
-        // "ab" is a vocabulary token, so a cut between a and b could be merged across.
-        let tokenizer = serde_json::json!({
-            "model": { "type": "BPE", "vocab": {"a": 0, "b": 1, "c": 2, "ab": 3}, "merges": ["a b"] },
-            "added_tokens": []
-        });
-        let tokenizer = prompt_tokenizer(&tokenizer).unwrap();
-        let config = RunConfig {
-            raw_prompt: true,
-            ..RunConfig::default()
-        };
-        let bound = run_prompt_bind(&tokenizer, &prompt_text("abcab"), &config).unwrap();
-        let seed = |previous: &prompt_prepare::input::PromptContext, end| {
-            run_prompt_seed(&tokenizer, &bound, previous, &RangeCut { end }).unwrap()
-        };
-
-        let first = seed(&bound.context, 3);
-        assert_eq!(first.context.fault, 0);
-        assert_eq!(
-            first
-                .pieces
-                .iter()
-                .map(|p| p.text.as_str())
-                .collect::<Vec<_>>(),
-            ["ab", "c"]
-        );
-        assert!(!first.context.complete);
-        let last = seed(&first.context, 5);
-        assert_eq!(last.context.fault, 0);
-        assert!(last.context.complete);
-
-        assert_eq!(seed(&bound.context, 1).context.fault, FAULT_UNSAFE_CUT);
-        assert_eq!(seed(&first.context, 3).context.fault, FAULT_EMPTY_RANGE);
-        assert_eq!(seed(&first.context, 9).context.fault, FAULT_CUT_BEYOND_TEXT);
-    }
-
-    #[test]
-    fn the_context_binds_the_original_text_and_says_when_a_range_is_left_out() {
-        use inference_kernels::kernels::prompt_prepare::{run_prompt_bind, run_prompt_seed};
+    fn the_context_binds_the_original_text() {
+        use inference_kernels::kernels::prompt_prepare::run_prompt_bind;
         use sha2::{Digest, Sha256};
         let tokenizer = serde_json::json!({
             "model": { "type": "BPE", "vocab": {"a": 0, "b": 1, "c": 2}, "merges": [] },
@@ -1054,23 +833,7 @@ mod tests {
             bind("abd").context.input_text_sha256
         );
         assert_eq!(bound.context.model_id, "model");
-
-        // Stopping early covers less than the whole prompt.
-        let early =
-            run_prompt_seed(&tokenizer, &bound, &bound.context, &RangeCut { end: 2 }).unwrap();
-        assert_eq!(early.context.fault, 0);
-        assert!(!early.context.complete);
-        // A range cannot begin anywhere but where the last one ended.
-        let next =
-            run_prompt_seed(&tokenizer, &bound, &early.context, &RangeCut { end: 3 }).unwrap();
-        assert_eq!(
-            next.pieces
-                .iter()
-                .map(|p| p.text.as_str())
-                .collect::<Vec<_>>(),
-            ["c"]
-        );
-        assert!(next.context.complete);
+        assert!(!bound.context.complete);
     }
 
     #[test]
@@ -1078,7 +841,7 @@ mod tests {
         use inference_kernels::kernels::prompt_prepare::{
             finalize_prompt, PromptPrepareDirectInputs,
         };
-        use prompt_prepare::input::FAULT_MERGES_INCOMPLETE;
+        use prompt_check::input::{BpePieces, FAULT_MERGES_INCOMPLETE};
         let tokenizer = serde_json::json!({
             "model": { "type": "BPE", "vocab": {"a": 0, "b": 1, "ab": 2}, "merges": ["a b"] },
             "added_tokens": []

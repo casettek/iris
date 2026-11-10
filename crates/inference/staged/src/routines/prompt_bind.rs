@@ -2,7 +2,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use anyhow::Result;
-use prompt_prepare::input::{
+use prompt_check::input::{
     bind_run_schedule, PromptState, PromptText, PromptTokenizer, RunConfig, RunSchedule,
 };
 
@@ -14,7 +14,7 @@ use crate::cache::{
 use inference_kernels::kernels::prompt_prepare::run_prompt_bind;
 
 pub struct Inputs {
-    pub witness: Arc<prompt_prepare::input::TokenizerWitness>,
+    pub witness: Arc<prompt_check::input::TokenizerWitness>,
     pub tokenizer: Arc<PromptTokenizer>,
     pub text: PromptText,
     pub config: RunConfig,
@@ -37,9 +37,11 @@ pub fn load_inputs_from_paths_with_cache(
         "tokenizer",
     )?;
     // The witness is the same committed input for every prompt stage of a run.
-    let witness_key = materialization_key_from_stage_files::<
-        prompt_prepare::input::TokenizerWitness,
-    >(input, input_manifest, "witness")?;
+    let witness_key = materialization_key_from_stage_files::<prompt_check::input::TokenizerWitness>(
+        input,
+        input_manifest,
+        "witness",
+    )?;
     with_stage_sequence_scope(input, input_manifest, || {
         load_inputs_with_cache(materialization_cache, key, witness_key)
     })
@@ -77,7 +79,7 @@ fn load_inputs_with_cache(
 ) -> Result<Inputs> {
     let binding = raster::start_program(&[
         raster::entry_argument_spec::<PromptTokenizer>("tokenizer"),
-        raster::entry_argument_spec::<prompt_prepare::input::TokenizerWitness>("witness"),
+        raster::entry_argument_spec::<prompt_check::input::TokenizerWitness>("witness"),
         raster::entry_argument_spec::<PromptText>("text"),
         raster::entry_argument_spec::<RunConfig>("config"),
         raster::entry_argument_spec::<raster::BytesPage>("descriptor"),
@@ -85,7 +87,7 @@ fn load_inputs_with_cache(
     ])?;
     let witness = materialize_with_cache(materialization_cache, witness_key, || {
         raster::materialize_auth_return(raster::entry_argument_auth_ref::<
-            prompt_prepare::input::TokenizerWitness,
+            prompt_check::input::TokenizerWitness,
         >(binding.reference.clone(), "witness"))
     })?;
     let tokenizer = materialize_with_cache(materialization_cache, key, || {

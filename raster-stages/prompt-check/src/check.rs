@@ -37,22 +37,8 @@ use serde::{Deserialize, Serialize};
 use crate::input::{
     record_fault, BpePiece, MergeCandidate, MergeMatch, MergeStep, PromptContext,
     FAULT_CUT_BEYOND_TEXT, FAULT_EMPTY_RANGE, FAULT_MERGES_INCOMPLETE, FAULT_NONE,
-    FAULT_RANGE_TOO_LARGE,
+    FAULT_NOT_THE_MERGE, FAULT_RANGE_TOO_LARGE, FAULT_TOKEN_SPLIT,
 };
-
-/// A claimed token's pieces are in two segments.
-pub const FAULT_TOKEN_SPLIT: u32 = 8;
-/// The claimed tokens are not what the ranked merge produces.
-pub const FAULT_NOT_THE_MERGE: u32 = 9;
-
-/// Describes the faults this stage adds to the prompt stages' own.
-pub fn check_fault_description(fault: u32) -> Option<&'static str> {
-    match fault {
-        FAULT_TOKEN_SPLIT => Some("a claimed token's pieces are in two segments"),
-        FAULT_NOT_THE_MERGE => Some("the claimed tokens are not what the merge produces"),
-        _ => None,
-    }
-}
 
 /// Merge rounds per pass. A window of two tokens needs two merges fewer than
 /// it has pieces, so this covers tokens of up to 33 pieces each. MUST match
@@ -546,8 +532,8 @@ pub fn observe_final_piece(summary: &mut PassSummary, piece: &CheckPiece) {
     summary.token = piece.token;
 }
 
-/// The context once the range is checked: everything `prompt-seed` and
-/// `prompt-prepare` record between them, from the check's results.
+/// The context once the range is checked: where the range ends, how many
+/// tokens it adds, and the first thing found wrong with it.
 pub fn finish_check_context(
     context: &PromptContext,
     plan: &RangePlan,

@@ -23,6 +23,6 @@ sha2 = "0.10"
 # (see its header), but the hash must NOT be: it is the one function the host
 # and the replay guest have to agree on byte-for-byte, and two copies of it is
 # exactly how they would silently drift into different buckets.
-prompt-prepare = { path = "../../../raster-stages/prompt-prepare" }
+prompt-check = { path = "../../../raster-stages/prompt-check" }
 
 run-prep = { path = "../run-prep" }

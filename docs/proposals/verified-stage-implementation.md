@@ -2,6 +2,11 @@
 
 Draft for review. November 9, 2026. Replaces the earlier drafts of the same day.
 
+Since November 10, 2026 the schedule is two counts, prompt ranges and claimed ranges:
+`prompt-check` replaced `prompt-seed`, `prompt-merge` and `prompt-prepare`, so the merge
+batch count `B` and the batch coordinate described below no longer exist. The current
+rules are in [raster-chain.md](../internals/raster-chain.md#stage-schedule).
+
 ## Goal
 
 **Give the pipeline its stage schedule as an input, verify that schedule in a stage, and have every later stage use it to verify that it is being run in the right order.**

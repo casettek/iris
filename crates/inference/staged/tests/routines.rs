@@ -1,7 +1,6 @@
 use input_embedding::input::{EmbeddingTable, PromptTokenization};
 use output_finalize::input::{DecoderTable, DecoderToken};
 use prefill_prepare_aux::input::{PleLayer, PleLayerParams};
-use prompt_prepare::input::{BpePieces, MergeBucket, PromptTokenizer, TokenEntry, VocabBucket};
 use raster::{Bytes, List};
 use serde::Serialize;
 use staged_infer::{kernels, routines};
@@ -327,61 +326,6 @@ fn output_finalize_publishes_budget_and_eos_faults_instead_of_failing() {
     let inputs = authenticate_decoder_inputs(inputs);
     let output = routines::output_finalize::run_direct(&inputs).unwrap();
     assert_eq!(output.output_fault, OUTPUT_FAULT_EDGE_DISAGREES);
-}
-
-#[test]
-fn prompt_prepare_resolves_vocab_bucket() {
-    let tokenizer = PromptTokenizer {
-        vocab_bucket_count: 1,
-        merge_bucket_count: 1,
-        vocab_buckets: List::from(vec![VocabBucket {
-            entries: List::from(vec![TokenEntry {
-                token: "hello".to_string(),
-                id: 42,
-            }]),
-        }]),
-        merge_buckets: List::from(vec![MergeBucket { rules: List::new() }]),
-        ..Default::default()
-    };
-    let mut inputs = routines::prompt_prepare::Inputs {
-        witness: prompt_prepare::input::tokenizer_witness(&tokenizer)
-            .unwrap()
-            .into(),
-        tokenizer: tokenizer.into(),
-        initial_pieces: BpePieces {
-            pieces: List::from(vec![prompt_prepare::input::BpePiece {
-                text: "hello".to_string(),
-                segment: 0,
-            }]),
-            ..Default::default()
-        },
-    };
-    let root = raster::core::tree::value_root(inputs.tokenizer.as_ref()).unwrap();
-    let d = model_identity::ModelDescriptor {
-        version: 1,
-        tokenizer: root,
-        decoder: [2; 32],
-        embedding: [3; 32],
-        head: [4; 32],
-        auxiliary: vec![[5; 32]],
-        transformer: vec![[6; 32]],
-    };
-    inputs.initial_pieces.context.model_id = hex::encode(d.model_id().unwrap());
-    inputs.initial_pieces.context.model = model_identity::ModelContext::bind(
-        &d.encode().unwrap(),
-        &inputs.initial_pieces.context.model_id,
-    );
-    let output = routines::prompt_prepare::run_direct(&inputs).unwrap();
-    let kernel_output = kernels::prompt_prepare::run_prompt_prepare_direct(
-        kernels::prompt_prepare::PromptPrepareDirectInputs {
-            tokenizer: &inputs.tokenizer,
-            initial_pieces: &inputs.initial_pieces,
-        },
-    )
-    .unwrap();
-
-    assert_same_json(&output, &kernel_output);
-    assert_eq!(output.token_ids.as_slice(), &[42]);
 }
 
 #[test]
@@ -776,13 +720,12 @@ fn authenticate_decoder_inputs(
         inputs.context.max_new_tokens,
         inputs.context.range_size,
     );
-    // One merge batch per prompt range, and the claimed ids in whole ranges.
+    // The prompt and the claimed ids, each in whole ranges.
     let schedule = model_identity::pipeline_core::StageSchedule {
         prompt_ranges: inputs
             .context
             .prompt_tokens
             .div_ceil(inputs.context.range_size),
-        merge_batches: 1,
         claimed_ranges: (inputs.edge.generated_token_ids.len() as u32)
             .div_ceil(inputs.context.range_size)
             .max(1),
@@ -790,7 +733,6 @@ fn authenticate_decoder_inputs(
     inputs.context.model.bind_schedule(schedule);
     for start in (0..inputs.context.prompt_tokens).step_by(inputs.context.range_size as usize) {
         inputs.context.model.begin_prompt_range();
-        inputs.context.model.continue_prompt_range();
         let end = (start + inputs.context.range_size).min(inputs.context.prompt_tokens);
         for _ in start..end {
             inputs.context.model.append_consumed_token(0);

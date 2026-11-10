@@ -124,80 +124,36 @@ fn sliced(total: u64, start: u64, end: u64) -> (PromptContext, SliceState) {
 }
 
 #[test]
-fn a_clean_cut_advances_and_the_last_one_completes_the_prompt() {
+fn a_slice_counts_its_pieces_and_keeps_the_two_either_side_of_its_end() {
     let (context, state) = sliced(4, 0, 2);
+    assert_eq!(
+        (state.start, state.end, state.position),
+        (context.next_piece, 2, 4)
+    );
+    assert!(state.has_left && state.has_right);
     assert_eq!(state.left.text, "1");
     assert_eq!(state.right.text, "2");
-    let next = finish_slice_context(&context, &state, &BoundaryHit::default());
-    assert_eq!((next.next_piece, next.complete, next.fault), (2, false, 0));
 
-    let (context, state) = sliced(4, 2, 4);
-    let next = finish_slice_context(&context, &state, &BoundaryHit::default());
-    assert_eq!((next.next_piece, next.complete, next.fault), (4, true, 0));
-    assert_eq!(boundary_query_of(&state), BoundaryQuery::default());
-}
+    // A slice that ends with the prompt has nothing to its right.
+    let (_, state) = sliced(4, 2, 4);
+    assert_eq!(state.left.text, "3");
+    assert!(!state.has_right);
 
-#[test]
-fn a_bad_cut_is_recorded_and_the_stage_still_finishes() {
-    let (context, state) = sliced(4, 2, 2);
-    let next = finish_slice_context(&context, &state, &BoundaryHit::default());
-    assert_eq!((next.fault, next.next_piece), (FAULT_EMPTY_RANGE, 2));
-
-    let (context, state) = sliced(4, 2, 9);
-    let next = finish_slice_context(&context, &state, &BoundaryHit::default());
-    assert_eq!(
-        (next.fault, next.next_piece, next.complete),
-        (FAULT_CUT_BEYOND_TEXT, 4, true)
-    );
-
-    let (context, state) = sliced(4, 0, 2);
-    let next = finish_slice_context(&context, &state, &BoundaryHit { found: true });
-    assert_eq!((next.fault, next.fault_position), (FAULT_UNSAFE_CUT, 2));
-}
-
-#[test]
-fn a_cut_between_segments_never_needs_the_boundary_table() {
-    let state = SliceState {
-        has_left: true,
-        left: BpePiece {
-            text: String::from("a"),
-            segment: 0,
-        },
-        has_right: true,
-        right: BpePiece {
-            text: String::from("b"),
-            segment: 1,
-        },
-        ..SliceState::default()
-    };
-    assert!(!boundary_query_of(&state).active);
+    // One that ends past the prompt has neither.
+    let (_, state) = sliced(4, 2, 9);
+    assert!(!state.has_left && !state.has_right);
 }
 
 #[test]
 fn the_first_fault_is_the_one_kept() {
-    let context = PromptContext {
-        range_size: 2,
-        ..PromptContext::default()
-    };
-    let best = MergeCandidate {
-        model_fault: 0,
-        matched: true,
-        left: 1,
-        ..MergeCandidate::default()
-    };
-    let next = finish_token_context(&context, &best, 3);
+    let mut context = PromptContext::default();
+    record_fault(&mut context, FAULT_EMPTY_RANGE, 3);
+    record_fault(&mut context, FAULT_RANGE_TOO_LARGE, 9);
     assert_eq!(
-        (next.fault, next.fault_position),
-        (FAULT_MERGES_INCOMPLETE, 1)
+        (context.fault, context.fault_position),
+        (FAULT_EMPTY_RANGE, 3)
     );
-    assert_eq!(next.prompt_tokens, 3);
-
-    let next = finish_token_context(&context, &MergeCandidate::default(), 3);
-    assert_eq!(next.fault, FAULT_RANGE_TOO_LARGE);
-
-    // Outside the ranged chain no range limit applies.
-    let next = finish_token_context(&PromptContext::default(), &MergeCandidate::default(), 3);
-    assert_eq!(next.fault, FAULT_NONE);
+    assert_eq!(fault_description(4), "an unknown fault");
 }
 
 #[test]
@@ -237,8 +193,11 @@ fn prompt_join_retains_faults_from_both_branches() {
     let joined = join_prompt_models(PromptContext::default(), &bound);
     assert_eq!((joined.fault, joined.fault_position), (FAULT_NO_TEXT, 12));
     let mut previous = PromptContext::default();
-    previous.fault = FAULT_UNSAFE_CUT;
+    previous.fault = FAULT_EMPTY_RANGE;
     previous.fault_position = 3;
     let joined = join_prompt_models(previous, &bound);
-    assert_eq!((joined.fault, joined.fault_position), (FAULT_UNSAFE_CUT, 3));
+    assert_eq!(
+        (joined.fault, joined.fault_position),
+        (FAULT_EMPTY_RANGE, 3)
+    );
 }

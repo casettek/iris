@@ -2080,15 +2080,15 @@ mod tests {
             }
         }
 
-        assert_eq!(manifest.chain.stage.len(), 50);
-        assert_eq!(direct, 49);
+        assert_eq!(manifest.chain.stage.len(), 44);
+        assert_eq!(direct, 43);
         assert_eq!(reference, 1);
     }
 
     #[test]
     fn stage_prefix_resolves_exact_expanded_instance_and_bounds_aux_waves() {
         let manifest = fixture_manifest();
-        for name in ["prompt_merge_p1_b1", "range_p1_l2", "aux_c0_l0"] {
+        for name in ["prompt_check_p1", "range_p1_l2", "aux_c0_l0"] {
             let mut stages = manifest.chain.stage.clone();
             let selected = stages.iter().position(|s| s.name == name).unwrap();
             truncate_through_stage(&mut stages, name).unwrap();
@@ -2104,7 +2104,7 @@ mod tests {
         }
         let mut stages = manifest.chain.stage;
         assert!(truncate_through_stage(&mut stages, "prefill-range").is_err());
-        assert!(truncate_through_stage(&mut stages, "prompt_merge_p9_b9").is_err());
+        assert!(truncate_through_stage(&mut stages, "prompt_check_p9").is_err());
         stages.push(stages[0].clone());
         assert!(truncate_through_stage(&mut stages, "range_origin").is_err());
     }
@@ -2112,7 +2112,7 @@ mod tests {
     #[test]
     fn prefix_timing_report_contains_only_executed_stages() {
         let mut manifest = fixture_manifest();
-        truncate_through_stage(&mut manifest.chain.stage, "prompt_merge_p0_b1").unwrap();
+        truncate_through_stage(&mut manifest.chain.stage, "embed_p0").unwrap();
         let base = test_base_dir();
         fs::create_dir_all(&base).unwrap();
         let times = vec![Some(Duration::from_nanos(7)); manifest.chain.stage.len()];
@@ -2138,12 +2138,11 @@ mod tests {
                 "range_origin",
                 "decode_init",
                 "prompt_bind",
-                "prompt_seed_p0",
-                "prompt_merge_p0_b0",
-                "prompt_merge_p0_b1"
+                "prompt_check_p0",
+                "embed_p0"
             ]
         );
-        assert_eq!(doc["total_exec_duration_ns"], 42);
+        assert_eq!(doc["total_exec_duration_ns"], 35);
         fs::remove_dir_all(base).unwrap();
     }
 
@@ -2163,13 +2162,20 @@ mod tests {
         let manifest = fixture_manifest();
         let index = build_stage_index(&manifest.chain.stage).unwrap();
 
-        assert!(index.contains_key("prompt_merge_p1_b1"));
-        assert!(!index.contains_key("prompt_merge_p1_b2"));
-        let prepare = &manifest.chain.stage[index["prompt_prepare_p1"]];
-        assert_eq!(
-            prepare.inputs["merged_pieces"],
-            InputBinding::From("prompt_merge_p1_b1".into())
-        );
+        assert!(index.contains_key("prompt_check_p1"));
+        assert!(!index.contains_key("prompt_check_p2"));
+        // The first range checks against the bind, each later one the range before.
+        for (range, previous) in [(0, "prompt_bind"), (1, "prompt_check_p0")] {
+            let check = &manifest.chain.stage[index[&format!("prompt_check_p{range}")]];
+            assert_eq!(
+                check.inputs["previous"],
+                InputBinding::From(previous.into())
+            );
+            assert_eq!(
+                check.inputs["bound"],
+                InputBinding::From("prompt_bind".into())
+            );
+        }
 
         assert!(index.contains_key("embed_c1"));
         assert!(index.contains_key("aux_c1_l3"));
@@ -2321,7 +2327,7 @@ inputs.edge = { from = "claimed.edge" }
         output_cache.insert(
             "producer",
             vec![0xaa, 0xbb],
-            CachedStageValue::PromptTokenization(prompt_prepare::input::PromptTokenization {
+            CachedStageValue::PromptTokenization(prompt_check::input::PromptTokenization {
                 token_ids: raster::List::from(vec![1, 2]),
                 ..Default::default()
             }),

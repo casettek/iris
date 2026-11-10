@@ -9,7 +9,7 @@ use sha2::{Digest, Sha256};
 pub const MODEL_ARTIFACTS_DIR: &str = "runtime/model-artifacts";
 pub const MODEL_MANIFEST_JSON: &str = "manifest.json";
 
-pub const MODEL_MANIFEST_VERSION: u32 = 8;
+pub const MODEL_MANIFEST_VERSION: u32 = 9;
 
 /// One committed model input, named by the role it plays in the chain.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

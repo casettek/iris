@@ -40,10 +40,10 @@ pub fn paged_i32s(values: &[i32]) -> raster::runtime::Result<Bytes<196_608>> {
     Bytes::<PAGE_SIZE>::paged(pack_i32_bytes(values))
 }
 
-// --- prompt-prepare ---------------------------------------------------------
+// --- prompt-bind, prompt-check ------------------------------------------------
 
 // The prompt stages share one crate, so these are the stages' own types.
-pub use prompt_prepare::input::{PromptTokenization, TokenEntry};
+pub use prompt_check::input::{PromptTokenization, TokenEntry};
 
 // --- output-finalize -------------------------------------------------------
 

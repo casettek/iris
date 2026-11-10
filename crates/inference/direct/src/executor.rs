@@ -76,7 +76,7 @@ impl DirectInferenceExecutor {
         let prompt = model.prompt_inputs(&prepared_prompt)?;
         // Direct inference is the independent numerical oracle; construct its
         // diagnostic statement/history from the actual prompt and selected IDs.
-        let prompt_schedule = model.prompt_schedule(&prepared_prompt);
+        let prompt_ranges = model.prompt_ranges(&prepared_prompt);
         let execution_context = |generated: Option<&[u32]>, claimed_tokens: usize| {
             let mut context = crate::view_kernels::bound_model_context(&model);
             context.bind_statement(
@@ -87,11 +87,10 @@ impl DirectInferenceExecutor {
             );
             // The schedule the chain runs this output under, so the two final
             // records agree byte for byte.
-            if let Some((prompt_ranges, merge_batches)) = prompt_schedule {
+            if let Some(prompt_ranges) = prompt_ranges {
                 let claimed_ranges = claimed_tokens.div_ceil(model.manifest().range_size as usize);
                 context.bind_schedule(model_identity::pipeline_core::StageSchedule {
                     prompt_ranges,
-                    merge_batches,
                     claimed_ranges: u32::try_from(claimed_ranges).unwrap_or(u32::MAX),
                 });
             }
@@ -102,7 +101,7 @@ impl DirectInferenceExecutor {
                 e.prompt = Some(e.end);
                 e.phase = model_identity::pipeline_core::PREPARED;
                 // The steps the chain's last prompt range and last check record.
-                e.step = model_identity::pipeline_core::Step::prepare(
+                e.step = model_identity::pipeline_core::Step::tokens(
                     e.schedule.prompt_ranges.saturating_sub(1),
                 );
                 if let Some(ids) = generated {

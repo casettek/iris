@@ -14,7 +14,7 @@ use input_embedding::input as embedding_input;
 use output_finalize::input as output_input;
 use prefill_prepare_aux::input as aux_input;
 use prefill_range::input as range_input;
-use prompt_prepare::input as prompt_input;
+use prompt_check::input as prompt_input;
 use range_origin::input as origin_input;
 use sequence_check::input as check_input;
 

@@ -67,40 +67,26 @@ impl ModelContext {
         };
         self.require_execution(held);
     }
-    /// Requires `bound` to be the run's `prompt-bind` output, for a range's seed.
+    /// Requires `bound` to be the run's `prompt-bind` output, for a range's
+    /// token check.
     pub fn require_bound(&mut self, bound: &Self) {
         match self.execution_context() {
             Some(e) => self.require_source(&e, Input::Bound, bound),
             None => self.require_execution(false),
         }
     }
+    /// Opens one prompt range's token check and records its step.
     pub fn begin_prompt_range(&mut self) {
         if let Some(mut e) = self.execution_context() {
             self.require_execution((e.phase == BOUND || e.phase == PREPARED) && e.prompt.is_none());
             // The first range follows the bind, each later one the range before.
             let range = match e.step.operation {
-                Operation::Prepare => e.step.range.saturating_add(1),
+                Operation::Tokens => e.step.range.saturating_add(1),
                 _ => 0,
             };
-            self.take_step(&mut e, Step::seed(range), Input::Previous);
+            self.take_step(&mut e, Step::tokens(range), Input::Previous);
             e.before = e.end;
             e.phase = TOKENIZING;
-            self.set_execution(&e);
-        } else {
-            self.require_execution(false);
-        }
-    }
-    /// One merge batch of the range being tokenized: the first follows the
-    /// range's seed, each later one the batch before.
-    pub fn continue_prompt_range(&mut self) {
-        if let Some(mut e) = self.execution_context() {
-            self.require_execution(e.phase == TOKENIZING);
-            let batch = match e.step.operation {
-                Operation::Merge => e.step.batch.saturating_add(1),
-                _ => 0,
-            };
-            let step = Step::merge(e.step.range, batch);
-            self.take_step(&mut e, step, Input::Pieces);
             self.set_execution(&e);
         } else {
             self.require_execution(false);
@@ -122,11 +108,9 @@ impl ModelContext {
                     && e.end.position == tokens
                     && fault == 0,
             );
-            let step = Step::prepare(e.step.range);
-            self.take_step(&mut e, step, Input::Pieces);
             // The schedule's last range completes the prompt, and no earlier one.
             self.require_execution(
-                complete == (step.range.saturating_add(1) == e.schedule.prompt_ranges),
+                complete == (e.step.range.saturating_add(1) == e.schedule.prompt_ranges),
             );
             e.phase = PREPARED;
             if complete {
@@ -384,11 +368,9 @@ mod tests {
         let mut p = bound();
         p.bind_schedule(StageSchedule {
             prompt_ranges: 1,
-            merge_batches: 1,
             claimed_ranges: 2,
         });
         p.begin_prompt_range();
-        p.continue_prompt_range();
         for &id in ids {
             p.append_consumed_token(id);
         }
@@ -399,7 +381,6 @@ mod tests {
     fn schedule_binds_once_before_any_range_and_keeps_a_bad_one_with_a_fault() {
         let schedule = StageSchedule {
             prompt_ranges: 2,
-            merge_batches: 3,
             claimed_ranges: 1,
         };
         let bind = |mut context: ModelContext, schedule| {
@@ -423,7 +404,7 @@ mod tests {
                 ..schedule
             },
             StageSchedule {
-                merge_batches: pipeline_core::MAX_MERGE_BATCHES + 1,
+                prompt_ranges: pipeline_core::MAX_RANGES + 1,
                 ..schedule
             },
         ] {
@@ -442,7 +423,7 @@ mod tests {
         let e = later.execution_context().unwrap();
         assert_eq!(
             (later.fault, e.schedule, e.step),
-            (0, schedule, Step::seed(0))
+            (0, schedule, Step::tokens(0))
         );
     }
     fn embed(

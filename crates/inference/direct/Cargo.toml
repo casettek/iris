@@ -14,7 +14,7 @@ inference-artifacts = { path = "../artifacts" }
 output-finalize = { path = "../../../raster-stages/output-finalize" }
 prefill-prepare-aux = { path = "../../../raster-stages/prefill-prepare-aux" }
 prefill-range = { path = "../../../raster-stages/prefill-range" }
-prompt-prepare = { path = "../../../raster-stages/prompt-prepare" }
+prompt-check = { path = "../../../raster-stages/prompt-check" }
 raster = { path = "../../../../raster/crates/raster" }
 run-prep = { path = "../../model/run-prep" }
 sequence-check = { path = "../../../raster-stages/sequence-check" }

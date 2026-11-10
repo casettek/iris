@@ -56,11 +56,9 @@ fn infer_final_result_matches_checkpointed_claim_path() {
     model.bind_statement(&"11".repeat(32), false, 1, 1);
     model.bind_schedule(model_identity::pipeline_core::StageSchedule {
         prompt_ranges: 1,
-        merge_batches: 1,
         claimed_ranges: 1,
     });
     model.begin_prompt_range();
-    model.continue_prompt_range();
     model.append_consumed_token(0);
     model.finish_prompt_range(true, 1, 0);
     edge.model = model.clone();

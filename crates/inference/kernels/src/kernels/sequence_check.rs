@@ -27,7 +27,7 @@ pub struct CheckPosition {
 
 /// This stage's copy of the prompt context: the stages share its source, not a
 /// Rust type.
-pub fn prompt_context(source: &prompt_prepare::input::PromptContext) -> PromptContext {
+pub fn prompt_context(source: &prompt_check::input::PromptContext) -> PromptContext {
     PromptContext {
         model: source.model.clone(),
         input_text_sha256: source.input_text_sha256.clone(),

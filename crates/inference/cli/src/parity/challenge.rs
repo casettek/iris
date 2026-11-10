@@ -66,9 +66,8 @@ struct RunInputs {
     config: RunConfig,
     marks: Vec<Vec<u32>>,
     ids: Vec<u32>,
-    merge_repeats: u32,
-    /// Added to the schedule's three counts. Zero for a schedule matching the run.
-    schedule_skew: [i64; 3],
+    /// Added to the schedule's two counts. Zero for a schedule matching the run.
+    schedule_skew: [i64; 2],
 }
 
 pub(super) fn run_challenge_leg(leg: &Leg) -> Result<Value> {
@@ -188,7 +187,7 @@ pub(super) fn run_challenge_leg(leg: &Leg) -> Result<Value> {
             "other-schedule",
             "prompt_bind",
             RunInputs {
-                schedule_skew: [0, 1, 0],
+                schedule_skew: [1, 0],
                 ..inputs.clone()
             },
         ),
@@ -543,8 +542,7 @@ fn honest_inputs(leg: &Leg) -> Result<RunInputs> {
         },
         marks: ranges.into_iter().map(|range| range.marks).collect(),
         ids: leg.claimed.to_vec(),
-        merge_repeats: run_prep::CHECK_MERGE_BATCHES,
-        schedule_skew: [0; 3],
+        schedule_skew: [0; 2],
     })
 }
 
@@ -561,7 +559,7 @@ fn not_greedy_ids(leg: &Leg) -> Result<Vec<u32>> {
 fn render(model_path: &Path, model: &ModelManifest, run: &RunInputs, dir: &Path) -> Result<String> {
     let (template_path, template) = model.verified_raster_template(model_path)?;
     let range_size = run.config.range_size as usize;
-    let cut_files = run_prep::write_marks(&run.marks, dir)?;
+    let mark_files = run_prep::write_marks(&run.marks, dir)?;
     let claimed_files = run_prep::write_claimed_ranges(&run.ids, range_size, dir)?;
     render_ranged_manifest(
         &template,
@@ -571,14 +569,12 @@ fn render(model_path: &Path, model: &ModelManifest, run: &RunInputs, dir: &Path)
         &run_prep::write_prompt_text(&run.text, dir)?,
         &run_prep::write_run_config(&run.config, dir)?,
         &run_prep::write_run_schedule(
-            (cut_files.len() as i64 + run.schedule_skew[0]) as usize,
-            (i64::from(run.merge_repeats) + run.schedule_skew[1]) as u32,
-            (claimed_files.len() as i64 + run.schedule_skew[2]) as usize,
+            (mark_files.len() as i64 + run.schedule_skew[0]) as usize,
+            (claimed_files.len() as i64 + run.schedule_skew[1]) as usize,
             dir,
         )?,
-        &cut_files,
+        &mark_files,
         &claimed_files,
-        run.merge_repeats,
     )
 }
 
@@ -789,7 +785,7 @@ fn swapped_ple(leg: &Leg, manifest: &str) -> Result<String> {
 /// Change all complete buckets without changing any matching rule. This tests
 /// membership even when the numerical/tokenization result happens to be equal.
 fn tokenizer_substitution_binding(manifest: &str, dir: &Path) -> Result<String> {
-    use output_finalize::prompt::{BoundaryPair, BpeMerge, PromptTokenizer, TokenEntry};
+    use output_finalize::prompt::{BpeMerge, PromptTokenizer, TokenEntry};
     let parsed: toml::Value = toml::from_str(manifest)?;
     let stage = parsed["chain"]["stage"]
         .as_array()
@@ -833,14 +829,6 @@ fn tokenizer_substitution_binding(manifest: &str, dir: &Path) -> Result<String> 
             rank: u32::MAX,
         });
         bucket.rules = rules.into();
-    }
-    for bucket in tokenizer.boundary_buckets.iter_mut() {
-        let mut pairs = bucket.pairs.as_slice().to_vec();
-        pairs.push(BoundaryPair {
-            left: u32::MAX,
-            right: u32::MAX,
-        });
-        bucket.pairs = pairs.into();
     }
     fs::create_dir_all(dir)?;
     let data = dir.join("tokenizer.rastered");

@@ -1,7 +1,7 @@
 # Checking claimed prompt tokens instead of recomputing them
 
-Implemented November 10, 2026, for review. The stage is `raster-stages/prompt-check`, and
-the claim chain runs it in place of `prompt-seed`, `prompt-merge` and `prompt-prepare`.
+Implemented November 10, 2026. The stage is `raster-stages/prompt-check`. It replaced
+`prompt-seed`, `prompt-merge` and `prompt-prepare`, which have been removed.
 [What was built](#what-was-built) lists where the result differs from the plan below. The
 soundness argument in [Why the pair check is enough](#why-the-pair-check-is-enough) is still
 the part to review first.
@@ -304,14 +304,13 @@ step. Its cost in the guest is not measured.
 The stage, its native twin, run preparation, the import template and the parity gate's
 cases are in place. These points differ from the plan above:
 
-- **The stage schedule keeps its merge-batch count, always 1.** `prompt-check` records a
-  range's seed, one merge step and its prepare step itself, through the existing rules.
-  Removing the count would have meant editing `pipeline-core` and `model-identity`, which
-  every stage program compiles, and re-locking all of them. The `Execution` record and the
-  other ten programs are unchanged. Removing the count remains possible later.
-- **The three old stage programs are still in the repository.** Direct inference, the
-  tokenizer fixture chain and several tests use their types and kernels. Only the claim
-  chain stopped running them.
+- **The schedule and the old programs were cleaned up in a second step.** The stage first
+  shipped recording a seed, one merge step and a prepare step under the old three-count
+  schedule, with the three old programs still in the repository. Later the same day the
+  merge-batch count and the step's batch coordinate were removed (`Execution` version 3),
+  the three programs and their fixture chain were deleted, every remaining program was
+  re-locked, and import and prepared-run formats moved to version 9. Direct inference
+  keeps its own whole-prompt tokenization in `inference-kernels`.
 - **The previous range's last token is always kept as a neighbour**, including when the
   range starts a new segment. It then merges alone, which changes nothing for a token the
   previous range already checked, and saves the stage a decision.
@@ -320,9 +319,13 @@ cases are in place. These points differ from the plan above:
   element. The end piece is also what closes the last pair's window.
 - **A range hands the next one its last token as pieces**, in the `pieces` field of its
   output, which `prompt-prepare` left empty. Nothing downstream reads that field.
-- **Two fault codes were added** in the stage's own source, 8 for a token whose pieces are
-  in two segments and 9 for tokens that are not what the merge produces. The shared prompt
-  source was not edited, because five other stage programs compile it.
+- **Two fault codes were added** to the shared prompt source, 8 for a token whose pieces
+  are in two segments and 9 for tokens that are not what the merge produces. Code 4, a cut
+  a merge could cross, is no longer recorded by any stage.
+- **The tokenizer's boundary table was removed** in the same cleanup. It was what
+  `prompt-seed` checked cuts against, and no stage read it once ranges could end between
+  any two tokens. The tokenizer artifact is now the vocabulary, the merge table and the
+  profile, so the model id changed.
 - **Import refuses a merge table whose results are longer than 33 characters**, the most
   the stage's rounds can check.
 

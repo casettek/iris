@@ -1,9 +1,8 @@
 //! `prompt-check`: tiles.
 //!
 //! Checks one range of the prompt against the claim's token marks and
-//! publishes the range's token ids. It replaces `prompt-seed`, the
-//! `prompt-merge` batches and `prompt-prepare` for a range. The logic is in
-//! [`check`]; these tiles are its steps.
+//! publishes the range's token ids. The logic is in [`check`]; these tiles
+//! are its steps.
 //!
 //! A claim that is wrong is recorded in the context rather than raised: the
 //! stage must finish so it has an output to compare and replay.
@@ -29,14 +28,6 @@ use input::*;
 #[tile(kind = iter, description = "Join prompt model contexts without clearing faults")]
 pub fn join_prompt_contexts(previous: PromptContext, bound: PromptContext) -> PromptContext {
     join_prompt_models(previous, &bound)
-}
-
-/// Records the one merge step the stage schedule puts between a range's seed
-/// and its prepare. This stage is all three.
-#[tile(kind = iter, description = "Record the range's merge step in the stage schedule")]
-pub fn continue_range(mut context: PromptContext) -> PromptContext {
-    context.model.continue_prompt_range();
-    context
 }
 
 #[tile(kind = iter)]

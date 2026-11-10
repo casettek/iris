@@ -22,7 +22,7 @@ use externals::*;
 use std::collections::BTreeMap;
 use std::error::Error;
 use std::fs;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 
 /// Q16.16 one.
 const ONE: i32 = 1 << 16;
@@ -54,7 +54,7 @@ pub struct ImportConfig {
     /// Rewrite only the tokenizer externals, leaving the weight externals
     /// alone. The weights are ~9 GB and depend on nothing the tokenizer
     /// touches, so a prompt or vocabulary-layout change has no reason to
-    /// re-emit them. Prints only the `prompt_prepare` stage.
+    /// re-emit them. Prints only the `prompt_bind` stage's tokenizer bindings.
     pub only_tokenizer: bool,
     /// Rewrite only the transformer-layer externals (`prefill-range`). Nothing
     /// else depends on `LayerParams`, so a per-layer shape correction has no
@@ -69,7 +69,8 @@ pub struct ImportConfig {
     /// Write only the host-side direct-infer manifest, without regenerating
     /// committed Raster stage externals.
     pub only_direct: bool,
-    /// Leave stage-local input.json and input_manifest.json fixtures untouched.
+    /// Accepted and ignored. Import once wrote input fixtures into a stage's
+    /// directory and this kept them; it writes nothing there now.
     pub no_stage_fixtures: bool,
     /// Largest teacher-forced range, in prompt tokens or claimed ids. Every
     /// per-position stage of the teacher-forced chain covers at most this many
@@ -175,14 +176,12 @@ impl ImportConfig {
 #[derive(Debug, Clone)]
 struct ArtifactLayout {
     model_dir: PathBuf,
-    no_stage_fixtures: bool,
 }
 
 impl ArtifactLayout {
     fn from_config(args: &ImportConfig) -> Self {
         Self {
             model_dir: args.artifact_dir(),
-            no_stage_fixtures: args.no_stage_fixtures,
         }
     }
 
@@ -484,7 +483,7 @@ fn model_commitments(
     let mut entries = vec![
         entry(
             String::from("tokenizer"),
-            stage_external_commitment(stages, "prompt_prepare", "tokenizer")?,
+            stage_external_commitment(stages, "prompt_bind", "tokenizer")?,
         ),
         entry(String::from("decoder"), decoder_commitment.to_string()),
         entry(
@@ -515,21 +514,20 @@ fn model_commitments(
 /// positions so no stage's cost grows with the prompt.
 ///
 /// `prompt_bind` hashes the committed original text and splits it. Run
-/// preparation chooses where to cut those pieces into ranges of at most
-/// `range_size` tokens, and `prompt_seed_p{j}` checks each cut as it takes its
-/// range. The claimed ids are cut into ranges of the same size. Every prompt
-/// range is tokenized and embedded, every claimed range embedded; then each
+/// preparation tokenizes those pieces and cuts the tokens into ranges of at
+/// most `range_size`, and `prompt_check_p{j}` checks each range's tokens
+/// against the merge. The claimed ids are cut into ranges of the same size.
+/// Every prompt range is checked and embedded, every claimed range embedded; then each
 /// layer runs across all ranges in order (`range_p{j}_l{l}`, then
 /// `range_c{k}_l{l}`), and `check_c{k}` re-derives the greedy selection for
 /// each claimed range. A layer's range takes its rows from the layer below and
 /// its inherited K/V cache from its own previous range, exactly as a decode
 /// step does.
 ///
-/// Counts, the last prompt range's index, the tokenizer batch count, the text,
-/// the configuration and the per-range externals are filled in by run
-/// preparation. A wrong cut or too few batches does not stop a stage: it is
-/// recorded in the prompt context, which the last range's `prompt_prepare`
-/// publishes for the whole prompt.
+/// Counts, the last prompt range's index, the text, the configuration and the
+/// per-range externals are filled in by run preparation. Wrong marks do not
+/// stop a stage: the fault is recorded in the prompt context, which the last
+/// range's `prompt_check` publishes for the whole prompt.
 fn chain_template(
     shape: &Shape,
     layout: &ArtifactLayout,
@@ -541,22 +539,22 @@ fn chain_template(
         .lines()
         .find(|line| line.starts_with("inputs.descriptor ="))
         .ok_or("missing model descriptor binding")?;
-    let tokenizer = stage_external_commitment(prefill_stages, "prompt_prepare", "tokenizer")?;
+    let tokenizer = stage_external_commitment(prefill_stages, "prompt_bind", "tokenizer")?;
     let embedding = stage_external_commitment(prefill_stages, "input_embedding", "embedding")?;
     let no_claim = stage_external_commitment(prefill_stages, "input_embedding", "claimed")?;
     let head = stage_external_commitment(prefill_stages, "final_head", "head")?;
     let no_prompt = no_prompt_commitment(layout)?;
-    let tokenizer_witness = stage_external_commitment(prefill_stages, "prompt_prepare", "witness")?;
+    let tokenizer_witness = stage_external_commitment(prefill_stages, "prompt_bind", "witness")?;
     let tokenizer_line = external_line(
         "tokenizer",
         layout,
-        "raster-stages/prompt-prepare",
+        "raster-stages/prompt-bind",
         "tokenizer",
         &tokenizer,
     ) + &external_line(
         "witness",
         layout,
-        "raster-stages/prompt-prepare",
+        "raster-stages/prompt-bind",
         "witness",
         &tokenizer_witness,
     );
@@ -1161,70 +1159,34 @@ fn write_tokenizer(
     let tokenizer_commitment = write_external(
         &prepared_tokenizer,
         layout,
-        "raster-stages/prompt-prepare",
+        "raster-stages/prompt-bind",
         "tokenizer",
     )?;
-    let tokenizer_witness = prompt_prepare::input::tokenizer_witness(&prepared_tokenizer)
+    let tokenizer_witness = prompt_check::input::tokenizer_witness(&prepared_tokenizer)
         .map_err(|f| format!("{f:?}"))?;
     let tokenizer_witness_commitment = write_external(
         &tokenizer_witness,
         layout,
-        "raster-stages/prompt-prepare",
+        "raster-stages/prompt-bind",
         "witness",
-    )?;
-    // Run preparation supplies the prompt-specific merged_pieces binding.
-    write_stage_fixtures(
-        "raster-stages/prompt-prepare",
-        layout,
-        &[
-            ("tokenizer", "tokenizer", &tokenizer_commitment),
-            ("witness", "witness", &tokenizer_witness_commitment),
-        ],
     )?;
     let tokenizer_line = external_line(
         "tokenizer",
         layout,
-        "raster-stages/prompt-prepare",
+        "raster-stages/prompt-bind",
         "tokenizer",
         &tokenizer_commitment,
     ) + &external_line(
         "witness",
         layout,
-        "raster-stages/prompt-prepare",
+        "raster-stages/prompt-bind",
         "witness",
         &tokenizer_witness_commitment,
     );
-    let pieces_line = external_line(
-        "initial_pieces",
-        layout,
-        RUN_PLACEHOLDER_DIR,
-        "initial_pieces",
-        INITIAL_PIECES_PLACEHOLDER_COMMITMENT,
-    );
+    // The stages that take the tokenizer also take run-specific inputs, which
+    // run preparation supplies.
     stages.push(format!(
-        r#"[[chain.stage]]
-name = "prompt_merge_seed"
-project = "raster-stages/prompt-merge"
-{tokenizer_line}{pieces_line}
-[[chain.repeat]]
-name = "tokenize"
-index = "b"
-count = 0
-
-[[chain.repeat.stage]]
-name = "prompt_merge_b{{b}}"
-project = "raster-stages/prompt-merge"
-inputs.initial_pieces = {{ from = "prompt_merge_b{{b-1}}", first = "prompt_merge_seed" }}
-{tokenizer_line}
-[chain.repeat.exports.pieces]
-stage = "prompt_merge_b{{b}}"
-entry = "prompt_merge_seed"
-
-[[chain.stage]]
-name = "prompt_prepare"
-project = "raster-stages/prompt-prepare"
-inputs.merged_pieces = {{ from = "tokenize.pieces" }}
-{tokenizer_line}"#
+        "[[chain.stage]]\nname = \"prompt_bind\"\nproject = \"raster-stages/prompt-bind\"\n{tokenizer_line}"
     ));
     Ok((decoder_commitment, witness_commitment))
 }
@@ -1271,7 +1233,7 @@ fn write_embedding(
             "[[chain.stage]]\n",
             "name = \"input_embedding\"\n",
             "project = \"raster-stages/input-embedding\"\n",
-            "inputs.prompt = {{ from = \"prompt_prepare\" }}\n",
+            "inputs.prompt = {{ from = \"prompt_check\" }}\n",
             "inputs.previous = {{ from = \"range_origin\" }}\n",
             "{}{}{}"
         ),
@@ -1675,47 +1637,6 @@ fn write_external<T: serde::Serialize>(
     Ok(commitment)
 }
 
-/// Writes a stage's `input.json` / `input_manifest.json` so it can also be run
-/// on its own with `cargo raster run`.
-fn write_stage_fixtures(
-    stage_dir: &str,
-    layout: &ArtifactLayout,
-    params: &[(&str, &str, &String)],
-) -> Result<(), Box<dyn Error>> {
-    if layout.no_stage_fixtures {
-        return Ok(());
-    }
-    let entries = |render: &dyn Fn(&str, &str, &str) -> String| -> String {
-        params
-            .iter()
-            .map(|(param, name, commitment)| render(param, name, commitment))
-            .collect::<Vec<_>>()
-            .join(",\n")
-    };
-    let input_json = entries(&|param, name, _| {
-        let data_path = layout.external_path(stage_dir, name, "rastered");
-        let index_path = layout.external_path(stage_dir, name, "rindex");
-        let stage_relative_data = path_from_dir(Path::new(stage_dir), &data_path);
-        let stage_relative_index = path_from_dir(Path::new(stage_dir), &index_path);
-        format!(
-            "  \"{param}\": {{ \"path\": {:?}, \"index_path\": {:?}, \"load_preference\": \"read\" }}",
-            path_string(&stage_relative_data),
-            path_string(&stage_relative_index)
-        )
-    });
-    let manifest_json = entries(&|param, _, commitment| {
-        format!("  \"{param}\": {{ \"type\": \"sha256\", \"encoding\": \"raster\", \"commitment\": \"{commitment}\" }}")
-    });
-    let dir = Path::new(stage_dir);
-    fs::write(dir.join("input.json"), format!("{{\n{input_json}\n}}\n"))?;
-    fs::write(
-        dir.join("input_manifest.json"),
-        format!("{{\n{manifest_json}\n}}\n"),
-    )?;
-    println!("wrote {stage_dir}/input.json + input_manifest.json");
-    Ok(())
-}
-
 fn external_line(
     param: &str,
     layout: &ArtifactLayout,
@@ -1743,19 +1664,6 @@ fn external_line(
 
 fn path_string(path: &Path) -> String {
     path.to_string_lossy().replace('\\', "/")
-}
-
-fn path_from_dir(base_dir: &Path, path: &Path) -> PathBuf {
-    if path.is_absolute() {
-        return path.to_path_buf();
-    }
-    let mut relative = PathBuf::new();
-    for component in base_dir.components() {
-        if matches!(component, Component::Normal(_)) {
-            relative.push("..");
-        }
-    }
-    relative.join(path)
 }
 
 #[cfg(test)]
@@ -1790,14 +1698,14 @@ mod tests {
             )
             .unwrap();
             fs::write(args.model_dir.join("tokenizer.json"), "{}").unwrap();
-            let manifest = format!("[chain]\nname = \"{name}\"\n[[chain.stage]]\nname = \"prompt_prepare\"\nproject = \"raster-stages/prompt-prepare\"\ninputs.tokenizer = {{ external = {{ path = \"data/{name}.rastered\", index_path = \"data/{name}.rindex\", commitment = \"abc\" }} }}\n");
+            let manifest = format!("[chain]\nname = \"{name}\"\n[[chain.stage]]\nname = \"prompt_bind\"\nproject = \"raster-stages/prompt-bind\"\ninputs.tokenizer = {{ external = {{ path = \"data/{name}.rastered\", index_path = \"data/{name}.rindex\", commitment = \"abc\" }} }}\n");
             let (path, template) = save_model_template(&args, &manifest).unwrap();
             assert!(path.is_file()); // No --manifest is necessary.
             assert!(template.contains(&format!(
                 "project = {:?}",
                 std::env::current_dir()
                     .unwrap()
-                    .join("raster-stages/prompt-prepare")
+                    .join("raster-stages/prompt-bind")
                     .to_string_lossy()
             )));
             assert!(template.contains(&format!(
@@ -1917,42 +1825,12 @@ mod tests {
     }
 
     #[test]
-    fn no_stage_fixtures_preserves_existing_files() {
-        let mut config = parse_args_from(
+    fn the_stage_fixtures_flag_is_still_accepted() {
+        let config = parse_args_from(
             ["--model", "model-bundles/model", "--no-stage-fixtures"].map(String::from),
         )
         .unwrap();
         assert!(config.no_stage_fixtures);
-        let dir = std::env::temp_dir().join(format!("import-no-fixtures-{}", std::process::id()));
-        fs::create_dir_all(&dir).unwrap();
-        fs::write(dir.join("input.json"), "existing input").unwrap();
-        fs::write(dir.join("input_manifest.json"), "existing manifest").unwrap();
-        write_stage_fixtures(
-            dir.to_str().unwrap(),
-            &ArtifactLayout::from_config(&config),
-            &[],
-        )
-        .unwrap();
-        assert_eq!(
-            fs::read_to_string(dir.join("input.json")).unwrap(),
-            "existing input"
-        );
-        assert_eq!(
-            fs::read_to_string(dir.join("input_manifest.json")).unwrap(),
-            "existing manifest"
-        );
-        config.no_stage_fixtures = false;
-        write_stage_fixtures(
-            dir.to_str().unwrap(),
-            &ArtifactLayout::from_config(&config),
-            &[],
-        )
-        .unwrap();
-        assert_ne!(
-            fs::read_to_string(dir.join("input.json")).unwrap(),
-            "existing input"
-        );
-        fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
@@ -2040,35 +1918,6 @@ mod tests {
             line.contains(r#"path = "target/iris/run-prompt-placeholder/initial_pieces.rastered""#)
         );
         assert!(!line.contains("runtime/model-artifacts"));
-    }
-
-    #[test]
-    fn stage_fixture_paths_are_relative_to_stage_dir() {
-        let config = ImportConfig {
-            model_dir: PathBuf::from("model-bundles/model"),
-            manifest: None,
-            artifact_root: PathBuf::from("runtime/model-artifacts"),
-            model_id: Some(String::from("gemma")),
-            only_tokenizer: false,
-            only_layers: false,
-            only_embedding: false,
-            only_ple: false,
-            only_direct: false,
-            no_stage_fixtures: false,
-            range_size: DEFAULT_RANGE_SIZE,
-        };
-        let layout = ArtifactLayout::from_config(&config);
-        let path = path_from_dir(
-            Path::new("raster-stages/input-embedding"),
-            &layout.external_path("raster-stages/input-embedding", "embedding", "rastered"),
-        );
-
-        assert_eq!(
-            path,
-            PathBuf::from(
-                "../../runtime/model-artifacts/gemma/raster/input-embedding/embedding.rastered"
-            )
-        );
     }
 
     #[test]

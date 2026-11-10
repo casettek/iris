@@ -170,15 +170,14 @@ fn replay_profile_tokenizer_smoke() {
         .args(["--model-id", "parity-gemma", "--no-stage-fixtures"]);
     logged(import, &dir.join("import.log"));
     let run = dir.join("inference.toml");
-    // The pinned near-window prompt exceeds the seed stage's eight-merge
-    // batch, so the expanded chain includes a repeated merge stage.
+    // The first prompt range's token check.
     fs::write(&run, "model_manifest = \"model-artifacts/parity-gemma/manifest.json\"\nprompt = \"abcdefghijklmn?!\"\nraw_prompt = true\ntokens = 1\n").unwrap();
     let mut profile = Command::new(exe);
     profile
         .current_dir(&root)
         .args(["replay-profile", "--run"])
         .arg(&run)
-        .args(["--stage", "prompt_merge_b0", "--top-n", "1"]);
+        .args(["--stage", "prompt_check_p0", "--top-n", "1"]);
     let log_path = dir.join("replay-profile.log");
     logged(profile, &log_path);
     let log = fs::read_to_string(&log_path).unwrap();
@@ -189,7 +188,7 @@ fn replay_profile_tokenizer_smoke() {
     let report: serde_json::Value = read_json(Path::new(report_path)).unwrap();
     assert_eq!(report["version"], 3);
     assert_eq!(report["complete"], true);
-    assert_eq!(report["stage"], "prompt_merge_b0");
+    assert_eq!(report["stage"], "prompt_check_p0");
     assert_eq!(report["top_calls"].as_array().unwrap().len(), 1);
     assert!(report["top_calls"][0]["user_cycles"].as_u64().unwrap() > 0);
     assert!(Path::new(report_path)

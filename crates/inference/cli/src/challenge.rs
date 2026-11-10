@@ -1122,11 +1122,11 @@ mod tests {
             ),
             (
                 inference_artifacts::InferenceResult {
-                    prompt_fault: 4,
+                    prompt_fault: run_prep::FAULT_NOT_THE_MERGE,
                     prompt_fault_position: 7,
                     ..clean.clone()
                 },
-                "a merge could cross",
+                "not what the merge produces",
             ),
             (
                 inference_artifacts::InferenceResult {

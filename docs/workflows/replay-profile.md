@@ -101,8 +101,11 @@ The whole chain ran through authenticated Raster with 549 s of stage time, and
 `output_finalize` used a window of 2 for this measurement, because they are too short
 for the challenge's 128.
 
-Tokenizing dominates long prompts. At 666 prompt tokens, one 512-token range size and
-8 claimed tokens the chain has 268 stages, and replays took:
+The `prompt_seed`, `prompt_merge` and `prompt_prepare` rows in this section were measured
+before `prompt_check_p{j}` replaced those stages on November 10, 2026.
+
+Tokenizing dominated long prompts then. At 666 prompt tokens, one 512-token range size and
+8 claimed tokens the chain had 268 stages, and replays took:
 
 | stage | trace steps | replay |
 | --- | --- | --- |

@@ -225,12 +225,9 @@ pub(crate) fn value_json(value: &RasterValue) -> Result<Value> {
 pub(super) fn validate_errors(stage: &str, value: &Value) -> Result<()> {
     if stage != "prompt_prepare"
         && stage != "prompt_bind"
-        && !stage.starts_with("prompt_seed_")
-        && !stage.starts_with("prompt_merge_")
         && stage != "decode_init"
         && stage != "output_finalize"
         && stage != "range_origin"
-        && !stage.starts_with("prompt_prepare_p")
         && !stage.starts_with("prompt_check_p")
         && !stage.starts_with("check_c")
         && !stage.starts_with("decode_select_")
