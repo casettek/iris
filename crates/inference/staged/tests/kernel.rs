@@ -129,6 +129,25 @@ fn ple_inputs() -> PleLayerInputs {
 }
 
 #[test]
+fn a_loaded_layer_keeps_the_root_of_its_bytes() {
+    let layer = tiny_layer(-1);
+    let loaded: routines::prefill_range::LoadedLayer = layer.clone().into();
+    assert_eq!(
+        loaded.root().as_slice(),
+        model_identity::stream::digest(&layer).as_slice()
+    );
+    // Computed once and shared by every handle to this copy.
+    assert!(std::ptr::eq(loaded.root(), loaded.clone().root()));
+
+    // Another copy, and a layer with other bytes, each have their own.
+    let again: routines::prefill_range::LoadedLayer = layer.into();
+    assert!(!std::ptr::eq(loaded.root(), again.root()));
+    assert_eq!(loaded.root().as_slice(), again.root().as_slice());
+    let other: routines::prefill_range::LoadedLayer = tiny_layer(0).into();
+    assert_ne!(loaded.root().as_slice(), other.root().as_slice());
+}
+
+#[test]
 fn direct_prefill_returns_activation_and_own_kv() {
     let activations = activation_sequence(&row(&[ONE]));
     let layer = tiny_layer(-1);

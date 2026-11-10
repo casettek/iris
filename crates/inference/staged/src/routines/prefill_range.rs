@@ -1,7 +1,8 @@
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use anyhow::Result;
+use inference_kernels::weight_budget::RetainedWeightBytes;
 use prefill_range::input::{ActivationSequence, PleLayerInputs, TransformerLayer};
 
 use crate::artifact_io::{with_main_sequence_scope, with_stage_sequence_scope};
@@ -15,9 +16,58 @@ pub use inference_kernels::kernels::prefill_range::{
     PrefillRangeWeightCache,
 };
 
+/// One loaded copy of a transformer layer.
+struct Loaded {
+    layer: TransformerLayer,
+    root: OnceLock<raster::BytesPage>,
+}
+
+impl RetainedWeightBytes for Loaded {
+    fn retained_weight_bytes(&self) -> usize {
+        // The root is 32 bytes beside tens of megabytes of weights.
+        self.layer.retained_weight_bytes() + 64
+    }
+}
+
+/// A transformer layer as loaded, with the model-identity root of its bytes.
+///
+/// Every layer stage binds the layer it ran to the model the claim names by
+/// that root, which takes a sweep of the whole layer. The root is a function
+/// of the bytes alone, so it is computed on first use and kept with this copy.
+/// A layer the run retains across ranges is swept once; a layer that is loaded
+/// again is a new copy and is swept again.
+#[derive(Clone)]
+pub struct LoadedLayer(Arc<Loaded>);
+
+impl LoadedLayer {
+    /// The model-identity root of this copy's bytes.
+    pub fn root(&self) -> &raster::BytesPage {
+        self.0
+            .root
+            .get_or_init(|| model_identity::stream::digest(&self.0.layer))
+    }
+}
+
+impl From<TransformerLayer> for LoadedLayer {
+    fn from(layer: TransformerLayer) -> Self {
+        Self(Arc::new(Loaded {
+            layer,
+            root: OnceLock::new(),
+        }))
+    }
+}
+
+impl std::ops::Deref for LoadedLayer {
+    type Target = TransformerLayer;
+
+    fn deref(&self) -> &TransformerLayer {
+        &self.0.layer
+    }
+}
+
 pub struct Inputs {
     pub activations: ActivationSequence,
-    pub layer: Arc<TransformerLayer>,
+    pub layer: LoadedLayer,
     pub layer_cache_key: Option<MaterializationCacheKey>,
     pub prior_kv: ActivationSequence,
     pub donor_a_kv: ActivationSequence,
@@ -45,8 +95,7 @@ pub fn load_inputs_from_paths_with_cache(
     cached_inputs: &CachedInputs,
     materialization_cache: Option<&MaterializationCache>,
 ) -> Result<Inputs> {
-    let layer_key =
-        materialization_key_from_stage_files::<TransformerLayer>(input, input_manifest, "layer")?;
+    let layer_key = materialization_key_from_stage_files::<Loaded>(input, input_manifest, "layer")?;
     with_stage_sequence_scope(input, input_manifest, || {
         load_inputs_from_initialized_runtime(cached_inputs, materialization_cache, layer_key)
     })
@@ -74,7 +123,7 @@ pub fn run_direct_with_weight_cache(
     )?;
     output.model = model_identity::stream::verify(
         output.model,
-        &model_identity::stream::digest(inputs.layer.as_ref()),
+        inputs.layer.root(),
         model_identity::Role::Transformer(inputs.layer.params.layer_idx),
     );
     output.model.require(
@@ -105,12 +154,18 @@ fn load_inputs_from_initialized_runtime(
             ActivationSequence,
         >(binding.reference.clone(), "activations")),
     };
-    let layer = materialize_with_cache(materialization_cache, layer_key.clone(), || {
-        raster::materialize_auth_return(raster::entry_argument_auth_ref::<TransformerLayer>(
-            binding.reference.clone(),
-            "layer",
-        ))
-    })?;
+    let layer = LoadedLayer(materialize_with_cache(
+        materialization_cache,
+        layer_key.clone(),
+        || Loaded {
+            layer: raster::materialize_auth_return(raster::entry_argument_auth_ref::<
+                TransformerLayer,
+            >(
+                binding.reference.clone(), "layer"
+            )),
+            root: OnceLock::new(),
+        },
+    )?);
     let prior_kv = match cached_inputs.get("prior_kv") {
         Some(value) => value.as_range_activation_sequence()?,
         None => raster::materialize_auth_return(raster::entry_argument_auth_ref::<
