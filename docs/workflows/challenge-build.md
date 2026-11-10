@@ -29,7 +29,7 @@ it, which is why step 2 prepares a new run. The claimed ids are checked against 
 frozen manifest's commitments. The challenger does not need the claimer's model files. If the selected model's id is not the
 one the claim names it warns and carries on. The run then diverges at the first
 stage whose committed inputs differ: `prompt_bind` for another configuration or
-text, `prompt_seed_p{j}` for another cut, or the first stage reading other weights.
+text, `prompt_check_p{j}` for other token marks, or the first stage reading other weights.
 A claim whose `sequence_check` or layer checkpoint is doctored diverges there and
 replays that stage as usual.
 

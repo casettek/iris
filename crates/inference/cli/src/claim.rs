@@ -283,18 +283,17 @@ fn prepare_run(
         run_prep::validate_claimed_length(&ids, run_spec.tokens, &prompt.eos_token_ids)?;
     }
     let range_size = model_manifest.range_size;
-    let ranges = run_prep::prompt_ranges(
+    let ranges = run_prep::marked_ranges(
         &prompt.initial_pieces,
         range_size as usize,
-        &run_prep::vocabulary_pairs(&tokenizer)?,
         &run_prep::prompt_tokenizer(&tokenizer)?,
     )?;
     let template_dir = template_path
         .parent()
         .ok_or_else(|| anyhow::anyhow!("manifest template has no parent directory"))?;
-    let cut_files = run_prep::write_range_cuts(&ranges, &prompt_dir)?;
+    let mark_files = run_prep::write_range_marks(&ranges, &prompt_dir)?;
     let claimed_files = run_prep::write_claimed_ranges(&ids, range_size as usize, &prompt_dir)?;
-    let merge_repeats = run_prep::range_tokenizer_repeat_count(&ranges)?;
+    let merge_repeats = run_prep::CHECK_MERGE_BATCHES;
     let run_manifest = render_ranged_manifest(
         &template,
         template_dir,
@@ -309,12 +308,12 @@ fn prepare_run(
             &prompt_dir,
         )?,
         &run_prep::write_run_schedule(
-            cut_files.len(),
+            mark_files.len(),
             merge_repeats,
             claimed_files.len(),
             &prompt_dir,
         )?,
-        &cut_files,
+        &mark_files,
         &claimed_files,
         merge_repeats,
     )?;
@@ -427,7 +426,9 @@ pub(crate) fn render_ranged_manifest(
             }
         }
         let files = match table.as_str() {
-            "[chain.input.prompt_cuts]" => Some((prompt, 2)),
+            // A template either checks each range against marks, or cuts it
+            // and replays its merges.
+            "[chain.input.prompt_marks]" | "[chain.input.prompt_cuts]" => Some((prompt, 2)),
             "[chain.input.claimed_ids]" => Some((claimed, 3)),
             _ => None,
         };
@@ -503,7 +504,7 @@ pub(crate) fn render_ranged_manifest(
     if replaced[..4] != [1, 2, 1, 1]
         || replaced[4] == 0
         || replaced[4] != replaced[5]
-        || replaced[6] != 1
+        || replaced[6] > 1
         || replaced[7..] != [1, 1, 1]
     {
         anyhow::bail!("incompatible chain template: expected [prompt repeats, claimed repeats, prompt commitments, claimed commitments] = [1, 2, 1, 1], matching per-layer range fans, one tokenizer batch fan and one text, one configuration and one schedule binding; found {replaced:?}");

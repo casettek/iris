@@ -65,7 +65,7 @@ and `model_id`, the hash of that list, in the model manifest (version 4). Paths 
 not part of it, so moving an import does not change the id. Manifests from older
 imports are refused: re-import them.
 
-The prompt is deliberately not imported with the model. Its text, cuts and the
+The prompt is deliberately not imported with the model. Its text, token marks and the
 claimed ids are written under each run's `prompt/` directory during run preparation.
 Legacy frozen prepared runs are rejected.
 

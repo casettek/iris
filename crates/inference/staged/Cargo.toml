@@ -20,6 +20,7 @@ inference-artifacts = { path = "../artifacts" }
 output-finalize = { path = "../../../raster-stages/output-finalize" }
 prefill-range = { path = "../../../raster-stages/prefill-range" }
 prefill-prepare-aux = { path = "../../../raster-stages/prefill-prepare-aux" }
+prompt-check = { path = "../../../raster-stages/prompt-check" }
 prompt-prepare = { path = "../../../raster-stages/prompt-prepare" }
 range-origin = { path = "../../../raster-stages/range-origin" }
 sequence-check = { path = "../../../raster-stages/sequence-check" }

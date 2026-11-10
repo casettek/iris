@@ -77,6 +77,13 @@ pub fn prompt_tokenizer(tokenizer: &serde_json::Value) -> Result<PromptTokenizer
                 pairs.insert((rule.left.clone(), rule.right.clone())),
                 "duplicate BPE pair"
             );
+            // `prompt-check` merges a pair of tokens in a fixed number of
+            // rounds, which bounds how many pieces a token may be made of.
+            ensure!(
+                rule.merged.chars().count() <= MAX_MERGED_TOKEN_CHARS,
+                "merge result {:?} is longer than the {MAX_MERGED_TOKEN_CHARS} characters                  prompt-check can verify",
+                rule.merged
+            );
             merges.push(rule);
         }
     }
@@ -291,6 +298,89 @@ pub fn range_cuts(ranges: &[PromptRange]) -> Vec<RangeCut> {
 /// Writes each range's cut as `cut_{j}`.
 pub fn write_range_cuts(ranges: &[PromptRange], dir: &Path) -> Result<Vec<RunFile>> {
     write_cuts(&range_cuts(ranges), dir)
+}
+
+pub use prompt_check::check::{FAULT_NOT_THE_MERGE, FAULT_TOKEN_SPLIT};
+
+/// One prompt range as `prompt-check` takes it: whole tokens, at most the
+/// range size of them, with a mark for each piece saying whether a token
+/// starts there.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MarkedRange {
+    pub pieces: usize,
+    pub tokens: usize,
+    pub marks: Vec<u32>,
+}
+
+/// The longest merge result `prompt-check` can verify: two such tokens side by
+/// side need two merges fewer than they have pieces, and a pass has
+/// `ROUNDS_PER_PASS` rounds. A piece is at least one character.
+pub const MAX_MERGED_TOKEN_CHARS: usize = prompt_check::check::ROUNDS_PER_PASS / 2 + 1;
+
+/// The merge batches a run's schedule names. `prompt-check` records a range's
+/// seed, one merge step and its prepare step itself.
+pub const CHECK_MERGE_BATCHES: u32 = 1;
+
+/// Tokenizes the prompt's pieces and cuts the tokens into ranges of at most
+/// `range_size`. A range may end between any two tokens: the stage checks the
+/// first token of each range against the last token of the range before.
+pub fn marked_ranges(
+    pieces: &[PreparedPiece],
+    range_size: usize,
+    tokenizer: &PromptTokenizer,
+) -> Result<Vec<MarkedRange>> {
+    ensure!(
+        !pieces.is_empty(),
+        "a teacher-forced claim needs a non-empty prompt"
+    );
+    ensure!(range_size >= 1, "range size must be positive");
+    let pieces = pieces
+        .iter()
+        .map(|piece| BpePiece {
+            text: piece.text.clone(),
+            segment: piece.segment,
+        })
+        .collect::<Vec<_>>();
+    let tokens = inference_kernels::kernels::prompt_check::merged_tokens(&pieces, tokenizer)?;
+    Ok(tokens
+        .chunks(range_size)
+        .map(|range| {
+            let counts = range.iter().map(|token| token.pieces as usize);
+            MarkedRange {
+                pieces: counts.clone().sum(),
+                tokens: range.len(),
+                marks: inference_kernels::kernels::prompt_check_stage::marks_for(counts),
+            }
+        })
+        .collect())
+}
+
+/// Writes each range's marks as `marks_{j}`.
+pub fn write_range_marks(ranges: &[MarkedRange], dir: &Path) -> Result<Vec<RunFile>> {
+    write_marks(
+        &ranges
+            .iter()
+            .map(|range| range.marks.clone())
+            .collect::<Vec<_>>(),
+        dir,
+    )
+}
+
+/// Writes these marks as `marks_{j}`.
+pub fn write_marks(marks: &[Vec<u32>], dir: &Path) -> Result<Vec<RunFile>> {
+    marks
+        .iter()
+        .enumerate()
+        .map(|(index, starts)| {
+            write_run_file(
+                &prompt_check::check::TokenMarks {
+                    starts: List::from(starts.clone()),
+                },
+                dir,
+                &format!("marks_{index}"),
+            )
+        })
+        .collect()
 }
 
 /// Writes these cuts as `cut_{j}`.

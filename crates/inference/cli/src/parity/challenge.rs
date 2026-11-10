@@ -16,7 +16,7 @@ use inference_artifacts::{
     write_checkpoint_hashes, CheckpointTrace, ModelManifest,
 };
 use raster_prover::commitment_file::CommitmentFile;
-use run_prep::{RangeCut, RunConfig};
+use run_prep::RunConfig;
 use serde_json::{json, Value};
 use staged_infer::chain_runner::StagedExecutionBackend;
 use staged_infer::{CheckpointedInferenceConfig, CheckpointedInferenceExecutor, ParityPolicy};
@@ -33,11 +33,10 @@ const REPLAY_WINDOW: usize = 128;
 
 /// Checkpoints to falsify in an otherwise honest claim, one per family of stage
 /// long enough to challenge.
-const FALSIFIED_STAGES: [&str; 6] = [
+const FALSIFIED_STAGES: [&str; 5] = [
     "prompt_bind",
-    "prompt_seed_p0",
-    "prompt_merge_p1_b0",
-    "prompt_prepare_p1",
+    "prompt_check_p0",
+    "prompt_check_p1",
     "range_p1_l2",
     "range_c1_l3",
 ];
@@ -65,7 +64,7 @@ pub(super) struct Leg<'a> {
 struct RunInputs {
     text: String,
     config: RunConfig,
-    cuts: Vec<RangeCut>,
+    marks: Vec<Vec<u32>>,
     ids: Vec<u32>,
     merge_repeats: u32,
     /// Added to the schedule's three counts. Zero for a schedule matching the run.
@@ -156,10 +155,15 @@ pub(super) fn run_challenge_leg(leg: &Leg) -> Result<Value> {
 
     // A claim of the honest run whose checkpoints came from something else:
     // its inputs, one model input at a time, or its stages' connections.
-    let moved_cut = {
-        let mut cuts = inputs.cuts.clone();
-        cuts[0].end -= 1;
-        cuts
+    // The first range claims its last piece the other way: a token starting
+    // there, or not.
+    let other_marks = {
+        let mut marks = inputs.marks.clone();
+        let last = marks[0]
+            .last_mut()
+            .context("the first prompt range has no pieces")?;
+        *last ^= 1;
+        marks
     };
     let mut other_budget = inputs.config.clone();
     other_budget.max_new_tokens += 1;
@@ -189,10 +193,10 @@ pub(super) fn run_challenge_leg(leg: &Leg) -> Result<Value> {
             },
         ),
         (
-            "other-cuts",
-            "prompt_seed_p0",
+            "other-marks",
+            "prompt_check_p0",
             RunInputs {
-                cuts: moved_cut,
+                marks: other_marks,
                 ..inputs.clone()
             },
         ),
@@ -239,19 +243,9 @@ pub(super) fn run_challenge_leg(leg: &Leg) -> Result<Value> {
             wire("prompt_bind", "tokenizer", &changed_tokenizer)?,
         ),
         (
-            "tokenizer-at-seed",
-            "prompt_seed_p0",
-            wire("prompt_seed_p{j}", "tokenizer", &changed_tokenizer)?,
-        ),
-        (
-            "tokenizer-at-merge",
-            "prompt_merge_p0_b0",
-            wire("prompt_merge_p{j}_b{b}", "tokenizer", &changed_tokenizer)?,
-        ),
-        (
-            "tokenizer-at-prepare",
-            "prompt_prepare_p0",
-            wire("prompt_prepare_p{j}", "tokenizer", &changed_tokenizer)?,
+            "tokenizer-at-check",
+            "prompt_check_p0",
+            wire("prompt_check_p{j}", "tokenizer", &changed_tokenizer)?,
         ),
         (
             "embedding-in-prompt",
@@ -285,9 +279,9 @@ pub(super) fn run_challenge_leg(leg: &Leg) -> Result<Value> {
         ),
         (
             "repeated-context",
-            "prompt_seed_p1",
+            "prompt_check_p1",
             wire(
-                "prompt_seed_p{j}",
+                "prompt_check_p{j}",
                 "previous",
                 r#"{ from = "prompt_bind" }"#,
             )?,
@@ -308,7 +302,7 @@ pub(super) fn run_challenge_leg(leg: &Leg) -> Result<Value> {
             wire(
                 "output_finalize",
                 "prompt",
-                r#"{ from = "prompt_prepare_p0" }"#,
+                r#"{ from = "prompt_check_p0" }"#,
             )?,
         ),
     ];
@@ -534,10 +528,9 @@ fn honest_inputs(leg: &Leg) -> Result<RunInputs> {
         .parent()
         .context("model manifest has no parent directory")?;
     let tokenizer: Value = read_json(&model_dir.join(&leg.model.bundle.tokenizer_path))?;
-    let ranges = run_prep::prompt_ranges(
+    let ranges = run_prep::marked_ranges(
         &prompt.initial_pieces,
         range_size as usize,
-        &run_prep::vocabulary_pairs(&tokenizer)?,
         &run_prep::prompt_tokenizer(&tokenizer)?,
     )?;
     Ok(RunInputs {
@@ -548,9 +541,9 @@ fn honest_inputs(leg: &Leg) -> Result<RunInputs> {
             max_new_tokens: leg.case.tokens,
             range_size,
         },
-        cuts: run_prep::range_cuts(&ranges),
+        marks: ranges.into_iter().map(|range| range.marks).collect(),
         ids: leg.claimed.to_vec(),
-        merge_repeats: run_prep::range_tokenizer_repeat_count(&ranges)?,
+        merge_repeats: run_prep::CHECK_MERGE_BATCHES,
         schedule_skew: [0; 3],
     })
 }
@@ -568,7 +561,7 @@ fn not_greedy_ids(leg: &Leg) -> Result<Vec<u32>> {
 fn render(model_path: &Path, model: &ModelManifest, run: &RunInputs, dir: &Path) -> Result<String> {
     let (template_path, template) = model.verified_raster_template(model_path)?;
     let range_size = run.config.range_size as usize;
-    let cut_files = run_prep::write_cuts(&run.cuts, dir)?;
+    let cut_files = run_prep::write_marks(&run.marks, dir)?;
     let claimed_files = run_prep::write_claimed_ranges(&run.ids, range_size, dir)?;
     render_ranged_manifest(
         &template,
@@ -1111,12 +1104,7 @@ mod tests {
         let manifest = fs::read_to_string(prepared.join("Raster.toml")).unwrap();
         let work = base.join(format!("sparse-tokenizer-native-{}", std::process::id()));
         let binding = tokenizer_substitution_binding(&manifest, &work.join("inputs")).unwrap();
-        for (name, stage) in [
-            ("bind", "prompt_bind"),
-            ("seed", "prompt_seed_p{j}"),
-            ("merge", "prompt_merge_p{j}_b{b}"),
-            ("prepare", "prompt_prepare_p{j}"),
-        ] {
+        for (name, stage) in [("bind", "prompt_bind"), ("check", "prompt_check_p{j}")] {
             let dir = work.join(name);
             fs::create_dir_all(&dir).unwrap();
             let path = dir.join("Raster.toml");

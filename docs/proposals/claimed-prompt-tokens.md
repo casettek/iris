@@ -1,9 +1,10 @@
 # Checking claimed prompt tokens instead of recomputing them
 
-Draft for review. November 9, 2026. No stage is implemented. A native version of the check
-exists and its tests pass ([Tests of the rule](#tests-of-the-rule)), and the stage is
-designed but not authored ([The stage](#the-stage)). The soundness argument in
-[Why the pair check is enough](#why-the-pair-check-is-enough) is the part to review first.
+Implemented November 10, 2026, for review. The stage is `raster-stages/prompt-check`, and
+the claim chain runs it in place of `prompt-seed`, `prompt-merge` and `prompt-prepare`.
+[What was built](#what-was-built) lists where the result differs from the plan below. The
+soundness argument in [Why the pair check is enough](#why-the-pair-check-is-enough) is still
+the part to review first.
 
 ## Goal
 
@@ -298,15 +299,37 @@ step. Its cost in the guest is not measured.
 - Import rejects a vocabulary with an entry longer than the rounds can check.
 - `raster-chain.md`, `claim-build.md` and `test-parity.md`.
 
-## Suggested order
+## What was built
 
-1. Review this argument.
-2. Native check and tests. Done; see [Tests of the rule](#tests-of-the-rule).
-3. Stage design and native model. Done; see [The stage](#the-stage).
-4. Author the stage and take it through the check ladder.
-5. Formats, re-import, parity cases, full gate.
+The stage, its native twin, run preparation, the import template and the parity gate's
+cases are in place. These points differ from the plan above:
 
-Nothing before step 4 touches the chain.
+- **The stage schedule keeps its merge-batch count, always 1.** `prompt-check` records a
+  range's seed, one merge step and its prepare step itself, through the existing rules.
+  Removing the count would have meant editing `pipeline-core` and `model-identity`, which
+  every stage program compiles, and re-locking all of them. The `Execution` record and the
+  other ten programs are unchanged. Removing the count remains possible later.
+- **The three old stage programs are still in the repository.** Direct inference, the
+  tokenizer fixture chain and several tests use their types and kernels. Only the claim
+  chain stopped running them.
+- **The previous range's last token is always kept as a neighbour**, including when the
+  range starts a new segment. It then merges alone, which changes nothing for a token the
+  previous range already checked, and saves the stage a decision.
+- **Every list of pieces ends with an end piece.** A recur that builds a list gives its
+  caller the list and not its final state, so the faults a pass finds travel on the last
+  element. The end piece is also what closes the last pair's window.
+- **A range hands the next one its last token as pieces**, in the `pieces` field of its
+  output, which `prompt-prepare` left empty. Nothing downstream reads that field.
+- **Two fault codes were added** in the stage's own source, 8 for a token whose pieces are
+  in two segments and 9 for tokens that are not what the merge produces. The shared prompt
+  source was not edited, because five other stage programs compile it.
+- **Import refuses a merge table whose results are longer than 33 characters**, the most
+  the stage's rounds can check.
+
+The stage's logic is one set of plain functions in
+[check.rs](../../raster-stages/prompt-check/src/check.rs), called by its tiles and by the
+native twin
+([prompt_check_stage.rs](../../crates/inference/kernels/src/kernels/prompt_check_stage.rs)).
 
 ## Questions for you
 

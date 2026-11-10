@@ -82,6 +82,24 @@ fn merges(
     }
     valid
 }
+/// Whether merge bucket `index` is the one the witness commits to.
+pub(crate) fn merge_bucket(t: &PromptTokenizer, w: &TokenizerWitness, index: u32) -> bool {
+    check(
+        t.merge_buckets.as_slice().get(index as usize),
+        &w.merges,
+        &w.merge_paths,
+        index,
+    )
+}
+/// Whether vocabulary bucket `index` is the one the witness commits to.
+pub(crate) fn vocab_bucket(t: &PromptTokenizer, w: &TokenizerWitness, index: u32) -> bool {
+    check(
+        t.vocab_buckets.as_slice().get(index as usize),
+        &w.vocab,
+        &w.vocab_paths,
+        index,
+    )
+}
 pub(crate) fn batch(t: &PromptTokenizer, w: &TokenizerWitness, pieces: &[BpePiece]) -> bool {
     let mut pieces = pieces.to_vec();
     let mut valid = true;

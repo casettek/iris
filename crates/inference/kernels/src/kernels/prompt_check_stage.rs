@@ -1,0 +1,288 @@
+//! The native twin of the `prompt-check` stage.
+//!
+//! It drives the same step functions the stage's tiles call
+//! (`prompt_check::check`), in the order the stage's sequences run them, so
+//! its output is the stage's output. What differs is only what cannot matter:
+//! lookups read the tokenizer directly, and a pass stops once a scan finds
+//! nothing to merge, because every later round would leave the list as it is.
+
+use anyhow::{bail, ensure, Result};
+use prompt_check::check::{
+    apply_piece, begin_apply_step, begin_number_state, begin_number_step, begin_window_step,
+    count_marks, end_range_piece, finish_check_context, finish_window_step, is_last_token,
+    is_range_token, lead_piece, number_piece, observe_best, observe_final_piece, plan_range,
+    range_end, range_piece, ApplyState, CheckPiece, MarkCount, PassSummary, ScanSummary,
+    WindowBest, WindowScan, ROUNDS_PER_PASS,
+};
+use prompt_check::input as check_input;
+use prompt_prepare::input::{
+    merge_bucket_of, vocab_bucket_of, BpePiece, PromptContext, PromptState, PromptTokenizer,
+};
+use raster::{BytesPage, List};
+
+fn to_check_context(context: &PromptContext) -> check_input::PromptContext {
+    check_input::PromptContext {
+        model: context.model.clone(),
+        input_text_sha256: context.input_text_sha256.clone(),
+        model_id: context.model_id.clone(),
+        raw_prompt: context.raw_prompt,
+        max_new_tokens: context.max_new_tokens,
+        range_size: context.range_size,
+        next_piece: context.next_piece,
+        prompt_tokens: context.prompt_tokens,
+        complete: context.complete,
+        fault: context.fault,
+        fault_position: context.fault_position,
+    }
+}
+
+fn from_check_context(context: check_input::PromptContext) -> PromptContext {
+    PromptContext {
+        model: context.model,
+        input_text_sha256: context.input_text_sha256,
+        model_id: context.model_id,
+        raw_prompt: context.raw_prompt,
+        max_new_tokens: context.max_new_tokens,
+        range_size: context.range_size,
+        next_piece: context.next_piece,
+        prompt_tokens: context.prompt_tokens,
+        complete: context.complete,
+        fault: context.fault,
+        fault_position: context.fault_position,
+    }
+}
+
+fn to_check_piece(piece: &BpePiece) -> check_input::BpePiece {
+    check_input::BpePiece {
+        text: piece.text.clone(),
+        segment: piece.segment,
+    }
+}
+
+/// What the stage's proofs of the tokenizer buckets it reads come to. The
+/// staged pass checks each bucket against the witness; a caller with nothing
+/// to check passes [`Trusted`].
+pub trait BucketProofs {
+    fn merge_bucket(&mut self, index: u32) -> bool;
+    fn vocab_bucket(&mut self, index: u32) -> bool;
+}
+
+/// Accepts every bucket.
+pub struct Trusted;
+
+impl BucketProofs for Trusted {
+    fn merge_bucket(&mut self, _index: u32) -> bool {
+        true
+    }
+    fn vocab_bucket(&mut self, _index: u32) -> bool {
+        true
+    }
+}
+
+/// One scan over the pieces: the best pair of every window.
+fn scan(
+    pieces: &[CheckPiece],
+    pass: u32,
+    tokenizer: &PromptTokenizer,
+    proofs: &mut dyn BucketProofs,
+) -> Vec<WindowBest> {
+    let mut state = WindowScan::default();
+    let mut entries = Vec::new();
+    for piece in pieces {
+        let step = begin_window_step(state, piece, pass);
+        let index = merge_bucket_of(
+            &step.query.pending,
+            &step.query.piece,
+            tokenizer.merge_bucket_count,
+        );
+        let mut hit = check_input::MergeMatch::default();
+        for rule in tokenizer.merge_buckets[index as usize].rules.iter() {
+            if step.query.has_pending
+                && rule.left == step.query.pending
+                && rule.right == step.query.piece
+                && (!hit.matched || rule.rank < hit.rank)
+            {
+                hit.matched = true;
+                hit.rank = rule.rank;
+                hit.merged = rule.merged.clone();
+            }
+        }
+        if step.push {
+            entries.push(step.closed.clone());
+        }
+        let mut next = finish_window_step(step, hit);
+        next.model_fault |= u32::from(!proofs.merge_bucket(index));
+        state = next;
+    }
+    entries
+}
+
+/// One pass: its final pieces, the closing scan and the fold over the pieces.
+fn pass(
+    pieces: &[CheckPiece],
+    pass: u32,
+    tokenizer: &PromptTokenizer,
+    proofs: &mut dyn BucketProofs,
+) -> Result<(Vec<CheckPiece>, ScanSummary, PassSummary)> {
+    let mut current = pieces.to_vec();
+    let mut entries = scan(&current, pass, tokenizer, proofs);
+    for _ in 0..ROUNDS_PER_PASS {
+        if !entries.iter().any(|best| best.matched) {
+            // No window merges, so this round and every later one copies the
+            // list unchanged, and the closing scan repeats this one.
+            break;
+        }
+        let mut state = ApplyState::default();
+        let mut next = Vec::with_capacity(current.len());
+        for piece in current {
+            let step = begin_apply_step(state, piece, pass);
+            let Some(best) = entries.get(step.index as usize).cloned() else {
+                bail!("a piece's window has no entry in the round's best pairs");
+            };
+            let action = apply_piece(step, best);
+            if action.push {
+                next.push(action.piece.clone());
+            }
+            state = action.state;
+        }
+        current = next;
+        entries = scan(&current, pass, tokenizer, proofs);
+    }
+    let mut closing = ScanSummary::default();
+    for best in &entries {
+        observe_best(&mut closing, best);
+    }
+    let mut summary = PassSummary::default();
+    for piece in &current {
+        observe_final_piece(&mut summary, piece);
+    }
+    Ok((current, closing, summary))
+}
+
+/// `prompt-check`: checks one range against the claim's marks and publishes
+/// its token ids. `root` is the tokenizer's identity root.
+pub fn run_prompt_check(
+    tokenizer: &PromptTokenizer,
+    root: &BytesPage,
+    bound: &PromptState,
+    previous: &PromptState,
+    marks: &[u32],
+    proofs: &mut dyn BucketProofs,
+) -> Result<PromptState> {
+    ensure!(
+        tokenizer.merge_bucket_count > 0
+            && tokenizer.merge_bucket_count as usize == tokenizer.merge_buckets.len(),
+        "invalid merge bucket count"
+    );
+    ensure!(
+        tokenizer.vocab_bucket_count > 0
+            && tokenizer.vocab_bucket_count as usize == tokenizer.vocab_buckets.len(),
+        "invalid vocabulary bucket count"
+    );
+    let mut context = check_input::join_prompt_models(
+        to_check_context(&previous.context),
+        &to_check_context(&bound.context),
+    );
+    context.model =
+        model_identity::stream::verify(context.model, root, model_identity::Role::Tokenizer);
+    context
+        .model
+        .require(context.model_id == context.model.model_id);
+    context.model.continue_prompt_range();
+
+    // Which pieces the range takes.
+    let mut marked = MarkCount::default();
+    count_marks(&mut marked, marks.len());
+    let end = range_end(&context, &marked);
+    let plan = plan_range(&context, end, bound.pieces.len() as u64);
+
+    // The range's pieces after the previous range's last token, numbered.
+    let mut range = Vec::new();
+    if plan.lead {
+        range.extend(
+            previous
+                .pieces
+                .iter()
+                .map(|piece| lead_piece(&to_check_piece(piece))),
+        );
+    }
+    for (index, piece) in bound.pieces.iter().enumerate() {
+        if let Some((piece, last)) = range_piece(&to_check_piece(piece), index as u64, &plan) {
+            range.push(piece);
+            if last {
+                range.push(end_range_piece());
+            }
+        }
+    }
+    let mut state = begin_number_state(&plan);
+    let mut pieces = Vec::with_capacity(range.len());
+    for piece in range {
+        let step = begin_number_step(state, piece);
+        let Some(mark) = marks.get(step.index as usize).copied() else {
+            bail!("a range piece has no mark");
+        };
+        let numbered = number_piece(step, mark);
+        pieces.push(numbered.piece);
+        state = numbered.state;
+    }
+
+    let (merged_a, scan_a, summary_a) = pass(&pieces, 0, tokenizer, proofs)?;
+    let (_, scan_b, summary_b) = pass(&pieces, 1, tokenizer, proofs)?;
+    let mut context =
+        finish_check_context(&context, &plan, &summary_a, &scan_a, &summary_b, &scan_b);
+
+    // The range's tokens, as pass A left them, resolved to ids.
+    let tokens: Vec<&CheckPiece> = merged_a
+        .iter()
+        .filter(|piece| is_range_token(piece))
+        .collect();
+    for token in &tokens {
+        let index = vocab_bucket_of(&token.text, tokenizer.vocab_bucket_count);
+        context.model.require(proofs.vocab_bucket(index));
+    }
+    let mut token_ids = Vec::with_capacity(tokens.len());
+    for token in &tokens {
+        let index = vocab_bucket_of(&token.text, tokenizer.vocab_bucket_count) as usize;
+        let Some(entry) = tokenizer.vocab_buckets[index]
+            .entries
+            .iter()
+            .find(|entry| entry.token == token.text)
+        else {
+            bail!(
+                "prepared or merged piece is absent from vocabulary: {:?}",
+                token.text
+            );
+        };
+        token_ids.push(entry.id);
+    }
+    for id in &token_ids {
+        context.model.append_consumed_token(*id);
+    }
+    context
+        .model
+        .finish_prompt_range(context.complete, context.prompt_tokens, context.fault);
+
+    // The range's last token, as the pieces it was claimed from.
+    let carried = pieces
+        .iter()
+        .filter(|piece| is_last_token(piece, summary_a.last_token))
+        .map(|piece| BpePiece {
+            text: piece.text.clone(),
+            segment: piece.segment,
+        })
+        .collect::<Vec<_>>();
+    Ok(PromptState {
+        pieces: List::from(carried),
+        token_ids: List::from(token_ids),
+        context: from_check_context(context),
+    })
+}
+
+/// The marks run preparation writes for a range: one per piece, 1 where a
+/// token starts. `counts` is each token's number of pieces, in order.
+pub fn marks_for(counts: impl IntoIterator<Item = usize>) -> Vec<u32> {
+    counts
+        .into_iter()
+        .flat_map(|count| (0..count).map(|offset| u32::from(offset == 0)))
+        .collect()
+}

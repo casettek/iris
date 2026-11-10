@@ -2068,6 +2068,7 @@ dependencies = [
  "output-finalize",
  "prefill-prepare-aux",
  "prefill-range",
+ "prompt-check",
  "prompt-prepare",
  "range-origin",
  "raster",
@@ -2972,6 +2973,16 @@ dependencies = [
 
 [[package]]
 name = "prompt-bind"
+version = "0.1.0"
+dependencies = [
+ "model-identity",
+ "raster",
+ "serde",
+ "sha2",
+]
+
+[[package]]
+name = "prompt-check"
 version = "0.1.0"
 dependencies = [
  "model-identity",
@@ -3965,6 +3976,7 @@ dependencies = [
  "inference-kernels",
  "input-embedding",
  "output-finalize",
+ "prompt-check",
  "prompt-prepare",
  "raster",
  "sequence-check",
@@ -4406,6 +4418,7 @@ dependencies = [
  "output-finalize",
  "prefill-prepare-aux",
  "prefill-range",
+ "prompt-check",
  "prompt-prepare",
  "range-origin",
  "raster",

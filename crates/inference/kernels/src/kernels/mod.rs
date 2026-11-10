@@ -4,6 +4,7 @@ pub mod output_finalize;
 pub mod prefill_prepare_aux;
 pub mod prefill_range;
 pub mod prompt_check;
+pub mod prompt_check_stage;
 pub mod prompt_prepare;
 pub mod range_origin;
 pub mod sequence_check;

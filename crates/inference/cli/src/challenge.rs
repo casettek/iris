@@ -1290,7 +1290,7 @@ mod tests {
                 bound_external(&frozen_manifest, "prompt_bind", parameter),
             );
         }
-        for input in ["prompt_cuts", "claimed_ids"] {
+        for input in ["prompt_marks", "claimed_ids"] {
             assert_eq!(
                 bound_commitments(&manifest, input).unwrap(),
                 bound_commitments(&frozen_manifest, input).unwrap(),

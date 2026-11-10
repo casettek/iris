@@ -18,10 +18,10 @@ pub(crate) fn model_fixture(base: &Path, name: &str) -> PathBuf {
     fs::write(dir.join("Raster.toml"), format!(r#"[chain]
 name = "{name}"
 
-[chain.input.prompt_cuts]
+[chain.input.prompt_marks]
 index = "j"
-path = "target/iris/run-prompt-placeholder/cut_{{j}}.rastered"
-index_path = "target/iris/run-prompt-placeholder/cut_{{j}}.rindex"
+path = "target/iris/run-prompt-placeholder/marks_{{j}}.rastered"
+index_path = "target/iris/run-prompt-placeholder/marks_{{j}}.rindex"
 commitments = []
 
 [chain.input.claimed_ids]
@@ -43,15 +43,11 @@ index = "j"
 count = 0
 
   [[chain.repeat.stage]]
-name = "prompt_merge_p{{j}}_b{{b}}"
-index = "b"
-count = 0
-project = "raster-stages/prompt-merge"
-
-  [[chain.repeat.stage]]
-name = "prompt_prepare_p{{j}}"
-project = "raster-stages/prompt-prepare"
-inputs.merged_pieces = {{ from = "prompt_merge_p{{j}}_b@LAST_MERGE_BATCH@" }}
+name = "prompt_check_p{{j}}"
+project = "raster-stages/prompt-check"
+inputs.bound = {{ from = "prompt_bind" }}
+inputs.previous = {{ from = "prompt_check_p{{j-1}}", first = "prompt_bind" }}
+inputs.marks = {{ input = "prompt_marks_{{j}}" }}
 
 [[chain.repeat]]
 name = "claimed_embed"

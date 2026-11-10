@@ -194,16 +194,15 @@ impl DirectInferenceModel {
     /// them. `None` when the prompt cannot be cut into ranges, which only a
     /// chain needs.
     pub fn prompt_schedule(&self, prompt: &PreparedPrompt) -> Option<(u32, u32)> {
-        let ranges = run_prep::prompt_ranges(
+        let ranges = run_prep::marked_ranges(
             &prompt.initial_pieces,
             self.manifest.range_size as usize,
-            &run_prep::vocabulary_pairs(&self.tokenizer).ok()?,
             &run_prep::prompt_tokenizer(&self.tokenizer).ok()?,
         )
         .ok()?;
         Some((
             u32::try_from(ranges.len()).ok()?,
-            run_prep::range_tokenizer_repeat_count(&ranges).ok()?,
+            run_prep::CHECK_MERGE_BATCHES,
         ))
     }
 

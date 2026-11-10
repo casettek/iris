@@ -8,6 +8,7 @@ anyhow = "1.0"
 inference-artifacts = { path = "../../inference/artifacts" }
 inference-kernels = { path = "../../inference/kernels" }
 output-finalize = { path = "../../../raster-stages/output-finalize" }
+prompt-check = { path = "../../../raster-stages/prompt-check" }
 prompt-prepare = { path = "../../../raster-stages/prompt-prepare" }
 sequence-check = { path = "../../../raster-stages/sequence-check" }
 raster = { path = "../../../../raster/crates/raster" }

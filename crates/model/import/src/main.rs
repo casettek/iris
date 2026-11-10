@@ -605,7 +605,7 @@ fn chain_template(
 
     let mut out = String::from("[chain]\nname = \"iris\"\nversion = \"0.1.0\"\n");
     out.push_str(&indexed_model_inputs(shape, layout, prefill_stages)?);
-    out.push_str(&range_input("prompt_cuts", "cut", "j"));
+    out.push_str(&range_input("prompt_marks", "marks", "j"));
     out.push_str(&range_input("claimed_ids", "claimed", "k"));
     out.push_str(
         "\n[[chain.stage]]\nname = \"range_origin\"\nproject = \"raster-stages/range-origin\"\n\
@@ -641,32 +641,16 @@ fn chain_template(
     out.push_str("\n[[chain.repeat]]\nname = \"prompt\"\nindex = \"j\"\ncount = 0\n");
     out.push_str(&format!(
         "\n  [[chain.repeat.stage]]\n\
-         name = \"prompt_seed_p{{j}}\"\n\
-         project = \"raster-stages/prompt-seed\"\n\
+         name = \"prompt_check_p{{j}}\"\n\
+         project = \"raster-stages/prompt-check\"\n\
          {tokenizer_line}\
          inputs.bound = {{ from = \"prompt_bind\" }}\n\
-         inputs.previous = {{ from = \"prompt_prepare_p{{j-1}}\", first = \"prompt_bind\" }}\n\
-         inputs.cut = {{ input = \"prompt_cuts_{{j}}\" }}\n"
-    ));
-    out.push_str(&format!(
-        "\n  [[chain.repeat.stage]]\n\
-         name = \"prompt_merge_p{{j}}_b{{b}}\"\n\
-         index = \"b\"\n\
-         count = 0\n\
-         project = \"raster-stages/prompt-merge\"\n\
-         inputs.initial_pieces = {{ from = \"prompt_merge_p{{j}}_b{{b-1}}\", first = \"prompt_seed_p{{j}}\" }}\n\
-         {tokenizer_line}"
-    ));
-    out.push_str(&format!(
-        "\n  [[chain.repeat.stage]]\n\
-         name = \"prompt_prepare_p{{j}}\"\n\
-         project = \"raster-stages/prompt-prepare\"\n\
-         inputs.merged_pieces = {{ from = \"prompt_merge_p{{j}}_b{LAST_MERGE_BATCH}\" }}\n\
-         {tokenizer_line}\
+         inputs.previous = {{ from = \"prompt_check_p{{j-1}}\", first = \"prompt_bind\" }}\n\
+         inputs.marks = {{ input = \"prompt_marks_{{j}}\" }}\n\
          \n  [[chain.repeat.stage]]\n\
          name = \"embed_p{{j}}\"\n\
          project = \"raster-stages/input-embedding\"\n\
-         inputs.prompt = {{ from = \"prompt_prepare_p{{j}}\" }}\n\
+         inputs.prompt = {{ from = \"prompt_check_p{{j}}\" }}\n\
          {}\
          inputs.previous = {{ from = \"embed_p{{j-1}}\", first = \"range_origin\" }}\n\
          {embedding_line}",
@@ -776,7 +760,7 @@ fn chain_template(
          inputs.activations = {{ from = \"range_c{{k}}_l{last_layer}\" }}\n\
          inputs.previous = {{ from = \"range_c{{k-1}}_l{last_layer}\", first = \"range_p{LAST_PROMPT_RANGE}_l{last_layer}\" }}\n\
          inputs.prior = {{ from = \"check_c{{k-1}}\", first = \"decode_init\" }}\n\
-         inputs.prompt = {{ from = \"prompt_prepare_p{LAST_PROMPT_RANGE}\" }}\n\
+         inputs.prompt = {{ from = \"prompt_check_p{LAST_PROMPT_RANGE}\" }}\n\
          {}",
         external_line("head", layout, "raster-stages/sequence-check", "head", &head),
     ));
@@ -785,7 +769,7 @@ fn chain_template(
          name = \"output_finalize\"\n\
          project = \"raster-stages/output-finalize\"\n\
          inputs.edge = {{ from = \"claimed.edge\" }}\n\
-         inputs.prompt = {{ from = \"prompt_prepare_p{LAST_PROMPT_RANGE}\" }}\n\
+         inputs.prompt = {{ from = \"prompt_check_p{LAST_PROMPT_RANGE}\" }}\n\
          {}",
         external_line(
             "decoder",
@@ -801,10 +785,6 @@ fn chain_template(
 
 /// Run preparation replaces this with the index of the last prompt range.
 const LAST_PROMPT_RANGE: &str = "@LAST_PROMPT_RANGE@";
-
-/// Run preparation replaces this with the index of each range's last
-/// tokenizer batch.
-const LAST_MERGE_BATCH: &str = "@LAST_MERGE_BATCH@";
 
 /// The empty prompt a claimed range embeds before its claimed ids.
 fn no_prompt_commitment(layout: &ArtifactLayout) -> Result<String, Box<dyn Error>> {

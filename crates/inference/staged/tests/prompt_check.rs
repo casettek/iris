@@ -7,6 +7,7 @@ use inference_kernels::kernels::prompt_check::rounds::{
 use inference_kernels::kernels::prompt_check::{
     check_prompt, check_range, grouping_passes, merged_tokens, ClaimedToken,
 };
+use inference_kernels::kernels::prompt_check_stage::{run_prompt_check, Trusted};
 use inference_kernels::kernels::prompt_prepare::best_merge;
 use prompt_prepare::input::{split_rendered, BpePiece, PromptTokenizer, TokenizerProfile};
 use serde_json::Value;
@@ -227,6 +228,9 @@ fn claimed_tokens_on_the_production_vocabulary() {
     let long_pieces = pieces(&long, &profile, &vocab);
     let long_tokens = merged_tokens(&long_pieces, &table).unwrap();
     let (mut staged_steps, mut today_steps, mut start, mut previous) = (0_u64, 0_u64, 0, None);
+    let root_page = raster::BytesPage::__from_parts(0, 0, Vec::new());
+    let bound = prompt_prepare::input::PromptState::of_pieces(long_pieces.clone());
+    let mut twin = bound.clone();
     for range in long_tokens.chunks(512) {
         let counts: Vec<usize> = range.iter().map(|token| token.pieces as usize).collect();
         let len: usize = counts.iter().sum();
@@ -236,6 +240,21 @@ fn claimed_tokens_on_the_production_vocabulary() {
         assert_eq!(staged.fault, None);
         assert_eq!(staged.texts.len(), range.len());
         staged_steps += staged.scan_steps;
+        // The stage's native twin over the same range, fed the range before it.
+        twin = run_prompt_check(
+            &table,
+            &root_page,
+            &bound,
+            &twin,
+            &marks_of(&counts),
+            &mut Trusted,
+        )
+        .unwrap();
+        assert_eq!(twin.context.fault, 0);
+        assert_eq!(
+            twin.token_ids.as_slice(),
+            range.iter().map(|token| token.id).collect::<Vec<_>>()
+        );
         today_steps += full_merge_scan_steps(&long_pieces[start..start + len], &table).unwrap();
         start += len;
         previous = counts.last().copied();

@@ -1,5 +1,5 @@
 {
-  "version": 7,
+  "version": 8,
   "model_id": "821204991faed2f412e0ec365798da90b8f77f57ad35a472d719a3c58895ef6d",
   "model_commitments": [
     {
@@ -372,6 +372,6 @@
   ],
   "provenance": {
     "raster_manifest_path": "Raster.toml",
-    "raster_manifest_sha256": "e62e713a8a9003a0316635fc2e24521bf04c51529ef83667b5a87bfa28bacff7"
+    "raster_manifest_sha256": "1cb0d80156458b936b4df9e63b7d5f51607941ca9bd7dff713e394e3b6646e8b"
   }
 }

@@ -31,7 +31,7 @@ The chain verifies a *known* output with one pass over `prompt ‖ claimed_outpu
 | --- | --- | --- |
 | `range-origin`, `decode-init` | `range_origin`, `decode_init` | The empty sequence and the empty edge the first range starts from |
 | `prompt-bind` | `prompt_bind` | Hash the original text and split it into pieces |
-| `prompt-seed`, `prompt-merge`, `prompt-prepare` | `prompt_seed_p{j}`, `prompt_merge_p{j}_b{b}`, `prompt_prepare_p{j}` | Check a range's cut and tokenize it |
+| `prompt-check` | `prompt_check_p{j}` | Check a range's claimed tokens against the merge and publish their ids |
 | `input-embedding` | `embed_p{j}`, `embed_c{k}` | Gather embedding rows |
 | `prefill-prepare-aux` | `aux_p{j}_l{l}`, `aux_c{k}_l{l}` | Per-layer PLE inputs |
 | `prefill-range` | `range_p{j}_l{l}`, `range_c{k}_l{l}` | Run one transformer layer over one range |
@@ -50,32 +50,40 @@ it in the context (see [Stage schedule](#stage-schedule)). Its output is every p
 of the prompt and a `PromptContext` holding the text's hash, the model id and the
 configuration.
 Every prompt stage publishes `PromptState`, so the context travels with the
-pieces, and the last range's `prompt_prepare` holds the record for the whole
+pieces, and the last range's `prompt_check` holds the record for the whole
 prompt.
 
-Run preparation chooses where to cut those pieces, and the chain checks each cut
-rather than trusting it. Ranges hold at most
-`range_size` tokens, each ending at a boundary no merge can cross: two pieces
-whose adjacent characters appear together in no vocabulary token. Every merge
-produces a vocabulary token, so pieces on either side of such a boundary tokenize
-independently to exactly the ids of the whole prompt. On Gemma 4 E2B only one
-token (`>▁</`) spans a space, so almost every space is a boundary. Run
-preparation merges each stretch between boundaries natively to count its
-tokens, then packs whole stretches into ranges. It fails if one stretch alone is
-longer than `range_size` tokens. The claimed ids are cut into ranges of the same
-size.
+Run preparation tokenizes the pieces natively and cuts the tokens into ranges of
+at most `range_size`. For each range it commits *marks*: one number per piece,
+1 where a token starts. The chain does not replay the merge to produce the ids.
+It checks that the marks are the merge's own result, and looks the ids up. A
+range may end between any two tokens. The claimed ids are cut into ranges of the
+same size.
+
+The check rests on one fact about the ranked merge: a tokenization is the
+merge's result exactly when every token, merged together with its left neighbour
+in the segment on those two tokens' pieces alone, comes back as those two tokens,
+and a token with no left neighbour merges alone to one piece. The argument and
+its tests are in [the proposal](../proposals/claimed-prompt-tokens.md).
+`prompt_check` runs those small merges without building them: tokens are paired
+(0,1), (2,3), … in one pass and (1,2), (3,4), … in another, a piece may merge
+only inside its pair and segment, and each pass is 64 rounds that merge at most
+one pair of pieces per pair of tokens. A merge that joins two tokens, a token
+left in more than one piece, or a pair still merging after the last round is a
+fault. 64 rounds cover tokens of up to 33 pieces; Gemma 4 E2B's longest
+vocabulary entry is 31 characters.
 
 Each prompt range `p{j}`:
 
-1. `prompt_seed_p{j}`: takes `prompt_bind`'s pieces, the previous range's context
-   and this range's cut, an index into the pieces. It checks the cut, copies the
-   range, and runs the range's first 64 merges. Because each range starts where
-   the previous context ended, a range cannot be substituted, omitted or
-   duplicated without the text's pieces saying so.
-2. `prompt_merge_p{j}_b{b}`, `prompt_prepare_p{j}`: 64 merges per stage, then ids.
-   Each merge scans only the range, so total tokenizer work is linear in the
-   prompt. Every range runs the same number of batches, enough for the range
-   needing the most merges, as filled in by run preparation.
+1. `prompt_check_p{j}`: takes `prompt_bind`'s pieces, the previous range's output
+   and this range's marks. It copies as many pieces as there are marks, starting
+   where the previous range ended, numbers their tokens from the marks, and
+   checks every neighbouring pair of tokens as described below. It then looks
+   each token up in the vocabulary and publishes the ids, and beside them the
+   pieces of the range's last token for the next range to pair its first token
+   with. Because each range starts where the previous context ended, a range
+   cannot be substituted, omitted or duplicated without the text's pieces saying
+   so.
 3. `embed_p{j}`: `input-embedding` over the range's ids, starting where the
    previous range's embedding ended (`range_origin` for the first).
 4. `aux_p{j}_l{l}`, `range_p{j}_l{l}`: the `prefill-prepare-aux` and
@@ -85,10 +93,15 @@ Each prompt range `p{j}`:
 
 A preparation that goes wrong does not stop a stage. An aborting stage has no
 output to compare or replay, so it runs to completion and records the first
-problem in `PromptContext.fault`: no text, an empty range, a cut past the end of
-the prompt, a cut a merge could cross, a range over `range_size` tokens, or pieces
-that could still merge. A run whose last context has a fault, or is not
+problem in `PromptContext.fault`: no text, a range with no marks, marks past the
+end of the prompt, a token whose pieces are in two segments, tokens that are not
+what the merge produces, a window still merging after the last round, or a range
+over `range_size` tokens. A run whose last context has a fault, or is not
 `complete`, is rejected on its record.
+
+Nothing a claim supplies can abort `prompt_check`. The marks are numbers, and the
+stage reads a mark only for a piece it has copied, of which there are never more
+than there are marks.
 
 Each claimed range `c{k}` runs `embed_c{k}` (an empty prompt, this range's
 claimed ids), `aux_c{k}_l{l}`, `range_c{k}_l{l}`, and `check_c{k}`.
@@ -128,7 +141,7 @@ chain ran under (`input_text_sha256`, `model_id`, `raw_prompt`, `max_new_tokens`
 computes none of it.
 
 The repeat counts, the last prompt range's index, the text, configuration and
-stage schedule, and the per-range externals (`cut_{j}`, `claimed_{k}`) are filled in by run preparation
+stage schedule, and the per-range externals (`marks_{j}`, `claimed_{k}`) are filled in by run preparation
 into the frozen run
 manifest. `range-origin` is the empty sequence at position 0 that the first
 range of each binding starts from, because a repeat's `first` fallback must name a
@@ -169,7 +182,7 @@ caught one of three ways:
   `challenge build` reports this as a rejected claimed output.
 
 The prompt side is inside the chain. The text, the configuration and the model
-id are committed inputs of `prompt_bind`, and the last range's `prompt_prepare`
+id are committed inputs of `prompt_bind`, and the last range's `prompt_check`
 context says what happened to them: the text's SHA-256, the model id, and whether
 every piece was prepared without a fault.
 
@@ -189,8 +202,9 @@ wrong weights is that comparison, which a contract can make without a replay.
 Every per-position stage covers at most `range_size` positions, so its replay
 cost is bounded independently of the prompt length, except that a global-attention
 layer's late ranges still read every earlier key. The stage count grows linearly
-with the prompt: per prompt range one seed, at least one more merge batch (a
-range needs about one per 64 merges), prepare, embed and two stages per layer.
+with the prompt: per prompt range one check, one embed and two stages per layer.
+`prompt_check` runs a fixed 128 merge rounds over its range whatever the range
+holds, so its cost does not depend on how many merges the range needs.
 
 Carrying K/V forward copies it, because Raster can extend only an object created
 inside the same program, and a stage's input is not one. Sliding-window layers
@@ -247,19 +261,19 @@ model/execution fault makes the final claim invalid even if native and Raster
 honestly execute the same malicious wiring. `test-parity` exercises that case
 as well as divergence from the honest template; production RISC Zero tests in
 `model_identity_guest.rs` cover the corresponding guest checks. Model imports
-and prepared runs use version 7; older boundary encodings must be regenerated.
+and prepared runs use version 8; older boundary encodings must be regenerated.
 
 ### Stage schedule
 
 The stage schedule is which stages a run executes and in what order. It is three
 counts, chosen by run preparation and committed as the `schedule` input of
 `prompt_bind`: the prompt ranges `P`, the merge batches `B` each range runs after
-its seed, and the claimed ranges `C`. With the model's layer count `L` they fix
-every stage:
+its seed, and the claimed ranges `C`. Run preparation always sets `B` to 1. With
+the model's layer count `L` they fix every stage:
 
 1. `prompt_bind`
-2. for each prompt range `j`: `prompt_seed`, `prompt_merge` batches `0..B`,
-   `prompt_prepare`, `embed_p{j}`
+2. for each prompt range `j`: `prompt_check_p{j}`, which is the range's
+   `prompt_seed`, `prompt_merge` batch 0 and `prompt_prepare`, then `embed_p{j}`
 3. for each claimed range `k`: `embed_c{k}`
 4. for each layer: the auxiliary stage of every range, then the transformer
    stage of every range
@@ -297,3 +311,10 @@ stage ran, each after the stages the schedule puts before it. Two stages that do
 not feed each other, such as the auxiliary stages of two layers, are not ordered
 against each other. A chain with no `prompt_bind`, such as the tokenizer fixture
 chain, has no schedule, and its prompt stages publish the execution fault.
+
+`prompt_check_p{j}` is a range's seed, its one merge batch and its prepare in one
+stage. It records those three steps in order, each checked against the one
+before, so its output carries the `prompt_prepare` step the later stages require.
+The schedule's rules and the `Execution` record are unchanged from when the three
+were separate stages; `B` is simply always 1. The tokenizer fixture chain still
+runs `prompt-seed`, `prompt-merge` and `prompt-prepare` as separate stages.

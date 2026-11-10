@@ -61,9 +61,13 @@ the chain then checks it.
 - The final record: its context is the last prompt context's, its
   `output_text_sha256` is the SHA-256 of its own text, its faults and verdict are
   clean, and the native result artifact and direct's result are exactly this record.
-- Over wrong cuts, on the templated case: the prompt stages finish through both
-  Raster and native-staged, agree byte for byte, and record the expected fault.
-  This includes cuts out of order and a range left out.
+- Over wrong token marks, on the templated case: the prompt stages finish through
+  both Raster and native-staged, agree byte for byte, and record the expected fault.
+  This includes marks past the end of the prompt, a range with no marks, a token
+  claimed as two, two tokens claimed as one, and a range left out. Marks that
+  split or join tokens spell the prompt with vocabulary entries and are refused
+  because they are not what the merge produces. A range that ends inside a word
+  records no fault.
 - Over a 3 KiB text of single-byte atoms: `prompt_bind` finishes through both and
   agrees byte for byte. Raster limits what a tile may write per text chunk and
   native does not, so only this run shows that the chunk size fits.
@@ -103,8 +107,8 @@ challenger runs, under `<case>/challenges/`:
   every tensor and two vocabulary ids exchanged, is found at `prompt_bind` and
   replays. The challenger never reads that model.
 - A claim of the honest run whose checkpoints came from elsewhere must first differ
-  at the stage named: other text, configuration or stage schedule (`prompt_bind`), other cuts
-  (`prompt_seed_p0`), other ids (`embed_c0`), that model's tokenizer at each prompt
+  at the stage named: other text, configuration or stage schedule (`prompt_bind`), other marks
+  (`prompt_check_p0`), other ids (`embed_c0`), that model's tokenizer at each prompt
   stage, its embedding, PLE, weights, head and decoder at the first stage reading
   each, PLE layers exchanged, and stages wired to the wrong predecessor.
 

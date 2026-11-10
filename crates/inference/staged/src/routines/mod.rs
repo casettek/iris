@@ -14,6 +14,7 @@ pub mod output_finalize;
 pub mod prefill_prepare_aux;
 pub mod prefill_range;
 pub mod prompt_bind;
+pub mod prompt_check;
 pub mod prompt_merge;
 pub mod prompt_prepare;
 pub mod prompt_seed;
@@ -23,6 +24,7 @@ pub mod sequence_check;
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum StageKind {
     PromptBind,
+    PromptCheck,
     PromptSeed,
     PromptPrepare,
     PromptMerge,
@@ -73,6 +75,7 @@ impl StageKind {
     pub fn from_stage_spec(project: &str, name: &str) -> Result<Self> {
         match project_basename(project) {
             "prompt-bind" if name == "prompt_bind" => Ok(Self::PromptBind),
+            "prompt-check" if name.starts_with("prompt_check_p") => Ok(Self::PromptCheck),
             "prompt-seed" if name.starts_with("prompt_seed_p") => Ok(Self::PromptSeed),
             "prompt-merge" if is_prompt_merge_name(name) => Ok(Self::PromptMerge),
             "prompt-prepare"
@@ -108,6 +111,7 @@ impl StageKind {
     pub fn from_stage_name(name: &str) -> Result<Self> {
         match name {
             "prompt_bind" => Ok(Self::PromptBind),
+            _ if name.starts_with("prompt_check_p") => Ok(Self::PromptCheck),
             _ if name.starts_with("prompt_seed_p") => Ok(Self::PromptSeed),
             "prompt_merge" => Ok(Self::PromptMerge),
             _ if is_prompt_merge_name(name) => Ok(Self::PromptMerge),
@@ -134,6 +138,7 @@ impl StageKind {
     pub fn project(&self) -> &'static str {
         match self {
             Self::PromptBind => "prompt-bind",
+            Self::PromptCheck => "prompt-check",
             Self::PromptSeed => "prompt-seed",
             Self::PromptPrepare => "prompt-prepare",
             Self::PromptMerge => "prompt-merge",
@@ -150,6 +155,7 @@ impl StageKind {
     pub fn routine(&self) -> &'static str {
         match self {
             Self::PromptBind => "prompt_bind",
+            Self::PromptCheck => "prompt_check",
             Self::PromptSeed => "prompt_seed",
             Self::PromptPrepare => "prompt_prepare",
             Self::PromptMerge => "prompt_merge",
@@ -167,6 +173,7 @@ impl StageKind {
         match self {
             Self::PrefillPrepareAux { layer } | Self::PrefillRange { layer } => Some(*layer),
             Self::PromptBind
+            | Self::PromptCheck
             | Self::PromptSeed
             | Self::PromptPrepare
             | Self::PromptMerge
@@ -185,6 +192,11 @@ pub fn run_for_compare(kind: &StageKind) -> Result<DirectCompareOutput> {
             prompt_bind::load_inputs_from_args,
             prompt_bind::run_direct,
             "prompt_bind",
+        ),
+        StageKind::PromptCheck => compare(
+            prompt_check::load_inputs_from_args,
+            prompt_check::run_direct,
+            "prompt_check",
         ),
         StageKind::PromptSeed => compare(
             prompt_seed::load_inputs_from_args,
@@ -246,6 +258,12 @@ pub fn run_and_publish(kind: &StageKind) -> Result<DirectPublishOutput> {
             prompt_bind::run_direct,
             "prompt_bind",
             CachedStageValue::BpePieces,
+        ),
+        StageKind::PromptCheck => publish(
+            prompt_check::load_inputs_from_args,
+            prompt_check::run_direct,
+            "prompt_check",
+            CachedStageValue::PromptTokenization,
         ),
         StageKind::PromptSeed => publish(
             prompt_seed::load_inputs_from_args,
@@ -344,6 +362,19 @@ pub fn run_and_publish_from_paths_with_caches(
             prompt_bind::run_direct,
             "prompt_bind",
             CachedStageValue::BpePieces,
+        ),
+        StageKind::PromptCheck => publish(
+            || {
+                prompt_check::load_inputs_from_paths_with_cache(
+                    input_path,
+                    input_manifest_path,
+                    cached_inputs,
+                    caches.materializations,
+                )
+            },
+            prompt_check::run_direct,
+            "prompt_check",
+            CachedStageValue::PromptTokenization,
         ),
         StageKind::PromptSeed => publish(
             || {
@@ -499,6 +530,19 @@ pub fn run_cached_from_paths_with_caches(
             prompt_bind::run_direct,
             "prompt_bind",
             CachedStageValue::BpePieces,
+        ),
+        StageKind::PromptCheck => cache(
+            || {
+                prompt_check::load_inputs_from_paths_with_cache(
+                    input_path,
+                    input_manifest_path,
+                    cached_inputs,
+                    caches.materializations,
+                )
+            },
+            prompt_check::run_direct,
+            "prompt_check",
+            CachedStageValue::PromptTokenization,
         ),
         StageKind::PromptSeed => cache(
             || {

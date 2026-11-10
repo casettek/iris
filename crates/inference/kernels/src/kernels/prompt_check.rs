@@ -843,4 +843,119 @@ mod tests {
                 .unwrap();
         assert!(staged.fault.is_some());
     }
+
+    /// The stage's native twin, run range by range with each range handing
+    /// its last token to the next, ends without a fault exactly when the
+    /// marks are the merge's, and then publishes the merge's ids.
+    #[test]
+    fn the_stage_twin_accepts_exactly_the_merge_across_ranges() {
+        use crate::kernels::prompt_check_stage::{marks_for, run_prompt_check, Trusted};
+        use prompt_prepare::input::PromptState;
+
+        let letters = ["a", "b", "c"];
+        let root = raster::BytesPage::__from_parts(0, 0, Vec::new());
+        let mut rng = Rng(0x57a9e);
+        for table in 0..30 {
+            let count = 2 + rng.below(14);
+            let rules = random_rules(&mut rng, &letters, count, table % 2 == 1);
+            let tokenizer = tokenizer(&letters, &rules);
+            for text in strings(&letters, 5) {
+                for segment_break in [None, Some(text.len() / 2)] {
+                    if segment_break == Some(0) {
+                        continue;
+                    }
+                    let pieces = pieces_of(&text, segment_break);
+                    let merged = merged_tokens(&pieces, &tokenizer).unwrap();
+                    let bound = PromptState::of_pieces(pieces.clone());
+                    for counts in groupings(pieces.len()) {
+                        let passes = grouping_passes(&tokenizer, &pieces, &counts).unwrap();
+                        // One range, then every way of cutting it in two.
+                        for cut in 1..=counts.len() {
+                            let (first, second) = counts.split_at(cut);
+                            let mut state = run_prompt_check(
+                                &tokenizer,
+                                &root,
+                                &bound,
+                                &bound,
+                                &marks_for(first.iter().copied()),
+                                &mut Trusted,
+                            )
+                            .unwrap();
+                            let mut ids = state.token_ids.as_slice().to_vec();
+                            if !second.is_empty() {
+                                state = run_prompt_check(
+                                    &tokenizer,
+                                    &root,
+                                    &bound,
+                                    &state,
+                                    &marks_for(second.iter().copied()),
+                                    &mut Trusted,
+                                )
+                                .unwrap();
+                                ids.extend(state.token_ids.iter().copied());
+                            }
+                            let label = format!(
+                                "text {text:?}, break {segment_break:?}, grouping {counts:?}, cut {cut}"
+                            );
+                            assert_eq!(state.context.fault == 0, passes, "{label}");
+                            assert!(state.context.complete, "{label}");
+                            if passes {
+                                let expected: Vec<u32> =
+                                    merged.iter().map(|token| token.id).collect();
+                                assert_eq!(ids, expected, "{label}");
+                                assert_eq!(state.context.prompt_tokens as usize, merged.len());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn the_stage_twin_records_what_is_wrong_with_a_range() {
+        use crate::kernels::prompt_check_stage::{run_prompt_check, Trusted};
+        use prompt_check::check::{FAULT_NOT_THE_MERGE, FAULT_TOKEN_SPLIT};
+        use prompt_prepare::input::{
+            PromptState, FAULT_CUT_BEYOND_TEXT, FAULT_EMPTY_RANGE, FAULT_RANGE_TOO_LARGE,
+        };
+
+        let rules = [
+            ("a".to_string(), "b".to_string()),
+            ("b".to_string(), "c".to_string()),
+        ];
+        let tokenizer = tokenizer(&["a", "b", "c"], &rules);
+        let root = raster::BytesPage::__from_parts(0, 0, Vec::new());
+        let check = |pieces: &[BpePiece], marks: &[u32], range_size: u32| {
+            let mut bound = PromptState::of_pieces(pieces.to_vec());
+            bound.context.range_size = range_size;
+            run_prompt_check(&tokenizer, &root, &bound, &bound, marks, &mut Trusted)
+                .unwrap()
+                .context
+        };
+        let abc = pieces_of("abc", None);
+        // The merge's own marks: [ab, c].
+        let good = check(&abc, &[1, 0, 1], 0);
+        assert_eq!(
+            (good.fault, good.prompt_tokens, good.complete),
+            (0, 2, true)
+        );
+        // [a, bc] spells the text with vocabulary tokens; token 2 is refused.
+        let other = check(&abc, &[1, 1, 0], 0);
+        assert_eq!(
+            (other.fault, other.fault_position),
+            (FAULT_NOT_THE_MERGE, 1)
+        );
+        // No marks, marks past the prompt, a token across two segments, and
+        // more tokens than the range size.
+        assert_eq!(check(&abc, &[], 0).fault, FAULT_EMPTY_RANGE);
+        let beyond = check(&abc, &[1, 0, 1, 1], 0);
+        assert_eq!(
+            (beyond.fault, beyond.fault_position),
+            (FAULT_CUT_BEYOND_TEXT, 4)
+        );
+        let split = check(&pieces_of("abc", Some(1)), &[1, 0, 1], 0);
+        assert_eq!((split.fault, split.fault_position), (FAULT_TOKEN_SPLIT, 1));
+        assert_eq!(check(&abc, &[1, 0, 1], 1).fault, FAULT_RANGE_TOO_LARGE);
+    }
 }

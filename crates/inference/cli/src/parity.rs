@@ -348,7 +348,7 @@ fn run_case(
         .prompt_ranges
         .checked_sub(1)
         .context("the chain has no prompt ranges")?;
-    let context = &native[&format!("prompt_prepare_p{last}")].value["context"];
+    let context = &native[&format!("prompt_check_p{last}")].value["context"];
     ensure!(
         context["fault"] == json!(0) && context["complete"] == json!(true),
         "an honest prompt recorded a preparation fault: {context}"
@@ -467,26 +467,31 @@ fn run_chain_fault_leg(
     prepared: &crate::claim::PreparedClaimRun,
     claimed: &[u32],
 ) -> Result<Value> {
-    use run_prep::RangeCut;
     let prompt = &prepared.prepared_run.prompt;
-    let count = prompt.initial_pieces.len() as u64;
     let range_size = model.range_size;
     let model_dir = model_path
         .parent()
         .context("model manifest has no parent directory")?;
     let tokenizer: Value = read_json(&model_dir.join(&model.bundle.tokenizer_path))?;
-    let ranges = run_prep::prompt_ranges(
+    let ranges = run_prep::marked_ranges(
         &prompt.initial_pieces,
         range_size as usize,
-        &run_prep::vocabulary_pairs(&tokenizer)?,
         &run_prep::prompt_tokenizer(&tokenizer)?,
     )?;
-    let canonical = run_prep::range_cuts(&ranges);
+    let canonical: Vec<Vec<u32>> = ranges.iter().map(|range| range.marks.clone()).collect();
+    // Every piece's mark, and the first place after the start where a token begins.
+    let all: Vec<u32> = canonical.concat();
+    let second_token = all
+        .iter()
+        .skip(1)
+        .position(|mark| *mark != 0)
+        .map(|index| index + 1)
+        .context("the pinned case's prompt is a single token")?;
     let (template_path, template) = model.verified_raster_template(model_path)?;
     let template_dir = template_path
         .parent()
         .context("manifest template has no parent directory")?;
-    let merge_repeats = run_prep::tokenizer_repeat_count(prompt.initial_pieces.len())? + 1;
+    let merge_repeats = run_prep::CHECK_MERGE_BATCHES;
 
     let greedy = claimed
         .get(..2)
@@ -494,15 +499,18 @@ fn run_chain_fault_leg(
     let not_greedy = [(greedy[0] + 1) % model.shape.vocab_size as u32, greedy[1]];
     // Just past the tables, and far enough past that its page does not exist.
     let unknown = [model.shape.vocab_size as u32, u32::MAX];
-    let ends = |ends: &[u64]| ends.iter().map(|&end| RangeCut { end }).collect::<Vec<_>>();
     let positions = case.input_token_ids.len() as u32;
-    // Name, cuts, claimed ids, budget, what the record must say, then what to
+    // Name, marks, claimed ids, budget, what the record must say, then what to
     // add to the schedule's three counts.
     // Invalid prompt histories suppress downstream rows and retain the fault.
     let cases = [
         (
             "empty-middle-range",
-            ends(&[1, 1, count]),
+            vec![
+                all[..second_token].to_vec(),
+                Vec::new(),
+                all[second_token..].to_vec(),
+            ],
             greedy,
             2,
             true,
@@ -512,7 +520,7 @@ fn run_chain_fault_leg(
         ),
         (
             "empty-last-range",
-            ends(&[count, count]),
+            vec![all.clone(), Vec::new()],
             greedy,
             2,
             true,
@@ -586,11 +594,11 @@ fn run_chain_fault_leg(
     ];
 
     let mut report = Vec::new();
-    for (name, cuts, ids, budget, prompt_fault, check_fault, check_position, skew) in cases {
+    for (name, marks, ids, budget, prompt_fault, check_fault, check_position, skew) in cases {
         let dir = case_dir.join("chain-faults").join(name);
         let files = dir.join("prompt");
         let manifest = dir.join("Raster.toml");
-        let cut_files = run_prep::write_cuts(&cuts, &files)?;
+        let cut_files = run_prep::write_marks(&marks, &files)?;
         let claimed_files = run_prep::write_claimed_ranges(ids, range_size as usize, &files)?;
         let rendered = crate::claim::render_ranged_manifest(
             &template,
@@ -705,7 +713,7 @@ fn run_chain_fault_leg(
 }
 
 /// A wrong preparation must not stop a prompt stage: an aborting stage has no
-/// output to compare or replay. Runs the prompt stages over wrong cuts through
+/// output to compare or replay. Runs the prompt stages over wrong marks through
 /// Raster and native-staged, and checks that both finish, agree byte for byte,
 /// and record the fault.
 fn run_prompt_fault_leg(
@@ -718,51 +726,90 @@ fn run_prompt_fault_leg(
     prepared: &crate::claim::PreparedClaimRun,
 ) -> Result<Value> {
     use run_prep::{
-        vocabulary_pairs, RunFile, FAULT_CUT_BEYOND_TEXT, FAULT_EMPTY_RANGE, FAULT_NONE,
-        FAULT_UNSAFE_CUT,
+        RunFile, FAULT_CUT_BEYOND_TEXT, FAULT_EMPTY_RANGE, FAULT_NONE, FAULT_NOT_THE_MERGE,
     };
     let pieces = &prepared.prepared_run.prompt.initial_pieces;
-    let count = pieces.len() as u64;
-    let mut cases = vec![
-        ("past-the-end", vec![count + 5], FAULT_CUT_BEYOND_TEXT, true),
-        ("empty-range", vec![1, 1, count], FAULT_EMPTY_RANGE, true),
-        ("out-of-order", vec![2, 1, count], FAULT_EMPTY_RANGE, true),
-        ("left-out", vec![1], FAULT_NONE, false),
-    ];
     let tokenizer: Value = read_json(
         &model_path
             .parent()
             .context("model manifest has no parent directory")?
             .join(&model.bundle.tokenizer_path),
     )?;
-    let pairs = vocabulary_pairs(&tokenizer)?;
-    let unsafe_cut = pieces.windows(2).position(|pair| {
-        pair[0].segment == pair[1].segment
-            && pair[0]
-                .text
-                .chars()
-                .last()
-                .zip(pair[1].text.chars().next())
-                .is_some_and(|edge| pairs.contains(&edge))
+    // The merge's own marks, range by range.
+    let canonical: Vec<Vec<u32>> = run_prep::marked_ranges(
+        pieces,
+        model.range_size as usize,
+        &run_prep::prompt_tokenizer(&tokenizer)?,
+    )?
+    .into_iter()
+    .map(|range| range.marks)
+    .collect();
+    let first = canonical[0].clone();
+    let with_first = |first: Vec<u32>| {
+        let mut ranges = canonical.clone();
+        ranges[0] = first;
+        ranges
+    };
+    let second_token = first
+        .iter()
+        .skip(1)
+        .position(|mark| *mark != 0)
+        .map(|index| index + 1)
+        .context("the pinned case's first range is a single token")?;
+    let mut past_the_end = canonical.clone();
+    past_the_end
+        .last_mut()
+        .context("the prompt has no range")?
+        .extend([1; 5]);
+    let mut empty_range = canonical.clone();
+    empty_range.insert(1, Vec::new());
+    let mut cases = vec![
+        ("past-the-end", past_the_end, FAULT_CUT_BEYOND_TEXT, true),
+        ("empty-range", empty_range, FAULT_EMPTY_RANGE, true),
+        (
+            "left-out",
+            vec![first[..second_token].to_vec()],
+            FAULT_NONE,
+            false,
+        ),
+    ];
+    // A token claimed as two: its pieces are vocabulary entries, and the merge
+    // joins them, so the claim is not the merge's result.
+    let inside = canonical.iter().enumerate().find_map(|(range, marks)| {
+        marks
+            .iter()
+            .position(|mark| *mark == 0)
+            .map(|index| (range, index))
     });
-    if let Some(left) = unsafe_cut {
+    if let Some((range, index)) = inside {
+        let mut split = canonical.clone();
+        split[range][index] = 1;
+        cases.push(("split-token", split, FAULT_NOT_THE_MERGE, true));
+    }
+    // Two neighbouring tokens of one segment, claimed as one token and as the
+    // ends of two ranges.
+    let same_segment = (1..first.len())
+        .find(|&index| first[index] != 0 && pieces[index - 1].segment == pieces[index].segment);
+    if let Some(boundary) = same_segment {
+        let mut joined = first.clone();
+        joined[boundary] = 0;
         cases.push((
-            "unsafe",
-            vec![left as u64 + 1, count],
-            FAULT_UNSAFE_CUT,
+            "joined-tokens",
+            with_first(joined),
+            FAULT_NOT_THE_MERGE,
             true,
         ));
+        // A range may end between any two tokens, even inside a word.
+        let mut ranges = vec![first[..boundary].to_vec(), first[boundary..].to_vec()];
+        ranges.extend(canonical[1..].iter().cloned());
+        cases.push(("cut-inside-a-segment", ranges, FAULT_NONE, true));
     }
 
     let template = fs::read_to_string(&prepared.manifest_path)?;
     let mut report = Vec::new();
-    for (name, ends, fault, complete) in cases {
+    for (name, marks, fault, complete) in cases {
         let dir = case_dir.join("prompt-faults").join(name);
-        let cuts = ends
-            .iter()
-            .map(|&end| run_prep::RangeCut { end })
-            .collect::<Vec<_>>();
-        let files: Vec<RunFile> = run_prep::write_cuts(&cuts, &dir.join("prompt"))?;
+        let files: Vec<RunFile> = run_prep::write_marks(&marks, &dir.join("prompt"))?;
         let manifest = dir.join("Raster.toml");
         fs::write(&manifest, prompt_only_manifest(&template, &files)?)?;
 
@@ -794,7 +841,7 @@ fn run_prompt_fault_leg(
             compare(stage, &raster_outputs[stage], &native[stage])
                 .with_context(|| format!("prompt fault `{name}`"))?;
         }
-        let last = format!("prompt_prepare_p{}", ends.len() - 1);
+        let last = format!("prompt_check_p{}", marks.len() - 1);
         let context = &raster_outputs[&last].value["context"];
         ensure!(
             context["fault"] == json!(fault) && context["complete"] == json!(complete),
@@ -893,7 +940,7 @@ fn block_name(block: &[&str]) -> String {
         .unwrap_or_default()
 }
 
-/// A run manifest's prompt stages alone, over these cuts.
+/// A run manifest's prompt stages alone, over these marks.
 fn prompt_only_manifest(template: &str, cuts: &[run_prep::RunFile]) -> Result<String> {
     let mut out = String::new();
     let mut in_prompt = false;
@@ -901,12 +948,12 @@ fn prompt_only_manifest(template: &str, cuts: &[run_prep::RunFile]) -> Result<St
         let name = block_name(block);
         match block[0].trim() {
             "[chain]" => out.push_str(&(block.join("\n") + "\n")),
-            "[chain.input.prompt_cuts]" => {
-                let dir = cuts[0].path.parent().context("cut has no directory")?;
+            "[chain.input.prompt_marks]" => {
+                let dir = cuts[0].path.parent().context("marks have no directory")?;
                 out.push_str(&format!(
-                    "\n[chain.input.prompt_cuts]\nindex = \"j\"\npath = {:?}\nindex_path = {:?}\ncommitments = {:?}\n",
-                    dir.join("cut_{j}.rastered"),
-                    dir.join("cut_{j}.rindex"),
+                    "\n[chain.input.prompt_marks]\nindex = \"j\"\npath = {:?}\nindex_path = {:?}\ncommitments = {:?}\n",
+                    dir.join("marks_{j}.rastered"),
+                    dir.join("marks_{j}.rindex"),
                     cuts.iter().map(|cut| &cut.commitment).collect::<Vec<_>>(),
                 ));
             }
@@ -979,7 +1026,7 @@ pub(crate) fn compare_teacher_forced(tf_dir: &Path, direct_dir: &Path) -> Result
 
     let mut ranged_prompt = Vec::new();
     for j in 0..shape.prompt_ranges {
-        let ids = load(tf_dir, &format!("prompt_prepare_p{j}"))?.value["token_ids"].clone();
+        let ids = load(tf_dir, &format!("prompt_check_p{j}"))?.value["token_ids"].clone();
         ranged_prompt.extend(ids.as_array().cloned().unwrap_or_default());
     }
     ensure!(
