@@ -227,7 +227,7 @@ mod tests {
     use alloc::{format, vec};
     fn prompt(seed: u8) -> ModelContext {
         let d = ModelDescriptor {
-            version: 1,
+            version: 2,
             tokenizer: [seed; 32],
             decoder: [2; 32],
             embedding: [3; 32],

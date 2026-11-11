@@ -105,14 +105,25 @@ struct ChainTable {
     #[serde(default, rename = "input")]
     inputs: BTreeMap<String, InputDecl>,
     #[serde(default, rename = "stage")]
-    stages: Vec<toml::Spanned<StageSpec>>,
+    stages: Vec<toml::Spanned<PlainStageSpec>>,
     #[serde(default, rename = "repeat")]
     repeats: Vec<toml::Spanned<RepeatSpec>>,
 }
 
+/// A `[[chain.stage]]` as the manifest writes it. Its bindings are a repeat
+/// stage's, read with no index in scope: a stage, an external, or a chain
+/// input by name.
+#[derive(Debug, Deserialize)]
+struct PlainStageSpec {
+    name: String,
+    project: String,
+    #[serde(default)]
+    inputs: BTreeMap<String, RepeatBinding>,
+}
+
 #[derive(Debug)]
 enum ChainItem {
-    Stage(StageSpec),
+    Stage(PlainStageSpec),
     Repeat(RepeatSpec),
 }
 
@@ -686,7 +697,21 @@ fn expand_chain_table(table: ChainTable) -> Result<ChainSpec> {
 
     for item in merge_chain_items(table.stages, table.repeats) {
         match item {
-            ChainItem::Stage(stage) => stages.push(stage),
+            ChainItem::Stage(stage) => {
+                let mut bound = BTreeMap::new();
+                for (param, binding) in &stage.inputs {
+                    bound.insert(
+                        param.clone(),
+                        expand_repeat_binding(binding, &inputs, &[])
+                            .with_context(|| format!("stage `{}`", stage.name))?,
+                    );
+                }
+                stages.push(StageSpec {
+                    name: stage.name,
+                    project: stage.project,
+                    inputs: bound,
+                });
+            }
             ChainItem::Repeat(repeat) => {
                 expand_repeat(&repeat, &inputs, &mut stages, &mut exports)?
             }
@@ -698,7 +723,7 @@ fn expand_chain_table(table: ChainTable) -> Result<ChainSpec> {
 }
 
 fn merge_chain_items(
-    stages: Vec<toml::Spanned<StageSpec>>,
+    stages: Vec<toml::Spanned<PlainStageSpec>>,
     repeats: Vec<toml::Spanned<RepeatSpec>>,
 ) -> Vec<ChainItem> {
     let mut items: Vec<(usize, ChainItem)> = stages
@@ -2080,8 +2105,8 @@ mod tests {
             }
         }
 
-        assert_eq!(manifest.chain.stage.len(), 44);
-        assert_eq!(direct, 43);
+        assert_eq!(manifest.chain.stage.len(), 43);
+        assert_eq!(direct, 42);
         assert_eq!(reference, 1);
     }
 
@@ -2106,7 +2131,7 @@ mod tests {
         assert!(truncate_through_stage(&mut stages, "prefill-range").is_err());
         assert!(truncate_through_stage(&mut stages, "prompt_check_p9").is_err());
         stages.push(stages[0].clone());
-        assert!(truncate_through_stage(&mut stages, "range_origin").is_err());
+        assert!(truncate_through_stage(&mut stages, "prompt_bind_p0").is_err());
     }
 
     #[test]
@@ -2132,17 +2157,8 @@ mod tests {
             .iter()
             .map(|s| s["name"].as_str().unwrap())
             .collect();
-        assert_eq!(
-            names,
-            [
-                "range_origin",
-                "decode_init",
-                "prompt_bind",
-                "prompt_check_p0",
-                "embed_p0"
-            ]
-        );
-        assert_eq!(doc["total_exec_duration_ns"], 35);
+        assert_eq!(names, ["prompt_bind_p0", "prompt_check_p0", "embed_p0"]);
+        assert_eq!(doc["total_exec_duration_ns"], 21);
         fs::remove_dir_all(base).unwrap();
     }
 
@@ -2164,18 +2180,63 @@ mod tests {
 
         assert!(index.contains_key("prompt_check_p1"));
         assert!(!index.contains_key("prompt_check_p2"));
-        // The first range checks against the bind, each later one the range before.
-        for (range, previous) in [(0, "prompt_bind"), (1, "prompt_check_p0")] {
-            let check = &manifest.chain.stage[index[&format!("prompt_check_p{range}")]];
+        // The chain starts at the first range's bind: no stage comes before
+        // it. That range's bind and check are given the empty prompt state,
+        // a committed constant, where each later one is given the range
+        // before; a check is always given its own bind.
+        assert_eq!(manifest.chain.stage[0].name, "prompt_bind_p0");
+        let previous = |stage: &str| manifest.chain.stage[index[stage]].inputs["previous"].clone();
+        let empty_prompt = previous("prompt_bind_p0");
+        assert!(matches!(&empty_prompt, InputBinding::External(file)
+            if file.path.ends_with("empty_prompt.rastered")));
+        assert_eq!(previous("prompt_check_p0"), empty_prompt);
+        assert_eq!(
+            previous("prompt_bind_p1"),
+            InputBinding::From("prompt_bind_p0".into())
+        );
+        assert_eq!(
+            previous("prompt_check_p1"),
+            InputBinding::From("prompt_check_p0".into())
+        );
+        for range in 0..2 {
+            let checked = &manifest.chain.stage[index[&format!("prompt_check_p{range}")]];
             assert_eq!(
-                check.inputs["previous"],
-                InputBinding::From(previous.into())
-            );
-            assert_eq!(
-                check.inputs["bound"],
-                InputBinding::From("prompt_bind".into())
+                checked.inputs["bound"],
+                InputBinding::From(format!("prompt_bind_p{range}"))
             );
         }
+        // The same for the sequence a range's embedding and layers continue,
+        // and for the verdict a check continues.
+        let empty_sequence = previous("embed_p0");
+        assert!(matches!(&empty_sequence, InputBinding::External(file)
+            if file.path.ends_with("empty_sequence.rastered")));
+        assert_eq!(previous("embed_p1"), InputBinding::From("embed_p0".into()));
+        for layer in 0..4 {
+            let first = &manifest.chain.stage[index[&format!("range_p0_l{layer}")]];
+            assert_eq!(first.inputs["prior_kv"], empty_sequence);
+            let second = &manifest.chain.stage[index[&format!("range_p1_l{layer}")]];
+            assert_eq!(
+                second.inputs["prior_kv"],
+                InputBinding::From(format!("range_p0_l{layer}"))
+            );
+        }
+        let check = |range: usize| &manifest.chain.stage[index[&format!("check_c{range}")]];
+        assert!(
+            matches!(&check(0).inputs["prior"], InputBinding::External(file)
+            if file.path.ends_with("empty_edge.rastered"))
+        );
+        assert_eq!(
+            check(0).inputs["previous"],
+            InputBinding::From("range_p1_l3".into())
+        );
+        assert_eq!(
+            check(1).inputs["prior"],
+            InputBinding::From("check_c0".into())
+        );
+        assert_eq!(
+            check(1).inputs["previous"],
+            InputBinding::From("range_c0_l3".into())
+        );
 
         assert!(index.contains_key("embed_c1"));
         assert!(index.contains_key("aux_c1_l3"));
@@ -2210,17 +2271,18 @@ mod tests {
 name = "empty-repeat"
 
 [[chain.stage]]
-name = "decode_init"
-project = "decode-init"
+name = "check_c0"
+project = "sequence-check"
 
 [[chain.repeat]]
 name = "claimed"
 index = "k"
+start = 1
 count = 0
 
   [chain.repeat.exports.edge]
 stage = "check_c{k}"
-entry = "decode_init"
+entry = "check_c0"
 
   [[chain.repeat.stage]]
 name = "check_c{k}"
@@ -2236,11 +2298,13 @@ inputs.edge = { from = "claimed.edge" }
         let manifest = read_manifest(&path).unwrap();
         let index = build_stage_index(&manifest.chain.stage).unwrap();
 
-        assert!(!index.contains_key("check_c0"));
+        // One claimed range: its check is the plain stage, the repeat of the
+        // checks after it does not run, and the export falls back to it.
+        assert!(!index.contains_key("check_c1"));
         let output = manifest.chain.stage.last().unwrap();
         assert_eq!(
             output.inputs.get("edge"),
-            Some(&InputBinding::From(String::from("decode_init")))
+            Some(&InputBinding::From(String::from("check_c0")))
         );
         fs::remove_dir_all(base).unwrap();
     }

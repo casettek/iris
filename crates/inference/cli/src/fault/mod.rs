@@ -566,8 +566,8 @@ mod tests {
         let manifest: toml::Value = toml::from_str(
             r#"
 [[chain.stage]]
-name = "range_origin"
-project = "origin"
+name = "prompt_bind_p0"
+project = "bind"
 [[chain.repeat]]
 name = "layers"
 index = "l"
@@ -595,7 +595,7 @@ project = "finalize"
         assert_eq!(
             projects,
             [
-                PathBuf::from("/model/origin"),
+                PathBuf::from("/model/bind"),
                 PathBuf::from("/model/range"),
                 PathBuf::from("/opt/check"),
                 PathBuf::from("/model/finalize")

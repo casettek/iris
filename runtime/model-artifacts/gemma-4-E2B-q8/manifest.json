@@ -1,11 +1,11 @@
 {
-  "version": 10,
+  "version": 11,
   "family": "gemma-dense",
-  "model_id": "7f43367b0e9855328429960bb23338d4dbf758ccca32a31af48a6937bc2875b3",
+  "model_id": "ed108b776ab462b7b3f011e3a1c6723ea789eb1a6cbf7cba4c96ab120a3012a7",
   "model_commitments": [
     {
       "role": "tokenizer",
-      "commitment": "68e45b7a22eb5b6dea787a8fe2227a0eb0fe9f9dc4f833b1b9b3311e8fb6ceb9"
+      "commitment": "c29f407799118a120f43399fe0b871dc26dee92963d54ec28f89f7af9bf29343"
     },
     {
       "role": "decoder",
@@ -373,6 +373,6 @@
   ],
   "provenance": {
     "raster_manifest_path": "Raster.toml",
-    "raster_manifest_sha256": "c4136a1167a6c2d0ca427e509bd39a8896879202d851ca19c86f04f8efdede57"
+    "raster_manifest_sha256": "3d5cf92e67f5d18261f53ba6c625c7884426f5f7f3229bac18d4c826ce6ae830"
   }
 }

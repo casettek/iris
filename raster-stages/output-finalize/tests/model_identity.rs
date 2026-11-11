@@ -19,7 +19,7 @@ fn decoder_text_and_flags_are_bound_to_model() {
     };
     let root = raster::core::tree::value_root(&table).unwrap();
     let descriptor = ModelDescriptor {
-        version: 1,
+        version: 2,
         tokenizer: [1; 32],
         decoder: root,
         embedding: [2; 32],
@@ -61,7 +61,7 @@ fn decoder_proofs_bind_positions_and_handle_odd_tree_widths() {
     };
     let root = raster::core::tree::value_root(&table).unwrap();
     let d = ModelDescriptor {
-        version: 1,
+        version: 2,
         tokenizer: [1; 32],
         decoder: root,
         embedding: [2; 32],
@@ -139,7 +139,7 @@ fn faults_survive_later_valid_tokens_and_verification_continues_after_eos() {
         tokens: vec![token.clone()].into(),
     };
     let descriptor = ModelDescriptor {
-        version: 1,
+        version: 2,
         tokenizer: [1; 32],
         decoder: raster::core::tree::value_root(&table).unwrap(),
         embedding: [2; 32],

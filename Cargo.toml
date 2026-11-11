@@ -13,14 +13,12 @@ members = [
     "crates/inference/direct",
     "crates/inference/staged",
     "crates/inference/cli",
-    "raster-stages/decode-init",
     "raster-stages/input-embedding",
     "raster-stages/output-finalize",
     "raster-stages/prefill-prepare-aux",
     "raster-stages/prefill-range",
     "raster-stages/prompt-bind",
     "raster-stages/prompt-check",
-    "raster-stages/range-origin",
     "raster-stages/sequence-check",
 ]
 

@@ -1182,12 +1182,20 @@ mod tests {
         prepared.prepared_run
     }
 
+    /// An external a stage is bound to, among the chain's own stages and
+    /// its repeated ones.
     fn bound_external(manifest: &Path, stage: &str, parameter: &str) -> String {
         let manifest: toml::Value = toml::from_str(&fs::read_to_string(manifest).unwrap()).unwrap();
+        let repeated = manifest["chain"]["repeat"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .flat_map(|repeat| repeat["stage"].as_array().unwrap().iter());
         manifest["chain"]["stage"]
             .as_array()
             .unwrap()
             .iter()
+            .chain(repeated)
             .find(|entry| entry["name"].as_str() == Some(stage))
             .and_then(|entry| {
                 entry["inputs"][parameter]["external"]["commitment"]
@@ -1195,6 +1203,12 @@ mod tests {
                     .map(str::to_string)
             })
             .unwrap()
+    }
+
+    /// The commitments of a run's text, range by range.
+    fn text_commitments(manifest: &Path) -> toml::Value {
+        let manifest: toml::Value = toml::from_str(&fs::read_to_string(manifest).unwrap()).unwrap();
+        manifest["chain"]["input"]["prompt_text"]["commitments"].clone()
     }
 
     #[test]
@@ -1238,15 +1252,20 @@ mod tests {
         );
         assert_ne!(rebuilt.model_id, frozen.model_id);
 
-        // Same text, so the first stage's text agrees; its configuration names
-        // a different model, so `prompt_bind`'s committed inputs differ.
+        // Same text, so every range's text and the text claim agree; the
+        // configuration names a different model, so the bind's committed
+        // inputs differ.
         assert_eq!(
-            bound_external(&manifest, "prompt_bind", "text"),
-            bound_external(&frozen_manifest, "prompt_bind", "text")
+            text_commitments(&manifest),
+            text_commitments(&frozen_manifest)
+        );
+        assert_eq!(
+            bound_external(&manifest, "prompt_bind_p{j}", "claim"),
+            bound_external(&frozen_manifest, "prompt_bind_p{j}", "claim")
         );
         assert_ne!(
-            bound_external(&manifest, "prompt_bind", "config"),
-            bound_external(&frozen_manifest, "prompt_bind", "config")
+            bound_external(&manifest, "prompt_bind_p{j}", "config"),
+            bound_external(&frozen_manifest, "prompt_bind_p{j}", "config")
         );
         // The claim's ids and its prompt carried over.
         assert_eq!(
@@ -1287,10 +1306,14 @@ mod tests {
             .replace("prompt = \"h\"", "prompt = \"hh\"");
         fs::write(&options.run_spec_path, spec).unwrap();
         let (manifest, _) = challenge_run(&options, &claimed).unwrap();
-        for parameter in ["text", "config"] {
+        assert_eq!(
+            text_commitments(&manifest),
+            text_commitments(&frozen_manifest)
+        );
+        for parameter in ["claim", "config"] {
             assert_eq!(
-                bound_external(&manifest, "prompt_bind", parameter),
-                bound_external(&frozen_manifest, "prompt_bind", parameter),
+                bound_external(&manifest, "prompt_bind_p{j}", parameter),
+                bound_external(&frozen_manifest, "prompt_bind_p{j}", parameter),
             );
         }
         for input in ["prompt_marks", "claimed_ids"] {

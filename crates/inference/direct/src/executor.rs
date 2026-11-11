@@ -142,9 +142,7 @@ impl DirectInferenceExecutor {
         timings.push(phase_timing("prefill", prefill_started.elapsed()));
 
         let decode_started = Instant::now();
-        let mut edge = inference_kernels::kernels::decode_init::run_decode_init_direct(
-            inference_kernels::kernels::decode_init::DecodeInitDirectInputs,
-        )?;
+        let mut edge = inference_kernels::kernels::origin::empty_decode_edge();
         trace.record("decode_init", &edge)?;
         for token_idx in 0..run_spec.tokens {
             edge = crate::generation::select_next_token(&logits, &edge)?;

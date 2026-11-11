@@ -15,7 +15,6 @@ use output_finalize::input as output_input;
 use prefill_prepare_aux::input as aux_input;
 use prefill_range::input as range_input;
 use prompt_check::input as prompt_input;
-use range_origin::input as origin_input;
 use sequence_check::input as check_input;
 
 #[derive(Clone, Debug)]
@@ -371,24 +370,6 @@ impl CachedStageValue {
             Self::RangeActivations(value) => Ok(check_activation_from_range(value)),
             _ => bail!("cached value is not a transformer layer's activation sequence"),
         }
-    }
-
-    /// The empty starting sequence is consumed exactly like an embedded range.
-    pub fn from_range_origin(value: origin_input::ActivationSequence) -> Self {
-        Self::EmbeddedActivations(embedding_input::ActivationSequence {
-            model: value.model,
-            rows: map_list(&value.rows, |row| embedding_input::ActivationRow {
-                token_id: row.token_id,
-                values: row.values.clone(),
-            }),
-            errors: value.errors,
-            kv: map_list(&value.kv, |row| embedding_input::KeyRow {
-                position: row.position,
-                k: row.k.clone(),
-                v: row.v.clone(),
-            }),
-            start_position: value.start_position,
-        })
     }
 }
 

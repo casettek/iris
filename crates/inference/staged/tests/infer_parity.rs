@@ -41,7 +41,7 @@ fn infer_final_result_matches_checkpointed_claim_path() {
         ]),
     };
     let descriptor = model_identity::ModelDescriptor {
-        version: 1,
+        version: 2,
         tokenizer: [1; 32],
         decoder: raster::core::tree::value_root(&decoder).unwrap(),
         embedding: [2; 32],
@@ -115,7 +115,7 @@ fn infer_final_result_matches_checkpointed_claim_path() {
         !base.join("target").exists(),
         "infer should not write checkpoint artifacts under the imported workspace"
     );
-    assert_eq!(infer_report.timings.stages.len(), 2);
+    assert_eq!(infer_report.timings.stages.len(), 1);
     assert!(infer_report.timings.aux_waves.is_empty());
 
     let checkpointed = CheckpointedInferenceExecutor
@@ -173,10 +173,6 @@ fn write_manifest(
             r#"[chain]
 name = "infer-parity"
 version = "0.1.0"
-
-[[chain.stage]]
-name = "decode_init"
-project = "raster-stages/decode-init"
 
 [[chain.stage]]
 name = "output_finalize"

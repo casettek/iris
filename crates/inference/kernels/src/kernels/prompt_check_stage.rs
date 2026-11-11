@@ -10,13 +10,13 @@ use anyhow::{bail, ensure, Result};
 use prompt_check::check::{
     apply_piece, begin_apply_step, begin_number_state, begin_number_step, begin_window_step,
     count_marks, end_range_piece, finish_check_context, finish_window_step, is_last_token,
-    is_range_token, lead_piece, number_piece, observe_best, observe_final_piece, plan_range,
-    range_end, range_piece, ApplyState, CheckPiece, MarkCount, PassSummary, ScanSummary,
-    WindowBest, WindowScan, ROUNDS_PER_PASS,
+    is_range_token, is_rest_piece, lead_piece, number_piece, observe_best, observe_final_piece,
+    plan_range, range_end, range_piece, ApplyState, CheckPiece, MarkCount, PassSummary,
+    ScanSummary, WindowBest, WindowScan, ROUNDS_PER_PASS,
 };
 use prompt_check::input::{
-    join_prompt_models, merge_bucket_of, vocab_bucket_of, BpePiece, MergeMatch, PromptState,
-    PromptTokenizer,
+    join_prompt_models, merge_bucket_of, vocab_bucket_of, BindCarry, BpePiece, MergeMatch,
+    PromptState, PromptTokenizer,
 };
 use raster::{BytesPage, List};
 
@@ -121,7 +121,9 @@ fn pass(
 }
 
 /// `prompt-check`: checks one range against the claim's marks and publishes
-/// its token ids. `root` is the tokenizer's identity root.
+/// its token ids. `root` is the tokenizer's identity root, `bound` the
+/// range's bind and `previous` the check of the range before, or the empty
+/// state. The range's pieces are the ones `previous` left, then `bound`'s.
 pub fn run_prompt_check(
     tokenizer: &PromptTokenizer,
     root: &BytesPage,
@@ -151,15 +153,17 @@ pub fn run_prompt_check(
     let mut marked = MarkCount::default();
     count_marks(&mut marked, marks.len());
     let end = range_end(&context, &marked);
-    let plan = plan_range(&context, end, bound.pieces.len() as u64);
+    let given: Vec<&BpePiece> = previous.rest.iter().chain(bound.pieces.iter()).collect();
+    let total = context.next_piece.saturating_add(given.len() as u64);
+    let plan = plan_range(&context, end, total);
 
     // The range's pieces after the previous range's last token, numbered.
     let mut range = Vec::new();
     if plan.lead {
         range.extend(previous.pieces.iter().map(|piece| lead_piece(piece)));
     }
-    for (index, piece) in bound.pieces.iter().enumerate() {
-        if let Some((piece, last)) = range_piece(piece, index as u64, &plan) {
+    for (offset, piece) in given.iter().enumerate() {
+        if let Some((piece, last)) = range_piece(piece, plan.start + offset as u64, &plan) {
             range.push(piece);
             if last {
                 range.push(end_range_piece());
@@ -180,8 +184,15 @@ pub fn run_prompt_check(
 
     let (merged_a, scan_a, summary_a) = pass(&pieces, 0, tokenizer, proofs)?;
     let (_, scan_b, summary_b) = pass(&pieces, 1, tokenizer, proofs)?;
-    let mut context =
-        finish_check_context(&context, &plan, &summary_a, &scan_a, &summary_b, &scan_b);
+    let mut context = finish_check_context(
+        &context,
+        &plan,
+        &summary_a,
+        &scan_a,
+        &summary_b,
+        &scan_b,
+        bound.bind.done,
+    );
 
     // The range's tokens, as pass A left them, resolved to ids.
     let tokens: Vec<&CheckPiece> = merged_a
@@ -223,10 +234,19 @@ pub fn run_prompt_check(
             segment: piece.segment,
         })
         .collect::<Vec<_>>();
+    // What the range was given and did not take, for the next range.
+    let rest = given
+        .iter()
+        .enumerate()
+        .filter(|(offset, _)| is_rest_piece(plan.start + *offset as u64, &plan))
+        .map(|(_, piece)| (*piece).clone())
+        .collect::<Vec<_>>();
     Ok(PromptState {
         pieces: List::from(carried),
+        rest: List::from(rest),
         token_ids: List::from(token_ids),
         context,
+        bind: BindCarry::default(),
     })
 }
 

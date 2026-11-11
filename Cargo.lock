@@ -955,15 +955,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "decode-init"
-version = "0.1.0"
-dependencies = [
- "model-identity",
- "raster",
- "serde",
-]
-
-[[package]]
 name = "defmt"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2069,7 +2060,6 @@ dependencies = [
  "prefill-prepare-aux",
  "prefill-range",
  "prompt-check",
- "range-origin",
  "raster",
  "rayon",
  "sequence-check",
@@ -2559,6 +2549,7 @@ dependencies = [
  "det-num",
  "detwgt",
  "inference-artifacts",
+ "inference-kernels",
  "model-identity",
  "output-finalize",
  "prompt-check",
@@ -3227,15 +3218,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "60aa6af80be32871323012e02e6e65f8a7cc7890931ae421d217ad8fe0df2ccf"
 dependencies = [
  "rand_core 0.10.1",
-]
-
-[[package]]
-name = "range-origin"
-version = "0.1.0"
-dependencies = [
- "model-identity",
- "raster",
- "serde",
 ]
 
 [[package]]
@@ -4387,7 +4369,6 @@ dependencies = [
  "prefill-prepare-aux",
  "prefill-range",
  "prompt-check",
- "range-origin",
  "raster",
  "raster-core",
  "raster-runtime",

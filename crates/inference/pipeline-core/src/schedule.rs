@@ -15,6 +15,7 @@ pub struct StageSchedule {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Operation {
+    /// The binding of one prompt range's text.
     Bind,
     /// The check of one prompt range's claimed tokens.
     Tokens,
@@ -45,8 +46,8 @@ impl Step {
             layer,
         }
     }
-    pub const fn bind() -> Self {
-        Self::new(Operation::Bind, false, 0, 0)
+    pub const fn bind(range: u32) -> Self {
+        Self::new(Operation::Bind, false, range, 0)
     }
     pub const fn tokens(range: u32) -> Self {
         Self::new(Operation::Tokens, false, range, 0)
@@ -135,8 +136,8 @@ impl StageSchedule {
         } = *step;
         let in_range = range < self.ranges(claimed);
         match operation {
-            Operation::Bind | Operation::Finalize => *step == Step::new(operation, false, 0, 0),
-            Operation::Tokens => !claimed && in_range && layer == 0,
+            Operation::Finalize => *step == Step::finalize(),
+            Operation::Bind | Operation::Tokens => !claimed && in_range && layer == 0,
             Operation::Embed => in_range && layer == 0,
             Operation::Auxiliary | Operation::Layer => in_range && layer < layers,
             Operation::Check => claimed && in_range && layer == 0,
@@ -152,10 +153,15 @@ impl StageSchedule {
         let (claimed, range, layer) = (step.claimed, step.range, step.layer);
         let at = Source::Step;
         Some(match (step.operation, input) {
-            (Operation::Tokens, Input::Bound) => at(Step::bind()),
-            (Operation::Tokens, Input::Previous) => {
-                at(range.checked_sub(1).map_or(Step::bind(), Step::tokens))
-            }
+            // Each range's text is bound after the range before's, and its
+            // tokens are checked against its own bind and the check before.
+            (Operation::Bind, Input::Previous) => range
+                .checked_sub(1)
+                .map_or(Source::Origin, |range| at(Step::bind(range))),
+            (Operation::Tokens, Input::Bound) => at(Step::bind(range)),
+            (Operation::Tokens, Input::Previous) => range
+                .checked_sub(1)
+                .map_or(Source::Origin, |range| at(Step::tokens(range))),
             (Operation::Embed, Input::Prompt) if claimed => Source::Origin,
             (Operation::Embed, Input::Prompt) => at(Step::tokens(range)),
             (Operation::Embed, Input::Previous) => self
@@ -206,8 +212,13 @@ impl StageSchedule {
     /// Every step in the order the chain runs them.
     pub fn steps(&self, layers: u32) -> impl Iterator<Item = Step> {
         let schedule = *self;
-        let prompt = (0..schedule.prompt_ranges)
-            .flat_map(|range| [Step::tokens(range), Step::embed(false, range)]);
+        let prompt = (0..schedule.prompt_ranges).flat_map(|range| {
+            [
+                Step::bind(range),
+                Step::tokens(range),
+                Step::embed(false, range),
+            ]
+        });
         let claimed = (0..schedule.claimed_ranges).map(|range| Step::embed(true, range));
         let ranges = move || {
             (0..schedule.prompt_ranges)
@@ -220,8 +231,7 @@ impl StageSchedule {
                 .chain(ranges().map(move |(claimed, range)| Step::layer(claimed, range, layer)))
         });
         let checks = (0..schedule.claimed_ranges).map(Step::check);
-        core::iter::once(Step::bind())
-            .chain(prompt)
+        prompt
             .chain(claimed)
             .chain(layers)
             .chain(checks)
@@ -278,9 +288,10 @@ mod tests {
     #[test]
     fn a_schedule_has_one_step_sequence() {
         let mut expected = Vec::from([
-            Step::bind(),
+            Step::bind(0),
             Step::tokens(0),
             Step::embed(false, 0),
+            Step::bind(1),
             Step::tokens(1),
             Step::embed(false, 1),
             Step::embed(true, 0),
@@ -349,12 +360,18 @@ mod tests {
         let s = schedule();
         let before = |step, input| s.before(&step, input, LAYERS);
         let at = |step| Some(Source::Step(step));
-        assert_eq!(before(Step::tokens(0), Input::Previous), at(Step::bind()));
+        assert_eq!(before(Step::bind(0), Input::Previous), Some(Source::Origin));
+        assert_eq!(before(Step::bind(1), Input::Previous), at(Step::bind(0)));
+        assert_eq!(
+            before(Step::tokens(0), Input::Previous),
+            Some(Source::Origin)
+        );
         assert_eq!(
             before(Step::tokens(1), Input::Previous),
             at(Step::tokens(0))
         );
-        assert_eq!(before(Step::tokens(1), Input::Bound), at(Step::bind()));
+        assert_eq!(before(Step::tokens(0), Input::Bound), at(Step::bind(0)));
+        assert_eq!(before(Step::tokens(1), Input::Bound), at(Step::bind(1)));
         assert_eq!(
             before(Step::embed(false, 0), Input::Previous),
             Some(Source::Origin)
@@ -421,7 +438,8 @@ mod tests {
         assert_eq!(before(Step::finalize(), Input::Edge), at(Step::check(1)));
         assert_eq!(before(Step::finalize(), Input::Prompt), at(Step::tokens(1)));
         // An input the step does not take, and a step the schedule does not run.
-        assert_eq!(before(Step::bind(), Input::Previous), None);
+        assert_eq!(before(Step::bind(0), Input::Bound), None);
+        assert_eq!(before(Step::bind(2), Input::Previous), None);
         assert_eq!(before(Step::tokens(0), Input::Edge), None);
         assert_eq!(before(Step::tokens(2), Input::Previous), None);
     }
@@ -478,10 +496,11 @@ mod tests {
                 }
             }
         }
-        // With nothing scheduled, the two fixed steps name no predecessor.
+        // With nothing scheduled, the one fixed step names no predecessor.
         assert!(empty.contains(&Step::finalize(), 0));
+        assert!(!empty.contains(&Step::bind(0), 0));
         assert_eq!(empty.before(&Step::finalize(), Input::Edge, 0), None);
         assert_eq!(empty.before(&Step::finalize(), Input::Prompt, 0), None);
-        assert_eq!(empty.steps(0).count(), 2);
+        assert_eq!(empty.steps(0).count(), 1);
     }
 }

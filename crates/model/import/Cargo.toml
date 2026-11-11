@@ -15,6 +15,7 @@ output-finalize = { path = "../../../raster-stages/output-finalize" }
 det-num = { path = "../../det-num" }
 detwgt = { path = "../detwgt" }
 inference-artifacts = { path = "../../inference/artifacts" }
+inference-kernels = { path = "../../inference/kernels" }
 raster = { path = "../../../../raster/crates/raster" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"

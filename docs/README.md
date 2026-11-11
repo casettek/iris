@@ -24,7 +24,8 @@ Start with the workflow docs when you want to run the repo, and the internals do
 - [Issues](issues/README.md)
 - [Proposals](proposals/)
 - [Checking claimed prompt tokens instead of recomputing them](proposals/claimed-prompt-tokens.md): implemented; token boundaries as an input, one checking stage per range, the argument for why a pair check is enough, and the stage design.
-- [Binding the prompt one range at a time](proposals/paged-prompt-bind.md): proposed; one `prompt_bind` stage per prompt range with the hash and scanner state carried between them, whole-text facts as a checked claim, and `prompt_check` reading only its own range.
+- [Pipeline version 11: one re-lock for the shared changes](proposals/pipeline-v11.md): implemented; the bind stage per range, a model with no per-layer inputs, the chat template as tokenizer data, and two tile fixes, with the E4B numbers before and after.
+- [Binding the prompt one range at a time](proposals/paged-prompt-bind.md): implemented in version 11; one `prompt_bind` stage per prompt range with the hash and scanner state carried between them, whole-text facts as a checked claim, and `prompt_check` reading only its own range.
 - [Verifying the stage schedule inside the Raster stages](proposals/verified-stage-implementation.md): implementation order, code targets, and completion checks.
 - [Enforcing the right stage](proposals/stage-progression.md): one check per stage execution, authenticated progression, and persistent faults.
 - [Claim protocol Phase 1 specification](proposals/claim-protocol-phase-one-spec.md): review draft defining the statement, registered pipeline, package, and acceptance rules.

@@ -7,19 +7,27 @@ use inference_artifacts::{InferenceRunSpec, ModelManifest, PreparedPiece, Prepar
 use input_embedding::input::ClaimedOutput;
 pub use output_finalize::input::{output_fault_description, OUTPUT_FAULT_SHORT_WITHOUT_EOS};
 use output_finalize::input::{DecoderTable, DecoderToken};
+pub use prompt_check::input::PromptTokenizer;
 use prompt_check::input::{
-    byte_token, fallback_mask, merge_bucket_of, split_rendered, vocab_bucket_of, BpeMerge,
-    MergeBucket, PromptText, TokenizerProfile, PROMPT_PREFIX, PROMPT_SUFFIX,
+    apply_atom, begin_scan_state, begin_text_fold_state, byte_token, claimed_scan_plan,
+    fallback_mask, fold_text, merge_bucket_of, scan_chunk_into, split_rendered, text_claim_of,
+    vocab_bucket_of, BpeMerge, MergeBucket, PromptText, SplitState, TokenizerProfile,
 };
 pub use prompt_check::input::{
-    fault_description, RunConfig, RunSchedule, FAULT_CUT_BEYOND_TEXT, FAULT_EMPTY_RANGE,
-    FAULT_NONE, FAULT_NOT_THE_MERGE, FAULT_TOKEN_SPLIT,
+    fault_description, RunConfig, RunSchedule, TextClaim, FAULT_CUT_BEYOND_TEXT, FAULT_EMPTY_RANGE,
+    FAULT_NONE, FAULT_NOT_THE_MERGE, FAULT_TEXT_AFTER_END, FAULT_TEXT_CLAIM, FAULT_TOKEN_SPLIT,
 };
-use prompt_check::input::{BpePiece, PromptTokenizer, TokenEntry, VocabBucket};
+use prompt_check::input::{BpePiece, TokenEntry, VocabBucket};
 use raster::List;
 pub use sequence_check::input::{
     check_fault_description, CHECK_FAULT_NO_CLAIMED_TOKENS, CHECK_FAULT_UNSCORED,
 };
+
+/// What Gemma's chat template puts before and after the trimmed prompt. They
+/// go into the committed tokenizer profile, which is where the stages read
+/// them from.
+pub const GEMMA_PROMPT_PREFIX: &str = "<bos><|turn>user\n";
+pub const GEMMA_PROMPT_SUFFIX: &str = "<turn|>\n<|turn>model\n";
 
 const BOS_TOKEN: &str = "<bos>";
 const TURN_OPEN: &str = "<|turn>";
@@ -109,8 +117,16 @@ pub fn tokenizer_profile(tokenizer: &serde_json::Value) -> Result<TokenizerProfi
     };
     let flag = |key: &str| model.get(key).and_then(|v| v.as_bool()).unwrap_or(false);
     let unk = model.get("unk_token").and_then(|v| v.as_str());
+    let template = |text: &str| {
+        if supports_gemma_turns(&vocab) {
+            text.to_string()
+        } else {
+            String::new()
+        }
+    };
     Ok(TokenizerProfile {
-        templated: supports_gemma_turns(&vocab),
+        template_prefix: template(GEMMA_PROMPT_PREFIX),
+        template_suffix: template(GEMMA_PROMPT_SUFFIX),
         normalize_spaces: present("normalizer"),
         split_spaces: present("pre_tokenizer"),
         byte_fallback: flag("byte_fallback"),
@@ -277,6 +293,190 @@ pub fn prompt_text(prompt: &str) -> PromptText {
     }
 }
 
+/// One prompt range as its two stages take it: the slice of the original text
+/// its `prompt-bind` is given, and the marks its `prompt-check` is given.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BoundRange {
+    pub text: PromptText,
+    pub pieces: usize,
+    pub tokens: usize,
+    pub marks: Vec<u32>,
+}
+
+/// A prompt cut into ranges, with what the run claims of the whole text.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BoundPrompt {
+    pub claim: TextClaim,
+    pub ranges: Vec<BoundRange>,
+}
+
+/// Cuts the prompt into ranges of at most `range_size` tokens, and the text
+/// into one slice per range.
+///
+/// The tokens are the full merge's, cut as `marked_ranges` cuts them. A slice
+/// ends at the first character by which the bind has produced every piece its
+/// range marks. The scan holds text back that could still start a special
+/// token, so that is usually a few characters past the range's own text, and
+/// the pieces those characters produce early are left for the next range.
+/// Where the cuts fall changes nothing the chain computes: any cut gives the
+/// same pieces.
+pub fn bound_ranges(
+    prompt: &str,
+    raw_prompt: bool,
+    range_size: usize,
+    tokenizer: &PromptTokenizer,
+) -> Result<BoundPrompt> {
+    ensure!(range_size >= 1, "range size must be positive");
+    ensure!(
+        tokenizer.vocab_bucket_count > 0
+            && tokenizer.vocab_bucket_count as usize == tokenizer.vocab_buckets.len(),
+        "invalid vocabulary bucket count"
+    );
+    let profile = &tokenizer.profile;
+    let claim = text_claim_of(
+        &fold_text(begin_text_fold_state(), prompt),
+        raw_prompt,
+        profile,
+    );
+    let plan = claimed_scan_plan(&claim, raw_prompt, profile);
+    let in_vocabulary = |piece: &str| {
+        let index = vocab_bucket_of(piece, tokenizer.vocab_bucket_count) as usize;
+        tokenizer.vocab_buckets[index]
+            .entries
+            .iter()
+            .any(|entry| entry.token == piece)
+    };
+
+    // Feed the text one character at a time, as the bind's loops would see it,
+    // and note how many pieces exist once each character is in.
+    let mut pieces = Vec::new();
+    let mut scan = begin_scan_state(&plan, profile);
+    let mut split = SplitState::default();
+    // `(byte offset just past a character, pieces produced by then)`.
+    let mut produced: Vec<(usize, usize)> = Vec::new();
+    let mut feed = |chunk: &str, end: usize, pieces: &mut Vec<BpePiece>| {
+        let mut atoms = Vec::new();
+        scan = scan_chunk_into(scan.clone(), chunk, &plan, profile, &mut |atom| {
+            atoms.push(atom)
+        });
+        for atom in &atoms {
+            split = apply_atom(
+                &split,
+                atom,
+                in_vocabulary(&atom.text),
+                profile,
+                &mut |piece| pieces.push(piece),
+            );
+        }
+        produced.push((end, pieces.len()));
+    };
+    if prompt.is_empty() {
+        feed("", 0, &mut pieces);
+    }
+    for (start, ch) in prompt.char_indices() {
+        let end = start + ch.len_utf8();
+        feed(&prompt[start..end], end, &mut pieces);
+    }
+    ensure!(
+        !pieces.is_empty(),
+        "a teacher-forced claim needs a non-empty prompt"
+    );
+
+    let tokens = inference_kernels::kernels::prompt_check::merged_tokens(&pieces, tokenizer)?;
+    let token_ranges: Vec<_> = tokens.chunks(range_size).collect();
+    let mut ranges = Vec::with_capacity(token_ranges.len());
+    let mut marked = 0;
+    let mut cut = 0;
+    for (index, range) in token_ranges.iter().enumerate() {
+        let counts = range.iter().map(|token| token.pieces as usize);
+        let range_pieces: usize = counts.clone().sum();
+        marked += range_pieces;
+        // The last range takes whatever text is left, so the text ends in it
+        // or before it.
+        let end = if index + 1 == token_ranges.len() {
+            prompt.len()
+        } else {
+            produced
+                .iter()
+                .find(|(_, count)| *count >= marked)
+                .map(|(end, _)| *end)
+                .context("the prompt's text ends before its pieces do")?
+        };
+        let end = end.max(cut);
+        let slice = &prompt[cut..end];
+        // A range after the first may be given no text at all. The first always
+        // has a chunk, so that the empty prompt is still committed text.
+        let text = if slice.is_empty() && index > 0 {
+            PromptText {
+                chunks: List::new(),
+            }
+        } else {
+            prompt_text(slice)
+        };
+        cut = end;
+        ranges.push(BoundRange {
+            text,
+            pieces: range_pieces,
+            tokens: range.len(),
+            marks: inference_kernels::kernels::prompt_check_stage::marks_for(counts),
+        });
+    }
+    Ok(BoundPrompt { claim, ranges })
+}
+
+/// The text for a run of `count` prompt ranges, and what is claimed of it.
+///
+/// When the prompt's own ranges number `count`, these are their slices.
+/// A run cut any other way (the gate's wrong claims are) is given all of
+/// the text in its first range and none after: still a true binding, since
+/// each check takes what the ranges before it left.
+pub fn text_for_ranges(
+    prompt: &str,
+    raw_prompt: bool,
+    range_size: usize,
+    tokenizer: &PromptTokenizer,
+    count: usize,
+) -> Result<(Vec<PromptText>, TextClaim)> {
+    ensure!(count >= 1, "a run needs at least one prompt range");
+    let bound = bound_ranges(prompt, raw_prompt, range_size, tokenizer)?;
+    let slices = if bound.ranges.len() == count {
+        bound.ranges.into_iter().map(|range| range.text).collect()
+    } else {
+        let mut slices = vec![prompt_text(prompt)];
+        slices.resize(
+            count,
+            PromptText {
+                chunks: List::new(),
+            },
+        );
+        slices
+    };
+    Ok((slices, bound.claim))
+}
+
+/// Writes these slices of the original prompt as `text_{j}`.
+pub fn write_text_slices(slices: &[PromptText], dir: &Path) -> Result<Vec<RunFile>> {
+    slices
+        .iter()
+        .enumerate()
+        .map(|(index, slice)| write_run_file(slice, dir, &format!("text_{index}")))
+        .collect()
+}
+
+/// Writes each range's slice of the original prompt as `text_{j}`.
+pub fn write_bound_text(ranges: &[BoundRange], dir: &Path) -> Result<Vec<RunFile>> {
+    ranges
+        .iter()
+        .enumerate()
+        .map(|(index, range)| write_run_file(&range.text, dir, &format!("text_{index}")))
+        .collect()
+}
+
+/// Writes what the run claims of the whole text as `claim`.
+pub fn write_text_claim(claim: &TextClaim, dir: &Path) -> Result<RunFile> {
+    write_run_file(claim, dir, "claim")
+}
+
 /// Writes the original prompt as `text`.
 pub fn write_prompt_text(prompt: &str, dir: &Path) -> Result<RunFile> {
     write_run_file(&prompt_text(prompt), dir, "text")
@@ -365,7 +565,10 @@ pub fn validate_claimed_length(token_ids: &[u32], tokens: u32, eos_ids: &[u32]) 
 }
 
 pub fn render_gemma_turns(prompt: &str) -> String {
-    format!("{PROMPT_PREFIX}{}{PROMPT_SUFFIX}", prompt.trim())
+    format!(
+        "{GEMMA_PROMPT_PREFIX}{}{GEMMA_PROMPT_SUFFIX}",
+        prompt.trim()
+    )
 }
 
 pub fn supports_gemma_turns(vocab: &BTreeMap<String, u32>) -> bool {
@@ -749,18 +952,17 @@ mod tests {
         assert_eq!(chunks.chunks.iter().cloned().collect::<String>(), text);
     }
 
-    #[test]
-    fn the_bind_stage_splits_the_prompt_as_run_preparation_does() {
-        use inference_kernels::kernels::prompt_prepare::run_prompt_bind;
-        let tokenizer = serde_json::json!({
+    /// A tokenizer with a template, a special, merges and byte fallback.
+    fn chat_tokenizer() -> serde_json::Value {
+        serde_json::json!({
             "model": {
                 "type": "BPE",
                 "vocab": {
                     "<bos>": 0, "<|turn>": 1, "<turn|>": 2, "\n": 3, "u": 4, "s": 5, "e": 6,
                     "r": 7, "m": 8, "o": 9, "d": 10, "l": 11, "h": 12, "▁": 13, "<0xC3>": 14,
-                    "<0xA9>": 15, "<unk>": 16
+                    "<0xA9>": 15, "<unk>": 16, "he": 17, "ld": 18, "old": 19
                 },
-                "merges": [],
+                "merges": ["h e", "l d", "o ld"],
                 "byte_fallback": true,
                 "unk_token": "<unk>",
                 "fuse_unk": true
@@ -771,46 +973,179 @@ mod tests {
                 { "id": 1, "content": "<|turn>", "special": true },
                 { "id": 2, "content": "<turn|>", "special": true }
             ]
-        });
+        })
+    }
+
+    const PROMPTS: [(&str, bool); 6] = [
+        ("  he é<turn|>hold\u{4e16}\u{754c} he hold  ", false),
+        ("  he é<turn|>hold\u{4e16}\u{754c} he hold  ", true),
+        ("   ", false),
+        ("", false),
+        ("hold", true),
+        ("<<|<|turn>|<", true),
+    ];
+
+    /// The chain's prompt stages, run natively over what `bound_ranges` cut.
+    fn run_prompt_stages(
+        tokenizer: &PromptTokenizer,
+        bound: &BoundPrompt,
+        config: &RunConfig,
+    ) -> (Vec<BpePiece>, Vec<u32>, prompt_check::input::PromptState) {
+        use inference_kernels::kernels::prompt_check_stage::{run_prompt_check, Trusted};
+        use inference_kernels::kernels::prompt_prepare::{run_prompt_bind, PromptBindInputs};
+        use prompt_check::input::PromptState;
+        let root = raster::BytesPage::__from_parts(0, 0, Vec::new());
+        let schedule = RunSchedule {
+            prompt_ranges: bound.ranges.len() as u32,
+            claimed_ranges: 1,
+        };
+        let mut binding = PromptState::default();
+        let mut checked = PromptState::default();
+        let (mut pieces, mut ids) = (Vec::new(), Vec::new());
+        for range in &bound.ranges {
+            binding = run_prompt_bind(
+                PromptBindInputs {
+                    tokenizer,
+                    root: &root,
+                    text: &range.text,
+                    config,
+                    descriptor: &[],
+                    schedule: &schedule,
+                    claim: &bound.claim,
+                    previous: &binding,
+                },
+                &mut Trusted,
+            )
+            .unwrap();
+            pieces.extend(binding.pieces.iter().cloned());
+            checked = run_prompt_check(
+                tokenizer,
+                &root,
+                &binding,
+                &checked,
+                &range.marks,
+                &mut Trusted,
+            )
+            .unwrap();
+            ids.extend(checked.token_ids.iter().copied());
+        }
+        (pieces, ids, checked)
+    }
+
+    #[test]
+    fn the_bind_stages_split_the_prompt_as_run_preparation_does() {
+        let tokenizer = chat_tokenizer();
         let prompt_tokenizer = prompt_tokenizer(&tokenizer).unwrap();
-        for (prompt, raw_prompt) in [
-            ("  he é<turn|>hold\u{4e16}\u{754c}  ", false),
-            ("  he é<turn|>hold\u{4e16}\u{754c}  ", true),
-            ("   ", false),
-            ("", false),
-            ("", true),
-        ] {
+        for (prompt, raw_prompt) in PROMPTS {
             let spec = run_spec(prompt, raw_prompt);
             let prepared =
                 prepare_prompt(&tokenizer, Path::new("."), &spec, &model_manifest()).unwrap();
-            let bound = run_prompt_bind(
-                &prompt_tokenizer,
-                &prompt_text(prompt),
-                &RunConfig {
-                    raw_prompt,
-                    ..RunConfig::default()
-                },
-            )
-            .unwrap();
-            let pieces = bound
-                .pieces
+            let whole_pieces = prepared
+                .initial_pieces
                 .iter()
-                .map(|piece| PreparedPiece {
+                .map(|piece| BpePiece {
                     text: piece.text.clone(),
                     segment: piece.segment,
                 })
                 .collect::<Vec<_>>();
-            assert_eq!(
-                pieces, prepared.initial_pieces,
-                "{prompt:?} raw {raw_prompt}"
-            );
-            assert_eq!(bound.context.fault, 0);
+            if whole_pieces.is_empty() {
+                // Nothing to claim over: an empty raw prompt has no pieces.
+                assert!(bound_ranges(prompt, raw_prompt, 4, &prompt_tokenizer).is_err());
+                continue;
+            }
+            let whole_ids: Vec<u32> = inference_kernels::kernels::prompt_check::merged_tokens(
+                &whole_pieces,
+                &prompt_tokenizer,
+            )
+            .unwrap()
+            .iter()
+            .map(|token| token.id)
+            .collect();
+            let config = RunConfig {
+                raw_prompt,
+                ..RunConfig::default()
+            };
+            for range_size in [1, 2, 3, 5, 64] {
+                let label = format!("{prompt:?} raw {raw_prompt} range size {range_size}");
+                let bound =
+                    bound_ranges(prompt, raw_prompt, range_size, &prompt_tokenizer).unwrap();
+                assert_eq!(
+                    bound.ranges.len(),
+                    whole_ids.len().div_ceil(range_size),
+                    "{label}"
+                );
+                // The slices are the text, in order, and only a later range is empty.
+                let text: String = bound
+                    .ranges
+                    .iter()
+                    .flat_map(|range| range.text.chunks.iter().cloned())
+                    .collect();
+                assert_eq!(text, prompt, "{label}");
+                assert!(!bound.ranges[0].text.chunks.is_empty(), "{label}");
+                let (pieces, ids, last) = run_prompt_stages(&prompt_tokenizer, &bound, &config);
+                assert_eq!(pieces, whole_pieces, "{label}");
+                assert_eq!(ids, whole_ids, "{label}");
+                assert_eq!(last.context.fault, 0, "{label}");
+                assert!(last.context.complete, "{label}");
+                assert!(last.rest.is_empty(), "{label}");
+                assert_eq!(last.context.prompt_tokens as usize, whole_ids.len());
+            }
         }
     }
 
     #[test]
+    fn a_prompt_that_is_not_what_was_claimed_does_not_complete() {
+        let tokenizer = prompt_tokenizer(&chat_tokenizer()).unwrap();
+        let (prompt, raw_prompt) = PROMPTS[0];
+        let config = RunConfig {
+            raw_prompt,
+            ..RunConfig::default()
+        };
+        let honest = bound_ranges(prompt, raw_prompt, 3, &tokenizer).unwrap();
+        let faulted = |edit: &dyn Fn(&mut BoundPrompt)| {
+            let mut bound = honest.clone();
+            edit(&mut bound);
+            let (_, _, last) = run_prompt_stages(&tokenizer, &bound, &config);
+            (last.context.fault, last.context.complete)
+        };
+        assert_eq!(faulted(&|_| {}), (FAULT_NONE, true));
+        // Another hash, and a trim that keeps one byte more.
+        assert_eq!(
+            faulted(&|bound| bound.claim.input_text_sha256 = "00".repeat(32)),
+            (FAULT_TEXT_CLAIM, false)
+        );
+        assert_eq!(
+            faulted(&|bound| bound.claim.keep_end += 1).1,
+            false,
+            "a wider trim"
+        );
+        // The slice the text ends in dropped: the text never ends, and the
+        // prompt never completes, though no single stage finds a fault in what
+        // it was given. (The ranges after that slice have no text of their own.)
+        let last = honest
+            .ranges
+            .iter()
+            .rposition(|range| !range.text.chunks.is_empty())
+            .unwrap();
+        assert!(last > 0);
+        assert_eq!(
+            faulted(&|bound| bound.ranges[last].text = PromptText {
+                chunks: List::new()
+            })
+            .1,
+            false
+        );
+        // A slice given twice: the hash of what was bound is not the claim's.
+        let (fault, complete) = faulted(&|bound| {
+            let first = bound.ranges[0].text.clone();
+            bound.ranges[1].text = first;
+        });
+        assert!(fault != FAULT_NONE || !complete);
+        assert!(!complete);
+    }
+
+    #[test]
     fn the_context_binds_the_original_text() {
-        use inference_kernels::kernels::prompt_prepare::run_prompt_bind;
         use sha2::{Digest, Sha256};
         let tokenizer = serde_json::json!({
             "model": { "type": "BPE", "vocab": {"a": 0, "b": 1, "c": 2}, "merges": [] },
@@ -822,7 +1157,10 @@ mod tests {
             model_id: String::from("model"),
             ..RunConfig::default()
         };
-        let bind = |text: &str| run_prompt_bind(&tokenizer, &prompt_text(text), &config).unwrap();
+        let bind = |text: &str| {
+            let bound = bound_ranges(text, true, 8, &tokenizer).unwrap();
+            run_prompt_stages(&tokenizer, &bound, &config).2
+        };
         let bound = bind("abc");
         assert_eq!(
             bound.context.input_text_sha256,
@@ -833,7 +1171,7 @@ mod tests {
             bind("abd").context.input_text_sha256
         );
         assert_eq!(bound.context.model_id, "model");
-        assert!(!bound.context.complete);
+        assert!(bound.context.complete);
     }
 
     #[test]

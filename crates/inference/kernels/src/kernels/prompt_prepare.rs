@@ -1,14 +1,16 @@
-//! Native prompt preparation: the split `prompt-bind` runs, the ranked merge
+//! Native prompt preparation: the bind `prompt-bind` runs for a range, the ranked merge
 //! every range's token check is held to, and the whole-prompt tokenization
 //! direct inference uses.
 use anyhow::{ensure, Result};
 use prompt_check::input::{
-    apply_atom, begin_scan_state, begin_text_fold_state, fold_text, merge_bucket_of,
-    open_prompt_context, record_fault, scan_chunk_into, scan_plan_of, vocab_bucket_of, BpePiece,
+    bind_range, merge_bucket_of, open_bind_range, record_fault, vocab_bucket_of, BpePiece,
     BpePieces, MergeCandidate, PromptContext, PromptState, PromptText, PromptTokenization,
-    PromptTokenizer, RunConfig, SplitState, FAULT_MERGES_INCOMPLETE, FAULT_RANGE_TOO_LARGE,
+    PromptTokenizer, RunConfig, RunSchedule, TextClaim, FAULT_MERGES_INCOMPLETE,
+    FAULT_RANGE_TOO_LARGE,
 };
-use raster::List;
+use raster::{BytesPage, List};
+
+use super::prompt_check_stage::BucketProofs;
 
 pub struct PromptPrepareDirectInputs<'a> {
     pub tokenizer: &'a PromptTokenizer,
@@ -54,50 +56,63 @@ fn apply(pieces: &mut Vec<BpePiece>, best: MergeCandidate) {
     pieces.remove(left + 1);
 }
 
-fn in_vocabulary(tokenizer: &PromptTokenizer, piece: &str) -> Result<bool> {
+/// What one range's `prompt-bind` is given.
+pub struct PromptBindInputs<'a> {
+    pub tokenizer: &'a PromptTokenizer,
+    /// The tokenizer's identity root.
+    pub root: &'a BytesPage,
+    /// This range's slice of the original text.
+    pub text: &'a PromptText,
+    pub config: &'a RunConfig,
+    pub descriptor: &'a [u8],
+    pub schedule: &'a RunSchedule,
+    pub claim: &'a TextClaim,
+    /// The bind of the range before, or the empty state.
+    pub previous: &'a PromptState,
+}
+
+/// `prompt-bind`: binds one range's text, continuing the range before.
+pub fn run_prompt_bind(
+    inputs: PromptBindInputs<'_>,
+    proofs: &mut dyn BucketProofs,
+) -> Result<PromptState> {
+    let tokenizer = inputs.tokenizer;
     ensure!(
         tokenizer.vocab_bucket_count > 0
             && tokenizer.vocab_bucket_count as usize == tokenizer.vocab_buckets.len(),
         "invalid vocabulary bucket count"
     );
-    let index = vocab_bucket_of(piece, tokenizer.vocab_bucket_count) as usize;
-    Ok(tokenizer.vocab_buckets[index]
-        .entries
-        .iter()
-        .any(|entry| entry.token == piece))
-}
-
-/// `prompt-bind`: hashes the original text, renders it, and splits it.
-pub fn run_prompt_bind(
-    tokenizer: &PromptTokenizer,
-    text: &PromptText,
-    config: &RunConfig,
-) -> Result<PromptState> {
     let profile = &tokenizer.profile;
-    let fold = text
-        .chunks
-        .iter()
-        .fold(begin_text_fold_state(), |fold, chunk| {
-            fold_text(fold, chunk)
-        });
-    let plan = scan_plan_of(&fold, config, profile);
-    let mut scan = begin_scan_state(&plan);
-    let mut atoms = Vec::new();
-    for chunk in text.chunks.iter() {
-        scan = scan_chunk_into(scan, chunk, &plan, profile, &mut |atom| atoms.push(atom));
-    }
+    let opened = open_bind_range(
+        &inputs.previous.context,
+        &inputs.previous.bind,
+        inputs.config,
+        inputs.descriptor,
+        inputs.schedule,
+        inputs.claim,
+        inputs.root,
+        profile,
+    );
     let mut pieces = Vec::new();
-    let mut split = SplitState::default();
-    for atom in &atoms {
-        let known = in_vocabulary(tokenizer, &atom.text)?;
-        split = apply_atom(&split, atom, known, profile, &mut |piece| {
-            pieces.push(piece)
-        });
-    }
+    let closed = bind_range(
+        opened,
+        inputs.text.chunks.as_slice(),
+        profile,
+        |piece| {
+            let index = vocab_bucket_of(piece, tokenizer.vocab_bucket_count);
+            let found = tokenizer.vocab_buckets[index as usize]
+                .entries
+                .iter()
+                .any(|entry| entry.token == piece);
+            (found, proofs.vocab_bucket(index))
+        },
+        &mut |piece| pieces.push(piece),
+    );
     Ok(PromptState {
         pieces: List::from(pieces),
-        token_ids: List::new(),
-        context: open_prompt_context(&fold, config),
+        context: closed.context,
+        bind: closed.carry,
+        ..PromptState::default()
     })
 }
 
@@ -162,9 +177,9 @@ pub fn finalize_prompt(inputs: PromptPrepareDirectInputs<'_>) -> Result<PromptTo
         .model
         .finish_prompt_range(context.complete, context.prompt_tokens, context.fault);
     Ok(PromptTokenization {
-        pieces: List::new(),
         token_ids: List::from(token_ids),
         context,
+        ..PromptTokenization::default()
     })
 }
 
@@ -195,8 +210,8 @@ pub fn run_prompt_prepare_direct(
         tokenizer: inputs.tokenizer,
         initial_pieces: &BpePieces {
             pieces: pieces.into(),
-            token_ids: List::new(),
             context: inputs.initial_pieces.context.clone(),
+            ..BpePieces::default()
         },
     })
 }

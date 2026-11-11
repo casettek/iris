@@ -59,7 +59,7 @@ fn same_substituted_inputs_finish_with_matching_model_faults() {
         ]),
     };
     let d = ModelDescriptor {
-        version: 1,
+        version: 2,
         tokenizer: [1; 32],
         decoder: raster::core::tree::value_root(&honest).unwrap(),
         embedding: [2; 32],

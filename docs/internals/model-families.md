@@ -47,9 +47,9 @@ model that computes something else.
 
 | Part | Shared | Per family today |
 | --- | --- | --- |
-| Schedule and step rules (`pipeline-core`, `model-identity`) | yes | assumes one auxiliary stage per layer |
-| `range-origin`, `decode-init`, `input-embedding`, `sequence-check`, `output-finalize` | yes | the head's softcap and the embedding scale are manifest values |
-| `prompt-bind`, `prompt-check` | the stages | the scanner in `prompt-core` implements Gemma's rules; the chat template is two constants |
+| Schedule and step rules (`pipeline-core`, `model-identity`) | yes; a model's descriptor has one auxiliary root per layer or none | |
+| `input-embedding`, `sequence-check`, `output-finalize` | yes | the head's softcap and the embedding scale are manifest values |
+| `prompt-bind`, `prompt-check` | the stages; the chat template is data in the tokenizer profile | the scanner in `prompt-core` implements Gemma's rules; `run-prep` fills the profile's template with Gemma's |
 | `prefill-range`, `prefill-prepare-aux` | the weight-page and scoring tiles | the layer's mathematics is Gemma's |
 | Native kernels (`inference-kernels`, `direct-infer`, `staged-infer`) | batched products, the GPU path, caching | `prefill_range.rs` is Gemma's layer |
 | `model-import` | command line, layout, paging, tokenizer externals, commitments, chain template, manifest | `gemma.rs`: config, tensors, layer and head externals, manifest shape |
@@ -85,12 +85,13 @@ In this order, because each step can be checked before the next:
 These are shared code that every stage program reaches, so each one re-locks nearly all
 programs and moves imports and prepared runs to a new version. Make them together.
 
-- **Which stages a layer has.** The schedule requires one auxiliary stage before every
-  layer stage, which only models with per-layer embedding inputs need. A family without
-  them needs the schedule to say so, and a mixture-of-experts layer would add an expert
-  stage after attention. Both are one change: the schedule naming the stages of a layer.
-- **Binding the prompt one range at a time.** See
-  [the proposal](../proposals/paged-prompt-bind.md). It changes the same step rules.
+- **A stage kind the schedule does not have.** A model without per-layer inputs needs
+  nothing: its descriptor has no auxiliary roots, no auxiliary stage runs, and its layer
+  program asks the schedule for no per-layer input. A layer made of two stages, as a
+  mixture-of-experts layer might be, needs a step the schedule rules do not name yet.
+- **The descriptor's roles.** It names a tokenizer, a decoder, an embedding, a head, and
+  per layer a transformer root and optionally an auxiliary one. A family that commits
+  something else per layer either folds it into the layer's root or changes this.
 - **A new `det-num` function** that a shared tile calls. A function only a family's own
   tiles call re-locks only that family's programs.
 

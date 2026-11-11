@@ -2,13 +2,14 @@
 //!
 //! ```text
 //!   marks ──recur──▶ how many pieces the range covers
-//!   bound.pieces ──recur──▶ how many pieces the prompt has ──▶ the range's plan
-//!   previous.pieces, bound.pieces ──recur──▶ the range's pieces, ending in an end piece
+//!   previous.rest, bound.pieces ──recur──▶ how many pieces the range is given ──▶ its plan
+//!   previous.pieces, previous.rest, bound.pieces ──recur──▶ the range's pieces, ending in an end piece
 //!   pieces × marks ──recur seq──▶ every piece's token
 //!   pass A, pass B: 64 × [ scan ──recur seq──▶ best pair per window
 //!                          apply ──recur seq──▶ at most one merge per window ]
 //!                   closing scan, and a fold over the pass's final pieces
 //!   pass A's pieces ──▶ the range's tokens ──vocabulary──▶ token ids ──▶ PromptState
+//!   previous.rest, bound.pieces ──recur──▶ the pieces past the range, for the next
 //! ```
 
 use prompt_check::check::*;
@@ -371,9 +372,10 @@ fn verify_piece(
     call!(identity_sparse_context, state, root, index, header, proof)
 }
 
-/// Stage entrypoint for one range: `bound` is every piece of the prompt,
-/// `previous` the stage whose context this range continues, and `marks` the
-/// claim of where each of the range's tokens starts.
+/// Stage entrypoint for one range: `bound` is this range's bind, `previous`
+/// the check of the range before or the empty state, and `marks` the claim
+/// of where each of the range's tokens starts. The range's pieces are the
+/// ones `previous` left, then `bound`'s.
 #[sequence]
 fn main(
     tokenizer: PromptTokenizer,
@@ -399,13 +401,23 @@ fn main(
         args = ()
     );
     let end = call!(marked_end, context.clone(), marked);
-    let all = select!(List<BpePiece>, bound.pieces);
+    let rest = select!(List<BpePiece>, previous.clone().rest);
+    let own = select!(List<BpePiece>, bound.clone().pieces);
     let slice = call!(begin_slice, context.clone(), end);
-    let observed = call_recur!(
+    let rest_base = select!(u64, slice.clone().position);
+    let observed_rest = call_recur!(
         tile = fold_slice,
-        input = all.clone(),
+        input = rest.clone(),
         chunk = 256,
         state = slice,
+        args = ()
+    );
+    let own_base = select!(u64, observed_rest.clone().position);
+    let observed = call_recur!(
+        tile = fold_slice,
+        input = own.clone(),
+        chunk = 256,
+        state = observed_rest,
         args = ()
     );
     let plan = call!(plan_check_range, context.clone(), observed);
@@ -419,12 +431,19 @@ fn main(
         output,
         args = (plan.clone(),)
     );
-    let range = call_recur!(
+    let with_rest = call_recur!(
         tile = copy_range,
-        input = all,
+        input = rest.clone(),
         chunk = 256,
         output = with_lead,
-        args = (plan.clone(),)
+        args = (plan.clone(), rest_base.clone())
+    );
+    let range = call_recur!(
+        tile = copy_range,
+        input = own.clone(),
+        chunk = 256,
+        output = with_rest,
+        args = (plan.clone(), own_base.clone())
     );
     let range_pieces = select!(List<RangePiece>, range.pieces);
     let number_seed = call!(begin_numbering, plan.clone());
@@ -502,14 +521,16 @@ fn main(
         args = ()
     );
 
+    let bound_done = select!(bool, bound.bind.done);
     let context = call!(
         finish_check,
         context,
-        plan,
+        plan.clone(),
         summary_a.clone(),
         scan_a,
         summary_b,
-        scan_b
+        scan_b,
+        bound_done
     );
 
     // The range's tokens, as pass A left them, resolved to ids.
@@ -560,12 +581,27 @@ fn main(
         args = ()
     );
     let last_token = select!(u32, summary_a.last_token);
-    call_recur!(
+    let with_last = call_recur!(
         tile = carry_last_token,
         input = pieces,
         chunk = 256,
         output = with_ids,
         args = (last_token,)
+    );
+    // What the range was given and did not take goes to the next range.
+    let with_old_rest = call_recur!(
+        tile = carry_rest,
+        input = rest,
+        chunk = 256,
+        output = with_last,
+        args = (plan.clone(), rest_base)
+    );
+    call_recur!(
+        tile = carry_rest,
+        input = own,
+        chunk = 256,
+        output = with_old_rest,
+        args = (plan, own_base)
     )
 }
 

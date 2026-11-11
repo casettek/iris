@@ -131,7 +131,7 @@ impl Fixture {
             ]),
         };
         let mut descriptor = model_identity::ModelDescriptor {
-            version: 1,
+            version: 2,
             tokenizer: [1; 32],
             decoder: raster::core::tree::value_root(&decoder_table).unwrap(),
             embedding: [2; 32],
@@ -250,6 +250,16 @@ impl Fixture {
             "descriptor",
             &raster::BytesPage::__from_parts(0, 0, descriptor.encode().unwrap()),
         );
+        // What the first range is given where a later one takes the range
+        // before it.
+        let empty_sequence = self.external(
+            "empty_sequence",
+            &staged_infer::kernels::origin::empty_sequence(),
+        );
+        let empty_edge = self.external(
+            "empty_edge",
+            &staged_infer::kernels::origin::empty_decode_edge(),
+        );
         let mut text = String::from("[chain]\nname = \"worker-parity\"\nversion = \"0.1.0\"\n");
         let mut add = |name: String, project: &str, inputs: Vec<(&str, String)>| {
             text.push_str(&format!(
@@ -263,14 +273,13 @@ impl Fixture {
             self.stages.push((name, project.into()));
         };
         let from = |s: &str| format!("{{ from = {} }}", toml::Value::String(s.into()));
-        add("range_origin".into(), "range-origin", vec![]);
         add(
             "embed_p0".into(),
             "input-embedding",
             vec![
                 ("prompt", prompt.clone()),
                 ("claimed", no_claim),
-                ("previous", from("range_origin")),
+                ("previous", empty_sequence.clone()),
                 ("embedding", embedding.clone()),
                 ("witness", page_witness.clone()),
             ],
@@ -295,15 +304,14 @@ impl Fixture {
                         "activations",
                         from(if l == 0 { "embed_p0" } else { "range_p0_l0" }),
                     ),
-                    ("prior_kv", from("range_origin")),
-                    ("donor_a_kv", from("range_origin")),
-                    ("donor_b_kv", from("range_origin")),
+                    ("prior_kv", empty_sequence.clone()),
+                    ("donor_a_kv", empty_sequence.clone()),
+                    ("donor_b_kv", empty_sequence.clone()),
                     ("ple", from(&format!("aux_p0_l{l}"))),
                     ("layer", layers[l].clone()),
                 ],
             );
         }
-        add("decode_init".into(), "decode-init", vec![]);
         for t in 0..3 {
             add(
                 format!("embed_c{t}"),
@@ -355,8 +363,8 @@ impl Fixture {
                                 format!("range_c{}_l{l}", t - 1)
                             }),
                         ),
-                        ("donor_a_kv", from("range_origin")),
-                        ("donor_b_kv", from("range_origin")),
+                        ("donor_a_kv", empty_sequence.clone()),
+                        ("donor_b_kv", empty_sequence.clone()),
                         ("ple", from(&format!("aux_c{t}_l{l}"))),
                         ("layer", layers[l].clone()),
                     ],
@@ -378,11 +386,11 @@ impl Fixture {
                     ("claimed", claimed[t].clone()),
                     (
                         "prior",
-                        from(&if t == 0 {
-                            "decode_init".into()
+                        if t == 0 {
+                            empty_edge.clone()
                         } else {
-                            format!("check_c{}", t - 1)
-                        }),
+                            from(&format!("check_c{}", t - 1))
+                        },
                     ),
                     ("prompt", prompt.clone()),
                     ("head", head.clone()),
@@ -481,10 +489,9 @@ fn repeated_ranges_have_identical_checkpoints_with_worker_and_cache_reuse() {
             serde_json::from_slice(&fs::read(run.join("staged-performance.json")).unwrap())
                 .unwrap();
         let starts = perf["auxiliary_process_starts"].as_u64().unwrap();
-        assert_eq!(perf["stages"][0]["name"], "range_origin");
-        assert_eq!(perf["stages"][1]["name"], "embed_p0");
+        assert_eq!(perf["stages"][0]["name"], "embed_p0");
         // The initial embedding retains only small verified metadata now.
-        let initial_retained = perf["stages"][1]["cache"]["retained_bytes"]
+        let initial_retained = perf["stages"][0]["cache"]["retained_bytes"]
             .as_u64()
             .unwrap();
         assert!(initial_retained <= 16 * 1024);

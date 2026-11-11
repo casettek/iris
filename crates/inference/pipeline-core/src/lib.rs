@@ -199,7 +199,7 @@ impl Execution {
             claimed: false,
             expected: None,
             schedule: StageSchedule::default(),
-            step: Step::bind(),
+            step: Step::bind(0),
         }
     }
     pub fn encode(&self) -> alloc::vec::Vec<u8> {

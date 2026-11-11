@@ -34,17 +34,17 @@ impl RangedShape {
     }
 }
 
-/// The ranged teacher-forced chain: every prompt range tokenized and
+/// The ranged teacher-forced chain: every prompt range bound, tokenized and
 /// embedded, every claimed range embedded, each layer across all ranges, then
 /// each claimed range checked.
 pub(super) fn teacher_forced_names(shape: RangedShape) -> Vec<String> {
-    let mut names = vec![
-        String::from("range_origin"),
-        String::from("decode_init"),
-        String::from("prompt_bind"),
-    ];
+    let mut names = Vec::new();
     for j in 0..shape.prompt_ranges {
-        names.extend([format!("prompt_check_p{j}"), format!("embed_p{j}")]);
+        names.extend([
+            format!("prompt_bind_p{j}"),
+            format!("prompt_check_p{j}"),
+            format!("embed_p{j}"),
+        ]);
     }
     names.extend((0..shape.claimed_ranges).map(|k| format!("embed_c{k}")));
     // Each layer runs across every range before the next layer.
@@ -223,11 +223,12 @@ pub(crate) fn value_json(value: &RasterValue) -> Result<Value> {
 }
 
 pub(super) fn validate_errors(stage: &str, value: &Value) -> Result<()> {
+    // `decode_init` is direct inference's name for its empty edge; no chain
+    // stage has it.
     if stage != "prompt_prepare"
-        && stage != "prompt_bind"
+        && !stage.starts_with("prompt_bind_p")
         && stage != "decode_init"
         && stage != "output_finalize"
-        && stage != "range_origin"
         && !stage.starts_with("prompt_check_p")
         && !stage.starts_with("check_c")
         && !stage.starts_with("decode_select_")
@@ -392,14 +393,13 @@ mod tests {
             claimed_ranges: 2,
         };
         let names = teacher_forced_names(shape);
-        // origin + init + bind, 3 × (check + embed + 8 layer stages),
+        // 3 × (bind + check + embed + 8 layer stages),
         // 2 × (embed + 8 layer stages + check), output.
-        assert_eq!(names.len(), 3 + 3 * 10 + 2 * 10 + 1);
+        assert_eq!(names.len(), 3 * 11 + 2 * 10 + 1);
+        assert_eq!(names.first().map(String::as_str), Some("prompt_bind_p0"));
         assert_eq!(RangedShape::from_names(&names), shape);
         assert_eq!(names.last().map(String::as_str), Some("output_finalize"));
-        assert!(!names
-            .iter()
-            .any(|name| name.starts_with("decode_") && name != "decode_init"));
+        assert!(!names.iter().any(|name| name.starts_with("decode_")));
     }
 
     #[test]

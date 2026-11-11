@@ -172,10 +172,7 @@ fn final_head_logits_feed_shared_decode_select_tie_break() {
         start_position: 0,
     };
     let logits = score_prefill_logits_view(&activations, &head).unwrap();
-    let prior = inference_kernels::kernels::decode_init::run_decode_init_direct(
-        inference_kernels::kernels::decode_init::DecodeInitDirectInputs,
-    )
-    .unwrap();
+    let prior = inference_kernels::kernels::origin::empty_decode_edge();
     let edge = direct_infer::generation::select_next_token(&logits, &prior).unwrap();
 
     assert_eq!(logits.decode_position, 1);

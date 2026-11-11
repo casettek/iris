@@ -1,54 +1,49 @@
-//! `prompt-bind`: sequences, one stage per run.
+//! `prompt-bind`: sequences, one stage per prompt range.
 //!
 //! ```text
-//!   text.chunks ──recur──▶ sha256, trim bounds ─┐
-//!   text.chunks ──recur──▶ atoms ◀── template ──┤
-//!   atoms ──recur seq──▶ [ vocabulary lookup · pieces · next position ] ──▶ PromptState
+//!   previous range's bind ─▶ context, fold, scan and split where it stopped
+//!   text.chunks ──recur──▶ sha256, trim bounds, scan position
+//!   text.chunks ──recur──▶ atoms
+//!   atoms ──recur seq──▶ [ bucket · one walk: hash and compare ] ──▶ known atoms
+//!   known atoms ──recur──▶ where the split ends, every lookup proven
+//!   known atoms ──recur──▶ pieces ──▶ PromptState
 //! ```
 
 use prompt_bind::input::*;
 use prompt_bind::*;
 use raster::prelude::*;
 
-/// One atom: look it up, append the pieces it becomes, move the split on.
+/// One atom: walk its bucket once, hashing every entry and comparing each
+/// with the atom, and record what was found.
 #[sequence(kind = recur)]
-fn resolve_atom(
+fn look_up_atom(
     input: RecurSequenceInput<PromptAtom>,
-    state: RecurSequenceState<SplitState>,
-    output: RecurSequenceOutput<PromptState>,
+    output: RecurSequenceOutput<KnownAtoms>,
     vocab_buckets: List<VocabBucket>,
     count: u32,
-    profile: TokenizerProfile,
-) -> (
-    RecurSequenceState<SplitState>,
-    RecurSequenceOutput<PromptState>,
-) {
-    let step = call!(begin_atom_step, state, input);
-    let query = select!(VocabQuery, step.clone().query);
-    let index = call!(vocab_bucket_index, query.clone(), count);
+    header: SparseHeader,
+    paths: List<SparsePath>,
+) -> RecurSequenceOutput<KnownAtoms> {
+    let lookup = call!(begin_atom_lookup, input, count);
+    let index = select!(u32, lookup.clone().index);
     let bucket = select!(VocabBucket, vocab_buckets[index]);
     let entries = select!(List<TokenEntry>, bucket.entries);
-    let empty = call!(empty_vocab_match);
-    let hit = call_recur!(
-        tile = scan_vocab_chunk,
+    let piece = select!(String, lookup.clone().atom.text);
+    let seed = call!(begin_walk);
+    let walk = call_recur!(
+        tile = walk_vocab_bucket,
         input = entries,
-        state = empty,
-        args = (query,)
+        state = seed,
+        args = (piece,)
     );
-    let output = call!(
-        append_atom_pieces,
-        output,
-        step.clone(),
-        hit.clone(),
-        profile.clone()
-    );
-    let state = call!(advance_split, step, hit, profile);
-    (state, output)
+    let path = select!(SparsePath, paths[index]);
+    call!(append_known_atom, output, lookup, walk, header, path)
 }
 
-/// Stage entrypoint: `text` is the original prompt, `config` the run's
-/// configuration, `schedule` its stage schedule, `tokenizer` the committed
-/// tokenizer.
+/// Stage entrypoint for one range: `text` is the range's slice of the original
+/// prompt and `previous` the bind of the range before, or the empty state.
+/// `config`, `descriptor`, `schedule` and `claim` are the run's, read by the
+/// first range only. `tokenizer` is the committed tokenizer.
 #[sequence]
 fn main(
     tokenizer: PromptTokenizer,
@@ -57,22 +52,42 @@ fn main(
     config: RunConfig,
     descriptor: BytesPage,
     schedule: RunSchedule,
+    claim: TextClaim,
+    previous: PromptState,
 ) -> PromptState {
     let profile = select!(TokenizerProfile, tokenizer.clone().profile);
     let count = select!(u32, tokenizer.clone().vocab_bucket_count);
     let vocab = select!(List<VocabBucket>, tokenizer.clone().vocab_buckets);
     let chunks = select!(List<String>, text.chunks);
 
-    let fold_seed = call!(begin_text_fold);
-    let fold = call_recur!(
+    let root = call_seq!(identity_root, tokenizer, witness.clone());
+    let previous_context = select!(PromptContext, previous.clone().context);
+    let previous_carry = select!(BindCarry, previous.bind);
+    let opened = call!(
+        open_bind,
+        previous_context,
+        previous_carry,
+        config,
+        descriptor,
+        schedule,
+        claim,
+        root,
+        profile.clone()
+    );
+    let context = select!(PromptContext, opened.clone().context);
+    let before = select!(BindCarry, opened.carry);
+
+    let text_claim = select!(TextClaim, before.clone().claim);
+    let raw_prompt = select!(bool, context.clone().raw_prompt);
+    let plan = call!(plan_scan, text_claim, raw_prompt, profile.clone());
+    let pass_seed = select!(TextPass, before.clone().text);
+    let pass = call_recur!(
         tile = fold_text_chunk,
         input = chunks.clone(),
-        state = fold_seed,
-        args = ()
+        state = pass_seed,
+        args = (plan.clone(), profile.clone())
     );
-
-    let plan = call!(plan_scan, fold.clone(), config.clone(), profile.clone());
-    let scan_seed = call!(begin_scan, plan.clone());
+    let scan_seed = select!(ScanState, before.clone().text.scan);
     let scanned = call_recur!(
         tile = scan_prompt_chunk,
         input = chunks,
@@ -82,25 +97,33 @@ fn main(
     );
     let atoms = select!(List<PromptAtom>, scanned.atoms);
 
-    let root = call_seq!(identity_root, tokenizer, witness.clone());
-    let context = call!(identity_bound_context, fold, config, descriptor, root);
-    let context = call!(bind_schedule, context, schedule);
     let vocab_header = select!(SparseHeader, witness.clone().vocab);
     let vocab_paths = select!(List<SparsePath>, witness.vocab_paths);
-    let context = call_recur_seq!(
-        sequence = verify_atom,
-        input = atoms.clone(),
-        state = context,
-        args = (vocab.clone(), count.clone(), vocab_header, vocab_paths)
-    );
-    let opened = call!(identity_open_bound, context);
-    let split_seed = call!(begin_split);
-    let bound = call_recur_seq!(
-        sequence = resolve_atom,
+    let known = call_recur_seq!(
+        sequence = look_up_atom,
         input = atoms,
+        output,
+        args = (vocab, count, vocab_header, vocab_paths)
+    );
+    let known_atoms = select!(List<KnownAtom>, known.atoms);
+
+    let split_seed = select!(SplitState, before.clone().split);
+    let tail_seed = call!(begin_tail, split_seed.clone());
+    let tail = call_recur!(
+        tile = advance_tail,
+        input = known_atoms.clone(),
+        chunk = 256,
+        state = tail_seed,
+        args = (profile.clone(),)
+    );
+    let closed = call!(close_bind, context, before, pass, tail, profile.clone());
+    let bound = call_recur!(
+        tile = append_pieces,
+        input = known_atoms,
+        chunk = 256,
         state = split_seed,
-        output = opened,
-        args = (vocab, count, profile)
+        output = closed,
+        args = (profile,)
     );
     raster::println!("prompt bind → {:?}", bound);
     bound
@@ -126,52 +149,4 @@ fn identity_root(value: PromptTokenizer, witness: TokenizerWitness) -> BytesPage
         vocab_buckets,
         merge_buckets
     )
-}
-
-#[sequence]
-fn identity_vocabbucket_contents(buckets: List<VocabBucket>, index: u32) -> BytesPage {
-    let input = select!(VocabBucket, buckets[index]);
-    let entries = select!(List<TokenEntry>, input.entries);
-    let seed = call!(identity_empty);
-    let folded = call_recur!(
-        tile = identity_vocabbucket_entry,
-        input = entries,
-        state = seed,
-        args = ()
-    );
-    let root = call!(identity_finish, folded);
-    let root = call!(identity_vocabbucket_root, root);
-    root
-}
-
-#[sequence]
-fn identity_mergebucket_contents(buckets: List<MergeBucket>, index: u32) -> BytesPage {
-    let input = select!(MergeBucket, buckets[index]);
-    let entries = select!(List<BpeMerge>, input.rules);
-    let seed = call!(identity_empty);
-    let folded = call_recur!(
-        tile = identity_mergebucket_entry,
-        input = entries,
-        state = seed,
-        args = ()
-    );
-    let root = call!(identity_finish, folded);
-    let root = call!(identity_mergebucket_root, root);
-    root
-}
-
-#[sequence(kind=recur)]
-fn verify_atom(
-    input: RecurSequenceInput<PromptAtom>,
-    state: RecurSequenceState<PromptContext>,
-    buckets: List<VocabBucket>,
-    count: u32,
-    header: SparseHeader,
-    paths: List<SparsePath>,
-) -> RecurSequenceState<PromptContext> {
-    let query = call!(identity_atom_query, input);
-    let index = call!(vocab_bucket_index, query, count);
-    let root = call_seq!(identity_vocabbucket_contents, buckets, index.clone());
-    let proof = select!(SparsePath, paths[index]);
-    call!(identity_sparse_context, state, root, index, header, proof)
 }

@@ -33,8 +33,7 @@ const REPLAY_WINDOW: usize = 128;
 
 /// Checkpoints to falsify in an otherwise honest claim, one per family of stage
 /// long enough to challenge.
-const FALSIFIED_STAGES: [&str; 5] = [
-    "prompt_bind",
+const FALSIFIED_STAGES: [&str; 4] = [
     "prompt_check_p0",
     "prompt_check_p1",
     "range_p1_l2",
@@ -44,7 +43,12 @@ const FALSIFIED_STAGES: [&str; 5] = [
 /// Whether this stage's trace exceeds the replay window on the pinned templated
 /// case.
 fn long_enough_to_challenge(stage: &str) -> bool {
-    stage.starts_with("prompt_") || stage.starts_with("range_p") || stage.starts_with("range_c")
+    // A bind stage covers one range, and a range of the pinned model is six
+    // tokens: about 110 steps, where a 512-token range of a real model is
+    // about 28,000.
+    stage.starts_with("prompt_check_p")
+        || stage.starts_with("range_p")
+        || stage.starts_with("range_c")
 }
 
 pub(super) struct Leg<'a> {
@@ -68,6 +72,8 @@ struct RunInputs {
     ids: Vec<u32>,
     /// Added to the schedule's two counts. Zero for a schedule matching the run.
     schedule_skew: [i64; 2],
+    /// Claim another hash for the text than the text's.
+    other_text_hash: bool,
 }
 
 pub(super) fn run_challenge_leg(leg: &Leg) -> Result<Value> {
@@ -138,13 +144,13 @@ pub(super) fn run_challenge_leg(leg: &Leg) -> Result<Value> {
     // names it.
     let other_spec = run_spec(leg, &other_path, "other-model.toml")?;
     let elsewhere = claim(leg, "other-model", &other_spec, None)?;
-    replays.push(expect_divergence(
+    replays.push(expect_claim_found(
         leg,
         "other-model",
         &spec,
-        &elsewhere.claim_bundle_path,
-        &elsewhere.checkpoint_hashes_path,
-        "prompt_bind",
+        &elsewhere,
+        &honest_trace,
+        "prompt_bind_p0",
     )?);
     let log = fs::read_to_string(leg.dir.join("other-model/challenge/challenge.log"))?;
     ensure!(
@@ -169,7 +175,7 @@ pub(super) fn run_challenge_leg(leg: &Leg) -> Result<Value> {
     let doctored = [
         (
             "other-text",
-            "prompt_bind",
+            "prompt_bind_p0",
             RunInputs {
                 text: format!("{} ", inputs.text),
                 ..inputs.clone()
@@ -177,7 +183,7 @@ pub(super) fn run_challenge_leg(leg: &Leg) -> Result<Value> {
         ),
         (
             "other-config",
-            "prompt_bind",
+            "prompt_bind_p0",
             RunInputs {
                 config: other_budget,
                 ..inputs.clone()
@@ -185,9 +191,17 @@ pub(super) fn run_challenge_leg(leg: &Leg) -> Result<Value> {
         ),
         (
             "other-schedule",
-            "prompt_bind",
+            "prompt_bind_p0",
             RunInputs {
                 schedule_skew: [1, 0],
+                ..inputs.clone()
+            },
+        ),
+        (
+            "other-text-claim",
+            "prompt_bind_p0",
+            RunInputs {
+                other_text_hash: true,
                 ..inputs.clone()
             },
         ),
@@ -226,6 +240,8 @@ pub(super) fn run_challenge_leg(leg: &Leg) -> Result<Value> {
         )?);
     }
 
+    // What range 0 is given where a later range takes the range before it.
+    let empty = |stage, key| binding_value(&honest_manifest, stage, key);
     let take = |stage, key| take_binding(&honest_manifest, &other_manifest, stage, key);
     let table = |header| take_table(&honest_manifest, &other_manifest, header);
     let wire = |stage, key, line: &str| replace_binding(&honest_manifest, stage, key, line);
@@ -238,8 +254,8 @@ pub(super) fn run_challenge_leg(leg: &Leg) -> Result<Value> {
     let substituted = [
         (
             "tokenizer-at-bind",
-            "prompt_bind",
-            wire("prompt_bind", "tokenizer", &changed_tokenizer)?,
+            "prompt_bind_p0",
+            wire("prompt_bind_p{j}", "tokenizer", &changed_tokenizer)?,
         ),
         (
             "tokenizer-at-check",
@@ -282,13 +298,13 @@ pub(super) fn run_challenge_leg(leg: &Leg) -> Result<Value> {
             wire(
                 "prompt_check_p{j}",
                 "previous",
-                r#"{ from = "prompt_bind" }"#,
+                &empty("prompt_check_p0", "previous")?,
             )?,
         ),
         (
             "dropped-verdict",
             "check_c1",
-            wire("check_c{k}", "prior", r#"{ from = "decode_init" }"#)?,
+            wire("check_c{k}", "prior", &empty("check_c0", "prior")?)?,
         ),
         (
             "unchecked-range",
@@ -350,14 +366,14 @@ pub(super) fn run_challenge_leg(leg: &Leg) -> Result<Value> {
     let rewired = [
         (
             "restarted-positions",
-            wire("embed_p{j}", "previous", r#"{ from = "range_origin" }"#)?,
+            wire("embed_p{j}", "previous", &empty("embed_p0", "previous")?)?,
         ),
         (
             "dropped-cache",
             wire(
                 "range_p{j}_l{l}",
                 "prior_kv",
-                r#"{ from = "range_origin" }"#,
+                &empty("range_p0_l{l}", "prior_kv")?,
             )?,
         ),
         (
@@ -427,6 +443,20 @@ fn claim(leg: &Leg, name: &str, spec: &Path, ids: Option<Vec<u32>>) -> Result<Cl
 
 /// Runs `challenge build` the way a challenger does and returns its output.
 fn challenge(leg: &Leg, name: &str, spec: &Path, context: &Path, hashes: &Path) -> Result<String> {
+    let (built, log) = attempt_challenge(leg, name, spec, context, hashes)?;
+    built.with_context(|| format!("challenge `{name}`"))?;
+    Ok(log)
+}
+
+/// Runs `challenge build` and returns whether it built a challenge and what
+/// it printed either way.
+fn attempt_challenge(
+    leg: &Leg,
+    name: &str,
+    spec: &Path,
+    context: &Path,
+    hashes: &Path,
+) -> Result<(Result<f64>, String)> {
     let dir = leg.dir.join(name).join("challenge");
     fs::create_dir_all(&dir)?;
     let log = dir.join("challenge.log");
@@ -438,8 +468,43 @@ fn challenge(leg: &Leg, name: &str, spec: &Path, context: &Path, hashes: &Path) 
         .arg(context)
         .arg("--checkpoints")
         .arg(hashes);
-    logged(run, &log).with_context(|| format!("challenge `{name}`"))?;
-    Ok(fs::read_to_string(log)?)
+    let built = logged(run, &log);
+    Ok((built, fs::read_to_string(log)?))
+}
+
+/// A claim built somewhere else. Recomputation must first differ from its
+/// checkpoints at this stage, and a stage long enough to challenge must also
+/// replay. For a shorter one the challenger's command is still run, for what
+/// it reports before the replay it cannot finish.
+fn expect_claim_found(
+    leg: &Leg,
+    name: &str,
+    spec: &Path,
+    claim: &ClaimBuildResult,
+    honest: &CheckpointTrace,
+    stage: &str,
+) -> Result<Value> {
+    let claimed = read_checkpoint_trace(&claim.checkpoint_trace_path)?;
+    let found = locate_divergence(
+        &claim.checkpoint_trace_path,
+        &claimed,
+        &claim.checkpoint_trace_path,
+        honest,
+    )
+    .with_context(|| format!("`{name}` did not differ from honest execution"))?;
+    ensure!(
+        found.stage == stage,
+        "`{name}` first differs at `{}`, not `{stage}`",
+        found.stage
+    );
+    let (context, hashes) = (&claim.claim_bundle_path, &claim.checkpoint_hashes_path);
+    if long_enough_to_challenge(stage) {
+        return expect_divergence(leg, name, spec, context, hashes, stage);
+    }
+    // The replay of a stage this short is refused, so whether the command
+    // built a challenge is not this case's result.
+    let (_built, _log) = attempt_challenge(leg, name, spec, context, hashes)?;
+    Ok(json!({"case": name, "stage": stage, "replayed": false}))
 }
 
 /// The challenge must name this stage. `challenge build` only succeeds once the
@@ -544,6 +609,7 @@ fn honest_inputs(leg: &Leg) -> Result<RunInputs> {
         marks: ranges.into_iter().map(|range| range.marks).collect(),
         ids: leg.claimed.to_vec(),
         schedule_skew: [0; 2],
+        other_text_hash: false,
     })
 }
 
@@ -562,18 +628,35 @@ fn render(model_path: &Path, model: &ModelManifest, run: &RunInputs, dir: &Path)
     let range_size = run.config.range_size as usize;
     let mark_files = run_prep::write_marks(&run.marks, dir)?;
     let claimed_files = run_prep::write_claimed_ranges(&run.ids, range_size, dir)?;
+    let tokenizer: Value = read_json(
+        &model_path
+            .parent()
+            .context("model manifest has no parent directory")?
+            .join(&model.bundle.tokenizer_path),
+    )?;
+    let (slices, mut text_claim) = run_prep::text_for_ranges(
+        &run.text,
+        run.config.raw_prompt,
+        range_size,
+        &run_prep::prompt_tokenizer(&tokenizer)?,
+        run.marks.len(),
+    )?;
+    if run.other_text_hash {
+        text_claim.input_text_sha256 = "00".repeat(32);
+    }
     render_ranged_manifest(
         &template,
         template_path
             .parent()
             .context("manifest template has no parent directory")?,
-        &run_prep::write_prompt_text(&run.text, dir)?,
+        &run_prep::write_text_slices(&slices, dir)?,
         &run_prep::write_run_config(&run.config, dir)?,
         &run_prep::write_run_schedule(
             (mark_files.len() as i64 + run.schedule_skew[0]) as usize,
             (claimed_files.len() as i64 + run.schedule_skew[1]) as usize,
             dir,
         )?,
+        &run_prep::write_text_claim(&text_claim, dir)?,
         &mark_files,
         &claimed_files,
     )
@@ -673,6 +756,25 @@ fn change_every_tensor(bytes: &mut [u8]) -> Result<()> {
     Ok(())
 }
 
+/// Whether a manifest table is this stage: the repeated entry of that name,
+/// or the plain stage its range 0 is written out as.
+fn is_stage(block: &[&str], stage: &str) -> bool {
+    let name = block_name(block);
+    name == stage || name == stage.replace("{j}", "0").replace("{k}", "0")
+}
+
+/// How this table binds `key`, as the manifest writes it.
+fn binding_value(manifest: &str, table: &str, key: &str) -> Result<String> {
+    let prefix = format!("inputs.{key} =");
+    manifest_blocks(manifest)
+        .iter()
+        .filter(|block| block_name(block) == table)
+        .flatten()
+        .find_map(|line| line.trim_start().strip_prefix(&prefix))
+        .map(|value| value.trim().to_string())
+        .with_context(|| format!("no table `{table}` binds `{key}`"))
+}
+
 /// The manifest with `key`'s binding replaced in every block of this stage.
 fn replace_binding(manifest: &str, stage: &str, key: &str, value: &str) -> Result<String> {
     let line = format!("inputs.{key} = {value}");
@@ -684,7 +786,7 @@ fn replace_binding_line(manifest: &str, stage: &str, key: &str, line: &str) -> R
     let mut replaced = 0;
     let mut out = Vec::new();
     for block in manifest_blocks(manifest) {
-        let matches = block_name(&block) == stage;
+        let matches = is_stage(&block, stage);
         for &original in &block {
             if matches && original.trim_start().starts_with(&prefix) {
                 replaced += 1;
@@ -704,7 +806,7 @@ fn take_binding(manifest: &str, other: &str, stage: &str, key: &str) -> Result<S
     let blocks = manifest_blocks(other);
     let line = blocks
         .iter()
-        .filter(|block| block_name(block) == stage)
+        .filter(|block| is_stage(block, stage))
         .flatten()
         .find(|line| line.trim_start().starts_with(&prefix))
         .with_context(|| format!("no stage `{stage}` binds `{key}`"))?;
@@ -788,11 +890,13 @@ fn swapped_ple(leg: &Leg, manifest: &str) -> Result<String> {
 fn tokenizer_substitution_binding(manifest: &str, dir: &Path) -> Result<String> {
     use output_finalize::prompt::{BpeMerge, PromptTokenizer, TokenEntry};
     let parsed: toml::Value = toml::from_str(manifest)?;
-    let stage = parsed["chain"]["stage"]
+    let stage = parsed["chain"]["repeat"]
         .as_array()
-        .context("missing stages")?
+        .context("missing repeats")?
         .iter()
-        .find(|s| s["name"].as_str() == Some("prompt_bind"))
+        .filter_map(|repeat| repeat["stage"].as_array())
+        .flatten()
+        .find(|s| s["name"].as_str() == Some("prompt_bind_p{j}"))
         .context("missing prompt bind")?;
     let external = &stage["inputs"]["tokenizer"]["external"];
     let data = Path::new(
@@ -1093,7 +1197,7 @@ mod tests {
         let manifest = fs::read_to_string(prepared.join("Raster.toml")).unwrap();
         let work = base.join(format!("sparse-tokenizer-native-{}", std::process::id()));
         let binding = tokenizer_substitution_binding(&manifest, &work.join("inputs")).unwrap();
-        for (name, stage) in [("bind", "prompt_bind"), ("check", "prompt_check_p{j}")] {
+        for (name, stage) in [("bind", "prompt_bind_p{j}"), ("check", "prompt_check_p{j}")] {
             let dir = work.join(name);
             fs::create_dir_all(&dir).unwrap();
             let path = dir.join("Raster.toml");

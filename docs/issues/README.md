@@ -11,7 +11,7 @@ before the design. Every claim is cited to a file and line in this repo. Issues 
 
 | issue | opened | subject | upstream |
 | --- | --- | --- | --- |
-| [`short-stage-fraud-window`](./short-stage-fraud-window.md) | 2026-11-03 | An authenticated stage replay with `--fraud-proof-window-size 128` cannot commit a trace of 128 items or fewer, so such a stage cannot be challenged. `range_origin` and `decode_init` are short at every claim size; `output_finalize` and some per-range stages are short on small claims. Deferred to its own project. | none |
+| [`short-stage-fraud-window`](./short-stage-fraud-window.md) | 2026-11-03 | An authenticated stage replay with `--fraud-proof-window-size 128` cannot commit a trace of 128 items or fewer, so such a stage cannot be challenged. `output_finalize` and some per-range stages are short on small claims. The one-tile origin stages, short at every size, were removed on 2026-11-11. Deferred to its own project. | none |
 | [`append-shaped-accumulators`](./append-shaped-accumulators.md) | 2026-08-25 | `mac_weight_page` and `score_key` carry an accumulator in `RecurState` that they never read back — the writes are appends, so they belong in `RecurOutput` and pay only their increment. `score_key`'s carrier grows, making the amplification the iteration count rather than a constant. `accumulate_context` genuinely needs read-back and is stuck. | `raster` `docs/issues/recur-accumulator-slots.md` |
 
 ## Closed

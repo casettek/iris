@@ -46,11 +46,11 @@ pub fn load_inputs_from_paths_with_cache(
 
 /// Checks each tokenizer bucket the stage reads against the witness, once.
 /// A bucket's check depends only on the tokenizer, the witness and its index.
-struct WitnessProofs<'a> {
-    tokenizer: &'a PromptTokenizer,
-    witness: &'a TokenizerWitness,
-    merges: HashMap<u32, bool>,
-    vocab: HashMap<u32, bool>,
+pub(crate) struct WitnessProofs<'a> {
+    pub(crate) tokenizer: &'a PromptTokenizer,
+    pub(crate) witness: &'a TokenizerWitness,
+    pub(crate) merges: HashMap<u32, bool>,
+    pub(crate) vocab: HashMap<u32, bool>,
 }
 
 impl BucketProofs for WitnessProofs<'_> {

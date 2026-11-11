@@ -33,10 +33,6 @@ use sha2::digest::generic_array::GenericArray;
 /// Token id reserved for pieces that are not in the vocabulary.
 pub const UNK_TOKEN_ID: u32 = 0;
 
-/// What the chat template adds before and after the trimmed prompt.
-pub const PROMPT_PREFIX: &str = "<bos><|turn>user\n";
-pub const PROMPT_SUFFIX: &str = "<turn|>\n<|turn>model\n";
-
 /// `PromptContext::fault` values. Zero is a clean preparation.
 pub const FAULT_NONE: u32 = 0;
 /// The committed text has no chunks at all, not even an empty one.
@@ -57,6 +53,11 @@ pub const FAULT_CONTEXT_MISMATCH: u32 = 7;
 pub const FAULT_TOKEN_SPLIT: u32 = 8;
 /// The claimed tokens are not what the ranked merge produces.
 pub const FAULT_NOT_THE_MERGE: u32 = 9;
+/// The text is not what the run claimed of it: its hash, its length or what
+/// the template's trim keeps.
+pub const FAULT_TEXT_CLAIM: u32 = 10;
+/// A range was given text after the text had ended.
+pub const FAULT_TEXT_AFTER_END: u32 = 11;
 
 /// What a `PromptContext::fault` value means.
 pub fn fault_description(fault: u32) -> &'static str {
@@ -70,6 +71,8 @@ pub fn fault_description(fault: u32) -> &'static str {
         FAULT_MERGES_INCOMPLETE => "a range's pieces could still merge",
         FAULT_TOKEN_SPLIT => "a claimed token's pieces are in two segments",
         FAULT_NOT_THE_MERGE => "the claimed tokens are not what the merge produces",
+        FAULT_TEXT_CLAIM => "the text is not what the run claimed of it",
+        FAULT_TEXT_AFTER_END => "a range was given text after the text had ended",
         _ => "an unknown fault",
     }
 }
@@ -119,9 +122,12 @@ pub struct MergeBucket {
 /// All-scalar and small, so a tile may take it whole.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
 pub struct TokenizerProfile {
-    /// The vocabulary has the chat template's tokens, so a prompt that is not
-    /// raw is rendered through the template.
-    pub templated: bool,
+    /// What the chat template puts before the trimmed prompt. A prompt that is
+    /// not raw is rendered through the template when this or the suffix is not
+    /// empty.
+    pub template_prefix: String,
+    /// What the chat template puts after the trimmed prompt.
+    pub template_suffix: String,
     /// Spaces normalize to `▁`.
     pub normalize_spaces: bool,
     /// A literal space ends its segment.
@@ -134,6 +140,13 @@ pub struct TokenizerProfile {
     pub specials: String,
     /// 64 hex digits: bit `b` is set when `<0xBB>` is in the vocabulary.
     pub fallback_bytes: String,
+}
+
+impl TokenizerProfile {
+    /// Whether the model has a chat template at all.
+    pub fn templated(&self) -> bool {
+        !self.template_prefix.is_empty() || !self.template_suffix.is_empty()
+    }
 }
 
 /// Committed tokenizer fixture: the vocabulary and the merge table, each
@@ -221,6 +234,22 @@ pub struct PromptText {
     pub chunks: List<String>,
 }
 
+/// What the run claims about the whole text, as one committed value.
+///
+/// The first range's bind needs each of these, and only the range that reaches
+/// the end of the text can know them. So the run supplies them, every range
+/// uses them, and the range the text ends in checks them against its fold.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
+pub struct TextClaim {
+    /// SHA-256 of the original UTF-8 prompt bytes, in lowercase hex.
+    pub input_text_sha256: String,
+    /// The text's length in bytes.
+    pub total: u64,
+    /// The bytes the template's trim keeps: from `keep_start` up to `keep_end`.
+    pub keep_start: u64,
+    pub keep_end: u64,
+}
+
 /// The run's configuration, as one committed value.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
 pub struct RunConfig {
@@ -233,8 +262,8 @@ pub struct RunConfig {
 
 /// The run's stage schedule, as one committed value: which stages run.
 ///
-/// Run preparation chooses it. `prompt-bind` checks it and stores it in the
-/// context, and it travels from there with the statement.
+/// Run preparation chooses it. The first range's `prompt-bind` checks it and
+/// stores it in the context, and it travels from there with the statement.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
 pub struct RunSchedule {
     pub prompt_ranges: u32,
@@ -292,14 +321,37 @@ pub struct PromptContext {
 
 /// The one output type of every prompt stage, so each may follow any other.
 ///
-/// `prompt-bind` publishes every piece of the prompt. `prompt-check` publishes
-/// one range's token ids, with the pieces of the range's last token for the
-/// next range to check against. Only the last range's context covers the prompt.
+/// `prompt-bind` publishes the pieces of one range's text, and in `bind` what
+/// the next range's bind continues from. `prompt-check` publishes one range's
+/// token ids, with the pieces of the range's last token for the next range to
+/// check against, and in `rest` the pieces it was given and did not take.
+/// Only the last range's context covers the prompt.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
 pub struct PromptState {
     pub pieces: List<BpePiece>,
+    /// Pieces a check was given past the end of its range, in order. The next
+    /// range's check takes them before its own bind's.
+    pub rest: List<BpePiece>,
     pub token_ids: List<u32>,
     pub context: PromptContext,
+    pub bind: BindCarry,
+}
+
+/// What one range's bind hands the next: the claim, and the three loops over
+/// the text exactly where this range left them.
+///
+/// Each loop's result depends only on its state and the chunks it is fed, in
+/// order. So binding the text in ranges, each from the state before, gives the
+/// pieces binding it whole gives, wherever the ranges are cut.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
+pub struct BindCarry {
+    pub claim: TextClaim,
+    /// The text fold and the scan's position.
+    pub text: TextPass,
+    pub split: SplitState,
+    /// The text has ended, in this range or an earlier one, and is what the
+    /// claim said.
+    pub done: bool,
 }
 
 /// The stage output as a list of pieces.
@@ -437,6 +489,12 @@ fn compress_blocks(words: &mut [u32; 8], bytes: &[u8]) -> usize {
     used
 }
 
+impl Default for TextFold {
+    fn default() -> Self {
+        begin_text_fold_state()
+    }
+}
+
 /// The fold before any chunk.
 pub fn begin_text_fold_state() -> TextFold {
     TextFold {
@@ -492,20 +550,17 @@ pub fn text_sha256_hex(fold: &TextFold) -> String {
     hex
 }
 
-/// The prompt context a run starts from.
-pub fn open_prompt_context(fold: &TextFold, config: &RunConfig) -> PromptContext {
-    let mut context = PromptContext {
-        input_text_sha256: text_sha256_hex(fold),
+/// The prompt context a run starts from. The text's hash is the claim's,
+/// until the range the text ends in has checked it.
+pub fn open_prompt_context(claim: &TextClaim, config: &RunConfig) -> PromptContext {
+    PromptContext {
+        input_text_sha256: claim.input_text_sha256.clone(),
         model_id: config.model_id.clone(),
         raw_prompt: config.raw_prompt,
         max_new_tokens: config.max_new_tokens,
         range_size: config.range_size,
         ..PromptContext::default()
-    };
-    if fold.chunks == 0 {
-        record_fault(&mut context, FAULT_NO_TEXT, 0);
     }
-    context
 }
 
 /// Keeps the first fault: the later ones are often its consequences.
@@ -550,9 +605,34 @@ pub struct ScanState {
     pub finished: bool,
 }
 
-/// The scan a fold's text and the run's configuration call for.
-pub fn scan_plan_of(fold: &TextFold, config: &RunConfig, profile: &TokenizerProfile) -> ScanPlan {
-    let templated = !config.raw_prompt && profile.templated;
+/// The scan the claim calls for. Every range scans with it.
+pub fn claimed_scan_plan(
+    claim: &TextClaim,
+    raw_prompt: bool,
+    profile: &TokenizerProfile,
+) -> ScanPlan {
+    ScanPlan {
+        total: claim.total,
+        keep_start: claim.keep_start,
+        keep_end: claim.keep_end,
+        templated: !raw_prompt && profile.templated(),
+    }
+}
+
+/// What the run may claim of a text it has folded to its end.
+pub fn text_claim_of(fold: &TextFold, raw_prompt: bool, profile: &TokenizerProfile) -> TextClaim {
+    let plan = scan_plan_of(fold, raw_prompt, profile);
+    TextClaim {
+        input_text_sha256: text_sha256_hex(fold),
+        total: plan.total,
+        keep_start: plan.keep_start,
+        keep_end: plan.keep_end,
+    }
+}
+
+/// The scan a whole text's fold and the run's configuration call for.
+pub fn scan_plan_of(fold: &TextFold, raw_prompt: bool, profile: &TokenizerProfile) -> ScanPlan {
+    let templated = !raw_prompt && profile.templated();
     let (keep_start, keep_end) = match (templated, fold.has_text) {
         (false, _) => (0, fold.total),
         (true, true) => (fold.first_text, fold.text_end),
@@ -566,11 +646,11 @@ pub fn scan_plan_of(fold: &TextFold, config: &RunConfig, profile: &TokenizerProf
     }
 }
 
-/// The scan before any chunk.
-pub fn begin_scan_state(plan: &ScanPlan) -> ScanState {
+/// The scan before any chunk: the template's prefix is already pending.
+pub fn begin_scan_state(plan: &ScanPlan, profile: &TokenizerProfile) -> ScanState {
     ScanState {
         pending: if plan.templated {
-            String::from(PROMPT_PREFIX)
+            profile.template_prefix.clone()
         } else {
             String::new()
         },
@@ -640,7 +720,7 @@ pub fn scan_chunk_into(
     let last = !state.finished && state.offset == plan.total;
     if last {
         if plan.templated {
-            state.pending.push_str(PROMPT_SUFFIX);
+            state.pending.push_str(&profile.template_suffix);
         }
         state.finished = true;
     }
@@ -757,6 +837,294 @@ pub fn apply_atom(
     next
 }
 
+// ---------------------------------------------------------------------------
+// Binding the text one range at a time
+// ---------------------------------------------------------------------------
+
+/// What the first range's bind starts from: the claim, and each loop before
+/// any text.
+pub fn begin_bind_carry(
+    claim: &TextClaim,
+    raw_prompt: bool,
+    profile: &TokenizerProfile,
+) -> BindCarry {
+    BindCarry {
+        claim: claim.clone(),
+        text: TextPass {
+            fold: begin_text_fold_state(),
+            scan: begin_scan_state(&claimed_scan_plan(claim, raw_prompt, profile), profile),
+        },
+        split: SplitState::default(),
+        done: false,
+    }
+}
+
+/// Closes one range's bind, once its text has been folded and scanned.
+///
+/// `before` is what the range started from. The range the text ends in holds
+/// the text to its claim; a range after that one may be given no text.
+pub fn finish_bind_range(
+    context: &mut PromptContext,
+    before: &BindCarry,
+    carry: &mut BindCarry,
+    profile: &TokenizerProfile,
+) {
+    if carry.text.fold.chunks == 0 {
+        record_fault(context, FAULT_NO_TEXT, 0);
+    }
+    if before.done {
+        if carry.text.fold.chunks != before.text.fold.chunks {
+            record_fault(context, FAULT_TEXT_AFTER_END, before.text.fold.total);
+        }
+        return;
+    }
+    if !carry.text.scan.finished {
+        return;
+    }
+    let raw = context.raw_prompt;
+    let as_claimed = scan_plan_of(&carry.text.fold, raw, profile)
+        == claimed_scan_plan(&carry.claim, raw, profile)
+        && text_sha256_hex(&carry.text.fold) == carry.claim.input_text_sha256;
+    if as_claimed {
+        carry.done = true;
+    } else {
+        record_fault(context, FAULT_TEXT_CLAIM, carry.text.fold.total);
+    }
+}
+
+/// What one range's bind starts from: its context and the state it continues.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
+pub struct BindOpen {
+    pub context: PromptContext,
+    pub carry: BindCarry,
+}
+
+/// Opens one range's bind.
+///
+/// The first range has nothing before it (`previous` is the empty state): it
+/// binds the model, the statement and the schedule, and starts the three loops.
+/// Every later range continues the bind before it, and reads none of the run's
+/// inputs again. Each checks the tokenizer it was given against the model.
+#[allow(clippy::too_many_arguments)]
+pub fn open_bind_range(
+    previous: &PromptContext,
+    previous_carry: &BindCarry,
+    config: &RunConfig,
+    descriptor: &[u8],
+    schedule: &RunSchedule,
+    claim: &TextClaim,
+    tokenizer_root: &BytesPage,
+    profile: &TokenizerProfile,
+) -> BindOpen {
+    use model_identity::{stream, ModelContext, Role};
+    if *previous == PromptContext::default() {
+        let mut context = open_prompt_context(claim, config);
+        context.model = ModelContext::bind(descriptor, &config.model_id);
+        context.model = stream::verify(context.model, tokenizer_root, Role::Tokenizer);
+        context.model.bind_statement(
+            &context.input_text_sha256,
+            context.raw_prompt,
+            context.max_new_tokens,
+            context.range_size,
+        );
+        let context = bind_run_schedule(context, schedule);
+        let carry = begin_bind_carry(claim, context.raw_prompt, profile);
+        BindOpen { context, carry }
+    } else {
+        let mut context = previous.clone();
+        context.model = stream::verify(context.model, tokenizer_root, Role::Tokenizer);
+        context
+            .model
+            .require(context.model_id == context.model.model_id);
+        context.model.continue_bind();
+        BindOpen {
+            context,
+            carry: previous_carry.clone(),
+        }
+    }
+}
+
+/// The two loops over a range's text that end in a state: the fold, and the
+/// scan's position. The scan's atoms are built by a loop of their own.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
+pub struct TextPass {
+    pub fold: TextFold,
+    pub scan: ScanState,
+}
+
+/// Adds one chunk to the fold and moves the scan past it.
+pub fn advance_text_pass(
+    pass: TextPass,
+    chunk: &str,
+    plan: &ScanPlan,
+    profile: &TokenizerProfile,
+) -> TextPass {
+    TextPass {
+        fold: fold_text(pass.fold, chunk),
+        scan: scan_chunk_into(pass.scan, chunk, plan, profile, &mut |_| {}),
+    }
+}
+
+/// One walk of a vocabulary bucket: its entries hashed in order, and whether
+/// one of them is the piece looked for.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
+pub struct BucketWalk {
+    pub entries: BytesPage,
+    pub found: bool,
+    pub token_id: u32,
+}
+
+/// The walk before any entry.
+pub fn begin_bucket_walk() -> BucketWalk {
+    BucketWalk {
+        entries: model_identity::stream::empty(),
+        found: false,
+        token_id: 0,
+    }
+}
+
+/// Adds one entry to the walk.
+pub fn walk_bucket_entry(mut walk: BucketWalk, entry: &TokenEntry, piece: &str) -> BucketWalk {
+    use model_identity::stream;
+    walk.entries = stream::append(&walk.entries, &stream::digest(entry));
+    if entry.token == piece {
+        walk.found = true;
+        walk.token_id = entry.id;
+    }
+    walk
+}
+
+/// Whether the bucket a walk went through is bucket `index` of the committed
+/// vocabulary.
+pub fn bucket_walk_proven(
+    walk: &BucketWalk,
+    index: u32,
+    header: &SparseHeader,
+    path: &SparsePath,
+) -> bool {
+    use model_identity::{sparse, stream};
+    let root = stream::structure(&[("entries", stream::finish(&walk.entries))]);
+    sparse::verify(&header.root, header.count, u64::from(index), path, &root)
+}
+
+/// An atom with what its bucket said of it.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
+pub struct KnownAtom {
+    pub text: String,
+    pub special: bool,
+    /// The atom is a vocabulary entry.
+    pub found: bool,
+    /// The bucket that answered is the committed one.
+    pub proven: bool,
+}
+
+/// A range's atoms, looked up.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
+pub struct KnownAtoms {
+    pub atoms: List<KnownAtom>,
+}
+
+/// Where the split ends, and whether every lookup on the way was proven.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
+pub struct BindTail {
+    pub split: SplitState,
+    pub unproven: bool,
+}
+
+/// The tail before any of this range's atoms.
+pub fn begin_bind_tail(before: &BindCarry) -> BindTail {
+    BindTail {
+        split: before.split.clone(),
+        unproven: false,
+    }
+}
+
+/// Moves the split past one atom, emitting its pieces.
+pub fn split_known_atom(
+    split: &SplitState,
+    atom: &KnownAtom,
+    profile: &TokenizerProfile,
+    emit: &mut impl FnMut(BpePiece),
+) -> SplitState {
+    let plain = PromptAtom {
+        text: atom.text.clone(),
+        special: atom.special,
+    };
+    apply_atom(split, &plain, atom.found, profile, emit)
+}
+
+/// Moves the tail past one atom.
+pub fn advance_bind_tail(tail: BindTail, atom: &KnownAtom, profile: &TokenizerProfile) -> BindTail {
+    BindTail {
+        split: split_known_atom(&tail.split, atom, profile, &mut |_| {}),
+        unproven: tail.unproven || !atom.proven,
+    }
+}
+
+/// Closes one range's bind: what the next range continues from, and the
+/// context with anything this range found wrong.
+pub fn close_bind_range(
+    mut context: PromptContext,
+    before: &BindCarry,
+    pass: TextPass,
+    tail: BindTail,
+    profile: &TokenizerProfile,
+) -> BindOpen {
+    context.model.require(!tail.unproven);
+    let mut carry = BindCarry {
+        claim: before.claim.clone(),
+        text: pass,
+        split: tail.split,
+        done: before.done,
+    };
+    finish_bind_range(&mut context, before, &mut carry, profile);
+    BindOpen { context, carry }
+}
+
+/// Binds one range's text from what `open_bind_range` gave, as a `prompt-bind`
+/// stage does, step for step. `lookup` answers for one atom: whether it is a
+/// vocabulary entry, and whether that answer is proven.
+///
+/// For the native kernel and run preparation. A stage runs the same functions
+/// from its tiles, with the lookup an authenticated walk of the atom's bucket.
+pub fn bind_range<S: AsRef<str>>(
+    opened: BindOpen,
+    chunks: &[S],
+    profile: &TokenizerProfile,
+    mut lookup: impl FnMut(&str) -> (bool, bool),
+    emit: &mut impl FnMut(BpePiece),
+) -> BindOpen {
+    let BindOpen {
+        context,
+        carry: before,
+    } = opened;
+    let plan = claimed_scan_plan(&before.claim, context.raw_prompt, profile);
+    let mut pass = before.text.clone();
+    for chunk in chunks {
+        pass = advance_text_pass(pass, chunk.as_ref(), &plan, profile);
+    }
+    let mut atoms = Vec::new();
+    let mut scan = before.text.scan.clone();
+    for chunk in chunks {
+        scan = scan_chunk_into(scan, chunk.as_ref(), &plan, profile, &mut |atom| {
+            let (found, proven) = lookup(&atom.text);
+            atoms.push(KnownAtom {
+                text: atom.text,
+                special: atom.special,
+                found,
+                proven,
+            })
+        });
+    }
+    let mut tail = begin_bind_tail(&before);
+    let mut split = before.split.clone();
+    for atom in &atoms {
+        tail = advance_bind_tail(tail, atom, profile);
+        split = split_known_atom(&split, atom, profile, emit);
+    }
+    close_bind_range(context, &before, pass, tail, profile)
+}
+
 /// Splits a rendered string into pieces, given a vocabulary membership test.
 pub fn split_rendered(
     rendered: &str,
@@ -771,7 +1139,7 @@ pub fn split_rendered(
     };
     let mut atoms = Vec::new();
     scan_chunk_into(
-        begin_scan_state(&plan),
+        begin_scan_state(&plan, profile),
         rendered,
         &plan,
         profile,
@@ -795,8 +1163,9 @@ pub fn split_rendered(
 // Cutting one range out of the prompt's pieces
 // ---------------------------------------------------------------------------
 
-/// A fold over every piece of the prompt: how many there are, and the two
-/// pieces either side of this range's cut.
+/// A fold over the pieces a range's check is given: the ones the check
+/// before it left, then its own bind's. Positions count from the start of the
+/// prompt, so `position` ends at the number of pieces bound so far.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
 pub struct SliceState {
     pub start: u64,
@@ -808,11 +1177,13 @@ pub struct SliceState {
     pub right: BpePiece,
 }
 
-/// The fold before any piece, for a range ending at `end`.
+/// The fold before any piece, for a range ending at `end`. The first piece
+/// the check is given is the one the range starts at.
 pub fn begin_slice_state(context: &PromptContext, end: u64) -> SliceState {
     SliceState {
         start: context.next_piece,
         end,
+        position: context.next_piece,
         ..SliceState::default()
     }
 }
@@ -830,35 +1201,50 @@ pub fn observe_piece(state: &mut SliceState, piece: &BpePiece) {
     state.position += 1;
 }
 
-pub fn join_prompt_models(mut previous: PromptContext, bound: &PromptContext) -> PromptContext {
-    if previous.input_text_sha256 != bound.input_text_sha256
-        || previous.model_id != bound.model_id
-        || previous.raw_prompt != bound.raw_prompt
-        || previous.max_new_tokens != bound.max_new_tokens
-        || previous.range_size != bound.range_size
-    {
-        let position = previous.next_piece;
-        record_fault(&mut previous, FAULT_CONTEXT_MISMATCH, position);
+/// The context a range's token check starts from.
+///
+/// A check continues the check before it, which holds the tokens so far. The
+/// first range has none: it continues from its own bind, and `previous` is the
+/// empty state. Either way the range is held to its bind and to what the
+/// schedule puts before it.
+pub fn join_prompt_models(previous: PromptContext, bound: &PromptContext) -> PromptContext {
+    let first = previous == PromptContext::default();
+    let mut joined = if first {
+        bound.clone()
+    } else {
+        previous.clone()
+    };
+    if !first {
+        if previous.input_text_sha256 != bound.input_text_sha256
+            || previous.model_id != bound.model_id
+            || previous.raw_prompt != bound.raw_prompt
+            || previous.max_new_tokens != bound.max_new_tokens
+            || previous.range_size != bound.range_size
+        {
+            let position = previous.next_piece;
+            record_fault(&mut joined, FAULT_CONTEXT_MISMATCH, position);
+        }
+        if bound.fault != FAULT_NONE {
+            record_fault(&mut joined, bound.fault, bound.fault_position);
+        }
+        joined.model.same_model(&bound.model);
     }
-    if bound.fault != FAULT_NONE {
-        record_fault(&mut previous, bound.fault, bound.fault_position);
-    }
-    previous.model.same_model(&bound.model);
-    let valid = previous.model.valid()
-        && previous.model.producer == model_identity::context::PROMPT
+    let valid = joined.model.valid()
+        && joined.model.producer == model_identity::context::PROMPT
         && bound.model.producer == model_identity::context::PROMPT
-        && previous.model.model_id == previous.model_id
+        && joined.model.model_id == joined.model_id
         && bound.model.model_id == bound.model_id;
-    previous.model.require(valid);
-    previous.model.require_execution(
+    joined.model.require(valid);
+    joined.model.require_execution(
         bound
             .model
             .execution_context()
             .is_some_and(|e| e.phase == model_identity::pipeline_core::BOUND),
     );
-    previous.model.begin_prompt_range();
-    previous.model.require_bound(&bound.model);
-    previous
+    joined.model.begin_prompt_range();
+    joined.model.require_bound(&bound.model);
+    joined.model.require_previous_check(&previous.model);
+    joined
 }
 
 pub use model_identity::sparse::{SparseHeader, SparsePath, SparseWitness};

@@ -24,6 +24,12 @@ path = "target/iris/run-prompt-placeholder/marks_{{j}}.rastered"
 index_path = "target/iris/run-prompt-placeholder/marks_{{j}}.rindex"
 commitments = []
 
+[chain.input.prompt_text]
+index = "j"
+path = "target/iris/run-prompt-placeholder/text_{{j}}.rastered"
+index_path = "target/iris/run-prompt-placeholder/text_{{j}}.rindex"
+commitments = []
+
 [chain.input.claimed_ids]
 index = "k"
 path = "target/iris/run-prompt-placeholder/claimed_{{k}}.rastered"
@@ -31,22 +37,41 @@ index_path = "target/iris/run-prompt-placeholder/claimed_{{k}}.rindex"
 commitments = []
 
 [[chain.stage]]
-name = "prompt_bind"
+name = "prompt_bind_p0"
 project = "raster-stages/prompt-bind"
-inputs.text = {{ external = {{ path = "target/iris/run-prompt-placeholder/text.rastered", index_path = "target/iris/run-prompt-placeholder/text.rindex", commitment = "0" }} }}
+inputs.text = {{ input = "prompt_text_0" }}
 inputs.config = {{ external = {{ path = "target/iris/run-prompt-placeholder/config.rastered", index_path = "target/iris/run-prompt-placeholder/config.rindex", commitment = "0" }} }}
 inputs.schedule = {{ external = {{ path = "target/iris/run-prompt-placeholder/schedule.rastered", index_path = "target/iris/run-prompt-placeholder/schedule.rindex", commitment = "0" }} }}
+inputs.claim = {{ external = {{ path = "target/iris/run-prompt-placeholder/claim.rastered", index_path = "target/iris/run-prompt-placeholder/claim.rindex", commitment = "0" }} }}
+inputs.previous = {{ external = {{ path = "empty_prompt.rastered", index_path = "empty_prompt.rindex", commitment = "0" }} }}
+
+[[chain.stage]]
+name = "prompt_check_p0"
+project = "raster-stages/prompt-check"
+inputs.bound = {{ from = "prompt_bind_p0" }}
+inputs.previous = {{ external = {{ path = "empty_prompt.rastered", index_path = "empty_prompt.rindex", commitment = "0" }} }}
+inputs.marks = {{ input = "prompt_marks_0" }}
 
 [[chain.repeat]]
 name = "prompt"
 index = "j"
+start = 1
 count = 0
+
+  [[chain.repeat.stage]]
+name = "prompt_bind_p{{j}}"
+project = "raster-stages/prompt-bind"
+inputs.text = {{ input = "prompt_text_{{j}}" }}
+inputs.config = {{ external = {{ path = "target/iris/run-prompt-placeholder/config.rastered", index_path = "target/iris/run-prompt-placeholder/config.rindex", commitment = "0" }} }}
+inputs.schedule = {{ external = {{ path = "target/iris/run-prompt-placeholder/schedule.rastered", index_path = "target/iris/run-prompt-placeholder/schedule.rindex", commitment = "0" }} }}
+inputs.claim = {{ external = {{ path = "target/iris/run-prompt-placeholder/claim.rastered", index_path = "target/iris/run-prompt-placeholder/claim.rindex", commitment = "0" }} }}
+inputs.previous = {{ from = "prompt_bind_p{{j-1}}", first = "prompt_bind_p0" }}
 
   [[chain.repeat.stage]]
 name = "prompt_check_p{{j}}"
 project = "raster-stages/prompt-check"
-inputs.bound = {{ from = "prompt_bind" }}
-inputs.previous = {{ from = "prompt_check_p{{j-1}}", first = "prompt_bind" }}
+inputs.bound = {{ from = "prompt_bind_p{{j}}" }}
+inputs.previous = {{ from = "prompt_check_p{{j-1}}", first = "prompt_check_p0" }}
 inputs.marks = {{ input = "prompt_marks_{{j}}" }}
 
 [[chain.repeat]]
@@ -61,8 +86,13 @@ start = 0
 count = 1
 
   [[chain.repeat.stage]]
+name = "range_p0_l{{l}}"
+project = "raster-stages/prefill-range"
+
+  [[chain.repeat.stage]]
 name = "range_p{{j}}_l{{l}}"
 index = "j"
+start = 1
 count = 0
 project = "raster-stages/prefill-range"
 
@@ -72,9 +102,14 @@ index = "k"
 count = 0
 project = "raster-stages/prefill-range"
 
+[[chain.stage]]
+name = "check_c0"
+project = "raster-stages/sequence-check"
+
 [[chain.repeat]]
 name = "claimed"
 index = "k"
+start = 1
 count = 0
 "#)).unwrap();
     let commitments = [inference_artifacts::ModelCommitment {

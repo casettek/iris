@@ -15,7 +15,7 @@ fn origin() -> ModelContext {
 }
 fn statement() -> ModelContext {
     let d = ModelDescriptor {
-        version: 1,
+        version: 2,
         tokenizer: [1; 32],
         decoder: [2; 32],
         embedding: [3; 32],
@@ -38,11 +38,23 @@ fn bind(schedule: StageSchedule) -> ModelContext {
     context.bind_schedule(schedule);
     context
 }
-/// A range's token check as its stage opens it, before it reads a token.
-fn open(previous: &ModelContext, bound: &ModelContext) -> ModelContext {
+/// The bind of the range after `previous`'s.
+fn rebind(previous: &ModelContext) -> ModelContext {
     let mut context = previous.clone();
+    context.continue_bind();
+    context
+}
+/// A range's token check as its stage opens it, before it reads a token.
+/// The first range has no check before it and continues from its bind.
+fn open(previous: &ModelContext, bound: &ModelContext) -> ModelContext {
+    let mut context = if previous.is_origin() {
+        bound.clone()
+    } else {
+        previous.clone()
+    };
     context.begin_prompt_range();
     context.require_bound(bound);
+    context.require_previous_check(previous);
     context
 }
 /// Every range holds one token: range `j` of the prompt is token `j`.
@@ -91,7 +103,8 @@ fn step(context: &ModelContext) -> Step {
 
 /// The contexts an honest run publishes, stage by stage.
 struct Run {
-    bound: ModelContext,
+    /// Each prompt range's bind.
+    bound: Vec<ModelContext>,
     /// Each prompt range's checked tokens.
     prepared: Vec<ModelContext>,
     /// Prompt ranges 0 and 1, then claimed ranges 0 and 1.
@@ -102,11 +115,12 @@ struct Run {
 }
 
 fn run() -> Run {
-    let bound = bind(schedule());
+    let first = bind(schedule());
+    let bound = vec![first.clone(), rebind(&first)];
     let (mut prepared, mut embeds) = (vec![], vec![]);
-    let mut previous = bound.clone();
+    let mut previous = origin();
     for range in 0..2 {
-        let ready = tokens(&previous, &bound, range, range == 1);
+        let ready = tokens(&previous, &bound[range as usize], range, range == 1);
         let before = embeds.last().cloned().unwrap_or_else(origin);
         embeds.push(embed(&ready, &before, range));
         previous = ready.clone();
@@ -140,8 +154,9 @@ fn run() -> Run {
 #[test]
 fn an_honest_run_follows_its_schedule_and_records_every_step() {
     let r = run();
-    let all = [&r.bound]
-        .into_iter()
+    let all = r
+        .bound
+        .iter()
         .chain(&r.prepared)
         .chain(&r.embeds)
         .chain(r.layers.iter().flatten())
@@ -150,7 +165,8 @@ fn an_honest_run_follows_its_schedule_and_records_every_step() {
         assert_eq!(context.fault, 0, "{:?}", step(context));
     }
     assert_eq!(r.checks[1].final_fault(&r.prepared[1], &r.prepared[1]), 0);
-    assert_eq!(step(&r.bound), Step::bind());
+    assert_eq!(step(&r.bound[0]), Step::bind(0));
+    assert_eq!(step(&r.bound[1]), Step::bind(1));
     assert_eq!(step(&r.prepared[0]), Step::tokens(0));
     assert_eq!(step(&r.prepared[1]), Step::tokens(1));
     assert_eq!(step(&r.embeds[1]), Step::embed(false, 1));
@@ -159,8 +175,9 @@ fn an_honest_run_follows_its_schedule_and_records_every_step() {
     assert_eq!(step(&r.layers[3][1]), Step::layer(true, 1, 1));
     assert_eq!(step(&r.checks[1]), Step::check(1));
     // The recorded steps are exactly the schedule's, each once.
-    let mut recorded: Vec<Step> = [&r.bound]
-        .into_iter()
+    let mut recorded: Vec<Step> = r
+        .bound
+        .iter()
         .chain(&r.prepared)
         .chain(&r.embeds)
         .chain(r.layers.iter().flatten())
@@ -185,29 +202,56 @@ fn a_prompt_stage_out_of_place_faults() {
     for (case, context) in [
         (
             "a range opened twice",
-            open(&open(&r.bound, &r.bound), &r.bound),
+            open(&open(&origin(), &r.bound[0]), &r.bound[0]),
         ),
         (
             "a range closed without being opened",
-            close(&r.bound, 0, false),
+            close(&r.bound[0], 0, false),
         ),
         ("a range closed twice", close(&r.prepared[0], 1, true)),
         (
             "a range past the schedule",
-            tokens(&r.prepared[1], &r.bound, 2, false),
+            tokens(&r.prepared[1], &r.bound[1], 2, false),
         ),
         (
             "the first range completing",
-            tokens(&r.bound, &r.bound, 0, true),
+            tokens(&origin(), &r.bound[0], 0, true),
         ),
         (
             "the last range not completing",
-            tokens(&r.prepared[0], &r.bound, 1, false),
+            tokens(&r.prepared[0], &r.bound[1], 1, false),
         ),
         (
-            "a range bound to something else",
-            open(&r.bound, &r.prepared[0]),
+            "a range checked against a check",
+            open(&r.prepared[0], &r.prepared[0]),
         ),
+        (
+            "a range checked against the bind of the range before",
+            open(&r.prepared[0], &r.bound[0]),
+        ),
+        (
+            "the first range checked against a later bind",
+            open(&origin(), &r.bound[1]),
+        ),
+        (
+            "the first range repeated after itself",
+            open(&r.prepared[0], &r.bound[0]),
+        ),
+        (
+            "a range continuing from a bind that is not the first",
+            open(&r.bound[1], &r.bound[1]),
+        ),
+        ("a bind past the schedule", rebind(&r.bound[1])),
+        ("a bind continued from a check", rebind(&r.prepared[0])),
+        (
+            "a bind continued from an open check",
+            rebind(&open(&origin(), &r.bound[0])),
+        ),
+        ("a schedule bound in a later range", {
+            let mut context = r.bound[1].clone();
+            context.bind_schedule(schedule());
+            context
+        }),
     ] {
         assert_ne!(context.execution_fault, 0, "{case}");
     }
@@ -227,7 +271,7 @@ fn an_embedding_or_layer_out_of_place_faults() {
         ),
         (
             "a range embedded before its tokens are checked",
-            embed(&open(&r.bound, &r.bound), &origin(), 0),
+            embed(&open(&origin(), &r.bound[0]), &origin(), 0),
         ),
         (
             "a claimed range past the schedule",
@@ -349,20 +393,24 @@ fn a_run_that_disagrees_with_its_counts_faults() {
     };
     // Scheduled for three prompt ranges, the prompt completes in two.
     let bound = with(|s| s.prompt_ranges = 3);
-    let first = tokens(&bound, &bound, 0, false);
+    let first = tokens(&origin(), &bound, 0, false);
     assert_eq!(first.fault, 0);
-    let second = tokens(&first, &bound, 1, true);
+    let second = tokens(&first, &rebind(&bound), 1, true);
     assert_ne!(second.execution_fault, 0);
     // Scheduled for one prompt range, the prompt needs two.
     let bound = with(|s| s.prompt_ranges = 1);
-    let first = tokens(&bound, &bound, 0, false);
+    let first = tokens(&origin(), &bound, 0, false);
     assert_ne!(first.execution_fault, 0);
+    assert_ne!(rebind(&bound).execution_fault, 0);
     // Scheduled for one claimed range, two run.
     let r = run();
-    let bound = with(|s| s.claimed_ranges = 1);
-    let mut previous = bound.clone();
+    let mut bound = with(|s| s.claimed_ranges = 1);
+    let mut previous = origin();
     let mut embedded = origin();
     for range in 0..2 {
+        if range > 0 {
+            bound = rebind(&bound);
+        }
         previous = tokens(&previous, &bound, range, range == 1);
         embedded = embed(&previous, &embedded, range);
     }
@@ -372,5 +420,5 @@ fn a_run_that_disagrees_with_its_counts_faults() {
     // An input from a run under another schedule, and a run with none.
     assert_ne!(open(&r.prepared[0], &bound).execution_fault, 0);
     let unscheduled = statement();
-    assert_ne!(open(&unscheduled, &unscheduled).execution_fault, 0);
+    assert_ne!(open(&origin(), &unscheduled).execution_fault, 0);
 }

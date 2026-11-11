@@ -513,7 +513,7 @@ fn auxiliary_sparse_witness_is_rechecked_after_cache_hit() {
     let mut f = Fixture::new(4, 32);
     let root = raster::core::tree::value_root(&f.layer).unwrap();
     let d = model_identity::ModelDescriptor {
-        version: 1,
+        version: 2,
         tokenizer: [1; 32],
         decoder: [2; 32],
         embedding: [3; 32],

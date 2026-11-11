@@ -844,8 +844,10 @@ mod tests {
     }
 
     /// The stage's native twin, run range by range with each range handing
-    /// its last token to the next, ends without a fault exactly when the
-    /// marks are the merge's, and then publishes the merge's ids.
+    /// its last token and the pieces it did not take to the next, ends
+    /// without a fault exactly when the marks are the merge's, and then
+    /// publishes the merge's ids. Where the text is bound in two does not
+    /// matter, so long as the first range is given the pieces it marks.
     #[test]
     fn the_stage_twin_accepts_exactly_the_merge_across_ranges() {
         use crate::kernels::prompt_check_stage::{marks_for, run_prompt_check, Trusted};
@@ -865,44 +867,62 @@ mod tests {
                     }
                     let pieces = pieces_of(&text, segment_break);
                     let merged = merged_tokens(&pieces, &tokenizer).unwrap();
-                    let bound = PromptState::of_pieces(pieces.clone());
+                    // A bind of these pieces, having seen the text end or not.
+                    let bind = |pieces: &[BpePiece], done: bool| {
+                        let mut bound = PromptState::of_pieces(pieces.to_vec());
+                        bound.bind.done = done;
+                        bound
+                    };
                     for counts in groupings(pieces.len()) {
                         let passes = grouping_passes(&tokenizer, &pieces, &counts).unwrap();
                         // One range, then every way of cutting it in two.
                         for cut in 1..=counts.len() {
                             let (first, second) = counts.split_at(cut);
-                            let mut state = run_prompt_check(
-                                &tokenizer,
-                                &root,
-                                &bound,
-                                &bound,
-                                &marks_for(first.iter().copied()),
-                                &mut Trusted,
-                            )
-                            .unwrap();
-                            let mut ids = state.token_ids.as_slice().to_vec();
-                            if !second.is_empty() {
-                                state = run_prompt_check(
+                            let needed: usize = first.iter().sum();
+                            // The second range's bind holds what the first's did not.
+                            let splits = if second.is_empty() {
+                                pieces.len()..=pieces.len()
+                            } else {
+                                needed..=pieces.len()
+                            };
+                            for split in splits {
+                                let one = second.is_empty();
+                                let mut state = run_prompt_check(
                                     &tokenizer,
                                     &root,
-                                    &bound,
-                                    &state,
-                                    &marks_for(second.iter().copied()),
+                                    &bind(&pieces[..split], one),
+                                    &PromptState::default(),
+                                    &marks_for(first.iter().copied()),
                                     &mut Trusted,
                                 )
                                 .unwrap();
-                                ids.extend(state.token_ids.iter().copied());
-                            }
-                            let label = format!(
-                                "text {text:?}, break {segment_break:?}, grouping {counts:?}, cut {cut}"
-                            );
-                            assert_eq!(state.context.fault == 0, passes, "{label}");
-                            assert!(state.context.complete, "{label}");
-                            if passes {
-                                let expected: Vec<u32> =
-                                    merged.iter().map(|token| token.id).collect();
-                                assert_eq!(ids, expected, "{label}");
-                                assert_eq!(state.context.prompt_tokens as usize, merged.len());
+                                let mut ids = state.token_ids.as_slice().to_vec();
+                                assert_eq!(state.rest.len(), split - needed);
+                                if !one {
+                                    assert!(!state.context.complete);
+                                    state = run_prompt_check(
+                                        &tokenizer,
+                                        &root,
+                                        &bind(&pieces[split..], true),
+                                        &state,
+                                        &marks_for(second.iter().copied()),
+                                        &mut Trusted,
+                                    )
+                                    .unwrap();
+                                    ids.extend(state.token_ids.iter().copied());
+                                }
+                                let label = format!(
+                                    "text {text:?}, break {segment_break:?}, grouping {counts:?}, cut {cut}, split {split}"
+                                );
+                                assert_eq!(state.context.fault == 0, passes, "{label}");
+                                assert!(state.context.complete, "{label}");
+                                assert!(state.rest.is_empty(), "{label}");
+                                if passes {
+                                    let expected: Vec<u32> =
+                                        merged.iter().map(|token| token.id).collect();
+                                    assert_eq!(ids, expected, "{label}");
+                                    assert_eq!(state.context.prompt_tokens as usize, merged.len());
+                                }
                             }
                         }
                     }
@@ -925,12 +945,15 @@ mod tests {
         ];
         let tokenizer = tokenizer(&["a", "b", "c"], &rules);
         let root = raster::BytesPage::__from_parts(0, 0, Vec::new());
-        let check = |pieces: &[BpePiece], marks: &[u32], range_size: u32| {
+        let run = |pieces: &[BpePiece], marks: &[u32], range_size: u32, done: bool| {
             let mut bound = PromptState::of_pieces(pieces.to_vec());
             bound.context.range_size = range_size;
-            run_prompt_check(&tokenizer, &root, &bound, &bound, marks, &mut Trusted)
-                .unwrap()
-                .context
+            bound.bind.done = done;
+            let first = PromptState::default();
+            run_prompt_check(&tokenizer, &root, &bound, &first, marks, &mut Trusted).unwrap()
+        };
+        let check = |pieces: &[BpePiece], marks: &[u32], range_size: u32| {
+            run(pieces, marks, range_size, true).context
         };
         let abc = pieces_of("abc", None);
         // The merge's own marks: [ab, c].
@@ -956,5 +979,26 @@ mod tests {
         let split = check(&pieces_of("abc", Some(1)), &[1, 0, 1], 0);
         assert_eq!((split.fault, split.fault_position), (FAULT_TOKEN_SPLIT, 1));
         assert_eq!(check(&abc, &[1, 0, 1], 1).fault, FAULT_RANGE_TOO_LARGE);
+        // The prompt is complete only when the text has ended and nothing is
+        // left: a range that takes less leaves the rest to the next, in order.
+        let unfinished = run(&abc, &[1, 0, 1], 0, false);
+        assert_eq!(
+            (unfinished.context.fault, unfinished.context.complete),
+            (0, false)
+        );
+        let partial = run(&abc, &[1, 0], 0, true);
+        assert_eq!(
+            (partial.context.fault, partial.context.complete),
+            (0, false)
+        );
+        assert_eq!(partial.context.next_piece, 2);
+        assert_eq!(
+            partial
+                .rest
+                .iter()
+                .map(|piece| piece.text.as_str())
+                .collect::<Vec<_>>(),
+            ["c"]
+        );
     }
 }

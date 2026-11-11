@@ -229,7 +229,6 @@ pub(super) fn write_embedding(
             "name = \"input_embedding\"\n",
             "project = \"raster-stages/input-embedding\"\n",
             "inputs.prompt = {{ from = \"prompt_check\" }}\n",
-            "inputs.previous = {{ from = \"range_origin\" }}\n",
             "{}{}{}"
         ),
         external_line(

@@ -68,9 +68,13 @@ the chain then checks it.
   split or join tokens spell the prompt with vocabulary entries and are refused
   because they are not what the merge produces. A range that ends inside a word
   records no fault.
-- Over a 3 KiB text of single-byte atoms: `prompt_bind` finishes through both and
-  agrees byte for byte. Raster limits what a tile may write per text chunk and
-  native does not, so only this run shows that the chunk size fits.
+- Over the merge's own marks and a text that is not what the run claimed of it
+  (another hash, or a length the text never reaches), or whose last slice is
+  withheld: the prompt stages finish through both, agree byte for byte, and the
+  prompt is not complete.
+- Over a 3 KiB text of single-byte atoms in one range: `prompt_bind_p0` finishes
+  through both and agrees byte for byte. Raster limits what a tile may write per
+  text chunk and native does not, so only this run shows that the chunk size fits.
 - Over empty prompt ranges, non-greedy claimed ids, claimed ids outside the
   vocabulary and an output short of its budget, on the templated case: the whole chain finishes through both Raster and
   native-staged, agrees byte for byte, and the final record names the failure.
@@ -104,17 +108,20 @@ challenger runs, under `<case>/challenges/`:
 - A falsified checkpoint in each stage family long enough to challenge is found at
   that stage and replays through authenticated Raster.
 - An honest claim from another model, the pinned bundle with one weight changed in
-  every tensor and two vocabulary ids exchanged, is found at `prompt_bind` and
-  replays. The challenger never reads that model.
+  every tensor and two vocabulary ids exchanged, is found at `prompt_bind_p0`. The
+  challenger never reads that model, and says the claim names another.
 - A claim of the honest run whose checkpoints came from elsewhere must first differ
-  at the stage named: other text, configuration or stage schedule (`prompt_bind`), other marks
+  at the stage named: other text, text claim, configuration or stage schedule (`prompt_bind_p0`), other marks
   (`prompt_check_p0`), other ids (`embed_c0`), that model's tokenizer at each prompt
   stage, its embedding, PLE, weights, head and decoder at the first stage reading
   each, PLE layers exchanged, and stages wired to the wrong predecessor.
 
 A stage [too short for the replay window](../issues/short-stage-fraud-window.md)
 cannot be challenged yet, so for those the leg checks only that recomputation finds
-it. Each case's result in `report.json` says whether it `replayed`.
+it. Each case's result in `report.json` says whether it `replayed`. A bind stage is
+one of them here: a range of the pinned model is six tokens and its bind about 110
+steps, so no case replays `prompt-bind` through authenticated Raster. On a real
+model a 512-token bind range is about 28,000 steps and replays.
 
 Two wirings stop a layer stage through both Raster and native-staged, because
 positions no longer line up with the cache: restarting positions at a later range,

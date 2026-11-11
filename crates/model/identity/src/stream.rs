@@ -111,7 +111,7 @@ mod tests {
         let values = vec![4u32, 7, 9];
         let root: Hash32 = digest(&values).as_slice().try_into().unwrap();
         let d = ModelDescriptor {
-            version: 1,
+            version: 2,
             tokenizer: root,
             decoder: root,
             embedding: root,
@@ -159,7 +159,7 @@ mod page_tests {
         let honest = Bytes::<4>::paged(vec![1, 2, 3, 4, 5, 6, 7, 8, 9]).unwrap();
         let root: Hash32 = digest(&honest).as_slice().try_into().unwrap();
         let d = ModelDescriptor {
-            version: 1,
+            version: 2,
             tokenizer: root,
             decoder: root,
             embedding: root,

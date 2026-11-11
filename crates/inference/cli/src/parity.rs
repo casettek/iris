@@ -590,10 +590,17 @@ fn run_chain_fault_leg(
         let manifest = dir.join("Raster.toml");
         let mark_files = run_prep::write_marks(&marks, &files)?;
         let claimed_files = run_prep::write_claimed_ranges(ids, range_size as usize, &files)?;
+        let (slices, text_claim) = run_prep::text_for_ranges(
+            &prompt.resolved_prompt,
+            case.raw_prompt,
+            range_size as usize,
+            &run_prep::prompt_tokenizer(&tokenizer)?,
+            marks.len(),
+        )?;
         let rendered = crate::claim::render_ranged_manifest(
             &template,
             template_dir,
-            &run_prep::write_prompt_text(&prompt.resolved_prompt, &files)?,
+            &run_prep::write_text_slices(&slices, &files)?,
             &run_prep::write_run_config(
                 &run_prep::RunConfig {
                     model_id: model.model_id.clone(),
@@ -608,6 +615,7 @@ fn run_chain_fault_leg(
                 (claimed_files.len() as i64 + skew[1]) as usize,
                 &files,
             )?,
+            &run_prep::write_text_claim(&text_claim, &files)?,
             &mark_files,
             &claimed_files,
         )?;
@@ -715,6 +723,7 @@ fn run_prompt_fault_leg(
 ) -> Result<Value> {
     use run_prep::{
         RunFile, FAULT_CUT_BEYOND_TEXT, FAULT_EMPTY_RANGE, FAULT_NONE, FAULT_NOT_THE_MERGE,
+        FAULT_TEXT_CLAIM,
     };
     let pieces = &prepared.prepared_run.prompt.initial_pieces;
     let tokenizer: Value = read_json(
@@ -793,13 +802,70 @@ fn run_prompt_fault_leg(
         cases.push(("cut-inside-a-segment", ranges, FAULT_NONE, true));
     }
 
+    // The merge's own marks over a text that is not what was claimed, or
+    // not all there. A wrong hash is found where the text ends. A length the
+    // text never reaches, and a text whose last slice is withheld, never end:
+    // the pieces the end would have released are marked and missing.
+    cases.push(("claimed-hash", canonical.clone(), FAULT_TEXT_CLAIM, false));
+    cases.push((
+        "claimed-length",
+        canonical.clone(),
+        FAULT_CUT_BEYOND_TEXT,
+        false,
+    ));
+    cases.push((
+        "text-withheld",
+        canonical.clone(),
+        FAULT_CUT_BEYOND_TEXT,
+        false,
+    ));
+
     let template = fs::read_to_string(&prepared.manifest_path)?;
+    let prompt_tokenizer = run_prep::prompt_tokenizer(&tokenizer)?;
+    let text = &prepared.prepared_run.prompt.resolved_prompt;
+    let raw_prompt = prepared.prepared_run.raw_prompt;
     let mut report = Vec::new();
     for (name, marks, fault, complete) in cases {
         let dir = case_dir.join("prompt-faults").join(name);
         let files: Vec<RunFile> = run_prep::write_marks(&marks, &dir.join("prompt"))?;
+        // The same text and the same claim of it, for however many ranges
+        // these marks make.
+        let (mut slices, mut claim) = run_prep::text_for_ranges(
+            text,
+            raw_prompt,
+            model.range_size as usize,
+            &prompt_tokenizer,
+            marks.len(),
+        )?;
+        let other_claim = match name {
+            "claimed-hash" => {
+                claim.input_text_sha256 = "00".repeat(32);
+                true
+            }
+            "claimed-length" => {
+                claim.total += 1;
+                true
+            }
+            "text-withheld" => {
+                let last = slices
+                    .iter()
+                    .rposition(|slice| !slice.chunks.is_empty())
+                    .filter(|last| *last > 0)
+                    .context("the pinned case's text is all in its first range")?;
+                slices[last] = Default::default();
+                false
+            }
+            _ => false,
+        };
+        let texts = run_prep::write_text_slices(&slices, &dir.join("prompt"))?;
+        let claim = other_claim
+            .then(|| run_prep::write_text_claim(&claim, &dir.join("prompt")))
+            .transpose()?;
         let manifest = dir.join("Raster.toml");
-        fs::write(&manifest, prompt_only_manifest(&template, &files)?)?;
+        fs::write(
+            &manifest,
+            prompt_only_manifest(&template, &texts, &files, claim.as_ref())?,
+        )?;
 
         let raster_dir = dir.join("raster");
         fs::create_dir(&raster_dir)?;
@@ -837,7 +903,15 @@ fn run_prompt_fault_leg(
         );
         report.push(json!({"case": name, "stages": order.len(), "context": context}));
     }
-    report.push(run_long_text_case(root, case_dir, exe, raster, &template)?);
+    report.push(run_long_text_case(
+        root,
+        case_dir,
+        exe,
+        raster,
+        &template,
+        raw_prompt,
+        &prompt_tokenizer,
+    )?);
     Ok(json!(report))
 }
 
@@ -850,30 +924,21 @@ fn run_long_text_case(
     exe: &Path,
     raster: &Path,
     template: &str,
+    raw_prompt: bool,
+    tokenizer: &run_prep::PromptTokenizer,
 ) -> Result<Value> {
     let dir = case_dir.join("prompt-faults/long-text");
+    let files = dir.join("prompt");
     let text = "ab ".repeat(1024);
-    let file = run_prep::write_prompt_text(&text, &dir.join("prompt"))?;
-    let binding = crate::claim::RunExternal::new(&file.path, &file.index_path, &file.commitment)
-        .binding("text");
-    let mut rendered = String::new();
-    for block in manifest_blocks(template) {
-        let keep = block[0].trim() == "[chain]"
-            || (block[0].trim() == "[[chain.stage]]" && block_name(&block) == "prompt_bind");
-        if !keep {
-            continue;
-        }
-        for line in block {
-            rendered.push_str(if line.starts_with("inputs.text =") {
-                &binding
-            } else {
-                line
-            });
-            rendered.push('\n');
-        }
-    }
+    // All of it in one range, with what is true of it claimed.
+    let (slices, claim) = run_prep::text_for_ranges(&text, raw_prompt, usize::MAX, tokenizer, 1)?;
+    let texts = run_prep::write_text_slices(&slices, &files)?;
+    let claim = run_prep::write_text_claim(&claim, &files)?;
     let manifest = dir.join("Raster.toml");
-    fs::write(&manifest, rendered)?;
+    fs::write(
+        &manifest,
+        prompt_only_manifest(template, &texts, &[], Some(&claim))?,
+    )?;
 
     let raster_dir = dir.join("raster");
     fs::create_dir(&raster_dir)?;
@@ -893,18 +958,22 @@ fn run_long_text_case(
         })
         .context("a long text did not finish natively")?
         .chain_dir;
-    let names = vec![String::from("prompt_bind")];
+    let names = vec![String::from("prompt_bind_p0")];
     let bound = read_boundaries(&raster_dir, &names, false)?;
     let native = read_boundaries(&native_dir, &names, false)?;
-    compare("prompt_bind", &bound["prompt_bind"], &native["prompt_bind"]).context("a long text")?;
-    let context = &bound["prompt_bind"].value["context"];
+    for name in &names {
+        compare(name, &bound[name], &native[name]).context("a long text")?;
+    }
+    let output = &bound["prompt_bind_p0"].value;
+    let context = &output["context"];
     ensure!(
         context["fault"] == json!(0)
+            && output["bind"]["done"] == json!(true)
             && context["input_text_sha256"]
                 == json!(format!("{:x}", Sha256::digest(text.as_bytes()))),
-        "a long text was not bound: {context}"
+        "a long text was not bound: {output}"
     );
-    Ok(json!({"case": "long-text", "stages": 1, "context": context}))
+    Ok(json!({"case": "long-text", "stages": names.len(), "context": context}))
 }
 
 /// A manifest's lines, split at each table header.
@@ -928,32 +997,53 @@ fn block_name(block: &[&str]) -> String {
         .unwrap_or_default()
 }
 
-/// A run manifest's prompt stages alone, over these marks.
-fn prompt_only_manifest(template: &str, cuts: &[run_prep::RunFile]) -> Result<String> {
+/// A run manifest's prompt stages alone: a bind of each of these slices of
+/// text, and a check of each range over these marks. With no marks, only the
+/// binds. `claim`, when given, replaces what the run claims of the text.
+fn prompt_only_manifest(
+    template: &str,
+    texts: &[run_prep::RunFile],
+    cuts: &[run_prep::RunFile],
+    claim: Option<&run_prep::RunFile>,
+) -> Result<String> {
+    let input = |name: &str, family: &str, files: &[run_prep::RunFile]| -> Result<String> {
+        let dir = files[0]
+            .path
+            .parent()
+            .context("run file has no directory")?;
+        Ok(format!(
+            "\n[chain.input.{name}]\nindex = \"j\"\npath = {:?}\nindex_path = {:?}\ncommitments = {:?}\n",
+            dir.join(format!("{family}_{{j}}.rastered")),
+            dir.join(format!("{family}_{{j}}.rindex")),
+            files.iter().map(|file| &file.commitment).collect::<Vec<_>>(),
+        ))
+    };
+    ensure!(!texts.is_empty(), "a prompt needs at least one range");
+    ensure!(
+        cuts.is_empty() || cuts.len() == texts.len(),
+        "each range needs its own text and its own marks"
+    );
+    // Range 0's stages are plain stages; the later ranges' are the prompt
+    // repeat's.
+    let prompt_stage =
+        |block: &[&str], in_prompt: bool| in_prompt || block[0].trim() == "[[chain.stage]]";
     let mut out = String::new();
     let mut in_prompt = false;
     for block in &manifest_blocks(template) {
         let name = block_name(block);
         match block[0].trim() {
             "[chain]" => out.push_str(&(block.join("\n") + "\n")),
-            "[chain.input.prompt_marks]" => {
-                let dir = cuts[0].path.parent().context("marks have no directory")?;
-                out.push_str(&format!(
-                    "\n[chain.input.prompt_marks]\nindex = \"j\"\npath = {:?}\nindex_path = {:?}\ncommitments = {:?}\n",
-                    dir.join("marks_{j}.rastered"),
-                    dir.join("marks_{j}.rindex"),
-                    cuts.iter().map(|cut| &cut.commitment).collect::<Vec<_>>(),
-                ));
-            }
-            "[[chain.stage]]" if name == "prompt_bind" => {
-                out.push_str(&(block.join("\n") + "\n"));
+            "[chain.input.prompt_text]" => out.push_str(&input("prompt_text", "text", texts)?),
+            "[chain.input.prompt_marks]" if !cuts.is_empty() => {
+                out.push_str(&input("prompt_marks", "marks", cuts)?)
             }
             "[[chain.repeat]]" => {
                 in_prompt = name == "prompt";
                 if in_prompt {
+                    // Range 0 is the plain stages before this block.
                     for line in block {
                         if line.trim().starts_with("count =") {
-                            out.push_str(&format!("count = {}\n", cuts.len()));
+                            out.push_str(&format!("count = {}\n", texts.len() - 1));
                         } else {
                             out.push_str(line);
                             out.push('\n');
@@ -961,7 +1051,31 @@ fn prompt_only_manifest(template: &str, cuts: &[run_prep::RunFile]) -> Result<St
                     }
                 }
             }
-            "[[chain.repeat.stage]]" if in_prompt && name.starts_with("prompt_") => {
+            "[[chain.stage]]" | "[[chain.repeat.stage]]"
+                if prompt_stage(block, in_prompt) && name.starts_with("prompt_bind_p") =>
+            {
+                for line in block {
+                    match claim {
+                        Some(claim) if line.trim().starts_with("inputs.claim =") => {
+                            out.push_str(
+                                &crate::claim::RunExternal::new(
+                                    &claim.path,
+                                    &claim.index_path,
+                                    &claim.commitment,
+                                )
+                                .binding("claim"),
+                            );
+                        }
+                        _ => out.push_str(line),
+                    }
+                    out.push('\n');
+                }
+            }
+            "[[chain.stage]]" | "[[chain.repeat.stage]]"
+                if prompt_stage(block, in_prompt)
+                    && !cuts.is_empty()
+                    && name.starts_with("prompt_check_p") =>
+            {
                 out.push_str(&(block.join("\n") + "\n"));
             }
             _ => {}

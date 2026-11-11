@@ -1,7 +1,10 @@
 # Binding the prompt one range at a time
 
-Proposed November 11, 2026. Not implemented. The measurements are from Gemma 4 E4B (`Q8_0`)
-on the 5,783-byte test prompt, about 1,200 tokens.
+Proposed November 11, 2026, and implemented the same day in import version 11. What was
+decided while building it, where it departs from this text, and what it measured are in
+[pipeline-v11.md](pipeline-v11.md); [raster-chain.md](../internals/raster-chain.md)
+describes the chain as it is. The measurements below are from before the change, on
+Gemma 4 E4B (`Q8_0`) and the 5,783-byte test prompt, about 1,200 tokens.
 [What keeps it sound](#what-keeps-it-sound) is the part to review first.
 
 ## Goal
@@ -228,9 +231,10 @@ What this leaves to check is that the carried states really are the whole state:
 
 ## Left out
 
-- **Halving the per-atom work.** Each atom's bucket is walked once to check it and once to
-  search it. One walk could do both. It is independent of paging, but it changes the same
-  program.
+- **One walk of the bucket per atom.** Each atom's bucket is walked once to check it and
+  once to search it. One walk could do both, for about 12 tile calls per atom in place of
+  19.5. It is independent of paging, but it changes the same program; it is taken up in
+  [pipeline-v11.md](pipeline-v11.md).
 - **Fusing bind into `prompt_check`.** One program per range in place of two, at the price
   of making the heaviest prompt stage heavier.
 - **Slices on a fixed byte grid.** A check would then need a varying number of bind stages

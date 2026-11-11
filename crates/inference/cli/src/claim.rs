@@ -305,20 +305,26 @@ fn prepare_run(
         run_prep::validate_claimed_length(&ids, run_spec.tokens, &prompt.eos_token_ids)?;
     }
     let range_size = model_manifest.range_size;
-    let ranges = run_prep::marked_ranges(
-        &prompt.initial_pieces,
+    let bound = run_prep::bound_ranges(
+        &prompt.resolved_prompt,
+        run_spec.raw_prompt,
         range_size as usize,
         &run_prep::prompt_tokenizer(&tokenizer)?,
     )?;
     let template_dir = template_path
         .parent()
         .ok_or_else(|| anyhow::anyhow!("manifest template has no parent directory"))?;
-    let mark_files = run_prep::write_range_marks(&ranges, &prompt_dir)?;
+    let marks: Vec<Vec<u32>> = bound
+        .ranges
+        .iter()
+        .map(|range| range.marks.clone())
+        .collect();
+    let mark_files = run_prep::write_marks(&marks, &prompt_dir)?;
     let claimed_files = run_prep::write_claimed_ranges(&ids, range_size as usize, &prompt_dir)?;
     let run_manifest = render_ranged_manifest(
         &template,
         template_dir,
-        &run_prep::write_prompt_text(&prompt.resolved_prompt, &prompt_dir)?,
+        &run_prep::write_bound_text(&bound.ranges, &prompt_dir)?,
         &run_prep::write_run_config(
             &run_prep::RunConfig {
                 model_id: model_manifest.model_id.clone(),
@@ -329,6 +335,7 @@ fn prepare_run(
             &prompt_dir,
         )?,
         &run_prep::write_run_schedule(mark_files.len(), claimed_files.len(), &prompt_dir)?,
+        &run_prep::write_text_claim(&bound.claim, &prompt_dir)?,
         &mark_files,
         &claimed_files,
     )?;
@@ -365,15 +372,16 @@ const RUN_PLACEHOLDER_DIR: &str = "target/iris/run-prompt-placeholder/";
 /// Marks where the template names the last prompt range.
 const LAST_PROMPT_RANGE: &str = "@LAST_PROMPT_RANGE@";
 
-/// Fills the template for one run: the original text, the configuration
-/// and the stage schedule, the range counts, the last prompt range's index,
-/// and each range's committed marks or claimed ids.
+/// Fills the template for one run: the configuration, the stage schedule and
+/// the text claim, the range counts, the last prompt range's index, and each
+/// range's committed text, marks or claimed ids.
 pub(crate) fn render_ranged_manifest(
     template: &str,
     template_dir: &Path,
-    text: &run_prep::RunFile,
+    text: &[run_prep::RunFile],
     config: &run_prep::RunFile,
     schedule: &run_prep::RunFile,
+    claim: &run_prep::RunFile,
     prompt: &[run_prep::RunFile],
     claimed: &[run_prep::RunFile],
 ) -> Result<String> {
@@ -381,15 +389,23 @@ pub(crate) fn render_ranged_manifest(
         !prompt.is_empty() && !claimed.is_empty(),
         "a run needs at least one prompt range and one claimed range"
     );
+    anyhow::ensure!(
+        text.len() == prompt.len(),
+        "a run needs one slice of text for each prompt range"
+    );
     let template = inference_artifacts::resolve_raster_manifest_paths(template, template_dir)?;
     let last_prompt = (prompt.len() - 1).to_string();
     let mut table = String::new();
     let mut name = String::new();
     let mut fan_index = String::new();
+    // Where the table being read starts its index. Range 0 of the prompt and
+    // of the checks is written out as plain stages, so those repeats and the
+    // prompt ranges' layer fans start at 1 and run one time fewer.
+    let mut start = 0_usize;
     // Prompt repeats, claimed repeats, prompt externals, claimed externals,
-    // per-layer prompt fans, per-layer claimed fans, text bindings,
-    // configuration bindings, schedule bindings.
-    let mut replaced = [0_usize; 9];
+    // per-layer prompt fans, per-layer claimed fans, text externals,
+    // configuration bindings, schedule bindings, text claim bindings.
+    let mut replaced = [0_usize; 10];
     let mut out = Vec::new();
     for line in template.lines() {
         let trimmed = line.trim();
@@ -397,6 +413,14 @@ pub(crate) fn render_ranged_manifest(
             table = trimmed.to_string();
             name.clear();
             fan_index.clear();
+            start = 0;
+        }
+        if trimmed.starts_with("start =") {
+            let value: toml::Value = toml::from_str(trimmed)?;
+            start = value["start"]
+                .as_integer()
+                .and_then(|start| usize::try_from(start).ok())
+                .context("invalid repeat start")?;
         }
         if trimmed.starts_with("name =") {
             let value: toml::Value = toml::from_str(trimmed)?;
@@ -412,13 +436,18 @@ pub(crate) fn render_ranged_manifest(
                 .context("invalid repeat index")?
                 .to_string();
         }
-        if table == "[[chain.stage]]" && name == "prompt_bind" {
-            let binding = if trimmed.starts_with("inputs.text =") {
-                Some(("text", text, 6))
-            } else if trimmed.starts_with("inputs.config =") {
+        // Every bind stage is given the run's three statements: range 0's,
+        // and the template of the ranges after it.
+        if matches!(
+            (table.as_str(), name.as_str()),
+            ("[[chain.stage]]", "prompt_bind_p0") | ("[[chain.repeat.stage]]", "prompt_bind_p{j}")
+        ) {
+            let binding = if trimmed.starts_with("inputs.config =") {
                 Some(("config", config, 7))
             } else if trimmed.starts_with("inputs.schedule =") {
                 Some(("schedule", schedule, 8))
+            } else if trimmed.starts_with("inputs.claim =") {
+                Some(("claim", claim, 9))
             } else {
                 None
             };
@@ -431,6 +460,7 @@ pub(crate) fn render_ranged_manifest(
             }
         }
         let files = match table.as_str() {
+            "[chain.input.prompt_text]" => Some((text, 6)),
             "[chain.input.prompt_marks]" => Some((prompt, 2)),
             "[chain.input.claimed_ids]" => Some((claimed, 3)),
             _ => None,
@@ -481,7 +511,7 @@ pub(crate) fn render_ranged_manifest(
             };
             if let Some((slot, count)) = range_count {
                 replaced[slot] += 1;
-                out.push(format!("count = {count}"));
+                out.push(format!("count = {}", iterations(count, start)?));
                 continue;
             }
         }
@@ -494,7 +524,7 @@ pub(crate) fn render_ranged_manifest(
             };
             if let Some((slot, count)) = range_count {
                 replaced[slot] += 1;
-                out.push(format!("count = {count}"));
+                out.push(format!("count = {}", iterations(count, start)?));
                 continue;
             }
         }
@@ -503,12 +533,20 @@ pub(crate) fn render_ranged_manifest(
     if replaced[..4] != [1, 2, 1, 1]
         || replaced[4] == 0
         || replaced[4] != replaced[5]
-        || replaced[6..] != [1, 1, 1]
+        || replaced[6..] != [1, 2, 2, 2]
     {
-        anyhow::bail!("incompatible chain template: expected [prompt repeats, claimed repeats, prompt commitments, claimed commitments] = [1, 2, 1, 1], matching per-layer range fans, and one text, one configuration and one schedule binding; found {replaced:?}");
+        anyhow::bail!("incompatible chain template: expected [prompt repeats, claimed repeats, prompt commitments, claimed commitments] = [1, 2, 1, 1], matching per-layer range fans, one set of text commitments, and a configuration, a schedule and a text claim binding for range 0's bind and for the later ranges'; found {replaced:?}");
     }
     out.push(String::new());
     Ok(out.join("\n"))
+}
+
+/// How many times a repeat over `ranges` ranges runs when its index starts
+/// at `start`.
+fn iterations(ranges: usize, start: usize) -> Result<usize> {
+    ranges
+        .checked_sub(start)
+        .with_context(|| format!("a repeat starts at range {start} of {ranges}"))
 }
 
 /// One run-specific external: the files and commitment a template
@@ -880,6 +918,12 @@ path = "/repo/target/iris/run-prompt-placeholder/marks_{j}.rastered"
 index_path = "/repo/target/iris/run-prompt-placeholder/marks_{j}.rindex"
 commitments = []
 
+[chain.input.prompt_text]
+index = "j"
+path = "/repo/target/iris/run-prompt-placeholder/text_{j}.rastered"
+index_path = "/repo/target/iris/run-prompt-placeholder/text_{j}.rindex"
+commitments = []
+
 [chain.input.claimed_ids]
 index = "k"
 path = "/repo/target/iris/run-prompt-placeholder/claimed_{k}.rastered"
@@ -887,19 +931,37 @@ index_path = "/repo/target/iris/run-prompt-placeholder/claimed_{k}.rindex"
 commitments = []
 
 [[chain.stage]]
-name = "prompt_bind"
-inputs.text = { external = { path = "/repo/target/iris/run-prompt-placeholder/text.rastered", index_path = "/repo/target/iris/run-prompt-placeholder/text.rindex", commitment = "0" } }
+name = "prompt_bind_p0"
+inputs.text = { input = "prompt_text_0" }
 inputs.config = { external = { path = "/repo/target/iris/run-prompt-placeholder/config.rastered", index_path = "/repo/target/iris/run-prompt-placeholder/config.rindex", commitment = "0" } }
 inputs.schedule = { external = { path = "/repo/target/iris/run-prompt-placeholder/schedule.rastered", index_path = "/repo/target/iris/run-prompt-placeholder/schedule.rindex", commitment = "0" } }
+inputs.claim = { external = { path = "/repo/target/iris/run-prompt-placeholder/claim.rastered", index_path = "/repo/target/iris/run-prompt-placeholder/claim.rindex", commitment = "0" } }
+inputs.previous = { external = { path = "/repo/model/empty_prompt.rastered", index_path = "/repo/model/empty_prompt.rindex", commitment = "e0" } }
+
+[[chain.stage]]
+name = "prompt_check_p0"
+inputs.bound = { from = "prompt_bind_p0" }
+inputs.previous = { external = { path = "/repo/model/empty_prompt.rastered", index_path = "/repo/model/empty_prompt.rindex", commitment = "e0" } }
+inputs.marks = { input = "prompt_marks_0" }
 
 [[chain.repeat]]
 name = "prompt"
 index = "j"
+start = 1
 count = 0
 
   [[chain.repeat.stage]]
+name = "prompt_bind_p{j}"
+inputs.text = { input = "prompt_text_{j}" }
+inputs.config = { external = { path = "/repo/target/iris/run-prompt-placeholder/config.rastered", index_path = "/repo/target/iris/run-prompt-placeholder/config.rindex", commitment = "0" } }
+inputs.schedule = { external = { path = "/repo/target/iris/run-prompt-placeholder/schedule.rastered", index_path = "/repo/target/iris/run-prompt-placeholder/schedule.rindex", commitment = "0" } }
+inputs.claim = { external = { path = "/repo/target/iris/run-prompt-placeholder/claim.rastered", index_path = "/repo/target/iris/run-prompt-placeholder/claim.rindex", commitment = "0" } }
+inputs.previous = { from = "prompt_bind_p{j-1}", first = "prompt_bind_p0" }
+
+  [[chain.repeat.stage]]
 name = "prompt_check_p{j}"
-inputs.previous = { from = "prompt_check_p{j-1}", first = "prompt_bind" }
+inputs.bound = { from = "prompt_bind_p{j}" }
+inputs.previous = { from = "prompt_check_p{j-1}", first = "prompt_check_p0" }
 inputs.marks = { input = "prompt_marks_{j}" }
 
 [[chain.repeat]]
@@ -918,8 +980,22 @@ start = 0
 count = 4
 
   [[chain.repeat.stage]]
+name = "aux_p{j}_l{l}"
+index = "j"
+count = 0
+
+  [[chain.repeat.stage]]
+name = "aux_c{k}_l{l}"
+index = "k"
+count = 0
+
+  [[chain.repeat.stage]]
+name = "range_p0_l{l}"
+
+  [[chain.repeat.stage]]
 name = "range_p{j}_l{l}"
 index = "j"
+start = 1
 count = 0
 
   [[chain.repeat.stage]]
@@ -927,9 +1003,13 @@ name = "range_c{k}_l{l}"
 index = "k"
 count = 0
 
+[[chain.stage]]
+name = "check_c0"
+
 [[chain.repeat]]
 name = "claimed"
 index = "k"
+start = 1
 count = 0
 "#;
         let file = |name: &str, commitment: &str| run_prep::RunFile {
@@ -937,9 +1017,14 @@ count = 0
             index_path: PathBuf::from(format!("/tmp/run/prompt/{name}.rindex")),
             commitment: commitment.into(),
         };
-        let text = file("text", "t0");
+        let text = [
+            file("text_0", "t0"),
+            file("text_1", "t1"),
+            file("text_2", "t2"),
+        ];
         let config = file("config", "g0");
         let schedule = file("schedule", "s0");
+        let claim = file("claim", "m0");
         let prompt = [
             file("marks_0", "a0"),
             file("marks_1", "a1"),
@@ -953,6 +1038,7 @@ count = 0
                 &text,
                 &config,
                 &schedule,
+                &claim,
                 &prompt,
                 claimed,
             )
@@ -977,19 +1063,55 @@ count = 0
             toml::Value::try_from(["c0"]).unwrap()
         );
         let repeats = parsed["chain"]["repeat"].as_array().unwrap();
-        let count = |value: &toml::Value| value["count"].as_integer();
-        assert_eq!(count(&repeats[0]), Some(3));
+        let count = |value: &toml::Value| value.get("count").and_then(toml::Value::as_integer);
+        // Range 0 of the prompt is plain stages, so the repeat runs twice.
+        assert_eq!(count(&repeats[0]), Some(2));
         assert_eq!(count(&repeats[1]), Some(1));
-        // The layer block keeps its count; its fans run once per range.
+        // The layer block keeps its count; its fans run once per range,
+        // and the prompt ranges' layer fan once per range after the first.
         assert_eq!(count(&repeats[2]), Some(4));
         let fans = repeats[2]["stage"].as_array().unwrap();
         assert_eq!(count(&fans[0]), Some(3));
         assert_eq!(count(&fans[1]), Some(1));
-        assert_eq!(count(&repeats[3]), Some(1));
+        assert_eq!(count(&fans[2]), None);
+        assert_eq!(count(&fans[3]), Some(2));
+        assert_eq!(count(&fans[4]), Some(1));
+        // One claimed range: its check is the plain stage and the repeat
+        // of the checks after it does not run.
+        assert_eq!(count(&repeats[3]), Some(0));
+        // Both bind entries are given the run's statements.
+        for commitment in ["g0", "s0", "m0"] {
+            assert_eq!(
+                manifest
+                    .matches(&format!(r#"commitment = "{commitment}""#))
+                    .count(),
+                2
+            );
+        }
         assert!(manifest.contains(r#"first = "embed_p2""#));
-        assert!(manifest.contains(r#"commitment = "t0""#));
+        assert_eq!(
+            inputs["prompt_text"]["path"].as_str(),
+            Some("/tmp/run/prompt/text_{j}.rastered")
+        );
+        assert_eq!(
+            inputs["prompt_text"]["commitments"],
+            toml::Value::try_from(["t0", "t1", "t2"]).unwrap()
+        );
         assert!(manifest.contains(r#"commitment = "g0""#));
         assert!(manifest.contains(r#"commitment = "s0""#));
+        assert!(manifest.contains(r#"commitment = "m0""#));
+        // Each range needs its own slice of the text.
+        assert!(render_ranged_manifest(
+            template,
+            Path::new("/repo"),
+            &text[..2],
+            &config,
+            &schedule,
+            &claim,
+            &prompt,
+            &claimed,
+        )
+        .is_err());
         assert!(!manifest.contains("run-prompt-placeholder"));
         assert!(render(template, &[]).is_err());
         // A template for the removed cut-and-merge stages is not this chain's.

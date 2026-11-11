@@ -35,15 +35,49 @@ fn native_prefix_stops_before_later_sequential_and_parallel_stages() {
 
     let root = unique_dir(&std::env::temp_dir().join("replay-profile-prefix"));
     let manifest = root.join("Raster.toml");
+    // The first stage is given empty values for everything it reads. It
+    // records what is wrong with them and finishes, which is all the
+    // scheduler needs of it here.
+    let external = |name: &str, value: &dyn Fn() -> (Vec<u8>, Vec<u8>, String)| {
+        let (data, index, commitment) = value();
+        fs::write(root.join(format!("{name}.rastered")), data).unwrap();
+        fs::write(root.join(format!("{name}.rindex")), index).unwrap();
+        format!(
+            "inputs.{name} = {{ external = {{ path = \"{name}.rastered\", index_path = \"{name}.rindex\", commitment = \"{commitment}\" }} }}\n"
+        )
+    };
+    raster::init();
+    let decoder = output_finalize::input::DecoderTable::default();
+    let inputs = [
+        external("edge", &|| {
+            raster::encode_raster_value(&output_finalize::input::DecodeEdge::default()).unwrap()
+        }),
+        external("prompt", &|| {
+            raster::encode_raster_value(&output_finalize::prompt::PromptState::default()).unwrap()
+        }),
+        external("decoder", &|| {
+            raster::encode_raster_value(&decoder).unwrap()
+        }),
+        external("descriptor", &|| {
+            raster::encode_raster_value(&raster::BytesPage::__from_parts(0, 0, Vec::new())).unwrap()
+        }),
+        external("witness", &|| {
+            raster::encode_raster_value(&output_finalize::decoder_witness(&decoder).unwrap())
+                .unwrap()
+        }),
+    ]
+    .concat();
     // Later stages intentionally have no usable inputs: they must not execute.
     fs::write(
         &manifest,
-        r#"
+        format!(
+            r#"
 [chain]
 name = "prefix-test"
 [[chain.stage]]
-name = "decode_init"
-project = "raster-stages/decode-init"
+name = "output_finalize"
+project = "raster-stages/output-finalize"
+{inputs}
 [[chain.stage]]
 name = "prefill_prepare_aux_l0"
 project = "raster-stages/prefill-prepare-aux"
@@ -54,9 +88,10 @@ project = "raster-stages/prefill-prepare-aux"
 name = "prefill_prepare_aux_l2"
 project = "raster-stages/prefill-prepare-aux"
 [[chain.stage]]
-name = "output_finalize"
-project = "raster-stages/output-finalize"
-"#,
+name = "check_c0"
+project = "raster-stages/sequence-check"
+"#
+        ),
     )
     .unwrap();
     let config = CheckpointedInferenceConfig {
@@ -67,7 +102,7 @@ project = "raster-stages/output-finalize"
         parity_policy: ParityPolicy::Skip,
     };
     let sequential = CheckpointedInferenceExecutor
-        .run_through_stage(config.clone(), "decode_init")
+        .run_through_stage(config.clone(), "output_finalize")
         .unwrap();
     assert!(sequential.output_path.is_file());
     assert!(sequential.output_index_path.is_file());
@@ -75,7 +110,7 @@ project = "raster-stages/output-finalize"
     assert!(!sequential.chain_dir.join("prefill_prepare_aux_l0").exists());
     assert_eq!(
         sequential.project_dir,
-        root.join("raster-stages/decode-init")
+        root.join("raster-stages/output-finalize")
     );
 
     // A stand-in aux worker publishes a valid artifact. This test exercises the
@@ -115,7 +150,7 @@ for line in sys.stdin:
         .exists());
     assert!(parallel.output_path.is_file());
     assert!(!parallel.chain_dir.join("prefill_prepare_aux_l2").exists());
-    assert!(!parallel.chain_dir.join("output_finalize").exists());
+    assert!(!parallel.chain_dir.join("check_c0").exists());
     let times: serde_json::Value =
         read_json(&parallel.chain_dir.join(EXECUTION_TIMES_JSON)).unwrap();
     assert_eq!(times["stages"].as_array().unwrap().len(), 3);

@@ -14,7 +14,8 @@
 //!
 //! ```text
 //!   marks ──fold──▶ how many pieces the range covers
-//!   previous range's last token, this range's pieces ──copy──▶ list ending in an end piece
+//!   pieces left by the check before, this range's bind ──fold──▶ how many there are
+//!   previous range's last token, the range's pieces ──copy──▶ list ending in an end piece
 //!   list × marks ──number──▶ every piece's token
 //!   pass A, pass B:  64 × [ scan: one merge lookup per piece, best pair per window
 //!                           apply: at most one merge per window ]
@@ -105,13 +106,15 @@ pub fn range_end(context: &PromptContext, marks: &MarkCount) -> u64 {
     context.next_piece.saturating_add(marks.pieces)
 }
 
-/// Which of the prompt's pieces the range takes.
+/// Which pieces the range takes, counted from the start of the prompt. The
+/// check is given the pieces from `start` up to `total`: what the check
+/// before it left, then its own range's bind.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
 pub struct RangePlan {
     pub start: u64,
     /// Where the marks say the range ends.
     pub end: u64,
-    /// Where it does end: `end`, or the prompt's last piece if that is sooner.
+    /// Where it does end: `end`, or the last piece it was given if that is sooner.
     pub stop: u64,
     pub total: u64,
     /// The previous range's last token is kept as the first token's neighbour.
@@ -165,6 +168,12 @@ pub fn range_piece(piece: &BpePiece, index: u64, plan: &RangePlan) -> Option<(Ra
             index + 1 == plan.stop,
         )
     })
+}
+
+/// Whether the piece at `index` is past the range, and so left for the
+/// next range's check.
+pub fn is_rest_piece(index: u64, plan: &RangePlan) -> bool {
+    index >= plan.stop
 }
 
 pub fn end_range_piece() -> RangePiece {
@@ -533,7 +542,9 @@ pub fn observe_final_piece(summary: &mut PassSummary, piece: &CheckPiece) {
 }
 
 /// The context once the range is checked: where the range ends, how many
-/// tokens it adds, and the first thing found wrong with it.
+/// tokens it adds, and the first thing found wrong with it. `bound_done`
+/// is whether the range's bind has seen the text end as claimed: the prompt
+/// is complete once it has, and this check has left no piece.
 pub fn finish_check_context(
     context: &PromptContext,
     plan: &RangePlan,
@@ -541,6 +552,7 @@ pub fn finish_check_context(
     scan_a: &ScanSummary,
     pass_b: &PassSummary,
     scan_b: &ScanSummary,
+    bound_done: bool,
 ) -> PromptContext {
     let mut next = context.clone();
     let base = u64::from(next.prompt_tokens);
@@ -572,7 +584,7 @@ pub fn finish_check_context(
     if plan.stop > plan.start {
         next.next_piece = plan.stop;
     }
-    next.complete = next.next_piece >= plan.total;
+    next.complete = bound_done && next.next_piece >= plan.total;
     next.prompt_tokens = next
         .prompt_tokens
         .saturating_add(u32::try_from(pass_a.tokens).unwrap_or(u32::MAX));

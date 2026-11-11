@@ -1,5 +1,7 @@
 # A rendered chain for the runner's tests: four layers, two prompt ranges and
-# two claimed ranges. Nothing here is executed.
+# two claimed ranges, in the form the import writes. Range 0 has nothing before
+# it, so its stages are written out and bound to the empty values, and each
+# repeat starts at range 1. Nothing here is executed.
 [chain]
 name = "iris"
 version = "0.1.0"
@@ -26,6 +28,12 @@ commitments = [
   "230fec6f8369eed481606c51e2cb75fa0c4423715ca264987fb5ebe62b320380", # l3
 ]
 
+[chain.input.prompt_text]
+index = "j"
+path = "run/text_{j}.rastered"
+index_path = "run/text_{j}.rindex"
+commitments = ["0", "1"]
+
 [chain.input.prompt_marks]
 index = "j"
 path = "run/marks_{j}.rastered"
@@ -39,31 +47,53 @@ index_path = "run/claimed_{k}.rindex"
 commitments = ["0", "1"]
 
 [[chain.stage]]
-name = "range_origin"
-project = "raster-stages/range-origin"
-
-[[chain.stage]]
-name = "decode_init"
-project = "raster-stages/decode-init"
-
-[[chain.stage]]
-name = "prompt_bind"
+name = "prompt_bind_p0"
 project = "raster-stages/prompt-bind"
 inputs.tokenizer = { external = { path = "model/raster/prompt-bind/tokenizer.rastered", index_path = "model/raster/prompt-bind/tokenizer.rindex", commitment = "242796af3dc4a3365a89c7696018953e6eb1b3fd0098475a03be438db8124564" } }
-inputs.text = { external = { path = "run/text.rastered", index_path = "run/text.rindex", commitment = "0000000000000000000000000000000000000000000000000000000000000000" } }
+inputs.text = { input = "prompt_text_0" }
 inputs.config = { external = { path = "run/config.rastered", index_path = "run/config.rindex", commitment = "0000000000000000000000000000000000000000000000000000000000000000" } }
+inputs.schedule = { external = { path = "run/schedule.rastered", index_path = "run/schedule.rindex", commitment = "0000000000000000000000000000000000000000000000000000000000000000" } }
+inputs.claim = { external = { path = "run/claim.rastered", index_path = "run/claim.rindex", commitment = "0000000000000000000000000000000000000000000000000000000000000000" } }
+inputs.previous = { external = { path = "model/raster/prompt-bind/empty_prompt.rastered", index_path = "model/raster/prompt-bind/empty_prompt.rindex", commitment = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" } }
+
+[[chain.stage]]
+name = "prompt_check_p0"
+project = "raster-stages/prompt-check"
+inputs.tokenizer = { external = { path = "model/raster/prompt-bind/tokenizer.rastered", index_path = "model/raster/prompt-bind/tokenizer.rindex", commitment = "242796af3dc4a3365a89c7696018953e6eb1b3fd0098475a03be438db8124564" } }
+inputs.bound = { from = "prompt_bind_p0" }
+inputs.previous = { external = { path = "model/raster/prompt-bind/empty_prompt.rastered", index_path = "model/raster/prompt-bind/empty_prompt.rindex", commitment = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" } }
+inputs.marks = { input = "prompt_marks_0" }
+
+[[chain.stage]]
+name = "embed_p0"
+project = "raster-stages/input-embedding"
+inputs.prompt = { from = "prompt_check_p0" }
+inputs.claimed = { external = { path = "model/raster/input-embedding/no_claim.rastered", index_path = "model/raster/input-embedding/no_claim.rindex", commitment = "94f6d7424f2abc4846e1e7b1cf592ea061ee6d9841b31ac1e040e6dd917f87b0" } }
+inputs.previous = { external = { path = "model/raster/input-embedding/empty_sequence.rastered", index_path = "model/raster/input-embedding/empty_sequence.rindex", commitment = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" } }
+inputs.embedding = { external = { path = "model/raster/input-embedding/embedding.rastered", index_path = "model/raster/input-embedding/embedding.rindex", commitment = "3bd19605326c5645eb245619ac6200a48d35a502f42aafa62b35919f611eb814" } }
 
 [[chain.repeat]]
 name = "prompt"
 index = "j"
-count = 2
+start = 1
+count = 1
+
+  [[chain.repeat.stage]]
+name = "prompt_bind_p{j}"
+project = "raster-stages/prompt-bind"
+inputs.tokenizer = { external = { path = "model/raster/prompt-bind/tokenizer.rastered", index_path = "model/raster/prompt-bind/tokenizer.rindex", commitment = "242796af3dc4a3365a89c7696018953e6eb1b3fd0098475a03be438db8124564" } }
+inputs.text = { input = "prompt_text_{j}" }
+inputs.config = { external = { path = "run/config.rastered", index_path = "run/config.rindex", commitment = "0000000000000000000000000000000000000000000000000000000000000000" } }
+inputs.schedule = { external = { path = "run/schedule.rastered", index_path = "run/schedule.rindex", commitment = "0000000000000000000000000000000000000000000000000000000000000000" } }
+inputs.claim = { external = { path = "run/claim.rastered", index_path = "run/claim.rindex", commitment = "0000000000000000000000000000000000000000000000000000000000000000" } }
+inputs.previous = { from = "prompt_bind_p{j-1}", first = "prompt_bind_p0" }
 
   [[chain.repeat.stage]]
 name = "prompt_check_p{j}"
 project = "raster-stages/prompt-check"
 inputs.tokenizer = { external = { path = "model/raster/prompt-bind/tokenizer.rastered", index_path = "model/raster/prompt-bind/tokenizer.rindex", commitment = "242796af3dc4a3365a89c7696018953e6eb1b3fd0098475a03be438db8124564" } }
-inputs.bound = { from = "prompt_bind" }
-inputs.previous = { from = "prompt_check_p{j-1}", first = "prompt_bind" }
+inputs.bound = { from = "prompt_bind_p{j}" }
+inputs.previous = { from = "prompt_check_p{j-1}", first = "prompt_check_p0" }
 inputs.marks = { input = "prompt_marks_{j}" }
 
   [[chain.repeat.stage]]
@@ -71,7 +101,7 @@ name = "embed_p{j}"
 project = "raster-stages/input-embedding"
 inputs.prompt = { from = "prompt_check_p{j}" }
 inputs.claimed = { external = { path = "model/raster/input-embedding/no_claim.rastered", index_path = "model/raster/input-embedding/no_claim.rindex", commitment = "94f6d7424f2abc4846e1e7b1cf592ea061ee6d9841b31ac1e040e6dd917f87b0" } }
-inputs.previous = { from = "embed_p{j-1}", first = "range_origin" }
+inputs.previous = { from = "embed_p{j-1}", first = "embed_p0" }
 inputs.embedding = { external = { path = "model/raster/input-embedding/embedding.rastered", index_path = "model/raster/input-embedding/embedding.rindex", commitment = "3bd19605326c5645eb245619ac6200a48d35a502f42aafa62b35919f611eb814" } }
 
 [[chain.repeat]]
@@ -110,14 +140,25 @@ inputs.embedded = { from = "embed_c{k}" }
 inputs.layer = { input = "aux_layer_{l}" }
 
   [[chain.repeat.stage]]
+name = "range_p0_l{l}"
+project = "raster-stages/prefill-range"
+inputs.activations = { from = "range_p0_l{l-1}", first = "embed_p0" }
+inputs.prior_kv = { external = { path = "model/raster/input-embedding/empty_sequence.rastered", index_path = "model/raster/input-embedding/empty_sequence.rindex", commitment = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" } }
+inputs.donor_a_kv = { external = { path = "model/raster/input-embedding/empty_sequence.rastered", index_path = "model/raster/input-embedding/empty_sequence.rindex", commitment = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" } }
+inputs.donor_b_kv = { external = { path = "model/raster/input-embedding/empty_sequence.rastered", index_path = "model/raster/input-embedding/empty_sequence.rindex", commitment = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" } }
+inputs.ple = { from = "aux_p0_l{l}" }
+inputs.layer = { input = "transformer_layer_{l}" }
+
+  [[chain.repeat.stage]]
 name = "range_p{j}_l{l}"
 index = "j"
-count = 2
+start = 1
+count = 1
 project = "raster-stages/prefill-range"
 inputs.activations = { from = "range_p{j}_l{l-1}", first = "embed_p{j}" }
-inputs.prior_kv = { from = "range_p{j-1}_l{l}", first = "range_origin" }
-inputs.donor_a_kv = { from = "range_origin" }
-inputs.donor_b_kv = { from = "range_origin" }
+inputs.prior_kv = { from = "range_p{j-1}_l{l}", first = "range_p0_l{l}" }
+inputs.donor_a_kv = { external = { path = "model/raster/input-embedding/empty_sequence.rastered", index_path = "model/raster/input-embedding/empty_sequence.rindex", commitment = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" } }
+inputs.donor_b_kv = { external = { path = "model/raster/input-embedding/empty_sequence.rastered", index_path = "model/raster/input-embedding/empty_sequence.rindex", commitment = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" } }
 inputs.ple = { from = "aux_p{j}_l{l}" }
 inputs.layer = { input = "transformer_layer_{l}" }
 
@@ -128,8 +169,8 @@ count = 2
 project = "raster-stages/prefill-range"
 inputs.activations = { from = "range_c{k}_l{l-1}", first = "embed_c{k}" }
 inputs.prior_kv = { from = "range_c{k-1}_l{l}", first = "range_p1_l{l}" }
-inputs.donor_a_kv = { from = "range_origin" }
-inputs.donor_b_kv = { from = "range_origin" }
+inputs.donor_a_kv = { external = { path = "model/raster/input-embedding/empty_sequence.rastered", index_path = "model/raster/input-embedding/empty_sequence.rindex", commitment = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" } }
+inputs.donor_b_kv = { external = { path = "model/raster/input-embedding/empty_sequence.rastered", index_path = "model/raster/input-embedding/empty_sequence.rindex", commitment = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" } }
 inputs.ple = { from = "aux_c{k}_l{l}" }
 inputs.layer = { input = "transformer_layer_{l}" }
 
@@ -156,12 +197,23 @@ inputs.embedded = { from = "embed_c{k}" }
 inputs.layer = { input = "aux_layer_{l}" }
 
   [[chain.repeat.stage]]
+name = "range_p0_l{l}"
+project = "raster-stages/prefill-range"
+inputs.activations = { from = "range_p0_l{l-1}", first = "range_p0_l1" }
+inputs.prior_kv = { external = { path = "model/raster/input-embedding/empty_sequence.rastered", index_path = "model/raster/input-embedding/empty_sequence.rindex", commitment = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" } }
+inputs.donor_a_kv = { from = "range_p0_l0" }
+inputs.donor_b_kv = { from = "range_p0_l1" }
+inputs.ple = { from = "aux_p0_l{l}" }
+inputs.layer = { input = "transformer_layer_{l}" }
+
+  [[chain.repeat.stage]]
 name = "range_p{j}_l{l}"
 index = "j"
-count = 2
+start = 1
+count = 1
 project = "raster-stages/prefill-range"
 inputs.activations = { from = "range_p{j}_l{l-1}", first = "range_p{j}_l1" }
-inputs.prior_kv = { from = "range_p{j-1}_l{l}", first = "range_origin" }
+inputs.prior_kv = { from = "range_p{j-1}_l{l}", first = "range_p0_l{l}" }
 inputs.donor_a_kv = { from = "range_p{j}_l0" }
 inputs.donor_b_kv = { from = "range_p{j}_l1" }
 inputs.ple = { from = "aux_p{j}_l{l}" }
@@ -179,22 +231,33 @@ inputs.donor_b_kv = { from = "range_c{k}_l1" }
 inputs.ple = { from = "aux_c{k}_l{l}" }
 inputs.layer = { input = "transformer_layer_{l}" }
 
+[[chain.stage]]
+name = "check_c0"
+project = "raster-stages/sequence-check"
+inputs.activations = { from = "range_c0_l3" }
+inputs.previous = { from = "range_p1_l3" }
+inputs.claimed = { input = "claimed_ids_0" }
+inputs.prior = { external = { path = "model/raster/sequence-check/empty_edge.rastered", index_path = "model/raster/sequence-check/empty_edge.rindex", commitment = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc" } }
+inputs.prompt = { from = "prompt_check_p1" }
+inputs.head = { external = { path = "model/raster/sequence-check/head.rastered", index_path = "model/raster/sequence-check/head.rindex", commitment = "b4599037cbac4aed94db1208a39e144c0f732c28ea83120cedbbbc4ba1a24fe6" } }
+
 [[chain.repeat]]
 name = "claimed"
 index = "k"
-count = 2
+start = 1
+count = 1
 
   [chain.repeat.exports.edge]
 stage = "check_c{k}"
-entry = "decode_init"
+entry = "check_c0"
 
   [[chain.repeat.stage]]
 name = "check_c{k}"
 project = "raster-stages/sequence-check"
 inputs.activations = { from = "range_c{k}_l3" }
-inputs.previous = { from = "range_c{k-1}_l3", first = "range_p1_l3" }
+inputs.previous = { from = "range_c{k-1}_l3", first = "range_c0_l3" }
 inputs.claimed = { input = "claimed_ids_{k}" }
-inputs.prior = { from = "check_c{k-1}", first = "decode_init" }
+inputs.prior = { from = "check_c{k-1}", first = "check_c0" }
 inputs.prompt = { from = "prompt_check_p1" }
 inputs.head = { external = { path = "model/raster/sequence-check/head.rastered", index_path = "model/raster/sequence-check/head.rindex", commitment = "b4599037cbac4aed94db1208a39e144c0f732c28ea83120cedbbbc4ba1a24fe6" } }
 

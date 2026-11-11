@@ -1,8 +1,9 @@
 //! `prompt-bind`: tiles.
 //!
-//! Hashes the original prompt, renders it through the chat template, and splits
-//! it into pieces. Everything the prompt stages consume after this comes from
-//! the text this stage hashed, so pieces cannot be substituted for it.
+//! Binds one prompt range's text: hashes it, renders it through the chat
+//! template, and splits it into pieces, continuing from where the range before
+//! stopped. Everything the prompt stages consume after this comes from text a
+//! bind stage hashed, so pieces cannot be substituted for it.
 //!
 //! The logic is in `input`, shared with the native kernel and with run
 //! preparation. A tile calls it, so it is inside the tile's image id.
@@ -20,34 +21,52 @@ pub mod input;
 
 use input::*;
 
-/// The hash and measurements before any text.
-#[tile(kind = iter, description = "Open the fold over the prompt text")]
-pub fn begin_text_fold() -> TextFold {
-    begin_text_fold_state()
+/// Opens the range: the first binds the model, the statement and the schedule;
+/// a later one continues the bind before it.
+#[allow(clippy::too_many_arguments)]
+#[tile(kind = iter, description = "Open one range's bind from the range before")]
+pub fn open_bind(
+    previous: PromptContext,
+    carry: BindCarry,
+    config: RunConfig,
+    descriptor: BytesPage,
+    schedule: RunSchedule,
+    claim: TextClaim,
+    root: BytesPage,
+    profile: TokenizerProfile,
+) -> BindOpen {
+    open_bind_range(
+        &previous,
+        &carry,
+        &config,
+        descriptor.as_slice(),
+        &schedule,
+        &claim,
+        &root,
+        &profile,
+    )
 }
 
-/// Hashes and measures one chunk of the original text.
+/// How the text is rendered: what the claim says the trim keeps, and the
+/// template.
+#[tile(kind = iter, description = "The scan the text's claim calls for")]
+pub fn plan_scan(claim: TextClaim, raw_prompt: bool, profile: TokenizerProfile) -> ScanPlan {
+    claimed_scan_plan(&claim, raw_prompt, &profile)
+}
+
+/// Hashes and measures one chunk of the range's text, and moves the scan's
+/// position past it.
 #[tile(kind = recur, description = "Hash and measure one chunk of the prompt")]
 pub fn fold_text_chunk(
     input: RecurInput<String>,
-    state: RecurState<TextFold>,
-) -> RecurState<TextFold> {
+    state: RecurState<TextPass>,
+    plan: ScanPlan,
+    profile: TokenizerProfile,
+) -> RecurState<TextPass> {
     let mut state = state;
     let chunk = input.into_value();
-    *state = fold_text((*state).clone(), &chunk);
+    *state = advance_text_pass((*state).clone(), &chunk, &plan, &profile);
     state
-}
-
-/// Decides how the text is rendered: what the trim keeps, and the template.
-#[tile(kind = iter, description = "Plan the prompt's rendering")]
-pub fn plan_scan(fold: TextFold, config: RunConfig, profile: TokenizerProfile) -> ScanPlan {
-    scan_plan_of(&fold, &config, &profile)
-}
-
-/// The scan before any text: the template's prefix is already pending.
-#[tile(kind = iter, description = "Open the scan over the rendered prompt")]
-pub fn begin_scan(plan: ScanPlan) -> ScanState {
-    begin_scan_state(&plan)
 }
 
 /// Turns one chunk of text into atoms: special tokens and single characters.
@@ -68,103 +87,120 @@ pub fn scan_prompt_chunk(
     (state, output)
 }
 
-/// Opens the stage's output with the context a run starts from.
-///
-/// Set here so a prompt with no pieces still has a complete output.
-#[tile(kind = iter, description = "Open the bound prompt with its context")]
-pub fn open_bound_prompt(
-    fold: TextFold,
-    config: RunConfig,
-    descriptor: BytesPage,
-    root: BytesPage,
-) -> Draft<PromptState> {
-    let mut output = Draft::<PromptState>::new();
-    let mut context = open_prompt_context(&fold, &config);
-    context.model = model_identity::stream::verify(
-        model_identity::ModelContext::bind(descriptor.as_slice(), &config.model_id),
-        &root,
-        model_identity::Role::Tokenizer,
-    );
-    context.model.bind_statement(
-        &context.input_text_sha256,
-        context.raw_prompt,
-        context.max_new_tokens,
-        context.range_size,
-    );
-    output.context().set(context);
-    output
+/// One atom and the vocabulary bucket it would be in.
+#[derive(
+    Debug, Clone, Default, serde::Serialize, serde::Deserialize, PartialEq, Eq, raster::Selectable,
+)]
+pub struct AtomLookup {
+    pub atom: PromptAtom,
+    pub index: u32,
 }
 
-/// Checks the run's stage schedule and stores it in the context. A schedule
-/// that fails is kept with a fault, and the stage finishes.
-#[tile(kind = iter, description = "Check and store the run's stage schedule")]
-pub fn bind_schedule(context: PromptContext, schedule: RunSchedule) -> PromptContext {
-    bind_run_schedule(context, &schedule)
-}
-
-/// The split before any atom.
-#[tile(kind = iter, description = "Open the split at the first segment")]
-pub fn begin_split() -> SplitState {
-    SplitState::default()
-}
-
-/// Pairs one atom with the split's position and its vocabulary lookup.
-#[tile(kind = iter, description = "Begin splitting one atom")]
-pub fn begin_atom_step(state: SplitState, atom: PromptAtom) -> AtomStep {
-    AtomStep {
-        query: VocabQuery {
-            piece: atom.text.clone(),
-        },
+#[tile(kind = iter, description = "Bucket of an atom's vocabulary lookup")]
+pub fn begin_atom_lookup(atom: PromptAtom, count: u32) -> AtomLookup {
+    assert!(count > 0, "empty vocabulary bucket index");
+    AtomLookup {
+        index: vocab_bucket_of(&atom.text, count),
         atom,
-        state,
     }
 }
 
-#[tile(kind = iter, description = "Bucket of a vocabulary lookup")]
-pub fn vocab_bucket_index(query: VocabQuery, count: u32) -> u32 {
-    assert!(count > 0, "empty vocabulary bucket index");
-    vocab_bucket_of(&query.piece, count)
+#[tile(kind = iter, description = "Open the walk of a vocabulary bucket")]
+pub fn begin_walk() -> BucketWalk {
+    begin_bucket_walk()
 }
 
-#[tile(kind = iter, description = "Open a vocabulary lookup with nothing found")]
-pub fn empty_vocab_match() -> VocabMatch {
-    VocabMatch::default()
-}
-
-#[tile(kind = recur, description = "Scan one vocabulary bucket")]
-pub fn scan_vocab_chunk(
+/// Hashes one entry of the bucket and compares it with the atom.
+#[tile(kind = recur, description = "Hash and compare one vocabulary entry")]
+pub fn walk_vocab_bucket(
     input: RecurInput<TokenEntry>,
-    state: RecurState<VocabMatch>,
-    query: VocabQuery,
-) -> RecurState<VocabMatch> {
+    state: RecurState<BucketWalk>,
+    piece: String,
+) -> RecurState<BucketWalk> {
     let mut state = state;
     let entry = input.into_value();
-    if entry.token == query.piece {
-        state.found = true;
-        state.token_id = entry.id;
-    }
+    *state = walk_bucket_entry((*state).clone(), &entry, &piece);
     state
 }
 
-/// Appends the pieces one atom becomes.
-#[tile(kind = iter, description = "Append one atom's pieces")]
-pub fn append_atom_pieces(
-    output: Draft<PromptState>,
-    step: AtomStep,
-    hit: VocabMatch,
-    profile: TokenizerProfile,
-) -> Draft<PromptState> {
+/// Records what the bucket said of the atom, and whether the bucket is the
+/// committed one.
+#[tile(kind = iter, description = "Append one looked-up atom")]
+pub fn append_known_atom(
+    output: Draft<KnownAtoms>,
+    lookup: AtomLookup,
+    walk: BucketWalk,
+    header: SparseHeader,
+    path: SparsePath,
+) -> Draft<KnownAtoms> {
     let mut output = output;
-    apply_atom(&step.state, &step.atom, hit.found, &profile, &mut |piece| {
-        output.pieces().push(piece)
+    output.atoms().push(KnownAtom {
+        proven: bucket_walk_proven(&walk, lookup.index, &header, &path),
+        found: walk.found,
+        text: lookup.atom.text,
+        special: lookup.atom.special,
     });
     output
 }
 
-/// Moves the split past one atom.
-#[tile(kind = iter, description = "Advance the split past one atom")]
-pub fn advance_split(step: AtomStep, hit: VocabMatch, profile: TokenizerProfile) -> SplitState {
-    apply_atom(&step.state, &step.atom, hit.found, &profile, &mut |_| {})
+#[tile(kind = iter, description = "Open the split's tail at the range's start")]
+pub fn begin_tail(split: SplitState) -> BindTail {
+    BindTail {
+        split,
+        unproven: false,
+    }
+}
+
+/// Moves the split past a chunk of atoms without emitting their pieces, to
+/// learn where it ends and whether every lookup was proven.
+#[tile(kind = recur, description = "Advance the split past a chunk of atoms")]
+pub fn advance_tail(
+    input: RecurInput<Block<KnownAtom>>,
+    state: RecurState<BindTail>,
+    profile: TokenizerProfile,
+) -> RecurState<BindTail> {
+    let mut state = state;
+    for atom in input.into_value().iter() {
+        *state = advance_bind_tail((*state).clone(), atom, &profile);
+    }
+    state
+}
+
+/// Opens the stage's output with the range's context and what the next
+/// range's bind continues from.
+///
+/// Set here so a range with no pieces still has a complete output.
+#[tile(kind = iter, description = "Close the range's bind and open its output")]
+pub fn close_bind(
+    context: PromptContext,
+    before: BindCarry,
+    pass: TextPass,
+    tail: BindTail,
+    profile: TokenizerProfile,
+) -> Draft<PromptState> {
+    let closed = close_bind_range(context, &before, pass, tail, &profile);
+    let mut output = Draft::<PromptState>::new();
+    output.context().set(closed.context);
+    output.bind().set(closed.carry);
+    output
+}
+
+/// Appends the pieces a chunk of atoms becomes.
+#[tile(kind = recur, description = "Append a chunk of atoms' pieces")]
+pub fn append_pieces(
+    input: RecurInput<Block<KnownAtom>>,
+    state: RecurState<SplitState>,
+    output: RecurOutput<PromptState>,
+    profile: TokenizerProfile,
+) -> (RecurState<SplitState>, RecurOutput<PromptState>) {
+    let mut state = state;
+    let mut output = output;
+    for atom in input.into_value().iter() {
+        *state = split_known_atom(&state, atom, &profile, &mut |piece| {
+            output.pieces().push(piece)
+        });
+    }
+    (state, output)
 }
 
 pub mod identity;

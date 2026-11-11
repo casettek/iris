@@ -31,17 +31,29 @@ impl ModelContext {
             self.require_execution(false);
         }
     }
-    /// Stores the run's stage schedule beside its statement: once, and before
-    /// any range begins. A schedule that fails its checks is kept with a fault.
+    /// Stores the run's stage schedule beside its statement: once, in the
+    /// first range's bind. A schedule that fails its checks is kept with a fault.
     pub fn bind_schedule(&mut self, schedule: StageSchedule) {
         if let Some(mut e) = self.execution_context() {
             self.require_execution(
                 e.phase == BOUND
-                    && e.step == Step::bind()
+                    && e.step == Step::bind(0)
                     && e.schedule == StageSchedule::default()
                     && schedule.validate(&e.statement).is_ok(),
             );
             e.schedule = schedule;
+            self.set_execution(&e);
+        } else {
+            self.require_execution(false);
+        }
+    }
+    /// Continues the bind into the next prompt range: `self` is the context
+    /// the bind of the range before published.
+    pub fn continue_bind(&mut self) {
+        if let Some(mut e) = self.execution_context() {
+            self.require_execution(e.phase == BOUND && e.step.operation == Operation::Bind);
+            let step = Step::bind(e.step.range.saturating_add(1));
+            self.take_step(&mut e, step, Input::Previous);
             self.set_execution(&e);
         } else {
             self.require_execution(false);
@@ -67,24 +79,33 @@ impl ModelContext {
         };
         self.require_execution(held);
     }
-    /// Requires `bound` to be the run's `prompt-bind` output, for a range's
-    /// token check.
+    /// Requires `bound` to be the bind of this range, for the range's token
+    /// check.
     pub fn require_bound(&mut self, bound: &Self) {
         match self.execution_context() {
             Some(e) => self.require_source(&e, Input::Bound, bound),
             None => self.require_execution(false),
         }
     }
-    /// Opens one prompt range's token check and records its step.
+    /// Requires `previous` to be what the schedule puts before this range's
+    /// token check: the check of the range before, or nothing.
+    pub fn require_previous_check(&mut self, previous: &Self) {
+        match self.execution_context() {
+            Some(e) => self.require_source(&e, Input::Previous, previous),
+            None => self.require_execution(false),
+        }
+    }
+    /// Opens one prompt range's token check and records its step. `self` is
+    /// the context the check continues: the check of the range before, or,
+    /// for the first range, that range's bind.
     pub fn begin_prompt_range(&mut self) {
         if let Some(mut e) = self.execution_context() {
             self.require_execution((e.phase == BOUND || e.phase == PREPARED) && e.prompt.is_none());
-            // The first range follows the bind, each later one the range before.
-            let range = match e.step.operation {
-                Operation::Tokens => e.step.range.saturating_add(1),
-                _ => 0,
+            let (range, input) = match e.step.operation {
+                Operation::Tokens => (e.step.range.saturating_add(1), Input::Previous),
+                _ => (0, Input::Bound),
             };
-            self.take_step(&mut e, Step::tokens(range), Input::Previous);
+            self.take_step(&mut e, Step::tokens(range), input);
             e.before = e.end;
             e.phase = TOKENIZING;
             self.set_execution(&e);
@@ -346,7 +367,7 @@ mod tests {
     use alloc::{format, string::String, vec};
     fn bound() -> ModelContext {
         let descriptor = crate::ModelDescriptor {
-            version: 1,
+            version: 2,
             tokenizer: [1; 32],
             decoder: [2; 32],
             embedding: [3; 32],
@@ -391,7 +412,7 @@ mod tests {
         let e = good.execution_context().unwrap();
         assert_eq!(
             (good.fault, e.schedule, e.step),
-            (0, schedule, Step::bind())
+            (0, schedule, Step::bind(0))
         );
         // A budget of eight tokens in ranges of four allows two claimed ranges.
         for bad in [

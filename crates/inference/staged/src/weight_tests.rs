@@ -1046,7 +1046,7 @@ fn sparse_embedding_checks_current_proofs_with_warm_cache() {
     let (f, table, mut prompt) = prompt_fixture(4, 32);
     let root = raster::core::tree::value_root(&table).unwrap();
     let descriptor = model_identity::ModelDescriptor {
-        version: 1,
+        version: 2,
         tokenizer: [1; 32],
         decoder: [2; 32],
         embedding: root,
@@ -1171,7 +1171,7 @@ fn sparse_merge_fault_survives_later_matches_and_cached_tokenizer() {
     let witness = tokenizer_witness(&tokenizer).unwrap();
     let root = raster::core::tree::value_root(&tokenizer).unwrap();
     let descriptor = model_identity::ModelDescriptor {
-        version: 1,
+        version: 2,
         tokenizer: root,
         decoder: [1; 32],
         embedding: [2; 32],
@@ -1185,9 +1185,14 @@ fn sparse_merge_fault_survives_later_matches_and_cached_tokenizer() {
         .iter()
         .map(|b| format!("{b:02x}"))
         .collect::<String>();
-    // What `prompt-bind` publishes for the text "ab": its pieces, and a context
-    // bound to the statement and to a schedule of one prompt range.
+    // What `prompt-bind` publishes for the text "ab": its pieces, a context
+    // bound to the statement and to a schedule of one prompt range, and a
+    // carry that has seen the text end.
     let bound = PromptState {
+        bind: prompt_check::input::BindCarry {
+            done: true,
+            ..Default::default()
+        },
         pieces: vec![
             BpePiece {
                 text: "a".into(),
@@ -1221,7 +1226,8 @@ fn sparse_merge_fault_survives_later_matches_and_cached_tokenizer() {
     f.write("tokenizer", &tokenizer);
     f.write("witness", &witness);
     f.write("bound", &bound);
-    f.write("previous", &bound);
+    // The first range has no check before it.
+    f.write("previous", &PromptState::default());
     // One token, "ab", starting at the first piece.
     f.write(
         "marks",

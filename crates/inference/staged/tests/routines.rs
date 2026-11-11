@@ -69,54 +69,23 @@ fn assert_same_json<T: Serialize>(left: &T, right: &T) {
 }
 
 #[test]
-fn decode_init_outputs_empty_edge() {
-    let output = routines::decode_init::run_direct(&routines::decode_init::Inputs).unwrap();
-    let kernel_output =
-        kernels::decode_init::run_decode_init_direct(kernels::decode_init::DecodeInitDirectInputs)
-            .unwrap();
+fn the_empty_values_are_empty() {
+    let edge = kernels::origin::empty_decode_edge();
+    assert!(!edge.has_selected);
+    assert_eq!(edge.decode_position, 0);
+    assert_eq!(edge.token_id, 0);
+    assert_eq!(edge.value, 0);
+    assert_eq!(edge.claim_mismatches, 0);
+    assert_eq!(edge.check_fault, 0);
+    assert!(edge.generated_token_ids.is_empty());
+    assert_same_json(&edge, &Default::default());
 
-    assert_same_json(&output, &kernel_output);
-    assert!(!output.has_selected);
-    assert_eq!(output.decode_position, 0);
-    assert_eq!(output.token_id, 0);
-    assert_eq!(output.value, 0);
-    assert!(output.generated_token_ids.is_empty());
-}
+    let sequence = kernels::origin::empty_sequence();
+    assert_eq!(sequence.start_position, 0);
+    assert!(sequence.rows.is_empty() && sequence.kv.is_empty() && sequence.errors.is_empty());
+    assert_same_json(&sequence.model, &Default::default());
 
-#[test]
-fn cached_runner_executes_without_writing_output_artifact() {
-    let base = temp_dir("cached-runner");
-    fs::create_dir_all(&base).unwrap();
-    let input = base.join("input.json");
-    let input_manifest = base.join("input_manifest.json");
-    fs::write(&input, "{}").unwrap();
-    fs::write(&input_manifest, "{}").unwrap();
-
-    let output = routines::run_cached_from_paths(
-        &routines::StageKind::DecodeInit,
-        &input,
-        &input_manifest,
-        &Default::default(),
-    )
-    .unwrap();
-
-    assert!(matches!(
-        output.output,
-        staged_infer::cache::CachedStageValue::DecodeEdge(_)
-    ));
-    assert!(!base.join("output.bin").exists());
-    fs::remove_dir_all(base).unwrap();
-}
-
-fn temp_dir(label: &str) -> std::path::PathBuf {
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    std::env::temp_dir().join(format!(
-        "staged-infer-routines-{label}-{}-{nanos}",
-        std::process::id()
-    ))
+    assert_same_json(&kernels::origin::empty_prompt(), &Default::default());
 }
 
 #[test]
@@ -699,7 +668,7 @@ fn authenticate_decoder_inputs(
     mut inputs: routines::output_finalize::Inputs,
 ) -> routines::output_finalize::Inputs {
     let d = model_identity::ModelDescriptor {
-        version: 1,
+        version: 2,
         tokenizer: [1; 32],
         decoder: raster::core::tree::value_root(&inputs.decoder).unwrap(),
         embedding: [2; 32],

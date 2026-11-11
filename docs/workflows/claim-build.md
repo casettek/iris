@@ -12,8 +12,8 @@ Flow:
 
 1. The CLI loads the run spec and its model manifest, then verifies the weight, config, tokenizer, and model-specific template hashes once before preparing the run. Missing template provenance is an error.
 2. Direct inference discovers the output ids. They must fill `tokens` unless the last one is EOS.
-3. The prompt's pieces are tokenized natively and the tokens cut into ranges of at most the model's range size, and the ids into ranges of the same size. A prompt range may end between any two tokens.
-4. The original text (`text`), the run's configuration (`config`), each prompt range's token marks (`marks_{j}`: one number per piece, 1 where a token starts) and each claimed range (`claimed_{k}`) are written as externals under `target/iris/runs/<run>/prompt/`, and a run-specific `Raster.toml` beside it commits to them. The configuration holds the model id, `raw_prompt`, `tokens` and the range size. The model id comes from the model manifest, which recomputes it from its commitments by role when it is loaded.
+3. The prompt's pieces are tokenized natively and the tokens cut into ranges of at most the model's range size, and the ids into ranges of the same size. A prompt range may end between any two tokens. The text is cut to match: slice `j` is the bytes whose scan yields range `j`'s pieces, so each range's bind stage reads only its own part of the prompt.
+4. Each prompt range's slice of the original text (`text_{j}`), the text claim (`claim`: the whole text's SHA-256, its length, and the first and last bytes the template's trim keeps), the run's configuration (`config`), its stage schedule (`schedule`), each prompt range's token marks (`marks_{j}`: one number per piece, 1 where a token starts) and each claimed range (`claimed_{k}`) are written as externals under `target/iris/runs/<run>/prompt/`, and a run-specific `Raster.toml` beside it commits to them. The configuration holds the model id, `raw_prompt`, `tokens` and the range size. The model id comes from the model manifest, which recomputes it from its commitments by role when it is loaded.
 5. `staged-infer` reads the run manifest and expands the [chain](../internals/raster-chain.md).
 6. Each stage synthesizes `input.json` and `input_manifest.json`, runs the host implementation, and writes Raster-compatible output artifacts.
 7. Claim build applies the rule a challenger will. If the final record's committed verdict counts any claimed id that is not the greedy selection, claim build fails: direct and teacher-forced inference are not in parity, and the claim would refute itself.
@@ -111,7 +111,7 @@ budgets, worker counts, and the diagnostic backend. To compare the same fixture
 against actual authenticated Raster stage execution:
 
 ```bash
-cargo build -p range-origin -p decode-init -p input-embedding -p prefill-prepare-aux \
+cargo build -p input-embedding -p prefill-prepare-aux \
   -p prefill-range -p sequence-check -p output-finalize --bins
 STAGED_INFER_REPLAY_BIN_DIR="$PWD/target/debug" cargo test -p staged-infer \
   --test worker_parity repeated_ranges_match_authenticated_raster_stage_execution -- --ignored

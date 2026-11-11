@@ -51,13 +51,13 @@ pub fn marked_end(context: PromptContext, marks: MarkCount) -> u64 {
 }
 
 /// The fold over the prompt's pieces, for a range ending at `end`.
-#[tile(kind = iter, description = "Open the fold over the prompt's pieces")]
+#[tile(kind = iter, description = "Open the fold over the range's pieces")]
 pub fn begin_slice(context: PromptContext, end: u64) -> SliceState {
     begin_slice_state(&context, end)
 }
 
-/// Counts a chunk of the prompt's pieces.
-#[tile(kind = recur, description = "Observe a chunk of the prompt's pieces")]
+/// Counts a chunk of the pieces the range is given.
+#[tile(kind = recur, description = "Observe a chunk of the range's pieces")]
 pub fn fold_slice(
     input: RecurInput<Block<BpePiece>>,
     state: RecurState<SliceState>,
@@ -91,17 +91,20 @@ pub fn copy_lead(
 }
 
 /// Copies the pieces of a chunk that fall inside this range, and ends the
-/// list after the range's last piece.
+/// list after the range's last piece. `base` is the prompt position of the
+/// first piece of the list the chunk is from.
 #[tile(kind = recur, description = "Copy a chunk's pieces in this range")]
 pub fn copy_range(
     input: RecurInput<Block<BpePiece>>,
     output: RecurOutput<CheckRange>,
     plan: RangePlan,
+    base: u64,
 ) -> RecurOutput<CheckRange> {
     let mut output = output;
     let first = input
         .index()
         .checked_mul(256)
+        .and_then(|offset| offset.checked_add(base))
         .expect("piece position overflow");
     for (offset, piece) in input.into_value().iter().enumerate() {
         let index = first
@@ -293,8 +296,11 @@ pub fn finish_check(
     scan_a: ScanSummary,
     pass_b: PassSummary,
     scan_b: ScanSummary,
+    bound_done: bool,
 ) -> PromptContext {
-    finish_check_context(&context, &plan, &pass_a, &scan_a, &pass_b, &scan_b)
+    finish_check_context(
+        &context, &plan, &pass_a, &scan_a, &pass_b, &scan_b, bound_done,
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -331,6 +337,8 @@ pub fn copy_token_pieces(
 pub fn open_tokens(context: PromptContext) -> Draft<PromptState> {
     let mut output = Draft::<PromptState>::new();
     output.context().set(context);
+    // A check carries no bind of its own.
+    output.bind().set(BindCarry::default());
     output
 }
 
@@ -422,6 +430,33 @@ pub fn carry_last_token(
                 text: piece.text.clone(),
                 segment: piece.segment,
             });
+        }
+    }
+    output
+}
+
+/// Publishes the pieces of a chunk that are past this range, for the next
+/// range's check to take before its own bind's. `base` is the prompt
+/// position of the first piece of the list the chunk is from.
+#[tile(kind = recur, description = "Leave a chunk's pieces past this range to the next")]
+pub fn carry_rest(
+    input: RecurInput<Block<BpePiece>>,
+    output: RecurOutput<PromptState>,
+    plan: RangePlan,
+    base: u64,
+) -> RecurOutput<PromptState> {
+    let mut output = output;
+    let first = input
+        .index()
+        .checked_mul(256)
+        .and_then(|offset| offset.checked_add(base))
+        .expect("piece position overflow");
+    for (offset, piece) in input.into_value().iter().enumerate() {
+        let index = first
+            .checked_add(offset as u64)
+            .expect("piece position overflow");
+        if is_rest_piece(index, &plan) {
+            output.rest().push(piece.clone());
         }
     }
     output

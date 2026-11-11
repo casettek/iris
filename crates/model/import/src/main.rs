@@ -426,9 +426,7 @@ pub fn import_model(args: ImportConfig) -> Result<ImportResult, Box<dyn Error>> 
     println!("weights: memory-mapped DETWGT");
     println!();
 
-    let mut stages = vec![String::from(
-        "[[chain.stage]]\nname = \"range_origin\"\nproject = \"raster-stages/range-origin\"\n",
-    )];
+    let mut stages = Vec::new();
     let (decoder_commitment, witness_commitment) =
         write_tokenizer(&tokenizer, &eos_ids, &layout, &mut stages)?;
     write_embedding(&weights, &shape, &layout, &mut stages)?;
@@ -564,16 +562,23 @@ fn model_commitments(
 /// The chain template: one pass over `prompt ‖ claimed output`, cut into ranges of at most `range_size`
 /// positions so no stage's cost grows with the prompt.
 ///
-/// `prompt_bind` hashes the committed original text and splits it. Run
-/// preparation tokenizes those pieces and cuts the tokens into ranges of at
-/// most `range_size`, and `prompt_check_p{j}` checks each range's tokens
-/// against the merge. The claimed ids are cut into ranges of the same size.
+/// Run preparation tokenizes the prompt and cuts the tokens into ranges of at
+/// most `range_size`, and the text into one slice per range.
+/// `prompt_bind_p{j}` hashes its slice and splits it, and `prompt_check_p{j}`
+/// checks the range's tokens against the merge. The claimed ids are cut into
+/// ranges of the same size.
 /// Every prompt range is checked and embedded, every claimed range embedded; then each
 /// layer runs across all ranges in order (`range_p{j}_l{l}`, then
 /// `range_c{k}_l{l}`), and `check_c{k}` re-derives the greedy selection for
 /// each claimed range. A layer's range takes its rows from the layer below and
 /// its inherited K/V cache from its own previous range, exactly as a decode
 /// step does.
+///
+/// Range 0 has nothing before it. Where a later range takes the range before,
+/// its stages take an empty value, written here as a committed constant, and
+/// check that it is empty. A repeat's `first` can only name a stage, so range
+/// 0 is written out as plain stages and each repeat starts at range 1 with
+/// range 0 as its `first`. No stage exists only to produce an empty value.
 ///
 /// Counts, the last prompt range's index, the text, the configuration and the
 /// per-range externals are filled in by run preparation. Wrong marks do not
@@ -654,15 +659,53 @@ fn chain_template(
 
     let mut out = String::from("[chain]\nname = \"iris\"\nversion = \"0.1.0\"\n");
     out.push_str(&indexed_model_inputs(shape, layout, prefill_stages)?);
+    out.push_str(&range_input("prompt_text", "text", "j"));
     out.push_str(&range_input("prompt_marks", "marks", "j"));
     out.push_str(&range_input("claimed_ids", "claimed", "k"));
-    out.push_str(
-        "\n[[chain.stage]]\nname = \"range_origin\"\nproject = \"raster-stages/range-origin\"\n\
-         \n[[chain.stage]]\nname = \"decode_init\"\nproject = \"raster-stages/decode-init\"\n",
-    );
+    // The empty values range 0 starts from.
+    use inference_kernels::kernels::origin;
+    let empty_sequence = write_external(
+        &origin::empty_sequence(),
+        layout,
+        "raster-stages/input-embedding",
+        "empty_sequence",
+    )?;
+    let empty_prompt = write_external(
+        &origin::empty_prompt(),
+        layout,
+        "raster-stages/prompt-bind",
+        "empty_prompt",
+    )?;
+    let empty_edge = write_external(
+        &origin::empty_decode_edge(),
+        layout,
+        "raster-stages/sequence-check",
+        "empty_edge",
+    )?;
+    let no_sequence = |param: &str| {
+        external_line(
+            param,
+            layout,
+            "raster-stages/input-embedding",
+            "empty_sequence",
+            &empty_sequence,
+        )
+    };
+    let no_prompt_state = |param: &str| {
+        external_line(
+            param,
+            layout,
+            "raster-stages/prompt-bind",
+            "empty_prompt",
+            &empty_prompt,
+        )
+    };
 
-    // Bind the text, the configuration and the stage schedule, and split the
-    // text into pieces.
+    // For every range: bind its slice of the text and split it into pieces,
+    // check its tokens against them, and embed it. The first range's bind
+    // also binds the configuration, the stage schedule and what the run
+    // claims of the whole text; later ones are given the same three and
+    // read none of them.
     let run_external = |param: &str| {
         external_line(
             param,
@@ -672,44 +715,63 @@ fn chain_template(
             INITIAL_PIECES_PLACEHOLDER_COMMITMENT,
         )
     };
-    out.push_str(&format!(
-        "\n[[chain.stage]]\n\
-         name = \"prompt_bind\"\n\
-         project = \"raster-stages/prompt-bind\"\n\
-         {descriptor_line}\n\
-         {tokenizer_line}\
-         {}\
-         {}\
-         {}",
-        run_external("text"),
-        run_external("config"),
-        run_external("schedule"),
+    let no_claim_line = external_line(
+        "claimed",
+        layout,
+        "raster-stages/input-embedding",
+        "no_claim",
+        &no_claim,
+    );
+    // `j` is the range as the names spell it: `0`, or `{j}` inside the repeat.
+    // `previous` binds what the bind, the check and the embedding continue.
+    let prompt_stages = |header: &str, j: &str, previous: [String; 3]| -> String {
+        let [bind_previous, check_previous, embed_previous] = previous;
+        format!(
+            "\n{header}\n\
+             name = \"prompt_bind_p{j}\"\n\
+             project = \"raster-stages/prompt-bind\"\n\
+             {descriptor_line}\n\
+             {tokenizer_line}\
+             inputs.text = {{ input = \"prompt_text_{j}\" }}\n\
+             {}\
+             {}\
+             {}\
+             {bind_previous}\
+             \n{header}\n\
+             name = \"prompt_check_p{j}\"\n\
+             project = \"raster-stages/prompt-check\"\n\
+             {tokenizer_line}\
+             inputs.bound = {{ from = \"prompt_bind_p{j}\" }}\n\
+             {check_previous}\
+             inputs.marks = {{ input = \"prompt_marks_{j}\" }}\n\
+             \n{header}\n\
+             name = \"embed_p{j}\"\n\
+             project = \"raster-stages/input-embedding\"\n\
+             inputs.prompt = {{ from = \"prompt_check_p{j}\" }}\n\
+             {no_claim_line}\
+             {embed_previous}\
+             {embedding_line}",
+            run_external("config"),
+            run_external("schedule"),
+            run_external("claim"),
+        )
+    };
+    out.push_str(&prompt_stages(
+        "[[chain.stage]]",
+        "0",
+        [
+            no_prompt_state("previous"),
+            no_prompt_state("previous"),
+            no_sequence("previous"),
+        ],
     ));
-
-    // Tokenize and embed every range first.
-    out.push_str("\n[[chain.repeat]]\nname = \"prompt\"\nindex = \"j\"\ncount = 0\n");
-    out.push_str(&format!(
-        "\n  [[chain.repeat.stage]]\n\
-         name = \"prompt_check_p{{j}}\"\n\
-         project = \"raster-stages/prompt-check\"\n\
-         {tokenizer_line}\
-         inputs.bound = {{ from = \"prompt_bind\" }}\n\
-         inputs.previous = {{ from = \"prompt_check_p{{j-1}}\", first = \"prompt_bind\" }}\n\
-         inputs.marks = {{ input = \"prompt_marks_{{j}}\" }}\n\
-         \n  [[chain.repeat.stage]]\n\
-         name = \"embed_p{{j}}\"\n\
-         project = \"raster-stages/input-embedding\"\n\
-         inputs.prompt = {{ from = \"prompt_check_p{{j}}\" }}\n\
-         {}\
-         inputs.previous = {{ from = \"embed_p{{j-1}}\", first = \"range_origin\" }}\n\
-         {embedding_line}",
-        external_line(
-            "claimed",
-            layout,
-            "raster-stages/input-embedding",
-            "no_claim",
-            &no_claim
-        ),
+    out.push_str("\n[[chain.repeat]]\nname = \"prompt\"\nindex = \"j\"\nstart = 1\ncount = 0\n");
+    out.push_str(&prompt_stages(
+        "  [[chain.repeat.stage]]",
+        "{j}",
+        ["prompt_bind", "prompt_check", "embed"].map(|stage| {
+            format!("inputs.previous = {{ from = \"{stage}_p{{j-1}}\", first = \"{stage}_p0\" }}\n")
+        }),
     ));
     out.push_str("\n[[chain.repeat]]\nname = \"claimed_embed\"\nindex = \"k\"\ncount = 0\n");
     out.push_str(&format!(
@@ -727,12 +789,15 @@ fn chain_template(
     // once per claim rather than once per range. Range `j` of layer `l`
     // needs layer `l - 1`'s range `j` and layer `l`'s range `j - 1`, both
     // already computed in this order. The inner fans' counts are the range
-    // counts, filled in by run preparation.
+    // counts, filled in by run preparation. Prompt range 0 inherits no K/V
+    // cache, so it is its own entry and the fan of the others starts at 1.
+    //
+    // `first_rows` and `donor` are given the range as the names spell it.
     let layer_block = |name: &str,
                        start: usize,
                        count: usize,
                        first_rows: &dyn Fn(&str, &str) -> String,
-                       donor: &dyn Fn(Option<&i32>, &str, &str) -> String|
+                       donor: &dyn Fn(&str, Option<&i32>, &str, &str) -> String|
      -> String {
         let mut text = format!(
             "\n[[chain.repeat]]\nname = \"{name}\"\nindex = \"l\"\nstart = {start}\ncount = {count}\n"
@@ -749,25 +814,41 @@ fn chain_template(
                  inputs.witness = {{ input = \"aux_witness_{{l}}\" }}\n"
             ));
         }
-        for (p, r, first_kv) in [
-            ("p", "j", String::from("range_origin")),
-            ("c", "k", format!("range_p{LAST_PROMPT_RANGE}_l{{l}}")),
+        let prior_of_later_prompt_ranges = String::from(
+            "inputs.prior_kv = { from = \"range_p{j-1}_l{l}\", first = \"range_p0_l{l}\" }\n",
+        );
+        let prior_of_claimed_ranges = format!(
+            "inputs.prior_kv = {{ from = \"range_c{{k-1}}_l{{l}}\", first = \"range_p{LAST_PROMPT_RANGE}_l{{l}}\" }}\n"
+        );
+        for (p, range, fan, prior_kv) in [
+            ("p", "0", "", no_sequence("prior_kv")),
+            (
+                "p",
+                "{j}",
+                "index = \"j\"\nstart = 1\ncount = 0\n",
+                prior_of_later_prompt_ranges,
+            ),
+            (
+                "c",
+                "{k}",
+                "index = \"k\"\ncount = 0\n",
+                prior_of_claimed_ranges,
+            ),
         ] {
             text.push_str(&format!(
                 "\n  [[chain.repeat.stage]]\n\
-                 name = \"range_{p}{{{r}}}_l{{l}}\"\n\
-                 index = \"{r}\"\n\
-                 count = 0\n\
+                 name = \"range_{p}{range}_l{{l}}\"\n\
+                 {fan}\
                  project = \"raster-stages/prefill-range\"\n\
-                 inputs.activations = {{ from = \"range_{p}{{{r}}}_l{{l-1}}\", first = \"{}\" }}\n\
-                 inputs.prior_kv = {{ from = \"range_{p}{{{r}-1}}_l{{l}}\", first = \"{first_kv}\" }}\n\
-                 inputs.donor_a_kv = {{ from = \"{}\" }}\n\
-                 inputs.donor_b_kv = {{ from = \"{}\" }}\n\
-                 inputs.ple = {{ from = \"aux_{p}{{{r}}}_l{{l}}\" }}\n\
+                 inputs.activations = {{ from = \"range_{p}{range}_l{{l-1}}\", first = \"{}\" }}\n\
+                 {prior_kv}\
+                 {}\
+                 {}\
+                 inputs.ple = {{ from = \"aux_{p}{range}_l{{l}}\" }}\n\
                  inputs.layer = {{ input = \"transformer_layer_{{l}}\" }}\n",
-                first_rows(p, r),
-                donor(donors.first(), p, r),
-                donor(donors.get(1), p, r),
+                first_rows(p, range),
+                donor("donor_a_kv", donors.first(), p, range),
+                donor("donor_b_kv", donors.get(1), p, range),
             ));
         }
         text
@@ -777,8 +858,8 @@ fn chain_template(
             "layers",
             0,
             first_shared,
-            &|p, r| format!("embed_{p}{{{r}}}"),
-            &|_, _, _| String::from("range_origin"),
+            &|p, range| format!("embed_{p}{range}"),
+            &|param, _, _, _| no_sequence(param),
         ));
     }
     if shape.num_kv_shared_layers > 0 {
@@ -787,31 +868,62 @@ fn chain_template(
             "shared_layers",
             first_shared,
             shape.num_kv_shared_layers,
-            &|p, r| format!("range_{p}{{{r}}}_l{last_own}"),
-            &|donor, p, r| {
-                donor
-                    .map(|layer| format!("range_{p}{{{r}}}_l{layer}"))
-                    .unwrap_or_else(|| String::from("range_origin"))
+            &|p, range| format!("range_{p}{range}_l{last_own}"),
+            &|param, donor, p, range| match donor {
+                Some(layer) => {
+                    format!("inputs.{param} = {{ from = \"range_{p}{range}_l{layer}\" }}\n")
+                }
+                None => no_sequence(param),
             },
         ));
     }
 
-    out.push_str("\n[[chain.repeat]]\nname = \"claimed\"\nindex = \"k\"\ncount = 0\n");
+    // Each claimed range's check continues the verdict of the one before. The
+    // first has none before it and takes the empty edge.
+    let head_line = external_line(
+        "head",
+        layout,
+        "raster-stages/sequence-check",
+        "head",
+        &head,
+    );
+    let check_stage = |header: &str, k: &str, previous: String, prior: String| -> String {
+        format!(
+            "\n{header}\n\
+             name = \"check_c{k}\"\n\
+             project = \"raster-stages/sequence-check\"\n\
+             inputs.activations = {{ from = \"range_c{k}_l{last_layer}\" }}\n\
+             {previous}\
+             {prior}\
+             inputs.prompt = {{ from = \"prompt_check_p{LAST_PROMPT_RANGE}\" }}\n\
+             {head_line}"
+        )
+    };
+    out.push_str(&check_stage(
+        "[[chain.stage]]",
+        "0",
+        format!("inputs.previous = {{ from = \"range_p{LAST_PROMPT_RANGE}_l{last_layer}\" }}\n"),
+        external_line(
+            "prior",
+            layout,
+            "raster-stages/sequence-check",
+            "empty_edge",
+            &empty_edge,
+        ),
+    ));
+    out.push_str("\n[[chain.repeat]]\nname = \"claimed\"\nindex = \"k\"\nstart = 1\ncount = 0\n");
     out.push_str(
         "\n  [chain.repeat.exports.edge]\n\
          stage = \"check_c{k}\"\n\
-         entry = \"decode_init\"\n",
+         entry = \"check_c0\"\n",
     );
-    out.push_str(&format!(
-        "\n  [[chain.repeat.stage]]\n\
-         name = \"check_c{{k}}\"\n\
-         project = \"raster-stages/sequence-check\"\n\
-         inputs.activations = {{ from = \"range_c{{k}}_l{last_layer}\" }}\n\
-         inputs.previous = {{ from = \"range_c{{k-1}}_l{last_layer}\", first = \"range_p{LAST_PROMPT_RANGE}_l{last_layer}\" }}\n\
-         inputs.prior = {{ from = \"check_c{{k-1}}\", first = \"decode_init\" }}\n\
-         inputs.prompt = {{ from = \"prompt_check_p{LAST_PROMPT_RANGE}\" }}\n\
-         {}",
-        external_line("head", layout, "raster-stages/sequence-check", "head", &head),
+    out.push_str(&check_stage(
+        "  [[chain.repeat.stage]]",
+        "{k}",
+        format!(
+            "inputs.previous = {{ from = \"range_c{{k-1}}_l{last_layer}\", first = \"range_c0_l{last_layer}\" }}\n"
+        ),
+        String::from("inputs.prior = { from = \"check_c{k-1}\", first = \"check_c0\" }\n"),
     ));
     out.push_str(&format!(
         "\n[[chain.stage]]\n\
@@ -1203,7 +1315,8 @@ mod tests {
                 descriptor_bytes,
                 model.descriptor().unwrap().encode().unwrap()
             );
-            assert_eq!(descriptor_bytes.len(), 200); // Four global and two layer roots.
+            // Version and two counts, then four global and two layer roots.
+            assert_eq!(descriptor_bytes.len(), 12 + 6 * 32);
 
             assert_eq!(
                 model.verified_raster_template(&model_path).unwrap().1,

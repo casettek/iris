@@ -30,6 +30,8 @@ fn check<T: serde::Serialize>(
         })
         .unwrap_or(false)
 }
+/// Whether the bucket `text` hashes to is the one the witness commits to.
+#[cfg(test)]
 fn vocab(t: &PromptTokenizer, w: &TokenizerWitness, text: &str) -> bool {
     if t.vocab_bucket_count == 0 {
         return false;
@@ -59,26 +61,6 @@ pub(crate) fn vocab_bucket(t: &PromptTokenizer, w: &TokenizerWitness, index: u32
         &w.vocab_paths,
         index,
     )
-}
-pub(crate) fn bind(
-    t: &PromptTokenizer,
-    w: &TokenizerWitness,
-    text: &PromptText,
-    config: &RunConfig,
-) -> bool {
-    let fold = text
-        .chunks
-        .iter()
-        .fold(begin_text_fold_state(), |f, c| fold_text(f, c));
-    let plan = scan_plan_of(&fold, config, &t.profile);
-    let mut scan = begin_scan_state(&plan);
-    let mut valid = true;
-    for chunk in text.chunks.iter() {
-        scan = scan_chunk_into(scan, chunk, &plan, &t.profile, &mut |atom| {
-            valid &= vocab(t, w, &atom.text);
-        });
-    }
-    valid
 }
 #[cfg(test)]
 mod tests {

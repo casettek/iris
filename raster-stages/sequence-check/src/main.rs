@@ -105,19 +105,23 @@ fn main(
 
     let previous_rows = select!(List<ActivationRow>, previous.rows);
     let tail_seed = call!(begin_previous_tail);
+    // 64 rows a call: a row is `hidden_size · 4` bytes, and reading 256 of
+    // them at width 2560 was the heaviest tile call in the chain.
     let tail = call_recur!(
         tile = keep_last_row,
         input = previous_rows,
-        chunk = 256,
+        chunk = 64,
         state = tail_seed,
         args = ()
     );
     let opened = call!(begin_predicting_rows, tail);
     let range_rows = select!(List<ActivationRow>, activations.clone().rows);
+    // 16 rows a call: a row copied into the output costs about five times a
+    // row read.
     let predicting = call_recur!(
         tile = append_predicting_rows,
         input = range_rows.clone(),
-        chunk = 64,
+        chunk = 16,
         output = opened,
         args = ()
     );

@@ -37,7 +37,7 @@ fn decoder_substitution_is_rejected_by_guest_execution() {
     };
     let root = raster::core::tree::value_root(&table).unwrap();
     let descriptor = ModelDescriptor {
-        version: 1,
+        version: 2,
         tokenizer: [1; 32],
         decoder: root,
         embedding: [2; 32],
@@ -108,7 +108,7 @@ fn decoder_substitution_is_rejected_by_guest_execution() {
 #[ignore = "builds and executes RISC Zero guests for all component roles"]
 fn component_roles_and_sticky_context_are_enforced_in_guests() {
     let d = ModelDescriptor {
-        version: 1,
+        version: 2,
         tokenizer: [1; 32],
         decoder: [2; 32],
         embedding: [3; 32],
@@ -302,7 +302,7 @@ fn page_bytes_and_final_context_are_checked_in_guests() {
         .build_tile_runner(&discovery.get("verify_final_model_context").unwrap())
         .unwrap();
     let d = ModelDescriptor {
-        version: 1,
+        version: 2,
         tokenizer: [1; 32],
         decoder: [2; 32],
         embedding: [3; 32],
@@ -354,7 +354,7 @@ fn page_bytes_and_final_context_are_checked_in_guests() {
 }
 
 #[test]
-#[ignore = "executes sparse membership checks in the four production Raster guests"]
+#[ignore = "executes sparse membership checks in three production Raster guests"]
 fn sparse_membership_is_checked_by_production_guests() {
     use model_identity::{sparse, stream, ModelContext};
     let values = vec![
@@ -363,12 +363,9 @@ fn sparse_membership_is_checked_by_production_guests() {
         page(vec![3; 1024]),
     ];
     let witness = sparse::witness(&values).unwrap();
-    for stage in [
-        "input-embedding",
-        "prefill-prepare-aux",
-        "prompt-bind",
-        "prompt-check",
-    ] {
+    // `prompt-bind` checks a bucket in the tile that walks it, with the same
+    // function; the parity gate's substituted-tokenizer case runs that guest.
+    for stage in ["input-embedding", "prefill-prepare-aux", "prompt-check"] {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../../raster-stages")
             .join(stage)
@@ -488,7 +485,7 @@ fn prompt_statement_substitution_is_rejected_in_guest() {
         .build_tile_runner(&discovery.get("join_prompt_contexts").unwrap())
         .unwrap();
     let descriptor = ModelDescriptor {
-        version: 1,
+        version: 2,
         tokenizer: [1; 32],
         decoder: [2; 32],
         embedding: [3; 32],
@@ -536,9 +533,12 @@ fn prompt_statement_substitution_is_rejected_in_guest() {
 
 #[test]
 #[ignore = "builds and executes the production prompt-bind guest"]
-fn stage_schedule_is_checked_and_stored_in_guest() {
-    use model_identity::pipeline_core::MAX_RANGES;
-    use output_finalize::prompt::{bind_run_schedule, PromptContext, RunSchedule};
+fn a_bind_opens_and_continues_in_guest_as_it_does_natively() {
+    use model_identity::pipeline_core::{Step, MAX_RANGES};
+    use output_finalize::prompt::{
+        open_bind_range, text_claim_of, BindCarry, BindOpen, PromptContext, RunConfig, RunSchedule,
+        TokenizerProfile,
+    };
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../../raster-stages/prompt-bind")
         .canonicalize()
@@ -551,10 +551,10 @@ fn stage_schedule_is_checked_and_stored_in_guest() {
     );
     let discovery = TileDiscovery::new(&project);
     let runner = Builder::new(&project, &backend)
-        .build_tile_runner(&discovery.get("bind_schedule").unwrap())
+        .build_tile_runner(&discovery.get("open_bind").unwrap())
         .unwrap();
     let descriptor = ModelDescriptor {
-        version: 1,
+        version: 2,
         tokenizer: [1; 32],
         decoder: [2; 32],
         embedding: [3; 32],
@@ -563,15 +563,49 @@ fn stage_schedule_is_checked_and_stored_in_guest() {
         transformer: vec![[6; 32]],
     };
     let model_id = hex::encode(descriptor.model_id().unwrap());
-    let mut model = model_identity::ModelContext::bind(&descriptor.encode().unwrap(), &model_id);
-    model.bind_statement(&"11".repeat(32), false, 8, 4);
-    let bound = PromptContext {
-        input_text_sha256: "11".repeat(32),
-        model,
+    let descriptor = page(descriptor.encode().unwrap());
+    let root = page(vec![1; 32]);
+    let config = RunConfig {
         model_id,
+        raw_prompt: false,
         max_new_tokens: 8,
         range_size: 4,
+    };
+    let profile = TokenizerProfile {
+        template_prefix: String::from("<s>"),
         ..Default::default()
+    };
+    let claim = text_claim_of(&Default::default(), false, &profile);
+    let open = |previous: &PromptContext, carry: &BindCarry, schedule: &RunSchedule| {
+        let expected = open_bind_range(
+            previous,
+            carry,
+            &config,
+            descriptor.as_slice(),
+            schedule,
+            &claim,
+            &root,
+            &profile,
+        );
+        let execution = runner
+            .run(
+                &postcard::to_allocvec(&(
+                    previous,
+                    carry,
+                    &config,
+                    &descriptor,
+                    schedule,
+                    &claim,
+                    &root,
+                    &profile,
+                ))
+                .unwrap(),
+                ExecutionMode::Estimate,
+            )
+            .unwrap();
+        let actual: BindOpen = postcard::from_bytes(&execution.output).unwrap();
+        assert_eq!(actual, expected);
+        actual
     };
     // Eight tokens in ranges of four allow two claimed ranges.
     let honest = RunSchedule {
@@ -591,28 +625,39 @@ fn stage_schedule_is_checked_and_stored_in_guest() {
         ..honest.clone()
     };
     for (schedule, faulted) in [
-        (honest, false),
-        (over_budget, true),
-        (no_ranges, true),
-        (past_limit, true),
+        (&honest, false),
+        (&over_budget, true),
+        (&no_ranges, true),
+        (&past_limit, true),
     ] {
-        let expected = bind_run_schedule(bound.clone(), &schedule);
-        let execution = runner
-            .run(
-                &postcard::to_allocvec(&(&bound, &schedule)).unwrap(),
-                ExecutionMode::Estimate,
-            )
-            .unwrap();
-        let actual: PromptContext = postcard::from_bytes(&execution.output).unwrap();
-        assert_eq!(actual, expected);
-        assert_eq!(actual.model.execution_fault != 0, faulted);
+        // The first range binds the statement and the schedule, and starts
+        // the scan with the template's prefix pending.
+        let first = open(&PromptContext::default(), &BindCarry::default(), schedule);
+        assert_eq!(first.context.model.execution_fault != 0, faulted);
+        assert_eq!(first.carry.text.scan.pending, "<s>");
         // The stage finishes and keeps the schedule it was given either way.
-        let stored = actual.model.execution_context().unwrap().schedule;
+        let execution = first.context.model.execution_context().unwrap();
         assert_eq!(
-            (stored.prompt_ranges, stored.claimed_ranges),
+            (
+                execution.schedule.prompt_ranges,
+                execution.schedule.claimed_ranges
+            ),
             (schedule.prompt_ranges, schedule.claimed_ranges)
         );
+        assert_eq!(execution.step, Step::bind(0));
     }
+    // A later range continues the one before and reads the run's inputs no
+    // more: another schedule changes nothing. A third range is past this
+    // schedule's two.
+    let first = open(&PromptContext::default(), &BindCarry::default(), &honest);
+    let second = open(&first.context, &first.carry, &over_budget);
+    assert_eq!(second.context.model.fault, 0);
+    assert_eq!(second.carry, first.carry);
+    let execution = second.context.model.execution_context().unwrap();
+    assert_eq!(execution.step, Step::bind(1));
+    assert_eq!(execution.schedule.claimed_ranges, 2);
+    let third = open(&second.context, &second.carry, &honest);
+    assert_ne!(third.context.model.execution_fault, 0);
 }
 
 fn execution_fixture() -> (
@@ -622,7 +667,7 @@ fn execution_fixture() -> (
 ) {
     use model_identity::ModelContext;
     let d = ModelDescriptor {
-        version: 1,
+        version: 2,
         tokenizer: [1; 32],
         decoder: [2; 32],
         embedding: [3; 32],

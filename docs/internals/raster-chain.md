@@ -29,8 +29,7 @@ The chain verifies a *known* output with one pass over `prompt ‖ claimed_outpu
 
 | Program | Stages | Work |
 | --- | --- | --- |
-| `range-origin`, `decode-init` | `range_origin`, `decode_init` | The empty sequence and the empty edge the first range starts from |
-| `prompt-bind` | `prompt_bind` | Hash the original text and split it into pieces |
+| `prompt-bind` | `prompt_bind_p{j}` | Hash a range's slice of the original text and split it into pieces |
 | `prompt-check` | `prompt_check_p{j}` | Check a range's claimed tokens against the merge and publish their ids |
 | `input-embedding` | `embed_p{j}`, `embed_c{k}` | Gather embedding rows |
 | `prefill-prepare-aux` | `aux_p{j}_l{l}`, `aux_c{k}_l{l}` | Per-layer PLE inputs |
@@ -42,13 +41,23 @@ Autoregressive generation is not a chain. It lives in `direct-infer`, which disc
 
 ## Ranges
 
-`prompt_bind` runs once, before any range. It takes the original UTF-8 prompt,
-the run's configuration and its stage schedule as committed inputs, folds SHA-256
-over the text in chunks of at most 256 bytes, renders it through the chat template
-unless the run is raw, and splits it into pieces. It checks the schedule and stores
-it in the context (see [Stage schedule](#stage-schedule)). Its output is every piece
-of the prompt and a `PromptContext` holding the text's hash, the model id and the
-configuration.
+Run preparation cuts the original UTF-8 prompt into one slice per prompt range, and
+`prompt_bind_p{j}` binds slice `j`. It folds SHA-256 over the slice in chunks of at
+most 256 bytes, renders it through the tokenizer's chat template unless the run is
+raw, and splits it into pieces, each of the three continuing from where the bind of
+the range before stopped. So the pieces of all the ranges, in order, are the pieces
+of the whole text, wherever it was cut. A bind publishes its slice's pieces, a
+`PromptContext`, and what the next bind continues from: the hash's state, the scan's
+position with any text it is holding back, and the split's position.
+
+The first range's bind also takes the run's configuration, its stage schedule and a
+*text claim* as committed inputs. It binds the statement, and checks the schedule
+and stores it in the context (see [Stage schedule](#stage-schedule)). The text claim
+is what the first range needs and only the last can know: the whole text's SHA-256,
+its length, and the first and last bytes the template's trim keeps. Every range
+scans with the claimed values, and the range the text ends in compares them with
+what it folded. A text that is not what was claimed, and text given after the text
+has ended, are faults.
 Every prompt stage publishes `PromptState`, so the context travels with the
 pieces, and the last range's `prompt_check` holds the record for the whole
 prompt.
@@ -75,9 +84,11 @@ vocabulary entry is 31 characters.
 
 Each prompt range `p{j}`:
 
-1. `prompt_check_p{j}`: takes `prompt_bind`'s pieces, the previous range's output
-   and this range's marks. It copies as many pieces as there are marks, starting
-   where the previous range ended, numbers their tokens from the marks, and
+1. `prompt_bind_p{j}`: binds the range's slice of the text, as above.
+2. `prompt_check_p{j}`: takes this range's bind, the previous range's check and
+   this range's marks. Its pieces are the ones the previous check was given and
+   did not take, then its own bind's. It copies as many as there are marks,
+   passes on the rest, numbers their tokens from the marks, and
    checks every neighbouring pair of tokens as described below. It then looks
    each token up in the vocabulary and publishes the ids, and beside them the
    pieces of the range's last token for the next range to pair its first token
@@ -85,7 +96,7 @@ Each prompt range `p{j}`:
    cannot be substituted, omitted or duplicated without the text's pieces saying
    so.
 3. `embed_p{j}`: `input-embedding` over the range's ids, starting where the
-   previous range's embedding ended (`range_origin` for the first).
+   previous range's embedding ended (the empty sequence for the first).
 4. `aux_p{j}_l{l}`, `range_p{j}_l{l}`: the `prefill-prepare-aux` and
    `prefill-range` programs. A layer's range takes its rows from the layer below
    and its inherited K/V cache from its own previous range. Sliding-window layers
@@ -143,9 +154,23 @@ computes none of it.
 The repeat counts, the last prompt range's index, the text, configuration and
 stage schedule, and the per-range externals (`marks_{j}`, `claimed_{k}`) are filled in by run preparation
 into the frozen run
-manifest. `range-origin` is the empty sequence at position 0 that the first
-range of each binding starts from, because a repeat's `first` fallback must name a
-stage.
+manifest.
+
+### What the first range starts from
+
+Range 0 has nothing before it. Where a later range's stage takes the range before,
+range 0's takes an empty value: the empty sequence at position 0 (`embed_p0`'s
+previous range, each layer's inherited K/V cache, and the donor caches of layers
+that share none), the empty prompt state (`prompt_bind_p0` and `prompt_check_p0`),
+and the empty decode edge (`check_c0`'s verdict so far). The import writes the three
+as committed constants beside the model's other externals, and the stage that reads
+one checks that it is empty. No stage produces them.
+
+A repeat's `first` fallback can only name a stage. So the template writes range 0's
+stages out as plain stages bound to the constants, and each repeat over ranges starts
+at 1 with the range 0 stage as its `first`: `prompt_bind_p0`, `prompt_check_p0`,
+`embed_p0`, `range_p0_l{l}` in every layer block, and `check_c0`. The chain's first
+stage is `prompt_bind_p0`.
 
 ## Soundness
 
@@ -181,8 +206,9 @@ caught one of three ways:
   non-zero verdict, so the claim refutes itself in its own final record.
   `challenge build` reports this as a rejected claimed output.
 
-The prompt side is inside the chain. The text, the configuration and the model
-id are committed inputs of `prompt_bind`, and the last range's `prompt_check`
+The prompt side is inside the chain. The text is the committed input of the bind
+stages, range by range, and the configuration, the model id and the text claim are
+committed inputs of the first. The last range's `prompt_check`
 context says what happened to them: the text's SHA-256, the model id, and whether
 every piece was prepared without a fault.
 
@@ -261,24 +287,23 @@ model/execution fault makes the final claim invalid even if native and Raster
 honestly execute the same malicious wiring. `test-parity` exercises that case
 as well as divergence from the honest template; production RISC Zero tests in
 `model_identity_guest.rs` cover the corresponding guest checks. Model imports
-and prepared runs use version 10; older boundary encodings must be regenerated.
+and prepared runs use version 11; older boundary encodings must be regenerated.
 
 ### Stage schedule
 
 The stage schedule is which stages a run executes and in what order. It is two
-counts, chosen by run preparation and committed as the `schedule` input of
-`prompt_bind`: the prompt ranges `P` and the claimed ranges `C`. With the model's
+counts, chosen by run preparation and committed as the `schedule` input of the
+first range's `prompt_bind`: the prompt ranges `P` and the claimed ranges `C`. With the model's
 layer count `L` they fix every stage:
 
-1. `prompt_bind`
-2. for each prompt range `j`: `prompt_check_p{j}`, then `embed_p{j}`
+1. for each prompt range `j`: `prompt_bind_p{j}`, `prompt_check_p{j}`, then `embed_p{j}`
 3. for each claimed range `k`: `embed_c{k}`
 4. for each layer: the auxiliary stage of every range, then the transformer
    stage of every range
 5. for each claimed range `k`: `check_c{k}`
 6. `output_finalize`
 
-`prompt_bind` checks that each count is at least one and within its limit, and
+The first range's `prompt_bind` checks that each count is at least one and within its limit, and
 that `C` fits the token budget at this range size. It stores the schedule in the
 `Execution` record beside the statement, so it reaches every later stage through
 the inputs they already take. A schedule that fails is kept with the execution
@@ -293,11 +318,12 @@ puts before it, under the same statement and schedule. The rules are in
 
 | Stage | Its step must be | Its inputs must carry |
 | --- | --- | --- |
-| `prompt_check_p{j}` | range `j < P` | `prompt_check` of range `j-1`, or `prompt_bind` when `j = 0`; and `prompt_bind`. The prompt is complete exactly when `j = P-1`. |
-| `embed_p{j}` | range `j` | `prompt_check` of range `j`, and `embed_p{j-1}` or the origin |
+| `prompt_bind_p{j}` | range `j < P` | `prompt_bind` of range `j-1`, or nothing when `j = 0` |
+| `prompt_check_p{j}` | range `j < P` | `prompt_bind` of range `j`; and `prompt_check` of range `j-1`, or nothing when `j = 0`. The prompt is complete exactly when `j = P-1`. |
+| `embed_p{j}` | range `j` | `prompt_check` of range `j`, and `embed_p{j-1}` or the empty sequence |
 | `embed_c{k}` | range `k < C` | `embed_c{k-1}`, or `embed_p{P-1}` when `k = 0` |
 | `aux_*_l{l}` | layer `l < L` of its range | that range's embedding |
-| `range_*_l{l}` | layer `l < L` of its range | layer `l-1` of the range (or its embedding), layer `l` of the range before (or the origin), the range's auxiliary stage for layer `l`, and the donor layer of the same range |
+| `range_*_l{l}` | layer `l < L` of its range | layer `l-1` of the range (or its embedding), layer `l` of the range before (or the empty sequence), the range's auxiliary stage for layer `l`, and the donor layer of the same range |
 | `check_c{k}` | claimed range `k` | layer `L-1` of range `k` and of the range before, `check_c{k-1}` or the empty edge, and `prompt_check` of range `P-1` |
 | `output_finalize` | last | `check_c{C-1}` and `prompt_check` of range `P-1` |
 

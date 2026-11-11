@@ -8,7 +8,7 @@ use raster_core::input::{Hash32, SelectionProof, SelectorPath};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-pub const DESCRIPTOR_VERSION: u32 = 1;
+pub const DESCRIPTOR_VERSION: u32 = 2;
 pub const MAX_LAYERS: usize = 1024;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -18,6 +18,7 @@ pub struct ModelDescriptor {
     pub decoder: Hash32,
     pub embedding: Hash32,
     pub head: Hash32,
+    /// One per layer, or none for a model whose layers take no per-layer input.
     pub auxiliary: Vec<Hash32>,
     pub transformer: Vec<Hash32>,
 }
@@ -52,7 +53,7 @@ impl ModelDescriptor {
         }
         if self.transformer.is_empty()
             || self.transformer.len() > MAX_LAYERS
-            || self.auxiliary.len() != self.transformer.len()
+            || !(self.auxiliary.is_empty() || self.auxiliary.len() == self.transformer.len())
         {
             return Err(ModelFault::LayerCount);
         }
@@ -176,7 +177,7 @@ mod tests {
 
     fn descriptor(root: Hash32) -> ModelDescriptor {
         ModelDescriptor {
-            version: 1,
+            version: 2,
             tokenizer: root,
             decoder: [2; 32],
             embedding: [3; 32],
@@ -226,8 +227,23 @@ mod tests {
         changed.transformer[0][0] ^= 1;
         assert_ne!(changed.model_id().unwrap(), id);
         changed = d.clone();
-        changed.auxiliary.clear();
+        changed.auxiliary.push([9; 32]);
         assert_eq!(changed.model_id(), Err(ModelFault::LayerCount));
+        // A model with no per-layer inputs is another model, and has no
+        // auxiliary root to give.
+        changed = d.clone();
+        changed.auxiliary.clear();
+        let bare = changed.model_id().unwrap();
+        assert_ne!(bare, id);
+        assert_eq!(
+            changed.bind(&bare).unwrap().root(Role::Auxiliary(0)),
+            Err(ModelFault::LayerIndex)
+        );
+        assert!(changed
+            .bind(&bare)
+            .unwrap()
+            .root(Role::Transformer(0))
+            .is_ok());
         changed = d.clone();
         changed.version += 1;
         assert_eq!(changed.model_id(), Err(ModelFault::DescriptorVersion));
@@ -255,10 +271,14 @@ mod tests {
 }
 
 impl ModelDescriptor {
-    /// Fixed-width wire format: version, layer count, then role-ordered roots.
+    /// Version, layer count and auxiliary count.
+    const HEADER: usize = 12;
+
+    /// Fixed-width wire format: version, layer count, auxiliary count, then
+    /// role-ordered roots. The auxiliary count is the layer count or zero.
     /// Length is checked before any allocation, including on hostile inputs.
     pub fn decode(bytes: &[u8]) -> Result<Self, ModelFault> {
-        if bytes.len() < 8 {
+        if bytes.len() < Self::HEADER {
             return Err(ModelFault::ValueEncoding);
         }
         let version = u32::from_le_bytes(bytes[..4].try_into().unwrap());
@@ -266,13 +286,14 @@ impl ModelDescriptor {
             return Err(ModelFault::DescriptorVersion);
         }
         let layers = u32::from_le_bytes(bytes[4..8].try_into().unwrap()) as usize;
-        if layers == 0 || layers > MAX_LAYERS {
+        let auxiliary = u32::from_le_bytes(bytes[8..12].try_into().unwrap()) as usize;
+        if layers == 0 || layers > MAX_LAYERS || !(auxiliary == 0 || auxiliary == layers) {
             return Err(ModelFault::LayerCount);
         }
-        if bytes.len() != 8 + (4 + 2 * layers) * 32 {
+        if bytes.len() != Self::HEADER + (4 + auxiliary + layers) * 32 {
             return Err(ModelFault::ValueEncoding);
         }
-        let mut roots = bytes[8..].chunks_exact(32).map(|b| {
+        let mut roots = bytes[Self::HEADER..].chunks_exact(32).map(|b| {
             let mut root = [0; 32];
             root.copy_from_slice(b);
             root
@@ -283,16 +304,18 @@ impl ModelDescriptor {
             decoder: roots.next().unwrap(),
             embedding: roots.next().unwrap(),
             head: roots.next().unwrap(),
-            auxiliary: roots.by_ref().take(layers).collect(),
+            auxiliary: roots.by_ref().take(auxiliary).collect(),
             transformer: roots.collect(),
         })
     }
 
     pub fn encode(&self) -> Result<Vec<u8>, ModelFault> {
         self.validate()?;
-        let mut bytes = Vec::with_capacity(8 + (4 + 2 * self.transformer.len()) * 32);
+        let roots = 4 + self.auxiliary.len() + self.transformer.len();
+        let mut bytes = Vec::with_capacity(Self::HEADER + roots * 32);
         bytes.extend_from_slice(&self.version.to_le_bytes());
         bytes.extend_from_slice(&(self.transformer.len() as u32).to_le_bytes());
+        bytes.extend_from_slice(&(self.auxiliary.len() as u32).to_le_bytes());
         for root in [&self.tokenizer, &self.decoder, &self.embedding, &self.head]
             .into_iter()
             .chain(self.auxiliary.iter())
@@ -311,7 +334,7 @@ mod wire_tests {
     #[test]
     fn exact_length_and_layer_bound_are_checked_before_allocation() {
         let d = ModelDescriptor {
-            version: 1,
+            version: 2,
             tokenizer: [1; 32],
             decoder: [2; 32],
             embedding: [3; 32],
@@ -320,7 +343,7 @@ mod wire_tests {
             transformer: vec![[6; 32]; 35],
         };
         let encoded = d.encode().unwrap();
-        assert_eq!(encoded.len(), 2376);
+        assert_eq!(encoded.len(), 12 + (4 + 35 + 35) * 32);
         assert_eq!(ModelDescriptor::decode(&encoded).unwrap(), d);
         for end in 0..encoded.len() {
             assert!(ModelDescriptor::decode(&encoded[..end]).is_err());
@@ -331,9 +354,32 @@ mod wire_tests {
             ModelDescriptor::decode(&extra),
             Err(ModelFault::ValueEncoding)
         );
-        let mut huge = encoded;
+        let mut huge = encoded.clone();
         huge[4..8].copy_from_slice(&u32::MAX.to_le_bytes());
         assert_eq!(ModelDescriptor::decode(&huge), Err(ModelFault::LayerCount));
+        // The auxiliary count is the layer count or zero, and the length follows it.
+        for count in [1_u32, 34, 36, u32::MAX] {
+            let mut partial = encoded.clone();
+            partial[8..12].copy_from_slice(&count.to_le_bytes());
+            assert_eq!(
+                ModelDescriptor::decode(&partial),
+                Err(ModelFault::LayerCount)
+            );
+        }
+        let mut none = encoded.clone();
+        none[8..12].copy_from_slice(&0_u32.to_le_bytes());
+        assert_eq!(
+            ModelDescriptor::decode(&none),
+            Err(ModelFault::ValueEncoding)
+        );
+        let bare = ModelDescriptor {
+            auxiliary: vec![],
+            ..d.clone()
+        };
+        let encoded = bare.encode().unwrap();
+        assert_eq!(encoded.len(), 12 + (4 + 35) * 32);
+        assert_eq!(ModelDescriptor::decode(&encoded).unwrap(), bare);
+        assert_ne!(bare.model_id().unwrap(), d.model_id().unwrap());
     }
 }
 
@@ -386,7 +432,7 @@ mod position_tests {
         let values = vec![7u32, 9u32];
         let root = raster_core::tree::value_root(&values).unwrap();
         let d = ModelDescriptor {
-            version: 1,
+            version: 2,
             tokenizer: root,
             decoder: root,
             embedding: root,
