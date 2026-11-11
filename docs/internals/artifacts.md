@@ -6,6 +6,7 @@ The stable contract types and filenames live in `crates/inference/artifacts`.
 
 `runtime/model-artifacts/<model-id>/manifest.json` records reusable model setup:
 
+- `family`, the [model family](model-families.md) it is run as. A manifest without the field is `gemma-dense`, and one naming a family this build does not have is refused when it is loaded.
 - The model's commitments by role and `model_id`, their hash.
 - `range_size`, the largest range a run cuts its prompt or output into.
 - Model, config, and tokenizer paths plus SHA-256 hashes.

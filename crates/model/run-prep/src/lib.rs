@@ -875,6 +875,9 @@ mod tests {
     fn model_manifest() -> ModelManifest {
         ModelManifest {
             version: inference_artifacts::MODEL_MANIFEST_VERSION,
+            family: inference_artifacts::ModelFamily::GemmaDense
+                .name()
+                .to_string(),
             model_id: inference_artifacts::model_id_of(&[]),
             model_commitments: Vec::new(),
             range_size: 512,

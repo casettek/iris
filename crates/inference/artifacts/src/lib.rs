@@ -26,8 +26,8 @@ pub use claim::{
 };
 pub use direct::{
     file_sha256, model_id_of, verify_file_sha256, DirectInferBundle, DirectInferProvenance,
-    DirectInferShape, ModelCommitment, ModelManifest, MODEL_ARTIFACTS_DIR, MODEL_MANIFEST_JSON,
-    MODEL_MANIFEST_VERSION,
+    DirectInferShape, ModelCommitment, ModelFamily, ModelManifest, MODEL_ARTIFACTS_DIR,
+    MODEL_MANIFEST_JSON, MODEL_MANIFEST_VERSION,
 };
 pub use inference::{
     InferAuxWaveTiming, InferStageTiming, InferenceResult, InferenceRunReport, InferenceTimings,
@@ -310,7 +310,23 @@ mod tests {
         });
         let path = dir.join("manifest.json");
         write_json(&path, &value).unwrap();
-        ModelManifest::load_verified(&path).unwrap();
+        // A manifest written before families were recorded is the first family's.
+        let loaded = ModelManifest::load_verified(&path).unwrap();
+        assert_eq!(loaded.family().unwrap(), ModelFamily::GemmaDense);
+        assert_eq!(
+            serde_json::to_value(&loaded).unwrap()["family"],
+            serde_json::json!("gemma-dense")
+        );
+        // One this build has no layer for is refused before anything runs.
+        value["family"] = serde_json::json!("qwen");
+        write_json(&path, &value).unwrap();
+        let error = ModelManifest::load_verified(&path).unwrap_err().to_string();
+        assert!(
+            error.contains("model family `qwen` is not supported"),
+            "{error}"
+        );
+        assert!(error.contains("gemma-dense"), "{error}");
+        value["family"] = serde_json::json!("gemma-dense");
         value["model_commitments"][0]["commitment"] = serde_json::json!("other");
         write_json(&path, &value).unwrap();
         assert!(ModelManifest::load_verified(&path)
@@ -324,6 +340,7 @@ mod tests {
     fn model_manifest_round_trips_without_run_prompt() {
         let manifest = ModelManifest {
             version: MODEL_MANIFEST_VERSION,
+            family: ModelFamily::GemmaDense.name().to_string(),
             model_id: model_id_of(&[]),
             model_commitments: Vec::new(),
             range_size: 512,

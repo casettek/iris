@@ -412,6 +412,9 @@ fn direct_executor_runs_from_direct_manifest_without_raster_toml() {
         &manifest_path,
         &ModelManifest {
             version: inference_artifacts::MODEL_MANIFEST_VERSION,
+            family: inference_artifacts::ModelFamily::GemmaDense
+                .name()
+                .to_string(),
             model_id: inference_artifacts::model_id_of(&[]),
             model_commitments: Vec::new(),
             range_size: 512,
@@ -675,6 +678,9 @@ fn write_tiny_model_detwgt(path: &Path) {
 fn tiny_direct_manifest(detwgt: &Path, config: &Path, tokenizer: &Path) -> ModelManifest {
     ModelManifest {
         version: inference_artifacts::MODEL_MANIFEST_VERSION,
+        family: inference_artifacts::ModelFamily::GemmaDense
+            .name()
+            .to_string(),
         model_id: inference_artifacts::model_id_of(&[]),
         model_commitments: Vec::new(),
         range_size: 512,

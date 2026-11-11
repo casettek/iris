@@ -5,17 +5,17 @@ use std::path::{Path, PathBuf};
 
 use inference_artifacts::{
     model_id_of, write_json, DirectInferBundle, DirectInferProvenance, DirectInferShape,
-    ModelCommitment, ModelManifest, MODEL_MANIFEST_JSON, MODEL_MANIFEST_VERSION,
+    ModelCommitment, ModelFamily, ModelManifest, MODEL_MANIFEST_JSON, MODEL_MANIFEST_VERSION,
 };
 use sha2::{Digest, Sha256};
 
-use super::{det_act_bits, f32_to_q16, ImportConfig, Shape};
+use super::ImportConfig;
 
 pub fn write_model_manifest(
     args: &ImportConfig,
     eos_ids: &BTreeSet<u32>,
-    shape: &Shape,
-    text_config: &serde_json::Value,
+    family: ModelFamily,
+    shape: DirectInferShape,
     raster_manifest: Option<(&Path, &str)>,
     model_commitments: &[ModelCommitment],
 ) -> Result<PathBuf, Box<dyn Error>> {
@@ -34,6 +34,7 @@ pub fn write_model_manifest(
 
     let direct = ModelManifest {
         version: MODEL_MANIFEST_VERSION,
+        family: family.name().to_string(),
         model_id: model_id_of(model_commitments),
         model_commitments: model_commitments.to_vec(),
         range_size: args.range_size,
@@ -45,32 +46,7 @@ pub fn write_model_manifest(
             tokenizer_path: manifest_relative_path(&artifact_dir, &tokenizer_path)?,
             tokenizer_sha256: sha256_file(&tokenizer_path)?,
         },
-        shape: DirectInferShape {
-            hidden_size: shape.hidden as u32,
-            num_hidden_layers: shape.layers as u32,
-            num_attention_heads: shape.heads as u32,
-            num_key_value_heads: shape.kv_heads as u32,
-            head_dim: shape.head_dim as u32,
-            global_head_dim: shape.global_head_dim as u32,
-            vocab_size: shape.vocab as u32,
-            hidden_size_per_layer_input: shape.ple_width as u32,
-            sliding_window: shape.sliding_window,
-            layer_types: shape.layer_types.clone(),
-            num_kv_shared_layers: shape.num_kv_shared_layers as u32,
-            norm_eps: shape.norm_eps,
-            rope_base_sliding: (shape.rope_base_sliding as i64) << 32,
-            rope_base_full: (shape.rope_base_full as i64) << 32,
-            full_partial_rotary_factor_q16: f32_to_q16(shape.full_partial_rotary_factor),
-            embedding_scale: det_act_bits((shape.hidden as f32).sqrt()),
-            ple_embedding_scale: det_act_bits((shape.ple_width as f32).sqrt()),
-            ple_projection_scalar: det_act_bits((shape.hidden as f32).powf(-0.5)),
-            ple_input_scale: det_act_bits(2f32.powf(-0.5)),
-            final_logit_softcap: text_config
-                .get("final_logit_softcapping")
-                .and_then(serde_json::Value::as_f64)
-                .map(f32_to_q16)
-                .unwrap_or(0),
-        },
+        shape,
         eos_token_ids: eos_ids.iter().copied().collect(),
         provenance: raster_manifest.map(template_provenance).transpose()?.map(
             |(raster_manifest_path, raster_manifest_sha256)| DirectInferProvenance {

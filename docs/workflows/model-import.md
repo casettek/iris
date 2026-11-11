@@ -25,6 +25,12 @@ Inputs:
 - `config.json`: model shape, attention/window settings, softcap, and normalization parameters.
 - `tokenizer.json`: vocabulary, merges, added tokens, and EOS metadata.
 
+The import works out the bundle's [model family](../internals/model-families.md) before it
+writes anything. It refuses a `config.json` whose `model_type` is not a family this build
+imports, and a bundle that holds language-model weights the family's import does not read.
+The second check is what stops a model with more in its layers than the family has, such as
+expert matrices, from importing as a smaller model that computes something else.
+
 Outputs:
 
 - `runtime/model-artifacts/<model-id>/Raster.toml`, the prompt-free [chain](../internals/raster-chain.md) template, saved on every full import. Its path and SHA-256 are recorded in the model manifest. `--range-size <positions>` (default 512) sets the largest range, in prompt tokens or claimed ids. It is recorded in the manifest and a run's configuration, so it is a per-model setting, not a per-claim one.

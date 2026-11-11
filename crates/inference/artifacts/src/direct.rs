@@ -11,6 +11,48 @@ pub const MODEL_MANIFEST_JSON: &str = "manifest.json";
 
 pub const MODEL_MANIFEST_VERSION: u32 = 10;
 
+/// Which layer mathematics, tokenizer rules and stage programs a model uses.
+///
+/// The chain, its schedule and its numerics are shared by every model. A family
+/// is what differs: how a layer computes, what the importer reads from a bundle,
+/// and which stage programs the import's chain template names. The manifest's
+/// `shape` is the family's own.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ModelFamily {
+    /// Gemma 3n and Gemma 4 dense models: sliding and full attention with two
+    /// RoPE bases, K/V sharing, a gated-GELU feed-forward block, per-layer
+    /// embedding inputs and a soft-capped head.
+    GemmaDense,
+}
+
+impl ModelFamily {
+    /// Every family this build can import and run.
+    pub const ALL: [Self; 1] = [Self::GemmaDense];
+
+    /// The name a manifest records.
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::GemmaDense => "gemma-dense",
+        }
+    }
+
+    pub fn parse(name: &str) -> Result<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|family| family.name() == name)
+            .with_context(|| {
+                format!(
+                    "model family `{name}` is not supported by this build (supported: {})",
+                    Self::ALL.map(Self::name).join(", ")
+                )
+            })
+    }
+}
+
+fn first_family() -> String {
+    ModelFamily::GemmaDense.name().to_string()
+}
+
 /// One committed model input, named by the role it plays in the chain.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ModelCommitment {
@@ -38,6 +80,10 @@ pub fn model_id_of(commitments: &[ModelCommitment]) -> String {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ModelManifest {
     pub version: u32,
+    /// A [`ModelFamily`] name. Manifests written before families were
+    /// recorded are the first family's.
+    #[serde(default = "first_family")]
+    pub family: String,
     pub model_id: String,
     pub model_commitments: Vec<ModelCommitment>,
     /// Largest range the chain cuts a prompt or an output into, in tokens.
@@ -50,6 +96,11 @@ pub struct ModelManifest {
 }
 
 impl ModelManifest {
+    /// The family this model is run as, or why this build cannot run it.
+    pub fn family(&self) -> Result<ModelFamily> {
+        ModelFamily::parse(&self.family)
+    }
+
     /// Validate the bundle once at the workflow boundary, before any inference.
     /// This validates host bundle provenance. Stage-level component authentication
     /// remains mandatory and is independent of this host check.
@@ -61,6 +112,7 @@ impl ModelManifest {
                 manifest.version
             );
         }
+        manifest.family()?;
         if manifest.model_id != model_id_of(&manifest.model_commitments) {
             bail!("model id does not match the manifest's model commitments");
         }

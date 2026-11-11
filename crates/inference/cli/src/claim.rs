@@ -258,6 +258,11 @@ fn prepare_run(
         .ok_or_else(|| anyhow::anyhow!("run spec has no parent directory"))?;
     let model_manifest_path = absolute(run_spec_dir, &run_spec.model_manifest);
     let model_manifest = ModelManifest::load_verified(&model_manifest_path)?;
+    // The stage list prepared below and the native routines that run it are
+    // one family's. Another brings its own layer stages.
+    match model_manifest.family()? {
+        inference_artifacts::ModelFamily::GemmaDense => {}
+    }
     let (template_path, template) =
         model_manifest.verified_raster_template(&model_manifest_path)?;
     let model_manifest_dir = model_manifest_path

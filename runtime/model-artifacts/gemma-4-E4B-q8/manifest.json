@@ -1,5 +1,6 @@
 {
   "version": 10,
+  "family": "gemma-dense",
   "model_id": "b4bbb04564d95841e94f3f1f44f801f8c42e346d76294e4a0d0bcb6e0537317a",
   "model_commitments": [
     {

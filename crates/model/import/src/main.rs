@@ -1,4 +1,10 @@
-//! Import a Gemma model bundle into this chain's committed externals.
+//! Import a model bundle into this chain's committed externals.
+//!
+//! This file is what every model family shares: the command line, the artifact
+//! layout, the tokenizer externals, commitments, the chain template and the
+//! manifest. What is particular to a family (its config, its tensors and how
+//! they become stage externals) is in that family's module; today that is
+//! [`gemma`] alone, and [`bundle_family`] refuses anything else.
 //!
 //! ```sh
 //! cargo run -p model-import -- \
@@ -16,9 +22,12 @@
 
 mod direct_manifest;
 mod externals;
+mod gemma;
 mod mapped_weights;
 
 use externals::*;
+use gemma::*;
+use inference_artifacts::ModelFamily;
 use std::collections::BTreeMap;
 use std::error::Error;
 use std::fs;
@@ -240,6 +249,34 @@ fn stage_artifact_dir_name(stage_dir: &str) -> String {
         .to_string()
 }
 
+/// The family a bundle's `config.json` declares.
+///
+/// A config says what it is in `model_type`, on the text model or on the whole
+/// model. Bundles made for this chain before families existed say nothing, and
+/// are Gemma's. Two families can share a `model_type` (a dense and a
+/// mixture-of-experts Gemma both say `gemma4`), so this is the first check and
+/// the family's own tensor inventory is the second.
+fn bundle_family(config: &serde_json::Value) -> Result<ModelFamily, Box<dyn Error>> {
+    let declared = [config.get("text_config"), Some(config)]
+        .into_iter()
+        .flatten()
+        .find_map(|section| {
+            section
+                .get("model_type")
+                .and_then(serde_json::Value::as_str)
+        });
+    match declared {
+        None => Ok(ModelFamily::GemmaDense),
+        Some(model_type) if model_type.starts_with("gemma") => Ok(ModelFamily::GemmaDense),
+        Some(model_type) => Err(format!(
+            "config.json declares model type `{model_type}`, which is not a family this build \
+             imports (supported: {})",
+            ModelFamily::ALL.map(ModelFamily::name).join(", ")
+        )
+        .into()),
+    }
+}
+
 pub fn import_model(args: ImportConfig) -> Result<ImportResult, Box<dyn Error>> {
     let layout = ArtifactLayout::from_config(&args);
     let tokenizer: serde_json::Value =
@@ -253,10 +290,18 @@ pub fn import_model(args: ImportConfig) -> Result<ImportResult, Box<dyn Error>> 
         let text = config
             .get("text_config")
             .ok_or("config.json has no text_config")?;
+        let family = bundle_family(&config)?;
         let shape = Shape::from_config(text)?;
         // A direct-only refresh cannot attest that existing Raster externals
         // were generated from this bundle. Only a full import binds a template.
-        direct_manifest::write_model_manifest(&args, &eos_ids, &shape, text, None, &[])?;
+        direct_manifest::write_model_manifest(
+            &args,
+            &eos_ids,
+            family,
+            shape.manifest_shape(text),
+            None,
+            &[],
+        )?;
         return Ok(ImportResult {
             manifest_path: None,
             manifest_text: None,
@@ -311,6 +356,12 @@ pub fn import_model(args: ImportConfig) -> Result<ImportResult, Box<dyn Error>> 
     let text = config
         .get("text_config")
         .ok_or("config.json has no text_config")?;
+    let family = bundle_family(&config)?;
+    match family {
+        ModelFamily::GemmaDense => {
+            require_known_tensors(weights.names(), Shape::from_config(text)?.layers)?
+        }
+    }
 
     if args.only_ple {
         let shape = Shape::from_config(text)?;
@@ -429,8 +480,8 @@ pub fn import_model(args: ImportConfig) -> Result<ImportResult, Box<dyn Error>> 
     direct_manifest::write_model_manifest(
         &args,
         &eos_ids,
-        &shape,
-        text,
+        family,
+        shape.manifest_shape(text),
         Some((&template_path, &template)),
         &commitments,
     )?;
@@ -881,180 +932,6 @@ fn det_act_bits(value: f32) -> i32 {
     det_num::f32_to_act(value).to_bits()
 }
 
-fn as_f64(value: &serde_json::Value) -> Option<f64> {
-    value.as_f64()
-}
-
-/// One key out of `rope_parameters.<attention_type>`, which is where Gemma 3n
-/// puts its per-family RoPE settings.
-fn rope_param(text: &serde_json::Value, attention_type: &str, key: &str) -> Option<f64> {
-    text.get("rope_parameters")?
-        .get(attention_type)?
-        .get(key)
-        .and_then(as_f64)
-}
-
-/// The shapes every stage needs, read from `config.json`.
-struct Shape {
-    hidden: usize,
-    ffn: usize,
-    layers: usize,
-    heads: usize,
-    kv_heads: usize,
-    head_dim: usize,
-    /// Head dim of the *full-attention* ("global") layers, which is not the
-    /// same as `head_dim` on Gemma 3n: E2B declares `head_dim: 256` for the
-    /// sliding layers and `global_head_dim: 512` for the full ones, and the
-    /// weights follow — a full layer's `q_proj` is [heads · 512, hidden] and
-    /// its `q_norm` has 512 values. Defaults to `head_dim` for models that
-    /// declare no such split.
-    global_head_dim: usize,
-    /// RoPE base per attention type, from `rope_parameters`. Gemma 3n gives the
-    /// two families different bases — 10 000 local, 1 000 000 global — so a
-    /// single `rope_theta` would silently detune half the layers.
-    rope_base_sliding: f64,
-    rope_base_full: f64,
-    /// Fraction of a full-attention head that rotates (`0.25` here). Sliding
-    /// layers rotate the whole head.
-    full_partial_rotary_factor: f64,
-    /// How many trailing layers borrow their K/V from an earlier donor.
-    num_kv_shared_layers: usize,
-    vocab: usize,
-    ple_width: usize,
-    sliding_window: u32,
-    layer_types: Vec<String>,
-    norm_eps: i64,
-}
-
-impl Shape {
-    fn is_sliding(&self, idx: usize) -> bool {
-        matches!(
-            self.layer_types.get(idx).map(String::as_str),
-            Some("sliding_attention")
-        )
-    }
-
-    /// Head dim of layer `idx` — `global_head_dim` for a full-attention layer,
-    /// `head_dim` for a sliding one.
-    fn head_dim_at(&self, idx: usize) -> usize {
-        if self.is_sliding(idx) {
-            self.head_dim
-        } else {
-            self.global_head_dim
-        }
-    }
-
-    /// The layer whose K/V cache layer `idx` borrows, or `-1` if it computes
-    /// its own.
-    ///
-    /// Mirrors `casettek/.../shared/model/gemma/io.rs:171` exactly: sharing
-    /// starts at `num_hidden_layers - num_kv_shared_layers`, and a sharing
-    /// layer's donor is the **last layer before that boundary with the same
-    /// attention type**. For this model that resolves to layer 13 for every
-    /// sliding layer and layer 14 for every full one — 20 layers in all, which
-    /// is the count the config declares.
-    fn kv_donor_layer(&self, idx: usize) -> i32 {
-        let first_shared = self.layers.saturating_sub(self.num_kv_shared_layers);
-        if self.num_kv_shared_layers == 0 || idx < first_shared {
-            return -1;
-        }
-        let Some(attention_type) = self.layer_types.get(idx) else {
-            return -1;
-        };
-        self.layer_types[..first_shared]
-            .iter()
-            .rposition(|candidate| candidate == attention_type)
-            .map(|donor| donor as i32)
-            .unwrap_or(-1)
-    }
-
-    /// RoPE parameters for layer `idx`: `(base_bits, rotary_dim, freq_base_dim)`.
-    ///
-    /// `base_bits` is the base as `Acc` (Q32.32) bits. Both bases this model
-    /// declares are exact integers, so the encoding is a plain shift — asserted
-    /// against local `f32_to_acc` in `det-num/tests/equivalence.rs`.
-    ///
-    /// `freq_base_dim` is the layer's `head_dim`, which is *not* `rotary_dim`
-    /// once the rotation is partial: a full-attention head is 512 wide and
-    /// rotates its first 128 lanes against a ladder built over 512.
-    fn rope_at(&self, idx: usize) -> (i64, u32, u32) {
-        let head_dim = self.head_dim_at(idx);
-        let (base, rotary_dim) = if self.is_sliding(idx) {
-            (self.rope_base_sliding, head_dim)
-        } else {
-            (
-                self.rope_base_full,
-                (head_dim as f64 * self.full_partial_rotary_factor) as usize,
-            )
-        };
-        ((base as i64) << 32, rotary_dim as u32, head_dim as u32)
-    }
-}
-
-impl Shape {
-    fn from_config(text: &serde_json::Value) -> Result<Self, Box<dyn Error>> {
-        let usize_at = |key: &str| -> Result<usize, Box<dyn Error>> {
-            text.get(key)
-                .and_then(serde_json::Value::as_u64)
-                .map(|value| value as usize)
-                .ok_or_else(|| format!("config.json text_config has no {key}").into())
-        };
-        let layer_types = text
-            .get("layer_types")
-            .and_then(serde_json::Value::as_array)
-            .map(|types| {
-                types
-                    .iter()
-                    .filter_map(|value| value.as_str().map(str::to_string))
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default();
-        // The MLP width is not in this config; it is the gate projection's rows.
-        Ok(Self {
-            hidden: usize_at("hidden_size")?,
-            ffn: 0,
-            layers: usize_at("num_hidden_layers")?,
-            heads: usize_at("num_attention_heads")?,
-            kv_heads: usize_at("num_key_value_heads")?,
-            head_dim: usize_at("head_dim")?,
-            global_head_dim: text
-                .get("global_head_dim")
-                .and_then(serde_json::Value::as_u64)
-                .map(|value| value as usize)
-                .unwrap_or(usize_at("head_dim")?),
-            rope_base_sliding: rope_param(text, "sliding_attention", "rope_theta")
-                .or_else(|| text.get("rope_local_base_freq").and_then(as_f64))
-                .unwrap_or(10_000.0),
-            rope_base_full: rope_param(text, "full_attention", "rope_theta")
-                .or_else(|| text.get("rope_theta").and_then(as_f64))
-                .unwrap_or(1_000_000.0),
-            full_partial_rotary_factor: rope_param(text, "full_attention", "partial_rotary_factor")
-                .unwrap_or(1.0),
-            num_kv_shared_layers: text
-                .get("num_kv_shared_layers")
-                .and_then(serde_json::Value::as_u64)
-                .unwrap_or(0) as usize,
-            vocab: usize_at("vocab_size")?,
-            ple_width: usize_at("hidden_size_per_layer_input")?,
-            sliding_window: text
-                .get("sliding_window")
-                .and_then(serde_json::Value::as_u64)
-                .unwrap_or(0) as u32,
-            layer_types,
-            // `Acc` (Q32.32) bits, not Q16.16: the canonical `rms_norm` takes its
-            // epsilon in accumulator units. Encoded through local
-            // `f32_to_acc` so it is the same value, not a near one — 1e-6 in
-            // Q16.16 rounds to zero, which is how this was silently disabled.
-            norm_eps: det_num::f32_to_acc(
-                text.get("rms_norm_eps")
-                    .and_then(serde_json::Value::as_f64)
-                    .unwrap_or(1e-6) as f32,
-            )
-            .to_bits(),
-        })
-    }
-}
-
 /// Converts a config float to Q16.16, the representation everything else uses.
 fn f32_to_q16(value: f64) -> i32 {
     let scaled = value * ONE as f64;
@@ -1192,430 +1069,6 @@ fn write_tokenizer(
 }
 
 // ---------------------------------------------------------------------------
-// Stage 2 — input embedding
-// ---------------------------------------------------------------------------
-
-fn write_embedding(
-    weights: &detwgt::MmapDetwgt,
-    shape: &Shape,
-    layout: &ArtifactLayout,
-    stages: &mut Vec<String>,
-) -> Result<(), Box<dyn Error>> {
-    let table = EmbeddingTable {
-        hidden_size: shape.hidden as u32,
-        // Gemma scales token embeddings by sqrt(hidden) before layer 0. Converted
-        // by local `f32_to_act` so the committed bits match the
-        // deterministic path exactly rather than approximately.
-        embedding_scale: det_num::f32_to_act((shape.hidden as f32).sqrt()).to_bits(),
-        values: mapped_weights::q8_rows(
-            weights,
-            "model.language_model.embed_tokens.weight",
-            0,
-            shape.vocab,
-        )?,
-    };
-    let commitment = write_external(&table, layout, "raster-stages/input-embedding", "embedding")?;
-    let witness = model_identity::sparse::witness(table.values.pages.as_slice())
-        .map_err(|f| format!("{f:?}"))?;
-    let witness_commitment =
-        write_external(&witness, layout, "raster-stages/input-embedding", "witness")?;
-    // A prompt range embeds only the prompt. A claimed range binds the run's
-    // claimed ids here instead.
-    let no_claim = write_external(
-        &ClaimedOutput::default(),
-        layout,
-        "raster-stages/input-embedding",
-        "no_claim",
-    )?;
-
-    stages.push(format!(
-        concat!(
-            "[[chain.stage]]\n",
-            "name = \"input_embedding\"\n",
-            "project = \"raster-stages/input-embedding\"\n",
-            "inputs.prompt = {{ from = \"prompt_check\" }}\n",
-            "inputs.previous = {{ from = \"range_origin\" }}\n",
-            "{}{}{}"
-        ),
-        external_line(
-            "witness",
-            layout,
-            "raster-stages/input-embedding",
-            "witness",
-            &witness_commitment
-        ),
-        external_line(
-            "claimed",
-            layout,
-            "raster-stages/input-embedding",
-            "no_claim",
-            &no_claim
-        ),
-        external_line(
-            "embedding",
-            layout,
-            "raster-stages/input-embedding",
-            "embedding",
-            &commitment
-        )
-    ));
-    Ok(())
-}
-
-// ---------------------------------------------------------------------------
-// Stage 3 — per-layer embeddings
-// ---------------------------------------------------------------------------
-
-fn write_ple_layers(
-    weights: &detwgt::MmapDetwgt,
-    shape: &Shape,
-    layout: &ArtifactLayout,
-    stages: &mut Vec<String>,
-) -> Result<(), Box<dyn Error>> {
-    let projection_norm =
-        weights.values("model.language_model.per_layer_projection_norm.weight")?;
-
-    for layer_idx in 0..shape.layers {
-        let start = layer_idx * shape.ple_width;
-        let end = start + shape.ple_width;
-
-        // The packed [vocab, layers · width] table gives this layer its slice.
-        let embeddings = mapped_weights::q8_columns(
-            weights,
-            "model.language_model.embed_tokens_per_layer.weight",
-            start,
-            end,
-        )?;
-
-        let layer = PleLayer {
-            params: PleLayerParams {
-                layer_idx: layer_idx as u32,
-                hidden_size: shape.hidden as u32,
-                ple_width: shape.ple_width as u32,
-                // Derived, not stored in the artifact — the comment this
-                // replaces claimed unit scaling was "faithful", but the model
-                // loader computes real values and hardcoding 1.0 silently
-                // dropped three scalings from every per-layer embedding
-                // (`casettek/.../gemma/io.rs:1176-1179`).
-                embedding_scale: det_act_bits((shape.ple_width as f32).sqrt()),
-                projection_scalar: det_act_bits((shape.hidden as f32).powf(-0.5)),
-                input_scale: det_act_bits(2f32.powf(-0.5)),
-                norm_eps: shape.norm_eps,
-                norm_weights: page_of_i32s(&projection_norm),
-            },
-            embeddings,
-            projection: mapped_weights::rows(
-                weights,
-                "model.language_model.per_layer_model_projection.weight",
-                start,
-                end,
-            )?,
-        };
-
-        let name = format!("layer{layer_idx}");
-        let commitment =
-            write_external(&layer, layout, "raster-stages/prefill-prepare-aux", &name)?;
-        let witness = model_identity::sparse::witness(layer.embeddings.pages.as_slice())
-            .map_err(|f| format!("{f:?}"))?;
-        let witness_name = format!("witness{layer_idx}");
-        let witness_commitment = write_external(
-            &witness,
-            layout,
-            "raster-stages/prefill-prepare-aux",
-            &witness_name,
-        )?;
-        stages.push(format!(
-            concat!(
-                "[[chain.stage]]\n",
-                "name = \"prefill_prepare_aux_l{idx}\"\n",
-                "project = \"raster-stages/prefill-prepare-aux\"\n",
-                "inputs.embedded = {{ from = \"input_embedding\" }}\n",
-                "{line}{witness_line}"
-            ),
-            witness_line = external_line(
-                "witness",
-                layout,
-                "raster-stages/prefill-prepare-aux",
-                &witness_name,
-                &witness_commitment
-            ),
-            idx = layer_idx,
-            line = external_line(
-                "layer",
-                layout,
-                "raster-stages/prefill-prepare-aux",
-                &name,
-                &commitment
-            )
-        ));
-    }
-    Ok(())
-}
-
-// ---------------------------------------------------------------------------
-// Stage 4 — transformer layers
-// ---------------------------------------------------------------------------
-
-fn write_transformer_layers(
-    weights: &detwgt::MmapDetwgt,
-    shape: &Shape,
-    layout: &ArtifactLayout,
-    stages: &mut Vec<String>,
-) -> Result<(), Box<dyn Error>> {
-    // Report the two RoPE families once. These are the numbers that silently
-    // decide every attention score, so they are worth seeing rather than
-    // trusting — a wrong base or rotary width produces a plausible-looking run
-    // and the wrong token.
-    for (label, idx) in shape
-        .layer_types
-        .iter()
-        .enumerate()
-        .map(|(i, t)| (t.as_str(), i))
-        .fold(Vec::new(), |mut seen: Vec<(&str, usize)>, (t, i)| {
-            if !seen.iter().any(|(s, _)| *s == t) {
-                seen.push((t, i));
-            }
-            seen
-        })
-    {
-        let (base, rotary, freq) = shape.rope_at(idx);
-        println!(
-            "rope[{label}]: head_dim {} · rotary_dim {rotary} · freq_base_dim {freq} · base {} (Q32.32 bits {base})",
-            shape.head_dim_at(idx),
-            base >> 32,
-        );
-    }
-
-    // And the KV-sharing map, for the same reason: a wrong donor is not a crash,
-    // it is a layer attending over another layer's keys.
-    let donors: Vec<(usize, i32)> = (0..shape.layers)
-        .map(|idx| (idx, shape.kv_donor_layer(idx)))
-        .filter(|(_, donor)| *donor >= 0)
-        .collect();
-    let mut by_donor: BTreeMap<i32, Vec<usize>> = BTreeMap::new();
-    for (idx, donor) in &donors {
-        by_donor.entry(*donor).or_default().push(*idx);
-    }
-    println!(
-        "kv sharing: {} of {} layers borrow (config declares {})",
-        donors.len(),
-        shape.layers,
-        shape.num_kv_shared_layers
-    );
-    for (donor, borrowers) in &by_donor {
-        println!("  donor layer {donor} -> {borrowers:?}");
-    }
-    if by_donor.len() > 2 {
-        return Err(format!(
-            "this chain supports at most two KV donor candidates, model declares {}",
-            by_donor.len()
-        )
-        .into());
-    }
-    let mut donor_candidates = by_donor.keys().copied();
-    let donor_a_layer = donor_candidates.next().unwrap_or(-2);
-    let donor_b_layer = donor_candidates.next().unwrap_or(-3);
-
-    for layer_idx in 0..shape.layers {
-        let at = |suffix: &str| format!("model.language_model.layers.{layer_idx}.{suffix}");
-        let gate = weights.tensor(&at("mlp.gate_proj.weight"))?;
-        let ffn = gate.dims[0] as usize;
-
-        // Alternating sliding/full attention, as `layer_types` declares.
-        let sliding = match shape.layer_types.get(layer_idx).map(String::as_str) {
-            Some("sliding_attention") => shape.sliding_window,
-            _ => 0,
-        };
-        // Head dim is per-layer here, not global (see `Shape::global_head_dim`).
-        let head_dim = shape.head_dim_at(layer_idx);
-        let (rope_base, rotary_dim, rope_freq_base_dim) = shape.rope_at(layer_idx);
-        let kv_donor_layer = shape.kv_donor_layer(layer_idx);
-        // `attention_k_eq_v` layers store no separate V projection: V *is* K.
-        // tiny-gemma-dev emits v_proj only for its sliding layers.
-        let v_name = if weights.tensor(&at("self_attn.v_proj.weight")).is_ok() {
-            at("self_attn.v_proj.weight")
-        } else {
-            at("self_attn.k_proj.weight")
-        };
-        let layer_scalar = weights
-            .slice(&at("layer_scalar"))
-            .ok()
-            .and_then(|slice| slice.value_at(0).ok())
-            .unwrap_or(0);
-
-        let layer = TransformerLayer {
-            params: LayerParams {
-                layer_idx: layer_idx as u32,
-                hidden_size: shape.hidden as u32,
-                ffn_size: ffn as u32,
-                num_heads: shape.heads as u32,
-                num_kv_heads: shape.kv_heads as u32,
-                head_dim: head_dim as u32,
-                sliding_window: sliding,
-                attn_scale: inv_sqrt_q16(head_dim),
-                layer_scalar,
-                norm_eps: shape.norm_eps,
-                rope_base,
-                rotary_dim,
-                rope_freq_base_dim,
-                kv_donor_layer,
-                donor_a_layer,
-                donor_b_layer,
-                norm_input: page_of_i32s(&weights.values(&at("input_layernorm.weight"))?),
-                norm_post_attn: page_of_i32s(
-                    &weights.values(&at("post_attention_layernorm.weight"))?,
-                ),
-                norm_pre_ffw: page_of_i32s(
-                    &weights.values(&at("pre_feedforward_layernorm.weight"))?,
-                ),
-                norm_post_ffw: page_of_i32s(
-                    &weights.values(&at("post_feedforward_layernorm.weight"))?,
-                ),
-                q_norm: page_of_i32s(&weights.values(&at("self_attn.q_norm.weight"))?),
-                k_norm: page_of_i32s(&weights.values(&at("self_attn.k_norm.weight"))?),
-                ple_width: shape.ple_width as u32,
-                // Hidden-width, despite the name: it normalises *after*
-                // `per_layer_projection` maps back up from `ple_width`.
-                ple_post_norm: page_of_i32s(
-                    &weights.values(&at("post_per_layer_input_norm.weight"))?,
-                ),
-            },
-            w_q: mapped_weights::q8_tensor(weights, &at("self_attn.q_proj.weight"))?,
-            w_k: mapped_weights::q8_tensor(weights, &at("self_attn.k_proj.weight"))?,
-            w_v: mapped_weights::q8_tensor(weights, &v_name)?,
-            w_o: mapped_weights::q8_tensor(weights, &at("self_attn.o_proj.weight"))?,
-            w_gate: mapped_weights::q8_tensor(weights, &at("mlp.gate_proj.weight"))?,
-            w_up: mapped_weights::q8_tensor(weights, &at("mlp.up_proj.weight"))?,
-            ple_input_gate: mapped_weights::tensor(weights, &at("per_layer_input_gate.weight"))?,
-            ple_layer_projection: mapped_weights::tensor(
-                weights,
-                &at("per_layer_projection.weight"),
-            )?,
-            w_down: mapped_weights::q8_tensor(weights, &at("mlp.down_proj.weight"))?,
-        };
-
-        let name = format!("layer{layer_idx}");
-        let commitment = write_external(&layer, layout, "raster-stages/prefill-range", &name)?;
-        let upstream = if layer_idx == 0 {
-            "input_embedding".to_string()
-        } else {
-            format!("prefill_range_l{}", layer_idx - 1)
-        };
-        // Before the sharing boundary both candidates must be the empty input:
-        // binding the eventual donor stages here would be a forward reference.
-        // Sharing layers receive both candidates and committed
-        // `kv_donor_layer` selects the exact one inside the tile.
-        let first_shared = shape.layers.saturating_sub(shape.num_kv_shared_layers);
-        let (donor_a, donor_b) = if layer_idx < first_shared {
-            (
-                String::from("input_embedding"),
-                String::from("input_embedding"),
-            )
-        } else {
-            (
-                format!("prefill_range_l{donor_a_layer}"),
-                format!("prefill_range_l{donor_b_layer}"),
-            )
-        };
-        stages.push(format!(
-            concat!(
-                "[[chain.stage]]\n",
-                "name = \"prefill_range_l{idx}\"\n",
-                "project = \"raster-stages/prefill-range\"\n",
-                "inputs.activations = {{ from = \"{upstream}\" }}\n",
-                // Prefill inherits an empty cache. Bound to `input_embedding`
-                // for every layer, the same stage the non-sharing layers use
-                // for `donor_kv` — a decode stage is where this points at the
-                // previous step instead.
-                "inputs.prior_kv = {{ from = \"input_embedding\" }}\n",
-                "inputs.donor_a_kv = {{ from = \"{donor_a}\" }}\n",
-                "inputs.donor_b_kv = {{ from = \"{donor_b}\" }}\n",
-                "inputs.ple = {{ from = \"prefill_prepare_aux_l{idx}\" }}\n",
-                "{line}"
-            ),
-            idx = layer_idx,
-            upstream = upstream,
-            donor_a = donor_a,
-            donor_b = donor_b,
-            line = external_line(
-                "layer",
-                layout,
-                "raster-stages/prefill-range",
-                &name,
-                &commitment,
-            )
-        ));
-    }
-    Ok(())
-}
-
-/// `1/sqrt(n)` in Q16.16, computed in integers so the fixture and the guest
-/// agree on the constant.
-fn inv_sqrt_q16(n: usize) -> i32 {
-    if n == 0 {
-        return 0;
-    }
-    let root = (0..).find(|r| r * r >= n).unwrap_or(1).max(1);
-    let exact = (n as f64).sqrt();
-    let _ = root;
-    f32_to_q16(1.0 / exact)
-}
-
-// ---------------------------------------------------------------------------
-// Stage 5 — output head
-// ---------------------------------------------------------------------------
-
-fn write_head(
-    weights: &detwgt::MmapDetwgt,
-    shape: &Shape,
-    text: &serde_json::Value,
-    layout: &ArtifactLayout,
-    stages: &mut Vec<String>,
-) -> Result<(), Box<dyn Error>> {
-    let tied = text
-        .get("tie_word_embeddings")
-        .and_then(serde_json::Value::as_bool)
-        .unwrap_or(false);
-    let projection = if tied {
-        "model.language_model.embed_tokens.weight"
-    } else {
-        "model.language_model.lm_head.weight"
-    };
-    let softcap = text
-        .get("final_logit_softcapping")
-        .and_then(serde_json::Value::as_f64)
-        .map(f32_to_q16)
-        .unwrap_or(0);
-
-    let commitment = write_external(
-        &FinalHead {
-            params: FinalHeadParams {
-                hidden_size: shape.hidden as u32,
-                norm_eps: shape.norm_eps,
-                softcap,
-                norm_weights: page_of_i32s(&weights.values("model.language_model.norm.weight")?),
-            },
-            projection: mapped_weights::q8_rows(weights, projection, 0, shape.vocab)?,
-        },
-        layout,
-        "raster-stages/sequence-check",
-        "head",
-    )?;
-
-    stages.push(format!(
-        "[[chain.stage]]\nname = \"final_head\"\nproject = \"raster-stages/sequence-check\"\n{}",
-        external_line(
-            "head",
-            layout,
-            "raster-stages/sequence-check",
-            "head",
-            &commitment
-        )
-    ));
-    Ok(())
-}
-
-// ---------------------------------------------------------------------------
 
 fn write_external<T: serde::Serialize>(
     value: &T,
@@ -1718,8 +1171,8 @@ mod tests {
             let model_path = direct_manifest::write_model_manifest(
                 &args,
                 &Default::default(),
-                &shape,
-                &text,
+                ModelFamily::GemmaDense,
+                shape.manifest_shape(&text),
                 Some((&path, &template)),
                 &[
                     "tokenizer",
@@ -1809,6 +1262,28 @@ mod tests {
                 range_size: DEFAULT_RANGE_SIZE,
             }
         );
+    }
+
+    #[test]
+    fn a_bundle_is_imported_only_as_a_family_this_build_has() {
+        let family = |config: serde_json::Value| bundle_family(&config);
+        // Gemma's own configs, and the bundles made for this chain that say nothing.
+        for config in [
+            serde_json::json!({"model_type": "gemma4", "text_config": {"model_type": "gemma4_text"}}),
+            serde_json::json!({"model_type": "gemma3n", "text_config": {}}),
+            serde_json::json!({"text_config": {"hidden_size": 2}}),
+        ] {
+            assert_eq!(family(config).unwrap(), ModelFamily::GemmaDense);
+        }
+        // The text model's type decides when the two differ.
+        for config in [
+            serde_json::json!({"model_type": "qwen3"}),
+            serde_json::json!({"model_type": "gemma4", "text_config": {"model_type": "qwen3"}}),
+        ] {
+            let error = family(config).unwrap_err().to_string();
+            assert!(error.contains("`qwen3`"), "{error}");
+            assert!(error.contains("gemma-dense"), "{error}");
+        }
     }
 
     #[test]

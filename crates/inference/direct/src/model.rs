@@ -158,6 +158,11 @@ impl DirectInferenceModel {
             );
         }
         let manifest = ModelManifest::load_verified(manifest_path)?;
+        // What follows (the config's keys, the tensor names, the per-layer
+        // inputs and the head) is one family's. Another loads its own way.
+        match manifest.family()? {
+            inference_artifacts::ModelFamily::GemmaDense => {}
+        }
 
         let manifest_dir = manifest_path
             .parent()

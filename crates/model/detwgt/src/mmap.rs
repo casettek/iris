@@ -64,6 +64,11 @@ impl MmapDetwgt {
         })
     }
 
+    /// Every tensor name in the bundle, in name order.
+    pub fn names(&self) -> impl Iterator<Item = &str> {
+        self.tensors.keys().map(String::as_str)
+    }
+
     pub fn tensor(&self, name: &str) -> Result<&TensorEntry> {
         self.tensors
             .get(name)
