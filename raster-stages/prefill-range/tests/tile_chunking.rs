@@ -7,7 +7,7 @@ use raster::prelude::*;
 mod support;
 
 #[sequence]
-fn test_projection(weights: Bytes<196_608>, row: BytesPage, width: u32, rows: u32) -> ProjAccum {
+fn test_projection(weights: Bytes<184_320>, row: BytesPage, width: u32, rows: u32) -> ProjAccum {
     let pages = select!(List<BytesPage>, weights.pages);
     let acc = call!(zero_accum, rows);
     call_recur!(

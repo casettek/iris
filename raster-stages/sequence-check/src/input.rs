@@ -18,9 +18,11 @@ use det_num::{Acc, Act, Wgt};
 use raster::{Bytes, BytesPage, List};
 use serde::{Deserialize, Serialize};
 
-/// Replay-unit page size for the logits projection. MUST match the page size
-/// the importer writes the head external with.
-pub const PAGE_SIZE: u64 = 52_224;
+/// Replay-unit page size for the logits projection: whole `Q8_0` rows of
+/// `hidden_size / 32 · 34` bytes for every width this chain is imported with
+/// (128 → 136, 1536 → 1632, 2560 → 2720). MUST match the page size the
+/// importer writes the head external with.
+pub const PAGE_SIZE: u64 = 48_960;
 
 // ---------------------------------------------------------------------------
 // Boundary types
@@ -77,8 +79,8 @@ pub struct FinalHeadParams {
 pub struct FinalHead {
     pub params: FinalHeadParams,
     /// `Q8_0` rows, one per vocabulary entry.
-    #[page_size = 52_224]
-    pub projection: Bytes<52_224>,
+    #[page_size = 48_960]
+    pub projection: Bytes<48_960>,
 }
 
 /// The stage's authorized output: the greedy selection at every generated

@@ -113,7 +113,7 @@ fn main(
 }
 
 #[sequence]
-fn identity_bytes_196_608(value: Bytes<196_608>) -> BytesPage {
+fn identity_bytes_184_320(value: Bytes<184_320>) -> BytesPage {
     let len = select!(u64, value.clone().byte_len);
     let size = select!(u64, value.clone().page_size);
     let pages = select!(List<BytesPage>, value.pages);
@@ -130,8 +130,8 @@ fn identity_root(value: PleLayer, header: SparseHeader) -> BytesPage {
     let len = select!(u64, embeddings.clone().byte_len);
     let size = select!(u64, embeddings.page_size);
     let embeddings = call!(identity_sparse_bytes, len, size, header);
-    let projection = select!(Bytes<196_608>, value.clone().projection);
-    let projection = call_seq!(identity_bytes_196_608, projection);
+    let projection = select!(Bytes<184_320>, value.clone().projection);
+    let projection = call_seq!(identity_bytes_184_320, projection);
     call!(identity_component, params, embeddings, projection)
 }
 

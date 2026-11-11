@@ -461,7 +461,7 @@ fn identity_bytes_195_840(value: Bytes<195_840>) -> BytesPage {
     call!(identity_bytes, len, size, root)
 }
 #[sequence]
-fn identity_bytes_196_608(value: Bytes<196_608>) -> BytesPage {
+fn identity_bytes_184_320(value: Bytes<184_320>) -> BytesPage {
     let len = select!(u64, value.clone().byte_len);
     let size = select!(u64, value.clone().page_size);
     let pages = select!(List<BytesPage>, value.pages);
@@ -488,10 +488,10 @@ fn identity_root(value: TransformerLayer) -> BytesPage {
     let w_up = call_seq!(identity_bytes_195_840, w_up);
     let w_down = select!(Bytes<195_840>, value.clone().w_down);
     let w_down = call_seq!(identity_bytes_195_840, w_down);
-    let ple_input_gate = select!(Bytes<196_608>, value.clone().ple_input_gate);
-    let ple_input_gate = call_seq!(identity_bytes_196_608, ple_input_gate);
-    let ple_layer_projection = select!(Bytes<196_608>, value.clone().ple_layer_projection);
-    let ple_layer_projection = call_seq!(identity_bytes_196_608, ple_layer_projection);
+    let ple_input_gate = select!(Bytes<184_320>, value.clone().ple_input_gate);
+    let ple_input_gate = call_seq!(identity_bytes_184_320, ple_input_gate);
+    let ple_layer_projection = select!(Bytes<184_320>, value.clone().ple_layer_projection);
+    let ple_layer_projection = call_seq!(identity_bytes_184_320, ple_layer_projection);
     call!(
         identity_component,
         params,

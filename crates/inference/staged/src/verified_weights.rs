@@ -150,7 +150,7 @@ pub(crate) fn input_documents_from_args() -> (Option<String>, Option<String>) {
 pub(crate) const Q8_PAGE_SIZE: u64 = 195_840;
 
 /// Page size of the `Q8_0` head projection (see `sequence_check::input::PAGE_SIZE`).
-pub(crate) const Q8_HEAD_PAGE_SIZE: u64 = 52_224;
+pub(crate) const Q8_HEAD_PAGE_SIZE: u64 = 48_960;
 
 #[derive(Clone, Copy)]
 pub(crate) struct PageRegion {

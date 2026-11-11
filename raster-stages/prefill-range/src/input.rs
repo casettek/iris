@@ -23,8 +23,10 @@ pub const FRAC_BITS: u32 = 16;
 /// One unit (`1.0`) in Q16.16.
 pub const ONE: i32 = 1 << FRAC_BITS;
 
-/// Replay-unit page size for every weight matrix in this program.
-pub const PAGE_SIZE: u64 = 196_608;
+/// Replay-unit page size for the Q16.16 matrices: whole rows of `width · 4`
+/// bytes for every width this chain is imported with (128, 256, 1536, 2560).
+/// MUST match the importer's `PAGE_SIZE`.
+pub const PAGE_SIZE: u64 = 184_320;
 
 /// Replay-unit page size for the `Q8_0` matrices: whole rows of
 /// `in / 32 · 34` bytes for every width this chain is imported with. MUST
@@ -171,11 +173,11 @@ pub struct TransformerLayer {
     #[page_size = 195_840]
     pub w_down: Bytes<195_840>,
     /// PLE gate: hidden -> ple_width.
-    #[page_size = 196_608]
-    pub ple_input_gate: Bytes<196_608>,
+    #[page_size = 184_320]
+    pub ple_input_gate: Bytes<184_320>,
     /// PLE projection back up: ple_width -> hidden.
-    #[page_size = 196_608]
-    pub ple_layer_projection: Bytes<196_608>,
+    #[page_size = 184_320]
+    pub ple_layer_projection: Bytes<184_320>,
 }
 
 /// Key/value side of one token, for the attention scan.

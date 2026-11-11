@@ -11,16 +11,17 @@ use raster::{Bytes, BytesPage, List};
 use serde::{Deserialize, Serialize};
 
 /// Replay-unit page size shared by every `Bytes<P>` region this importer writes.
-pub const PAGE_SIZE: u64 = 196_608;
+pub const PAGE_SIZE: u64 = 184_320;
 
 /// Page size of every `Q8_0` region: a whole number of rows for each row
 /// width `in / 32 · 34` this chain is imported with. MUST match the stages'
 /// `Q8_PAGE_SIZE` / embedding and head `PAGE_SIZE`.
 pub const Q8_PAGE_SIZE: u64 = 195_840;
 
-/// Page size of the head projection: at most 384 rows of a 128-wide head.
+/// Page size of the head projection: whole rows for every hidden width this
+/// chain is imported with (360 rows at 128, 30 at 1536, 18 at 2560).
 /// MUST match `sequence-check`.
-pub const Q8_HEAD_PAGE_SIZE: u64 = 52_224;
+pub const Q8_HEAD_PAGE_SIZE: u64 = 48_960;
 
 /// Packs Q16.16 values as little-endian i32s.
 pub fn pack_i32_bytes(values: &[i32]) -> Vec<u8> {
@@ -36,7 +37,7 @@ pub fn page_of_i32s(values: &[i32]) -> BytesPage {
     BytesPage::__from_parts(0, 0, pack_i32_bytes(values))
 }
 
-pub fn paged_i32s(values: &[i32]) -> raster::runtime::Result<Bytes<196_608>> {
+pub fn paged_i32s(values: &[i32]) -> raster::runtime::Result<Bytes<184_320>> {
     Bytes::<PAGE_SIZE>::paged(pack_i32_bytes(values))
 }
 
@@ -84,8 +85,8 @@ pub struct PleLayer {
     pub params: PleLayerParams,
     #[page_size = 195_840]
     pub embeddings: Bytes<195_840>,
-    #[page_size = 196_608]
-    pub projection: Bytes<196_608>,
+    #[page_size = 184_320]
+    pub projection: Bytes<184_320>,
 }
 
 // --- prefill-range ----------------------------------------------------------
@@ -135,10 +136,10 @@ pub struct TransformerLayer {
     pub w_up: Bytes<195_840>,
     #[page_size = 195_840]
     pub w_down: Bytes<195_840>,
-    #[page_size = 196_608]
-    pub ple_input_gate: Bytes<196_608>,
-    #[page_size = 196_608]
-    pub ple_layer_projection: Bytes<196_608>,
+    #[page_size = 184_320]
+    pub ple_input_gate: Bytes<184_320>,
+    #[page_size = 184_320]
+    pub ple_layer_projection: Bytes<184_320>,
 }
 
 // --- sequence-check ---------------------------------------------------------
@@ -154,6 +155,6 @@ pub struct FinalHeadParams {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
 pub struct FinalHead {
     pub params: FinalHeadParams,
-    #[page_size = 52_224]
-    pub projection: Bytes<52_224>,
+    #[page_size = 48_960]
+    pub projection: Bytes<48_960>,
 }

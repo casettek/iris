@@ -779,6 +779,6 @@ fn pack_i32_page(values: &[i32]) -> raster::BytesPage {
     raster::BytesPage::__from_parts(0, 0, pack_i32_bytes(values))
 }
 
-fn paged_i32s(values: &[i32]) -> Result<Bytes<196_608>> {
-    Bytes::<196_608>::paged(pack_i32_bytes(values)).map_err(|error| anyhow::anyhow!("{error}"))
+fn paged_i32s(values: &[i32]) -> Result<Bytes<184_320>> {
+    Bytes::<184_320>::paged(pack_i32_bytes(values)).map_err(|error| anyhow::anyhow!("{error}"))
 }

@@ -205,7 +205,7 @@ fn main(
 }
 
 #[sequence]
-fn identity_bytes_52_224(value: Bytes<52_224>) -> BytesPage {
+fn identity_bytes_48_960(value: Bytes<48_960>) -> BytesPage {
     let len = select!(u64, value.clone().byte_len);
     let size = select!(u64, value.clone().page_size);
     let pages = select!(List<BytesPage>, value.pages);
@@ -218,7 +218,7 @@ fn identity_bytes_52_224(value: Bytes<52_224>) -> BytesPage {
 fn identity_root(value: FinalHead) -> BytesPage {
     let params = select!(FinalHeadParams, value.clone().params);
     let params = call!(identity_hash_finalheadparams, params);
-    let projection = select!(Bytes<52_224>, value.clone().projection);
-    let projection = call_seq!(identity_bytes_52_224, projection);
+    let projection = select!(Bytes<48_960>, value.clone().projection);
+    let projection = call_seq!(identity_bytes_48_960, projection);
     call!(identity_component, params, projection)
 }

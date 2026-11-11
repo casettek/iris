@@ -57,8 +57,8 @@ fn q8_paged<const P: u64>(values: &[i32]) -> Bytes<P> {
     Bytes::<P>::paged(out).unwrap()
 }
 
-fn paged(values: &[i32]) -> Bytes<196_608> {
-    Bytes::<196_608>::paged(bytes_of_i32s(values)).unwrap()
+fn paged(values: &[i32]) -> Bytes<184_320> {
+    Bytes::<184_320>::paged(bytes_of_i32s(values)).unwrap()
 }
 
 fn assert_same_json<T: Serialize>(left: &T, right: &T) {
@@ -471,7 +471,7 @@ fn sequence_check_matches_a_greedy_oracle_at_every_position() {
             block
         })
         .collect::<Vec<_>>();
-    let projection = || Bytes::<52_224>::paged(projection_bytes.clone()).unwrap();
+    let projection = || Bytes::<48_960>::paged(projection_bytes.clone()).unwrap();
     let norm = (0..hidden).map(|i| ONE + value(i) / 3).collect::<Vec<_>>();
     let row_values = |row: usize| {
         (0..hidden)

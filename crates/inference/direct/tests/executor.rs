@@ -770,8 +770,8 @@ fn q8_paged<const P: u64>(values: &[i32]) -> Bytes<P> {
     Bytes::<P>::paged(q8_exact(values)).unwrap()
 }
 
-fn paged(values: &[i32]) -> Bytes<196_608> {
-    Bytes::<196_608>::paged(bytes_of_i32s(values)).unwrap()
+fn paged(values: &[i32]) -> Bytes<184_320> {
+    Bytes::<184_320>::paged(bytes_of_i32s(values)).unwrap()
 }
 
 fn pack_i32_page(values: &[i32]) -> raster::BytesPage {

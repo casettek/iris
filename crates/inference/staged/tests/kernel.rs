@@ -15,7 +15,7 @@ fn bytes_of_i32s(values: &[i32]) -> Vec<u8> {
     bytes
 }
 
-fn paged(values: &[i32]) -> Bytes<196_608> {
+fn paged(values: &[i32]) -> Bytes<184_320> {
     Bytes::<PAGE_SIZE>::paged(bytes_of_i32s(values)).unwrap()
 }
 

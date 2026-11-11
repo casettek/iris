@@ -7,7 +7,7 @@ use std::{
     process::Command,
 };
 const ONE: i32 = 1 << 16;
-fn paged(values: &[i32]) -> Bytes<196_608> {
+fn paged(values: &[i32]) -> Bytes<184_320> {
     Bytes::paged(
         values
             .iter()

@@ -1001,11 +1001,11 @@ mod tests {
     }
 
     /// The `N`-wide identity in Q16.16.
-    fn identity() -> Bytes<196_608> {
+    fn identity() -> Bytes<184_320> {
         let bytes: Vec<u8> = (0..N * N)
             .flat_map(|i| (if i % (N + 1) == 0 { 1 << 16 } else { 0_i32 }).to_le_bytes())
             .collect();
-        Bytes::<196_608>::paged(bytes).unwrap()
+        Bytes::<184_320>::paged(bytes).unwrap()
     }
 
     /// The `N`-wide identity as `Q8_0`: scale 1.0, a single 1 per row. Exact.

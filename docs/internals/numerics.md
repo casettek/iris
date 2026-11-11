@@ -83,6 +83,6 @@ one page at a time, so a page must hold whole rows.
 
 | Region | Page size | Why |
 | --- | --- | --- |
-| Q16.16 matrices | 196,608 | Whole rows of `width · 4` bytes |
+| Q16.16 matrices | 184,320 | Whole rows of `width · 4` bytes for every width in use (128, 256, 1536, 2560) |
 | `Q8_0` matrices and embedding tables | 195,840 | Whole rows of `width / 32 · 34` bytes for every width in use |
-| `Q8_0` logits head | 52,224 | Whole rows, and at most 384 rows of a 128-wide head in one tile call |
+| `Q8_0` logits head | 48,960 | Whole rows of `hidden / 32 · 34` bytes for every hidden width in use (128, 1536, 2560) |
