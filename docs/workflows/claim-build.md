@@ -21,6 +21,12 @@ Flow:
 
 `prepared_run.json` holds no copy of the ids: the claim's output is the chain's final `output_finalize` record, which also holds the input text's SHA-256, the model id and the output text's SHA-256.
 
+When `iris infer` has already run this spec, pass the ids it printed with
+`--direct-output-ids 1,2,3` and step 2 is skipped: the claim is built from them
+without a second direct pass. Nothing else changes. The ids must still fill
+`tokens` unless the last is EOS, the chain re-derives every token, and ids that
+are not the run's greedy output fail the build at step 7.
+
 The hidden debug flag `--claimed-ids 1,2,3` claims the given ids instead of
 discovering them. A rejection is then a warning, and the claim is written anyway.
 This builds deliberately false claims for challenge tests.

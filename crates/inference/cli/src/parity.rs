@@ -255,6 +255,7 @@ fn run_case(
         current_exe: exe.to_path_buf(),
         staged_backend: StagedExecutionBackend::InProcess,
         claimed_token_ids: None,
+        direct_output_ids: None,
     })?;
     let claimed = prepared.claimed_token_ids.clone();
     let raster_dir = dir.join("raster");
@@ -1471,6 +1472,7 @@ pub fn worker(spec: &Path, output: &Path, direct: bool) -> Result<()> {
             current_exe: std::env::current_exe()?,
             staged_backend: StagedExecutionBackend::InProcess,
             claimed_token_ids: None,
+            direct_output_ids: None,
         })?;
         write_json(
             &output.join("result.json"),

@@ -208,6 +208,16 @@ struct ClaimBuildArgs {
     #[arg(long = "claimed-ids", value_delimiter = ',', hide = true)]
     claimed_ids: Option<Vec<u32>>,
 
+    /// The comma-separated output ids `iris infer` printed for this same run
+    /// spec. The claim is built from them without running direct inference
+    /// again; the chain still re-derives every token and rejects any other ids.
+    #[arg(
+        long = "direct-output-ids",
+        value_delimiter = ',',
+        conflicts_with = "claimed_ids"
+    )]
+    direct_output_ids: Option<Vec<u32>>,
+
     /// Use the previous per-stage child-process staged-infer runner.
     #[arg(long = "staged-subprocess", alias = "direct-subprocess", hide = true)]
     staged_subprocess: bool,
@@ -1022,6 +1032,7 @@ impl ClaimBuildArgs {
         let mut options =
             ClaimBuildOptions::from_current_dir(current_exe, staged_backend, self.run)?;
         options.claimed_token_ids = self.claimed_ids;
+        options.direct_output_ids = self.direct_output_ids;
         Ok(options)
     }
 }

@@ -29,6 +29,11 @@ pub struct ClaimBuildOptions {
     /// inference. Used to build claims whose tokens are not the greedy
     /// continuation.
     pub claimed_token_ids: Option<Vec<u32>>,
+    /// The output a direct run of this same spec already produced. Taken in
+    /// place of running direct inference again, and held to every rule a
+    /// discovered output is: the chain re-derives each token, and a claim it
+    /// rejects is not written.
+    pub direct_output_ids: Option<Vec<u32>>,
 }
 
 pub(crate) struct PreparedClaimRun {
@@ -105,6 +110,13 @@ pub fn build_claim(options: ClaimBuildOptions) -> Result<ClaimBuildResult> {
         crate::challenge::claimed_output_rejection(checkpointed.final_result.as_ref())?
     {
         if options.claimed_token_ids.is_none() {
+            if options.direct_output_ids.is_some() {
+                anyhow::bail!(
+                    "{reason}; the ids given as this run's direct output are not what the chain \
+                     derives, so they are not that output or direct and teacher-forced \
+                     inference are not in parity"
+                );
+            }
             // The ids came from direct decode, so the two paths are not
             // bit-identical: an honest claimer would convict itself.
             anyhow::bail!("{reason}; direct and teacher-forced inference are not in parity");
@@ -212,6 +224,7 @@ impl ClaimBuildOptions {
             current_exe,
             staged_backend,
             claimed_token_ids: None,
+            direct_output_ids: None,
         })
     }
 }
@@ -265,7 +278,11 @@ fn prepare_run(
             run_spec.tokens,
         ));
     let prompt_dir = run_dir.join("prompt");
-    let ids = match &options.claimed_token_ids {
+    let ids = match options
+        .claimed_token_ids
+        .as_ref()
+        .or(options.direct_output_ids.as_ref())
+    {
         Some(ids) => ids.clone(),
         // Discovery is the only autoregression left: the claim posts what
         // direct decode produced and the chain checks it.
@@ -658,12 +675,27 @@ mod tests {
             current_exe: PathBuf::from("unused"),
             staged_backend: StagedExecutionBackend::InProcess,
             claimed_token_ids: Some(vec![0, 0, 0]),
+            direct_output_ids: None,
         };
         let prepared = prepare_claim_run(&options).unwrap();
         let rendered = fs::read_to_string(&prepared.manifest_path).unwrap();
         assert!(rendered.contains("name = \"model-b\""));
         assert!(!rendered.contains("model-a"));
         assert_eq!(prepared.claimed_token_ids, [0, 0, 0]);
+        // A prior direct run's output is taken without running direct again
+        // (this fixture has no weights to run), and is held to the run's length.
+        let given = |ids: &[u32]| ClaimBuildOptions {
+            claimed_token_ids: None,
+            direct_output_ids: Some(ids.to_vec()),
+            ..options.clone()
+        };
+        assert_eq!(
+            prepare_claim_run(&given(&[0, 0, 0]))
+                .unwrap()
+                .claimed_token_ids,
+            [0, 0, 0]
+        );
+        assert!(prepare_claim_run(&given(&[0])).is_err());
         assert_eq!(
             fs::canonicalize(&prepared.prepared_run.model_manifest_path).unwrap(),
             fs::canonicalize(&model_path).unwrap()

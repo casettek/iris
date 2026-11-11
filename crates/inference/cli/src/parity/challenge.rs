@@ -420,6 +420,7 @@ fn claim(leg: &Leg, name: &str, spec: &Path, ids: Option<Vec<u32>>) -> Result<Cl
         current_exe: leg.exe.to_path_buf(),
         staged_backend: StagedExecutionBackend::InProcess,
         claimed_token_ids: ids,
+        direct_output_ids: None,
     })
     .with_context(|| format!("claim `{name}`"))
 }

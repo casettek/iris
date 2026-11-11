@@ -258,6 +258,7 @@ fn challenge_run(
         current_exe: options.current_exe.clone(),
         staged_backend: options.staged_backend,
         claimed_token_ids: None,
+        direct_output_ids: None,
     })?;
     Ok((prepared.manifest_path, None))
 }
@@ -294,6 +295,7 @@ fn rebuild_teacher_forced_run(
             current_exe: options.current_exe.clone(),
             staged_backend: options.staged_backend,
             claimed_token_ids: Some(frozen_claimed_ids(frozen_manifest)?),
+            direct_output_ids: None,
         },
         &run_spec,
     )?;
@@ -1174,6 +1176,7 @@ mod tests {
             current_exe: PathBuf::from("unused"),
             staged_backend: StagedExecutionBackend::InProcess,
             claimed_token_ids: Some(ids),
+            direct_output_ids: None,
         })
         .unwrap();
         prepared.prepared_run
