@@ -35,7 +35,6 @@ The chain verifies a *known* output with one pass over `prompt ‖ claimed_outpu
 | `prefill-prepare-aux` | `aux_p{j}_l{l}`, `aux_c{k}_l{l}` | Per-layer PLE inputs |
 | `prefill-range` | `range_p{j}_l{l}`, `range_c{k}_l{l}` | Run one transformer layer over one range |
 | `sequence-check` | `check_c{k}` | Re-derive the greedy selections and compare them with the claimed ids |
-| `output-finalize` | `output_finalize` | Decode the text and publish the final record |
 
 Autoregressive generation is not a chain. It lives in `direct-infer`, which discovers the output a claim then verifies.
 
@@ -81,6 +80,16 @@ one pair of pieces per pair of tokens. A merge that joins two tokens, a token
 left in more than one piece, or a pair still merging after the last round is a
 fault. 64 rounds cover tokens of up to 33 pieces; Gemma 4 E2B's longest
 vocabulary entry is 31 characters.
+
+A pair's pieces change only when one of its own merges is applied, so a pair whose
+scan finds nothing to merge is finished for good. The round that finds it so checks
+that each of its two tokens has become one piece and drops its pieces from the
+rounds that follow. Most pairs finish within a few rounds, and the later rounds run
+over little more than the list's end piece. The range's token ids are read from the
+claimed tokens themselves, each one's pieces joined, because a pass's result no
+longer holds every token. When the checks pass that text is exactly the piece the
+merge made. A claimed token that is no vocabulary entry is a fault and is given id
+0; it does not stop the stage.
 
 Each prompt range `p{j}`:
 
@@ -137,12 +146,11 @@ range's context for the range size and the prompt's token count, and publishes
 `check_fault` and `check_fault_position` when it cannot stand behind the edge: a
 position with no predicting row, a range with no tokens or more than the range
 size, or a range that does not start where the prompt or the previous range ended.
-The earliest range's fault stands. The last check's `DecodeEdge` feeds
-`output-finalize`.
+The earliest range's fault stands.
 
-`output_finalize`:
-`output-finalize` reads the last check's edge and the last prompt range's context,
-and publishes the final record: the ids and their hash, the text and
+The output record:
+every check also finalizes the transcript so far. It decodes each id against the
+committed decoder table, and states the record beside its edge: the ids' hash, the text and
 `output_text_sha256` (the SHA-256 of the text's exact UTF-8 bytes), the verdict and
 check fault, `output_fault` (no tokens, over the budget, short of the budget without
 EOS, past EOS, or an edge that disagrees with its transcript), and the context the
@@ -176,12 +184,12 @@ stage is `prompt_bind_p0`.
 
 Causal attention means row `i` sees exactly the tokens direct generation's decode
 step at position `i` saw. For an honest claim every row and K/V entry equals
-direct generation's, the last check's `DecodeEdge` equals its last selection, and
-`output_finalize` is the same record it publishes.
+direct generation's, and the last check's `DecodeEdge`, with its record, is byte
+for byte direct generation's final edge.
 
 The claimed ids are an input to this chain, so a claim must not be able to post
 an output other than the one the chain consumed. It cannot: a claim posts no
-output ids of its own. Its output is `output_finalize`'s record,
+output ids of its own. Its output is the last check's edge and record,
 and it stands only if that record's prompt fault, check fault, `claim_mismatches`
 and `output_fault` are zero and `prompt_complete` is set.
 
@@ -229,8 +237,10 @@ Every per-position stage covers at most `range_size` positions, so its replay
 cost is bounded independently of the prompt length, except that a global-attention
 layer's late ranges still read every earlier key. The stage count grows linearly
 with the prompt: per prompt range one check, one embed and two stages per layer.
-`prompt_check` runs a fixed 128 merge rounds over its range whatever the range
-holds, so its cost does not depend on how many merges the range needs.
+`prompt_check` unrolls a fixed 128 merge rounds whatever the range holds. A round
+runs over the pairs still merging, so the stage's cost follows the merges the range
+needs: 942,387 steps for 512 tokens of English on Gemma 4 E4B, where running every
+round over every piece took 2,730,134.
 
 Carrying K/V forward copies it, because Raster can extend only an object created
 inside the same program, and a stage's input is not one. Sliding-window layers
@@ -287,7 +297,7 @@ model/execution fault makes the final claim invalid even if native and Raster
 honestly execute the same malicious wiring. `test-parity` exercises that case
 as well as divergence from the honest template; production RISC Zero tests in
 `model_identity_guest.rs` cover the corresponding guest checks. Model imports
-and prepared runs use version 11; older boundary encodings must be regenerated.
+and prepared runs use version 12; older boundary encodings must be regenerated.
 
 ### Stage schedule
 
@@ -300,8 +310,8 @@ layer count `L` they fix every stage:
 3. for each claimed range `k`: `embed_c{k}`
 4. for each layer: the auxiliary stage of every range, then the transformer
    stage of every range
-5. for each claimed range `k`: `check_c{k}`
-6. `output_finalize`
+5. for each claimed range `k`: `check_c{k}`, the last of which is the chain's
+   last stage
 
 The first range's `prompt_bind` checks that each count is at least one and within its limit, and
 that `C` fits the token budget at this range size. It stores the schedule in the
@@ -325,7 +335,11 @@ puts before it, under the same statement and schedule. The rules are in
 | `aux_*_l{l}` | layer `l < L` of its range | that range's embedding |
 | `range_*_l{l}` | layer `l < L` of its range | layer `l-1` of the range (or its embedding), layer `l` of the range before (or the empty sequence), the range's auxiliary stage for layer `l`, and the donor layer of the same range |
 | `check_c{k}` | claimed range `k` | layer `L-1` of range `k` and of the range before, `check_c{k-1}` or the empty edge, and `prompt_check` of range `P-1` |
-| `output_finalize` | last | `check_c{C-1}` and `prompt_check` of range `P-1` |
+| the output record, stated in `check_c{k}` | last | `check_c{C-1}` and `prompt_check` of range `P-1` |
+
+The schedule keeps a final step after the last check. A check states its record by
+taking that step from its own edge, so only the record of range `C-1` can be without
+a fault: an earlier range's record always carries one and cannot stand as a claim's.
 
 A failed requirement sets the execution fault, which is sticky and reaches
 `model_fault` in the final record. A valid record therefore means every scheduled

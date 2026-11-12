@@ -1,10 +1,10 @@
 //! Explicit guest execution gate; requires the installed RISC Zero toolchain.
 use model_identity::ModelDescriptor;
-use output_finalize::input::{DecoderProof, DecoderTable, DecoderToken, FinalizeState};
 use raster::{BytesPage, List};
 use raster_backend::ExecutionMode;
 use raster_backend_risc0::Risc0Backend;
 use raster_compiler::{builder::Builder, tile::TileDiscovery, Project};
+use sequence_check::input::{DecoderProof, DecoderTable, DecoderToken, FinalizeState};
 
 fn page(bytes: Vec<u8>) -> BytesPage {
     BytesPage::__from_parts(0, 0, bytes)
@@ -14,7 +14,7 @@ fn page(bytes: Vec<u8>) -> BytesPage {
 #[ignore = "builds and executes a RISC Zero guest"]
 fn decoder_substitution_is_rejected_by_guest_execution() {
     let stage = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../../raster-stages/output-finalize")
+        .join("../../../raster-stages/sequence-check")
         .canonicalize()
         .unwrap();
     let project = Project::new(stage.clone()).unwrap();
@@ -60,7 +60,7 @@ fn decoder_substitution_is_rejected_by_guest_execution() {
         let state: FinalizeState = postcard::from_bytes(&execution.output).unwrap();
         assert_eq!(
             state,
-            output_finalize::authenticated_finalize_state(&descriptor, expected_id)
+            sequence_check::authenticated_finalize_state(&descriptor, expected_id)
         );
         eprintln!(
             "begin model fault {}: {:?} cycles",
@@ -82,8 +82,8 @@ fn decoder_substitution_is_rejected_by_guest_execution() {
         (altered_special, 1),
         (altered_eos, 1),
     ] {
-        let state = output_finalize::authenticated_finalize_state(&descriptor, &id);
-        let expected = output_finalize::advance_authenticated_finalize(
+        let state = sequence_check::authenticated_finalize_state(&descriptor, &id);
+        let expected = sequence_check::advance_authenticated_finalize(
             state.clone(),
             &descriptor,
             &id,
@@ -185,7 +185,7 @@ fn component_roles_and_sticky_context_are_enforced_in_guests() {
             let mut input = context.clone();
             input.fault = prior_fault;
             let root = page(actual.into());
-            let prompt = output_finalize::prompt::PromptContext {
+            let prompt = sequence_check::prompt::PromptContext {
                 model: input.clone(),
                 model_id: input.model_id.clone(),
                 ..Default::default()
@@ -208,7 +208,7 @@ fn component_roles_and_sticky_context_are_enforced_in_guests() {
             };
             let execution = runner.run(&bytes, ExecutionMode::Estimate).unwrap();
             let output: model_identity::ModelContext = if stage == "prompt-check" {
-                postcard::from_bytes::<output_finalize::prompt::PromptContext>(&execution.output)
+                postcard::from_bytes::<sequence_check::prompt::PromptContext>(&execution.output)
                     .unwrap()
                     .model
             } else {
@@ -287,7 +287,7 @@ fn page_bytes_and_final_context_are_checked_in_guests() {
         eprintln!("page hash: {:?} cycles", execution.cycles);
     }
     let stage = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../../raster-stages/output-finalize")
+        .join("../../../raster-stages/sequence-check")
         .canonicalize()
         .unwrap();
     let project = Project::new(stage.clone()).unwrap();
@@ -313,7 +313,7 @@ fn page_bytes_and_final_context_are_checked_in_guests() {
     let descriptor = page(d.encode().unwrap());
     let id = hex::encode(d.model_id().unwrap());
     let (p, previous, current) = execution_fixture();
-    let prompt = output_finalize::prompt::PromptContext {
+    let prompt = sequence_check::prompt::PromptContext {
         model: p,
         model_id: id.clone(),
         input_text_sha256: "11".repeat(32),
@@ -332,7 +332,7 @@ fn page_bytes_and_final_context_are_checked_in_guests() {
             3 => edge.fault = 4,
             _ => (),
         }
-        let state = output_finalize::authenticated_finalize_state(&descriptor, &id);
+        let state = sequence_check::authenticated_finalize_state(&descriptor, &id);
         let execution = runner
             .run(
                 &postcard::to_allocvec(&(&state, &edge, &prompt, &descriptor, true, 2u32, 3u32))
@@ -343,7 +343,7 @@ fn page_bytes_and_final_context_are_checked_in_guests() {
         let result: FinalizeState = postcard::from_bytes(&execution.output).unwrap();
         assert_eq!(
             result.model_fault,
-            output_finalize::final_context_fault(&edge, &prompt, &descriptor)
+            sequence_check::final_context_fault(&edge, &prompt, &descriptor)
         );
         assert_eq!(result.model_fault == 0, case == 0);
         eprintln!(
@@ -409,7 +409,7 @@ fn sparse_membership_is_checked_by_production_guests() {
                 header.root = page(vec![0; 32]);
             }
             let input = if prompt_stage {
-                let prompt = output_finalize::prompt::PromptContext {
+                let prompt = sequence_check::prompt::PromptContext {
                     model: context,
                     ..Default::default()
                 };
@@ -426,7 +426,7 @@ fn sparse_membership_is_checked_by_production_guests() {
             };
             let execution = runner.run(&input, ExecutionMode::Estimate).unwrap();
             let output = if prompt_stage {
-                postcard::from_bytes::<output_finalize::prompt::PromptContext>(&execution.output)
+                postcard::from_bytes::<sequence_check::prompt::PromptContext>(&execution.output)
                     .unwrap()
                     .model
             } else {
@@ -469,7 +469,7 @@ fn sparse_membership_is_checked_by_production_guests() {
 #[test]
 #[ignore = "builds and executes the production prompt-check guest"]
 fn prompt_statement_substitution_is_rejected_in_guest() {
-    use output_finalize::prompt::{join_prompt_models, PromptContext, FAULT_CONTEXT_MISMATCH};
+    use sequence_check::prompt::{join_prompt_models, PromptContext, FAULT_CONTEXT_MISMATCH};
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../../raster-stages/prompt-check")
         .canonicalize()
@@ -535,7 +535,7 @@ fn prompt_statement_substitution_is_rejected_in_guest() {
 #[ignore = "builds and executes the production prompt-bind guest"]
 fn a_bind_opens_and_continues_in_guest_as_it_does_natively() {
     use model_identity::pipeline_core::{Step, MAX_RANGES};
-    use output_finalize::prompt::{
+    use sequence_check::prompt::{
         open_bind_range, text_claim_of, BindCarry, BindOpen, PromptContext, RunConfig, RunSchedule,
         TokenizerProfile,
     };
@@ -700,7 +700,7 @@ fn execution_fixture() -> (
 }
 
 #[test]
-#[ignore = "builds and executes production sequence-check and finalization guests"]
+#[ignore = "builds and executes production sequence-check guests, finalization among them"]
 fn pipeline_history_and_transcript_substitutions_match_native_in_guest() {
     use model_identity::ModelContext;
     let (prompt, previous, current) = execution_fixture();
@@ -751,7 +751,7 @@ fn pipeline_history_and_transcript_substitutions_match_native_in_guest() {
     }
     let checked = current.head(&previous, &prompt, &empty);
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../../raster-stages/output-finalize")
+        .join("../../../raster-stages/sequence-check")
         .canonicalize()
         .unwrap();
     let project = Project::new(path.clone()).unwrap();
@@ -762,18 +762,19 @@ fn pipeline_history_and_transcript_substitutions_match_native_in_guest() {
     );
     let discovery = TileDiscovery::new(&project);
     let runner = Builder::new(&project, &backend)
-        .build_tile_runner(&discovery.get("finish_finalize_state").unwrap())
+        .build_tile_runner(&discovery.get("finish_output_record").unwrap())
         .unwrap();
+    let context = sequence_check::prompt::PromptContext::default();
     for (ids, clean) in [
         (vec![3], true),
         (vec![], false),
         (vec![4], false),
         (vec![3, 3], false),
     ] {
-        let mut state = output_finalize::initial_finalize_state();
-        output_finalize::begin_final_history(&mut state, &checked, true, 2, 3);
+        let mut state = sequence_check::initial_finalize_state();
+        sequence_check::begin_final_history(&mut state, &checked, true, 2, 3);
         for id in ids {
-            state = output_finalize::advance_finalize_state(
+            state = sequence_check::advance_finalize_state(
                 state,
                 id,
                 DecoderToken {
@@ -783,14 +784,19 @@ fn pipeline_history_and_transcript_substitutions_match_native_in_guest() {
                 },
             );
         }
-        let expected = output_finalize::finished_state(state.clone());
+        let expected = sequence_check::output_record(
+            sequence_check::finished_state(state.clone()),
+            true,
+            &context,
+        );
         let actual = runner
             .run(
-                &postcard::to_allocvec(&(state,)).unwrap(),
+                &postcard::to_allocvec(&(state, true, &context)).unwrap(),
                 ExecutionMode::Estimate,
             )
             .unwrap();
-        let actual: FinalizeState = postcard::from_bytes(&actual.output).unwrap();
+        let actual: sequence_check::input::OutputRecord =
+            postcard::from_bytes(&actual.output).unwrap();
         assert_eq!(actual, expected);
         assert_eq!(actual.model_fault == 0, clean);
     }

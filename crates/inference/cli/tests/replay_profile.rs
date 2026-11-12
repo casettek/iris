@@ -35,11 +35,15 @@ fn native_prefix_stops_before_later_sequential_and_parallel_stages() {
 
     let root = unique_dir(&std::env::temp_dir().join("replay-profile-prefix"));
     let manifest = root.join("Raster.toml");
-    // The first stage is given empty values for everything it reads. It
-    // records what is wrong with them and finishes, which is all the
-    // scheduler needs of it here.
-    let external = |name: &str, value: &dyn Fn() -> (Vec<u8>, Vec<u8>, String)| {
-        let (data, index, commitment) = value();
+    // The first stage is a prompt check over a tokenizer with one empty bucket
+    // of each kind and a range with no marks. It records the range as empty
+    // and finishes, which is all the scheduler needs of it here.
+    use sequence_check::prompt::{PromptState, PromptTokenizer};
+    #[derive(serde::Serialize)]
+    struct Marks {
+        starts: raster::List<u32>,
+    }
+    let external = |name: &str, (data, index, commitment): (Vec<u8>, Vec<u8>, String)| {
         fs::write(root.join(format!("{name}.rastered")), data).unwrap();
         fs::write(root.join(format!("{name}.rindex")), index).unwrap();
         format!(
@@ -47,24 +51,35 @@ fn native_prefix_stops_before_later_sequential_and_parallel_stages() {
         )
     };
     raster::init();
-    let decoder = output_finalize::input::DecoderTable::default();
+    let tokenizer = PromptTokenizer {
+        vocab_bucket_count: 1,
+        merge_bucket_count: 1,
+        vocab_buckets: raster::List::from(vec![Default::default()]),
+        merge_buckets: raster::List::from(vec![Default::default()]),
+        ..Default::default()
+    };
+    let witness = sequence_check::prompt::tokenizer_witness(&tokenizer).unwrap();
     let inputs = [
-        external("edge", &|| {
-            raster::encode_raster_value(&output_finalize::input::DecodeEdge::default()).unwrap()
-        }),
-        external("prompt", &|| {
-            raster::encode_raster_value(&output_finalize::prompt::PromptState::default()).unwrap()
-        }),
-        external("decoder", &|| {
-            raster::encode_raster_value(&decoder).unwrap()
-        }),
-        external("descriptor", &|| {
-            raster::encode_raster_value(&raster::BytesPage::__from_parts(0, 0, Vec::new())).unwrap()
-        }),
-        external("witness", &|| {
-            raster::encode_raster_value(&output_finalize::decoder_witness(&decoder).unwrap())
-                .unwrap()
-        }),
+        external(
+            "tokenizer",
+            raster::encode_raster_value(&tokenizer).unwrap(),
+        ),
+        external("witness", raster::encode_raster_value(&witness).unwrap()),
+        external(
+            "bound",
+            raster::encode_raster_value(&PromptState::default()).unwrap(),
+        ),
+        external(
+            "previous",
+            raster::encode_raster_value(&PromptState::default()).unwrap(),
+        ),
+        external(
+            "marks",
+            raster::encode_raster_value(&Marks {
+                starts: raster::List::new(),
+            })
+            .unwrap(),
+        ),
     ]
     .concat();
     // Later stages intentionally have no usable inputs: they must not execute.
@@ -75,8 +90,8 @@ fn native_prefix_stops_before_later_sequential_and_parallel_stages() {
 [chain]
 name = "prefix-test"
 [[chain.stage]]
-name = "output_finalize"
-project = "raster-stages/output-finalize"
+name = "prompt_check_p0"
+project = "raster-stages/prompt-check"
 {inputs}
 [[chain.stage]]
 name = "prefill_prepare_aux_l0"
@@ -102,7 +117,7 @@ project = "raster-stages/sequence-check"
         parity_policy: ParityPolicy::Skip,
     };
     let sequential = CheckpointedInferenceExecutor
-        .run_through_stage(config.clone(), "output_finalize")
+        .run_through_stage(config.clone(), "prompt_check_p0")
         .unwrap();
     assert!(sequential.output_path.is_file());
     assert!(sequential.output_index_path.is_file());
@@ -110,7 +125,7 @@ project = "raster-stages/sequence-check"
     assert!(!sequential.chain_dir.join("prefill_prepare_aux_l0").exists());
     assert_eq!(
         sequential.project_dir,
-        root.join("raster-stages/output-finalize")
+        root.join("raster-stages/prompt-check")
     );
 
     // A stand-in aux worker publishes a valid artifact. This test exercises the

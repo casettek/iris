@@ -48,7 +48,7 @@ model that computes something else.
 | Part | Shared | Per family today |
 | --- | --- | --- |
 | Schedule and step rules (`pipeline-core`, `model-identity`) | yes; a model's descriptor has one auxiliary root per layer or none | |
-| `input-embedding`, `sequence-check`, `output-finalize` | yes | the head's softcap and the embedding scale are manifest values |
+| `input-embedding`, `sequence-check` (which also states the output record) | yes | the head's softcap and the embedding scale are manifest values |
 | `prompt-bind`, `prompt-check` | the stages; the chat template is data in the tokenizer profile | the scanner in `prompt-core` implements Gemma's rules; `run-prep` fills the profile's template with Gemma's |
 | `prefill-range`, `prefill-prepare-aux` | the weight-page and scoring tiles | the layer's mathematics is Gemma's |
 | Native kernels (`inference-kernels`, `direct-infer`, `staged-infer`) | batched products, the GPU path, caching | `prefill_range.rs` is Gemma's layer |

@@ -7,7 +7,6 @@ edition = "2021"
 anyhow = "1.0"
 inference-artifacts = { path = "../../inference/artifacts" }
 inference-kernels = { path = "../../inference/kernels" }
-output-finalize = { path = "../../../raster-stages/output-finalize" }
 prompt-check = { path = "../../../raster-stages/prompt-check" }
 sequence-check = { path = "../../../raster-stages/sequence-check" }
 raster = { path = "../../../../raster/crates/raster" }

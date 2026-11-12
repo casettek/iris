@@ -9,8 +9,8 @@ use anyhow::{bail, Context, Result};
 use inference_artifacts::{
     InferAuxWaveTiming, InferStageTiming, InferenceResult, InferenceRunReport, InferenceTimings,
 };
-use output_finalize::input::GeneratedOutput;
 use rayon::prelude::*;
+use sequence_check::input::GeneratedOutput;
 
 use crate::cache::{CachedInputs, CachedStageValue, MaterializationCache, StageOutputCache};
 use crate::chain_runner::{self, InputBinding, StageSpec};
@@ -124,11 +124,13 @@ impl UncheckpointedInferenceExecutor {
         }
 
         let result = match state.last_output.as_deref() {
-            Some(CachedStageValue::GeneratedOutput(output)) => {
-                inference_result_from_generated(output.clone())
+            // The last stage of a chain is the last claimed range's check,
+            // and its record is the output.
+            Some(CachedStageValue::DecodeEdge(edge)) => {
+                inference_result_from_generated(sequence_check::input::generated_output(edge))
             }
             Some(other) => bail!(
-                "infer expected final stage to produce generated output, got {:?}",
+                "infer expected final stage to be a check with its output record, got {:?}",
                 other
             ),
             None => bail!("infer cannot run an empty chain"),

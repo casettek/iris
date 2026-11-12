@@ -8,11 +8,14 @@
 //!     row      = predicting[k]                     (teacher-forced: row i sees ids[..=i])
 //!     normed   = rms_norm(row, w_final)
 //!     selected = argmax_t softcap(normed · projection[t])   (first maximum wins)
+//!   transcript = earlier ranges' ids ‖ every selection
+//!   record     = transcript decoded and committed, with what it breaks
 //!   DecodeEdge {
 //!     last selection,
 //!     claim_mismatches    = earlier ranges' + #{k : selected_k ≠ claimed_k},
 //!     check_fault         = the earliest range's fault, else this range's,
-//!     generated_token_ids = earlier ranges' ‖ every selection,
+//!     record,
+//!     generated_token_ids = transcript,
 //!   }
 //! ```
 //!
@@ -43,8 +46,13 @@ extern crate alloc;
 use alloc::string::String;
 use raster::prelude::*;
 
+pub mod finalize;
+pub mod finalize_model;
 pub mod input;
 pub mod prompt;
+
+pub use finalize::*;
+pub use finalize_model::*;
 
 use input::*;
 
@@ -453,8 +461,8 @@ pub fn check_fault_of(
 /// verdict: the earlier ranges' disagreements plus this range's, keeping the
 /// earliest position.
 ///
-/// The transcript list stays empty here: the copy sites below derive from
-/// this object and only push — the earlier ranges' ids, then this range's.
+/// The transcript list stays empty here: the copy site below derives from
+/// this object and only pushes the transcript's ids.
 #[tile(kind = iter, description = "Open the checked decode edge")]
 pub fn begin_decode_edge(
     summary: SelectionSummary,
@@ -462,9 +470,11 @@ pub fn begin_decode_edge(
     prior_first_mismatch_position: u32,
     fault: CheckFault,
     model: ModelContext,
+    record: OutputRecord,
 ) -> Draft<DecodeEdge> {
     let mut output = Draft::<DecodeEdge>::new();
     output.model().set(model);
+    output.record().set(record);
     output.has_selected().set(summary.has_selected);
     output.decode_position().set(summary.decode_position);
     output.token_id().set(summary.token_id);
@@ -486,28 +496,42 @@ pub fn begin_decode_edge(
     output
 }
 
-/// Copies a bounded chunk of the earlier ranges' transcript into the edge.
+/// Copies a bounded chunk of the earlier ranges' ids into the transcript.
 #[tile(kind = recur, description = "Copy earlier ranges' selected token ids")]
 pub fn copy_prior_token_ids(
+    input: RecurInput<Block<u32>>,
+    output: RecurOutput<Transcript>,
+) -> RecurOutput<Transcript> {
+    let mut output = output;
+    for token_id in input.into_value() {
+        output.ids().push(token_id);
+    }
+    output
+}
+
+/// Appends a bounded chunk of this range's selected token ids to the
+/// transcript.
+#[tile(kind = recur, description = "Copy selected token ids into the transcript")]
+pub fn copy_selected_token_ids(
+    input: RecurInput<Block<PositionSelection>>,
+    output: RecurOutput<Transcript>,
+) -> RecurOutput<Transcript> {
+    let mut output = output;
+    for selection in input.into_value() {
+        output.ids().push(selection.token_id);
+    }
+    output
+}
+
+/// Copies a bounded chunk of the transcript into the edge.
+#[tile(kind = recur, description = "Copy the transcript into the edge")]
+pub fn copy_transcript(
     input: RecurInput<Block<u32>>,
     output: RecurOutput<DecodeEdge>,
 ) -> RecurOutput<DecodeEdge> {
     let mut output = output;
     for token_id in input.into_value() {
         output.generated_token_ids().push(token_id);
-    }
-    output
-}
-
-/// Appends a bounded chunk of this range's selected token ids to the edge.
-#[tile(kind = recur, description = "Copy selected token ids into the edge")]
-pub fn copy_selected_token_ids(
-    input: RecurInput<Block<PositionSelection>>,
-    output: RecurOutput<DecodeEdge>,
-) -> RecurOutput<DecodeEdge> {
-    let mut output = output;
-    for selection in input.into_value() {
-        output.generated_token_ids().push(selection.token_id);
     }
     output
 }

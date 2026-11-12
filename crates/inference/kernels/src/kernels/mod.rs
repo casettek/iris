@@ -1,6 +1,6 @@
+pub mod finalize;
 pub mod input_embedding;
 pub mod origin;
-pub mod output_finalize;
 pub mod prefill_prepare_aux;
 pub mod prefill_range;
 pub mod prompt_check;

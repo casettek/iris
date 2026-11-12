@@ -5,8 +5,6 @@ use std::path::Path;
 use anyhow::{ensure, Context, Result};
 use inference_artifacts::{InferenceRunSpec, ModelManifest, PreparedPiece, PreparedPrompt};
 use input_embedding::input::ClaimedOutput;
-pub use output_finalize::input::{output_fault_description, OUTPUT_FAULT_SHORT_WITHOUT_EOS};
-use output_finalize::input::{DecoderTable, DecoderToken};
 pub use prompt_check::input::PromptTokenizer;
 use prompt_check::input::{
     apply_atom, begin_scan_state, begin_text_fold_state, byte_token, claimed_scan_plan,
@@ -22,6 +20,8 @@ use raster::List;
 pub use sequence_check::input::{
     check_fault_description, CHECK_FAULT_NO_CLAIMED_TOKENS, CHECK_FAULT_UNSCORED,
 };
+pub use sequence_check::input::{output_fault_description, OUTPUT_FAULT_SHORT_WITHOUT_EOS};
+use sequence_check::input::{DecoderTable, DecoderToken};
 
 /// What Gemma's chat template puts before and after the trimmed prompt. They
 /// go into the committed tokenizer profile, which is where the stages read

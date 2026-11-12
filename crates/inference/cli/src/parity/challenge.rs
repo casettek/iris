@@ -273,11 +273,9 @@ pub(super) fn run_challenge_leg(leg: &Leg) -> Result<Value> {
             take("embed_c{k}", "embedding")?,
         ),
         ("other-head", "check_c0", take("check_c{k}", "head")?),
-        (
-            "other-decoder",
-            "output_finalize",
-            take("output_finalize", "decoder")?,
-        ),
+        // The first check is the first stage to read the decoder table: every
+        // check states the output record of the transcript so far.
+        ("other-decoder", "check_c0", take("check_c{k}", "decoder")?),
         ("other-ple", "aux_p0_l0", table("[chain.input.aux_layer]")?),
         (
             "other-weights",
@@ -306,19 +304,13 @@ pub(super) fn run_challenge_leg(leg: &Leg) -> Result<Value> {
             "check_c1",
             wire("check_c{k}", "prior", &empty("check_c0", "prior")?)?,
         ),
-        (
-            "unchecked-range",
-            "output_finalize",
-            wire("output_finalize", "edge", r#"{ from = "check_c0" }"#)?,
-        ),
+        // No wiring presents an earlier range's record as the claim's: the
+        // final record is the last check's own output, and the three-path
+        // leg checks that an earlier check's record carries a fault.
         (
             "first-prompt-context",
-            "output_finalize",
-            wire(
-                "output_finalize",
-                "prompt",
-                r#"{ from = "prompt_check_p0" }"#,
-            )?,
+            "check_c0",
+            wire("check_c{k}", "prompt", r#"{ from = "prompt_check_p0" }"#)?,
         ),
     ];
     for (name, stage, manifest) in &substituted {
@@ -888,7 +880,7 @@ fn swapped_ple(leg: &Leg, manifest: &str) -> Result<String> {
 /// Change all complete buckets without changing any matching rule. This tests
 /// membership even when the numerical/tokenization result happens to be equal.
 fn tokenizer_substitution_binding(manifest: &str, dir: &Path) -> Result<String> {
-    use output_finalize::prompt::{BpeMerge, PromptTokenizer, TokenEntry};
+    use sequence_check::prompt::{BpeMerge, PromptTokenizer, TokenEntry};
     let parsed: toml::Value = toml::from_str(manifest)?;
     let stage = parsed["chain"]["repeat"]
         .as_array()
@@ -955,8 +947,8 @@ fn decoder_substitution_manifests(manifest: &str, dir: &Path) -> Result<(String,
         .as_array()
         .context("missing stages")?
         .iter()
-        .find(|stage| stage["name"].as_str() == Some("output_finalize"))
-        .context("missing finalization stage")?;
+        .find(|stage| stage["name"].as_str() == Some("check_c0"))
+        .context("missing the first check stage")?;
     let external = &stage["inputs"]["decoder"]["external"];
     let data = Path::new(external["path"].as_str().context("missing decoder path")?);
     let index = Path::new(
@@ -970,7 +962,7 @@ fn decoder_substitution_manifests(manifest: &str, dir: &Path) -> Result<(String,
     );
     let artifact =
         raster_runtime::read_raster_value(data, index, &raster_runtime::ReadLimits::unbounded())?;
-    let table: output_finalize::input::DecoderTable =
+    let table: sequence_check::input::DecoderTable =
         serde_json::from_value(super::compare::value_json(&artifact)?)?;
     let tokens = table
         .tokens
@@ -981,10 +973,10 @@ fn decoder_substitution_manifests(manifest: &str, dir: &Path) -> Result<(String,
             token
         })
         .collect::<Vec<_>>();
-    let table = output_finalize::input::DecoderTable {
+    let table = sequence_check::input::DecoderTable {
         tokens: tokens.into(),
     };
-    let witness = output_finalize::decoder_witness(&table).map_err(|f| anyhow::anyhow!("{f:?}"))?;
+    let witness = sequence_check::decoder_witness(&table).map_err(|f| anyhow::anyhow!("{f:?}"))?;
     fs::create_dir_all(dir)?;
     let binding = |name: &str, root: String| -> Result<String> {
         Ok(format!(
@@ -1006,13 +998,13 @@ fn decoder_substitution_manifests(manifest: &str, dir: &Path) -> Result<(String,
     )?;
     let changed = replace_binding(
         manifest,
-        "output_finalize",
+        "check_c{k}",
         "decoder",
         &binding("decoder", decoder_root)?,
     )?;
     let changed_proof = replace_binding(
         &changed,
-        "output_finalize",
+        "check_c{k}",
         "witness",
         &binding("witness", witness_root)?,
     )?;
@@ -1070,19 +1062,10 @@ fn replay_semantic_rejection(
         result.model_id == expected_model_id,
         "substitution replaced the statement model ID"
     );
-    // Only truncating an otherwise honest checked transcript may preserve
-    // model/history integrity; it must fail the explicit completion rule.
-    if name == "unchecked-range-self-replay" {
-        ensure!(
-            result.output_fault == run_prep::OUTPUT_FAULT_SHORT_WITHOUT_EOS,
-            "truncated checked history was not rejected as incomplete"
-        );
-    } else {
-        ensure!(
-            result.model_fault != 0,
-            "substitution produced a clean model/execution binding verdict"
-        );
-    }
+    ensure!(
+        result.model_fault != 0,
+        "substitution produced a clean model/execution binding verdict"
+    );
     let rejection = crate::challenge::claimed_output_rejection(Some(&result))?
         .context("matching dishonest execution was accepted")?;
     ensure!(!rejection.is_empty(), "missing semantic rejection");
@@ -1150,7 +1133,6 @@ mod tests {
         for case in [
             "repeated-context",
             "dropped-verdict",
-            "unchecked-range",
             "first-prompt-context",
             "restarted-positions",
             "dropped-cache",

@@ -151,6 +151,23 @@ pub fn numbered_state(numbered: Numbered) -> NumberState {
     numbered.state
 }
 
+#[tile(kind = iter)]
+pub fn empty_claim_summary() -> ClaimSummary {
+    ClaimSummary::default()
+}
+
+#[tile(kind = recur, description = "How many tokens the marks claim")]
+pub fn summarize_claim(
+    input: RecurInput<Block<CheckPiece>>,
+    state: RecurState<ClaimSummary>,
+) -> RecurState<ClaimSummary> {
+    let mut state = state;
+    for piece in input.into_value().iter() {
+        observe_claimed_piece(&mut state, piece);
+    }
+    state
+}
+
 // ---------------------------------------------------------------------------
 // A round
 // ---------------------------------------------------------------------------
@@ -230,7 +247,10 @@ pub fn begin_apply(state: ApplyState, piece: CheckPiece, pass: u32) -> ApplyStep
     begin_apply_step(state, piece, pass)
 }
 
-#[tile(kind = iter, description = "Keep, merge or drop a piece")]
+#[tile(
+    kind = iter,
+    description = "Keep or merge a piece, or drop it with its finished window"
+)]
 pub fn apply(step: ApplyStep, best: WindowBest) -> ApplyAction {
     apply_piece(step, best)
 }
@@ -275,7 +295,10 @@ pub fn empty_pass_summary() -> PassSummary {
     PassSummary::default()
 }
 
-#[tile(kind = recur, description = "Whether every token is one piece")]
+#[tile(
+    kind = recur,
+    description = "What a pass carried, and whether each token left is one piece"
+)]
 pub fn summarize_pass(
     input: RecurInput<Block<CheckPiece>>,
     state: RecurState<PassSummary>,
@@ -289,9 +312,11 @@ pub fn summarize_pass(
 
 /// The context once the range is checked. Faults are recorded, not raised.
 #[tile(kind = iter, description = "Record the range's check in the context")]
+#[allow(clippy::too_many_arguments)]
 pub fn finish_check(
     context: PromptContext,
     plan: RangePlan,
+    claim: ClaimSummary,
     pass_a: PassSummary,
     scan_a: ScanSummary,
     pass_b: PassSummary,
@@ -299,7 +324,7 @@ pub fn finish_check(
     bound_done: bool,
 ) -> PromptContext {
     finish_check_context(
-        &context, &plan, &pass_a, &scan_a, &pass_b, &scan_b, bound_done,
+        &context, &plan, &claim, &pass_a, &scan_a, &pass_b, &scan_b, bound_done,
     )
 }
 
@@ -314,22 +339,27 @@ pub fn open_token_pieces() -> Draft<MergeRound> {
     output
 }
 
-/// Copies the range's own tokens out of a pass's final pieces.
-#[tile(kind = recur, description = "Copy the range's tokens")]
-pub fn copy_token_pieces(
+#[tile(kind = iter)]
+pub fn begin_token_join() -> TokenJoin {
+    TokenJoin::default()
+}
+
+/// Reads the range's own tokens off the numbered pieces: each one's text
+/// is its claimed pieces joined.
+#[tile(kind = recur, description = "Join each claimed token's pieces")]
+pub fn join_token_pieces(
     input: RecurInput<Block<CheckPiece>>,
+    state: RecurState<TokenJoin>,
     output: RecurOutput<MergeRound>,
-) -> RecurOutput<MergeRound> {
+) -> (RecurState<TokenJoin>, RecurOutput<MergeRound>) {
+    let mut state = state;
     let mut output = output;
     for piece in input.into_value().iter() {
-        if is_range_token(piece) {
-            output.pieces().push(BpePiece {
-                text: piece.text.clone(),
-                segment: piece.segment,
-            });
+        if let Some(token) = join_claimed_piece(&mut state, piece) {
+            output.pieces().push(token);
         }
     }
-    output
+    (state, output)
 }
 
 /// Opens the stage's output with the range's context.
@@ -373,18 +403,22 @@ pub fn scan_vocab_chunk(
     state
 }
 
-/// Every piece here is one of `prompt-bind`'s, which are vocabulary entries,
-/// or a merge's result, which the import checks is one. A claim cannot make
-/// this fail.
+/// A claimed token that is no vocabulary entry has no id. The range is
+/// already refused for it (`require_token`), and it is given id 0 so that
+/// the range still has one id for each token it claims.
 #[tile(kind = iter)]
 pub fn append_token_id(output: Draft<PromptState>, hit: VocabMatch) -> Draft<PromptState> {
-    assert!(
-        hit.found,
-        "prepared or merged piece is absent from vocabulary"
-    );
     let mut output = output;
-    output.token_ids().push(hit.token_id);
     output
+        .token_ids()
+        .push(if hit.found { hit.token_id } else { 0 });
+    output
+}
+
+#[tile(kind = iter, description = "A claimed token must be a vocabulary entry")]
+pub fn require_token(mut context: PromptContext, hit: VocabMatch) -> PromptContext {
+    require_vocabulary_token(&mut context, hit.found);
+    context
 }
 
 #[tile(kind = recur)]

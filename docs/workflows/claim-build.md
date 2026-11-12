@@ -19,7 +19,7 @@ Flow:
 7. Claim build applies the rule a challenger will. If the final record's committed verdict counts any claimed id that is not the greedy selection, claim build fails: direct and teacher-forced inference are not in parity, and the claim would refute itself.
 8. `inference-artifacts` scans the completed chain directory and writes the claim files.
 
-`prepared_run.json` holds no copy of the ids: the claim's output is the chain's final `output_finalize` record, which also holds the input text's SHA-256, the model id and the output text's SHA-256.
+`prepared_run.json` holds no copy of the ids: the claim's output is the record the chain's last stage, the last range's check, states with its edge, which also holds the input text's SHA-256, the model id and the output text's SHA-256.
 
 When `iris infer` has already run this spec, pass the ids it printed with
 `--direct-output-ids 1,2,3` and step 2 is skipped: the claim is built from them
@@ -112,7 +112,7 @@ against actual authenticated Raster stage execution:
 
 ```bash
 cargo build -p input-embedding -p prefill-prepare-aux \
-  -p prefill-range -p sequence-check -p output-finalize --bins
+  -p prefill-range -p sequence-check --bins
 STAGED_INFER_REPLAY_BIN_DIR="$PWD/target/debug" cargo test -p staged-infer \
   --test worker_parity repeated_ranges_match_authenticated_raster_stage_execution -- --ignored
 ```

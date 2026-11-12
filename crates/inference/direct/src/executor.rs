@@ -80,7 +80,7 @@ impl DirectInferenceExecutor {
         let execution_context = |generated: Option<&[u32]>, claimed_tokens: usize| {
             let mut context = crate::view_kernels::bound_model_context(&model);
             context.bind_statement(
-                &output_finalize::sha256_hex(prepared_prompt.resolved_prompt.as_bytes()),
+                &sequence_check::sha256_hex(prepared_prompt.resolved_prompt.as_bytes()),
                 run_spec.raw_prompt,
                 run_spec.tokens,
                 model.manifest().range_size,
@@ -176,18 +176,7 @@ impl DirectInferenceExecutor {
         timings.push(phase_timing("decode", decode_started.elapsed()));
 
         let finalize_started = Instant::now();
-        let output_edge = output_finalize::input::DecodeEdge {
-            model: edge.model.clone(),
-            has_selected: edge.has_selected,
-            decode_position: edge.decode_position,
-            token_id: edge.token_id,
-            value: edge.value,
-            claim_mismatches: edge.claim_mismatches,
-            first_claim_mismatch_position: edge.first_claim_mismatch_position,
-            check_fault: edge.check_fault,
-            check_fault_position: edge.check_fault_position,
-            generated_token_ids: edge.generated_token_ids.clone(),
-        };
+        let output_edge = edge.clone();
         let decoder = model.decoder_table()?;
         let descriptor = raster::BytesPage::__from_parts(
             0,
@@ -203,44 +192,45 @@ impl DirectInferenceExecutor {
             },
         );
         let witness =
-            output_finalize::decoder_witness(&decoder).map_err(|f| anyhow::anyhow!("{f:?}"))?;
-        let finalize_inputs =
-            inference_kernels::kernels::output_finalize::OutputFinalizeDirectInputs {
-                edge: &output_edge,
-                decoder: &decoder,
-                descriptor: &descriptor,
-                witness: &witness,
-                // The record the chain publishes for this run: a direct result
-                // and an honest claim's final record are the same bytes.
-                context: &output_finalize::prompt::PromptContext {
-                    model: execution_context(None, output_edge.generated_token_ids.len()),
-                    input_text_sha256: output_finalize::sha256_hex(
-                        prepared_prompt.resolved_prompt.as_bytes(),
-                    ),
-                    model_id: model.manifest().model_id.clone(),
-                    raw_prompt: run_spec.raw_prompt,
-                    max_new_tokens: run_spec.tokens,
-                    range_size: model.manifest().range_size,
-                    next_piece: prepared_prompt.initial_pieces.len() as u64,
-                    prompt_tokens: prompt.token_ids.len() as u32,
-                    complete: true,
-                    fault: 0,
-                    fault_position: 0,
-                },
-            };
-        let output = if model.manifest().model_commitments.is_empty() {
-            inference_kernels::kernels::output_finalize::run_output_finalize_discovery(
-                finalize_inputs.edge,
+            sequence_check::decoder_witness(&decoder).map_err(|f| anyhow::anyhow!("{f:?}"))?;
+        let finalize_inputs = inference_kernels::kernels::finalize::FinalizeInputs {
+            decoder: &decoder,
+            descriptor: &descriptor,
+            witness: &witness,
+            // The record the chain publishes for this run: a direct result
+            // and an honest claim's final record are the same bytes.
+            context: &sequence_check::prompt::PromptContext {
+                model: execution_context(None, output_edge.generated_token_ids.len()),
+                input_text_sha256: sequence_check::sha256_hex(
+                    prepared_prompt.resolved_prompt.as_bytes(),
+                ),
+                model_id: model.manifest().model_id.clone(),
+                raw_prompt: run_spec.raw_prompt,
+                max_new_tokens: run_spec.tokens,
+                range_size: model.manifest().range_size,
+                next_piece: prepared_prompt.initial_pieces.len() as u64,
+                prompt_tokens: prompt.token_ids.len() as u32,
+                complete: true,
+                fault: 0,
+                fault_position: 0,
+            },
+        };
+        let final_edge = if model.manifest().model_commitments.is_empty() {
+            inference_kernels::kernels::finalize::run_output_finalize_discovery(
+                &output_edge,
                 finalize_inputs.decoder,
                 finalize_inputs.context,
             )?
         } else {
-            inference_kernels::kernels::output_finalize::run_output_finalize_direct(
-                finalize_inputs,
+            inference_kernels::kernels::finalize::run_output_finalize_direct(
+                &output_edge,
+                &finalize_inputs,
             )?
         };
 
-        trace.record("output_finalize", &output)?;
+        // The run's last boundary is its final edge with the output record.
+        trace.record("output_finalize", &final_edge)?;
+        let output = sequence_check::input::generated_output(&final_edge);
         let result = InferenceResult {
             model_fault: output.model_fault,
             generated_token_count: output.generated_token_count,

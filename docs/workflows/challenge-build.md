@@ -35,7 +35,7 @@ A claim whose `sequence_check` or layer checkpoint is doctored diverges there an
 replays that stage as usual.
 
 If every checkpoint matches, there is no stage to dispute, and the claim is
-judged by its own final record, `output_finalize`. The claim posts no other
+judged by its own final record, the last check's edge and output record. The claim posts no other
 copy of its output. It is rejected, without a replay, when:
 
 - **The prompt was not prepared correctly.** `prompt_fault` is non-zero, or

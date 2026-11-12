@@ -11,7 +11,6 @@ use raster::List;
 use serde::Deserialize;
 
 use input_embedding::input as embedding_input;
-use output_finalize::input as output_input;
 use prefill_prepare_aux::input as aux_input;
 use prefill_range::input as range_input;
 use prompt_check::input as prompt_input;
@@ -25,7 +24,6 @@ pub enum CachedStageValue {
     PleLayerInputs(aux_input::PleLayerInputs),
     RangeActivations(range_input::ActivationSequence),
     DecodeEdge(check_input::DecodeEdge),
-    GeneratedOutput(output_input::GeneratedOutput),
 }
 
 #[derive(Clone, Debug)]
@@ -311,16 +309,6 @@ impl CachedStageValue {
         }
     }
 
-    /// The stage reads only the context, and has its own copy of the type.
-    pub fn as_output_prompt_context(&self) -> Result<output_finalize::prompt::PromptContext> {
-        match self {
-            Self::PromptTokenization(value) => Ok(
-                inference_kernels::kernels::output_finalize::prompt_context(&value.context),
-            ),
-            _ => bail!("cached value is not a prompt tokenization"),
-        }
-    }
-
     pub fn as_aux_activation_sequence(&self) -> Result<aux_input::ActivationSequence> {
         match self {
             Self::EmbeddedActivations(value) => Ok(aux_activation_from_embedding(value)),
@@ -341,13 +329,6 @@ impl CachedStageValue {
         match self {
             Self::PleLayerInputs(value) => Ok(range_ple_from_aux(value)),
             _ => bail!("cached value is not PLE layer inputs"),
-        }
-    }
-
-    pub fn as_output_edge(&self) -> Result<output_input::DecodeEdge> {
-        match self {
-            Self::DecodeEdge(value) => Ok(output_edge_from_decode(value)),
-            _ => bail!("cached value is not a decode edge"),
         }
     }
 
@@ -466,21 +447,6 @@ fn range_ple_from_aux(source: &aux_input::PleLayerInputs) -> range_input::PleLay
             values: row.values.clone(),
         }),
         errors: source.errors.clone(),
-    }
-}
-
-fn output_edge_from_decode(source: &check_input::DecodeEdge) -> output_input::DecodeEdge {
-    output_input::DecodeEdge {
-        model: source.model.clone(),
-        has_selected: source.has_selected,
-        decode_position: source.decode_position,
-        token_id: source.token_id,
-        value: source.value,
-        claim_mismatches: source.claim_mismatches,
-        first_claim_mismatch_position: source.first_claim_mismatch_position,
-        check_fault: source.check_fault,
-        check_fault_position: source.check_fault_position,
-        generated_token_ids: source.generated_token_ids.clone(),
     }
 }
 

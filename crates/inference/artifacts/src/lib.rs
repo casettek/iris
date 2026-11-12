@@ -218,7 +218,7 @@ mod tests {
     fn claim_artifacts_round_trip_as_json() {
         let trace = CheckpointTrace {
             checkpoints: vec![Checkpoint {
-                stage: String::from("output_finalize"),
+                stage: String::from("check_c0"),
                 input_commitment: String::from("input"),
                 output_commitment: String::from("abc"),
                 output_sha256: String::from("deadbeef"),
@@ -232,7 +232,7 @@ mod tests {
                 commitment: String::from("input"),
             },
             output: ClaimEndpoint {
-                stage: String::from("output_finalize"),
+                stage: String::from("check_c0"),
                 commitment: String::from("abc"),
             },
             prepared_run_path: None,

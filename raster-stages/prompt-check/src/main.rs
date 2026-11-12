@@ -5,10 +5,12 @@
 //!   previous.rest, bound.pieces ──recur──▶ how many pieces the range is given ──▶ its plan
 //!   previous.pieces, previous.rest, bound.pieces ──recur──▶ the range's pieces, ending in an end piece
 //!   pieces × marks ──recur seq──▶ every piece's token
+//!   numbered pieces ──recur──▶ how many tokens the marks claim, and the last
 //!   pass A, pass B: 64 × [ scan ──recur seq──▶ best pair per window
-//!                          apply ──recur seq──▶ at most one merge per window ]
-//!                   closing scan, and a fold over the pass's final pieces
-//!   pass A's pieces ──▶ the range's tokens ──vocabulary──▶ token ids ──▶ PromptState
+//!                          apply ──recur seq──▶ at most one merge per window;
+//!                                              a finished window leaves the list ]
+//!                   closing scan, and a fold over what the pass has left
+//!   numbered pieces ──recur──▶ each claimed token's text ──vocabulary──▶ token ids ──▶ PromptState
 //!   previous.rest, bound.pieces ──recur──▶ the pieces past the range, for the next
 //! ```
 
@@ -118,7 +120,8 @@ fn scan_windows(
     )
 }
 
-/// One round: at most one merge in every window.
+/// One round: at most one merge in every window. A window with nothing to
+/// merge is finished, and its pieces are not in the round's result.
 #[sequence]
 fn check_round(
     pieces: List<CheckPiece>,
@@ -366,10 +369,26 @@ fn verify_piece(
     paths: List<SparsePath>,
 ) -> RecurSequenceState<PromptContext> {
     let query = call!(begin_vocab_lookup, input);
-    let index = call!(vocab_bucket_index, query, count);
-    let root = call_seq!(identity_vocabbucket_contents, buckets, index.clone());
+    let index = call!(vocab_bucket_index, query.clone(), count);
+    let root = call_seq!(
+        identity_vocabbucket_contents,
+        buckets.clone(),
+        index.clone()
+    );
     let proof = select!(SparsePath, paths[index]);
-    call!(identity_sparse_context, state, root, index, header, proof)
+    // The token must be an entry of the bucket being proven. A token read
+    // off the claim's marks need not be one.
+    let bucket = select!(VocabBucket, buckets[index]);
+    let entries = select!(List<TokenEntry>, bucket.entries);
+    let empty = call!(empty_vocab_match);
+    let hit = call_recur!(
+        tile = scan_vocab_chunk,
+        input = entries,
+        state = empty,
+        args = (query,)
+    );
+    let state = call!(identity_sparse_context, state, root, index, header, proof);
+    call!(require_token, state, hit)
 }
 
 /// Stage entrypoint for one range: `bound` is this range's bind, `previous`
@@ -456,6 +475,16 @@ fn main(
     );
     let pieces = select!(List<CheckPiece>, numbered.pieces);
 
+    // What the marks claim of the range: how many tokens, and the last.
+    let no_claim = call!(empty_claim_summary);
+    let claim = call_recur!(
+        tile = summarize_claim,
+        input = pieces.clone(),
+        chunk = 256,
+        state = no_claim,
+        args = ()
+    );
+
     let count = select!(u32, tokenizer.clone().merge_bucket_count);
     let buckets = select!(List<MergeBucket>, tokenizer.clone().merge_buckets);
     let header = select!(SparseHeader, witness.clone().merges);
@@ -485,7 +514,7 @@ fn main(
     let no_pass_a = call!(empty_pass_summary);
     let summary_a = call_recur!(
         tile = summarize_pass,
-        input = merged_a.clone(),
+        input = merged_a,
         chunk = 256,
         state = no_pass_a,
         args = ()
@@ -526,19 +555,23 @@ fn main(
         finish_check,
         context,
         plan.clone(),
-        summary_a.clone(),
+        claim.clone(),
+        summary_a,
         scan_a,
         summary_b,
         scan_b,
         bound_done
     );
 
-    // The range's tokens, as pass A left them, resolved to ids.
+    // The range's tokens, each the text of its claimed pieces, resolved to
+    // ids. A pass's result does not hold them: finished windows left it.
     let opened_tokens = call!(open_token_pieces);
+    let join_seed = call!(begin_token_join);
     let tokens = call_recur!(
-        tile = copy_token_pieces,
-        input = merged_a,
+        tile = join_token_pieces,
+        input = pieces.clone(),
         chunk = 256,
+        state = join_seed,
         output = opened_tokens,
         args = ()
     );
@@ -580,7 +613,7 @@ fn main(
         output = opened,
         args = ()
     );
-    let last_token = select!(u32, summary_a.last_token);
+    let last_token = select!(u32, claim.last_token);
     let with_last = call_recur!(
         tile = carry_last_token,
         input = pieces,

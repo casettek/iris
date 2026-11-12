@@ -2105,8 +2105,8 @@ mod tests {
             }
         }
 
-        assert_eq!(manifest.chain.stage.len(), 43);
-        assert_eq!(direct, 42);
+        assert_eq!(manifest.chain.stage.len(), 42);
+        assert_eq!(direct, 41);
         assert_eq!(reference, 1);
     }
 
@@ -2252,12 +2252,17 @@ mod tests {
             InputBinding::From("range_p1_l0".into())
         );
 
-        let output = manifest.chain.stage.last().unwrap();
-        assert_eq!(output.name, "output_finalize");
-        assert_eq!(
-            output.inputs.get("edge"),
-            Some(&InputBinding::From(String::from("check_c1")))
-        );
+        // The chain ends at the last claimed range's check. Every check is
+        // given the decoder inputs its output record is stated from.
+        assert_eq!(manifest.chain.stage.last().unwrap().name, "check_c1");
+        for range in 0..2 {
+            for input in ["decoder", "descriptor", "witness"] {
+                assert!(
+                    matches!(check(range).inputs[input], InputBinding::External(_)),
+                    "check_c{range} {input}"
+                );
+            }
+        }
     }
 
     #[test]
@@ -2289,8 +2294,8 @@ name = "check_c{k}"
 project = "sequence-check"
 
 [[chain.stage]]
-name = "output_finalize"
-project = "output-finalize"
+name = "embed_c9"
+project = "input-embedding"
 inputs.edge = { from = "claimed.edge" }
 "#,
         )
@@ -2298,8 +2303,9 @@ inputs.edge = { from = "claimed.edge" }
         let manifest = read_manifest(&path).unwrap();
         let index = build_stage_index(&manifest.chain.stage).unwrap();
 
-        // One claimed range: its check is the plain stage, the repeat of the
-        // checks after it does not run, and the export falls back to it.
+        // A repeat that does not run exports its entry: a stage bound to the
+        // export reads the stage before the repeat. The iris chain has no
+        // such binding now; the mechanism is the manifest format's.
         assert!(!index.contains_key("check_c1"));
         let output = manifest.chain.stage.last().unwrap();
         assert_eq!(

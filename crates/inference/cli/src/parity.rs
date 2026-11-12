@@ -20,7 +20,8 @@ use staged_infer::chain_runner::StagedExecutionBackend;
 
 use crate::claim::{build_claim, prepare_claim_run, ClaimBuildOptions};
 use compare::{
-    check_inventory, compare, read_boundaries, teacher_forced_names, Boundary, RangedShape,
+    check_inventory, compare, final_record, read_boundaries, teacher_forced_names, Boundary,
+    RangedShape,
 };
 
 #[derive(Debug, Deserialize)]
@@ -363,7 +364,21 @@ fn run_case(
     );
     // The final record is what a contract reads: the context it reports is the
     // one the prompt stages established, and its commitment hashes its own text.
-    let record = &raster_outputs["output_finalize"].value;
+    let last_check = format!("check_c{}", shape.claimed_ranges - 1);
+    let record = &final_record(&raster_outputs[&last_check].value)?;
+    // Every check states a record, and only the last range's is a claim's:
+    // an earlier one carries a fault, so it cannot be presented as final.
+    for earlier in 0..shape.claimed_ranges - 1 {
+        let stage = format!("check_c{earlier}");
+        ensure!(
+            raster_outputs[&stage].value["record"]["model_fault"] != json!(0),
+            "{stage} is not the last claimed range and states a clean output record"
+        );
+    }
+    ensure!(
+        record["model_fault"] == json!(0),
+        "the final record carries a model fault: {record}"
+    );
     for (field, source) in [
         ("input_text_sha256", "input_text_sha256"),
         ("model_id", "model_id"),
@@ -649,7 +664,8 @@ fn run_chain_fault_leg(
                 .with_context(|| format!("chain fault `{name}`"))?;
         }
 
-        let record = &raster_outputs["output_finalize"].value;
+        let last = order.last().context("the chain ran no stage")?;
+        let record = &final_record(&raster_outputs[last].value)?;
         ensure!(
             (record["prompt_fault"] != json!(0)) == prompt_fault,
             "chain fault `{name}`: expected a prompt fault: {prompt_fault}; got {record}"
@@ -1093,7 +1109,7 @@ fn prompt_only_manifest(
 /// step `i - prompt_len`'s single row, and every K/V entry a range publishes,
 /// inherited or its own, direct's entry at the same position. Direct never runs a
 /// pass for its last token, so the chain's row for it has no reference; nothing
-/// is scored from that row. `output_finalize` must be the same record, and the
+/// is scored from that row. The last range's check must be direct's final edge and record, and the
 /// last range's check the same edge as direct's last selection.
 ///
 /// Stages are read one layer at a time, so real-model chains with hundreds of
@@ -1135,20 +1151,15 @@ pub(crate) fn compare_teacher_forced(tf_dir: &Path, direct_dir: &Path) -> Result
         json!(ranged_prompt) == prompt_ids,
         "prompt ranges tokenize differently from the whole prompt"
     );
-    compare(
-        "output_finalize",
-        &load(tf_dir, "output_finalize")?,
-        &load(direct_dir, "output_finalize")?,
-    )
-    .context("chain ↔ direct final record")?;
+    // The last check publishes the final edge with the output record, and
+    // direct generation's final boundary is the same bytes.
     let last_check = format!("check_c{}", shape.claimed_ranges - 1);
-    let last_select = format!("decode_select_t{}", tokens - 1);
     compare(
         &last_check,
         &load(tf_dir, &last_check)?,
-        &load(direct_dir, &last_select)?,
+        &load(direct_dir, "output_finalize")?,
     )
-    .with_context(|| format!("chain {last_check} ↔ direct {last_select}"))?;
+    .with_context(|| format!("chain {last_check} ↔ direct final edge and record"))?;
 
     // The same family of stages, ranged and direct.
     let ranges = (0..shape.prompt_ranges)
@@ -1317,8 +1328,8 @@ fn validate_case(
             );
         }
     }
-    let final_value = &outputs["output_finalize"].value;
-    let result: InferenceResult = serde_json::from_value(final_value.clone())?;
+    let result: InferenceResult =
+        serde_json::from_value(final_record(&outputs["output_finalize"].value)?)?;
     ensure!(
         result.generated_token_count == case.tokens
             && result.generated_token_ids.len() == case.tokens as usize,

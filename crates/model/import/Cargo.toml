@@ -11,7 +11,7 @@ path = "src/main.rs"
 
 [dependencies]
 model-identity = { path = "../identity" }
-output-finalize = { path = "../../../raster-stages/output-finalize" }
+sequence-check = { path = "../../../raster-stages/sequence-check" }
 det-num = { path = "../../det-num" }
 detwgt = { path = "../detwgt" }
 inference-artifacts = { path = "../../inference/artifacts" }

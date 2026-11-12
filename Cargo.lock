@@ -1119,7 +1119,6 @@ dependencies = [
  "inference-kernels",
  "input-embedding",
  "model-identity",
- "output-finalize",
  "prefill-prepare-aux",
  "prefill-range",
  "prompt-check",
@@ -2056,7 +2055,6 @@ dependencies = [
  "det-num",
  "input-embedding",
  "model-identity",
- "output-finalize",
  "prefill-prepare-aux",
  "prefill-range",
  "prompt-check",
@@ -2105,7 +2103,6 @@ dependencies = [
  "inference-artifacts",
  "model-identity",
  "model-import",
- "output-finalize",
  "postcard",
  "raster",
  "raster-analysis",
@@ -2117,6 +2114,7 @@ dependencies = [
  "raster-runtime",
  "risc0-zkvm",
  "run-prep",
+ "sequence-check",
  "serde",
  "serde_json",
  "sha2",
@@ -2551,10 +2549,10 @@ dependencies = [
  "inference-artifacts",
  "inference-kernels",
  "model-identity",
- "output-finalize",
  "prompt-check",
  "raster",
  "run-prep",
+ "sequence-check",
  "serde",
  "serde_json",
  "sha2",
@@ -2766,16 +2764,6 @@ name = "option-ext"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "04744f49eae99ab78e0d5c0b603ab218f515ea8cfe5a456d7629ad883a3b6e7d"
-
-[[package]]
-name = "output-finalize"
-version = "0.1.0"
-dependencies = [
- "model-identity",
- "raster",
- "serde",
- "sha2",
-]
 
 [[package]]
 name = "parking_lot"
@@ -3926,7 +3914,6 @@ dependencies = [
  "inference-artifacts",
  "inference-kernels",
  "input-embedding",
- "output-finalize",
  "prompt-check",
  "raster",
  "sequence-check",
@@ -4365,7 +4352,6 @@ dependencies = [
  "inference-kernels",
  "input-embedding",
  "model-identity",
- "output-finalize",
  "prefill-prepare-aux",
  "prefill-range",
  "prompt-check",

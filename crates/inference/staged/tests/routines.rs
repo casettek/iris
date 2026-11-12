@@ -1,11 +1,9 @@
 use input_embedding::input::{EmbeddingTable, PromptTokenization};
-use output_finalize::input::{DecoderTable, DecoderToken};
 use prefill_prepare_aux::input::{PleLayer, PleLayerParams};
 use raster::{Bytes, List};
+use sequence_check::input::{DecoderTable, DecoderToken};
 use serde::Serialize;
 use staged_infer::{kernels, routines};
-use std::fs;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 const ONE: i32 = 1 << 16;
 
@@ -88,15 +86,45 @@ fn the_empty_values_are_empty() {
     assert_same_json(&kernels::origin::empty_prompt(), &Default::default());
 }
 
+/// What finalization reads: an edge, and the decoder inputs it is stated from.
+struct FinalizeCase {
+    edge: sequence_check::input::DecodeEdge,
+    decoder: DecoderTable,
+    context: sequence_check::prompt::PromptContext,
+    descriptor: raster::BytesPage,
+    witness: sequence_check::input::DecoderWitness,
+}
+
+impl FinalizeCase {
+    /// The output a claim would have if this were its last check's edge.
+    fn run(&self) -> sequence_check::input::GeneratedOutput {
+        let edge = kernels::finalize::run_output_finalize_direct(
+            &self.edge,
+            &kernels::finalize::FinalizeInputs {
+                decoder: &self.decoder,
+                context: &self.context,
+                descriptor: &self.descriptor,
+                witness: &self.witness,
+            },
+        )
+        .unwrap();
+        // Finalizing changes nothing of the edge but its record.
+        let mut unchanged = edge.clone();
+        unchanged.record = Default::default();
+        assert_same_json(&unchanged, &self.edge);
+        sequence_check::input::generated_output(&edge)
+    }
+}
+
 #[test]
-fn output_finalize_decodes_generated_ids() {
-    let inputs = routines::output_finalize::Inputs {
+fn finalization_decodes_generated_ids() {
+    let inputs = FinalizeCase {
         descriptor: raster::BytesPage::__from_parts(0, 0, vec![]),
-        witness: output_finalize::input::DecoderWitness {
+        witness: sequence_check::input::DecoderWitness {
             token_count: 0,
             paths: List::new(),
         },
-        edge: output_finalize::input::DecodeEdge {
+        edge: sequence_check::input::DecodeEdge {
             model: Default::default(),
             has_selected: true,
             decode_position: 2,
@@ -106,6 +134,7 @@ fn output_finalize_decodes_generated_ids() {
             first_claim_mismatch_position: 1,
             check_fault: 0,
             check_fault_position: 0,
+            record: Default::default(),
             generated_token_ids: List::from(vec![0, 1]),
         },
         decoder: DecoderTable {
@@ -122,26 +151,14 @@ fn output_finalize_decodes_generated_ids() {
                 },
             ]),
         },
-        context: output_finalize::prompt::PromptContext {
+        context: sequence_check::prompt::PromptContext {
             max_new_tokens: 2,
             range_size: 4,
             ..Default::default()
         },
     };
     let inputs = authenticate_decoder_inputs(inputs);
-    let output = routines::output_finalize::run_direct(&inputs).unwrap();
-    let kernel_output = kernels::output_finalize::run_output_finalize_direct(
-        kernels::output_finalize::OutputFinalizeDirectInputs {
-            edge: &inputs.edge,
-            decoder: &inputs.decoder,
-            context: &inputs.context,
-            descriptor: &inputs.descriptor,
-            witness: &inputs.witness,
-        },
-    )
-    .unwrap();
-
-    assert_same_json(&output, &kernel_output);
+    let output = inputs.run();
     // The claim verdict is published as the edge carried it.
     assert_eq!(output.claim_mismatches, 2);
     assert_eq!(output.first_claim_mismatch_position, 1);
@@ -154,19 +171,19 @@ fn output_finalize_decodes_generated_ids() {
 
 /// A decoder with text, an accent split into byte fallback, a special token and
 /// a terminal one, and a run over `ids` with this budget.
-fn finalize(ids: &[u32], max_new_tokens: u32) -> output_finalize::input::GeneratedOutput {
+fn finalize(ids: &[u32], max_new_tokens: u32) -> sequence_check::input::GeneratedOutput {
     let token = |token: &str, special, terminal| DecoderToken {
         token: token.to_string(),
         special,
         terminal,
     };
-    let inputs = routines::output_finalize::Inputs {
+    let inputs = FinalizeCase {
         descriptor: raster::BytesPage::__from_parts(0, 0, vec![]),
-        witness: output_finalize::input::DecoderWitness {
+        witness: sequence_check::input::DecoderWitness {
             token_count: 0,
             paths: List::new(),
         },
-        edge: output_finalize::input::DecodeEdge {
+        edge: sequence_check::input::DecodeEdge {
             has_selected: !ids.is_empty(),
             decode_position: 9,
             token_id: ids.last().copied().unwrap_or(0),
@@ -182,7 +199,7 @@ fn finalize(ids: &[u32], max_new_tokens: u32) -> output_finalize::input::Generat
                 token("<eos>", true, true),
             ]),
         },
-        context: output_finalize::prompt::PromptContext {
+        context: sequence_check::prompt::PromptContext {
             input_text_sha256: String::from("input-hash"),
             model_id: String::from("model-id"),
             raw_prompt: true,
@@ -196,25 +213,12 @@ fn finalize(ids: &[u32], max_new_tokens: u32) -> output_finalize::input::Generat
         },
     };
     let inputs = authenticate_decoder_inputs(inputs);
-    let output = routines::output_finalize::run_direct(&inputs).unwrap();
-    assert_same_json(
-        &output,
-        &kernels::output_finalize::run_output_finalize_direct(
-            kernels::output_finalize::OutputFinalizeDirectInputs {
-                edge: &inputs.edge,
-                decoder: &inputs.decoder,
-                context: &inputs.context,
-                descriptor: &inputs.descriptor,
-                witness: &inputs.witness,
-            },
-        )
-        .unwrap(),
-    );
+    let output = inputs.run();
     output
 }
 
 #[test]
-fn output_finalize_commits_the_exact_text_it_emits() {
+fn finalization_commits_the_exact_text_it_emits() {
     use sha2::{Digest, Sha256};
     let output = finalize(&[0, 1, 2, 3, 0, 4], 6);
     // Byte fallback joins into UTF-8, the marker becomes a space, and the
@@ -241,7 +245,7 @@ fn output_finalize_commits_the_exact_text_it_emits() {
 }
 
 #[test]
-fn output_finalize_reports_what_the_chain_consumed() {
+fn finalization_reports_what_the_chain_consumed() {
     let output = finalize(&[0], 1);
     assert_eq!(output.input_text_sha256, "11".repeat(32));
     assert_eq!(output.model_id.len(), 64);
@@ -256,8 +260,8 @@ fn output_finalize_reports_what_the_chain_consumed() {
 }
 
 #[test]
-fn output_finalize_publishes_budget_and_eos_faults_instead_of_failing() {
-    use output_finalize::input::*;
+fn finalization_publishes_budget_and_eos_faults_instead_of_failing() {
+    use sequence_check::input::*;
     for (ids, budget, expected) in [
         (vec![0, 0], 2, OUTPUT_FAULT_NONE),
         (vec![0, 4], 2, OUTPUT_FAULT_NONE),
@@ -277,13 +281,13 @@ fn output_finalize_publishes_budget_and_eos_faults_instead_of_failing() {
     }
 
     // The edge's flag and its transcript disagree: published, not raised.
-    let inputs = routines::output_finalize::Inputs {
+    let inputs = FinalizeCase {
         descriptor: raster::BytesPage::__from_parts(0, 0, vec![]),
-        witness: output_finalize::input::DecoderWitness {
+        witness: sequence_check::input::DecoderWitness {
             token_count: 0,
             paths: List::new(),
         },
-        edge: output_finalize::input::DecodeEdge {
+        edge: sequence_check::input::DecodeEdge {
             has_selected: true,
             ..Default::default()
         },
@@ -293,7 +297,7 @@ fn output_finalize_publishes_budget_and_eos_faults_instead_of_failing() {
         context: Default::default(),
     };
     let inputs = authenticate_decoder_inputs(inputs);
-    let output = routines::output_finalize::run_direct(&inputs).unwrap();
+    let output = inputs.run();
     assert_eq!(output.output_fault, OUTPUT_FAULT_EDGE_DISAGREES);
 }
 
@@ -516,6 +520,21 @@ fn sequence_check_matches_a_greedy_oracle_at_every_position() {
         prompt_tokens: 3,
         ..Default::default()
     };
+    // A check also states the output record, so it needs a decoder entry for
+    // every id it can select. This oracle is about the selections; the record
+    // is tested on its own above.
+    let decoder = std::sync::Arc::new(DecoderTable {
+        tokens: List::from(
+            (0..vocab)
+                .map(|id| DecoderToken {
+                    token: format!("t{id}"),
+                    special: false,
+                    terminal: false,
+                })
+                .collect::<Vec<_>>(),
+        ),
+    });
+    let witness = std::sync::Arc::new(sequence_check::decoder_witness(&decoder).unwrap());
     let check_range =
         |mut activations: check::ActivationSequence, previous, claimed: &[u32], prior| {
             activations.rows = List::from(
@@ -535,6 +554,9 @@ fn sequence_check_matches_a_greedy_oracle_at_every_position() {
                 prior,
                 check_head.clone(),
                 context.clone(),
+                decoder.clone(),
+                raster::BytesPage::__from_parts(0, 0, vec![]),
+                witness.clone(),
             ))
             .unwrap()
         };
@@ -600,6 +622,9 @@ fn sequence_check_matches_a_greedy_oracle_at_every_position() {
             check::DecodeEdge::default(),
             check_head.clone(),
             context.clone(),
+            decoder.clone(),
+            raster::BytesPage::__from_parts(0, 0, vec![]),
+            witness.clone(),
         ))
         .unwrap();
     assert_eq!(substituted.claim_mismatches, 1);
@@ -611,8 +636,10 @@ fn sequence_check_matches_a_greedy_oracle_at_every_position() {
     assert_ne!(honest_edge.model.fault, 0);
     let mut actual = serde_json::to_value(&honest_edge).unwrap();
     let mut expected = serde_json::to_value(&prior).unwrap();
-    actual.as_object_mut().unwrap().remove("model");
-    expected.as_object_mut().unwrap().remove("model");
+    for field in ["model", "record"] {
+        actual.as_object_mut().unwrap().remove(field);
+        expected.as_object_mut().unwrap().remove(field);
+    }
     assert_eq!(actual, expected);
 
     assert_eq!(edge.has_selected, prior.has_selected);
@@ -664,9 +691,7 @@ fn sequence_check_matches_a_greedy_oracle_at_every_position() {
     assert_eq!(wrong.claim_mismatches, 1);
 }
 
-fn authenticate_decoder_inputs(
-    mut inputs: routines::output_finalize::Inputs,
-) -> routines::output_finalize::Inputs {
+fn authenticate_decoder_inputs(mut inputs: FinalizeCase) -> FinalizeCase {
     let d = model_identity::ModelDescriptor {
         version: 2,
         tokenizer: [1; 32],
@@ -725,7 +750,7 @@ fn authenticate_decoder_inputs(
     inputs.edge.model.set_execution(&e);
     inputs.edge.model.producer = model_identity::context::DECODE;
     inputs.edge.model.completed_layers = inputs.edge.model.layers;
-    inputs.witness = output_finalize::decoder_witness(&inputs.decoder).unwrap();
+    inputs.witness = sequence_check::decoder_witness(&inputs.decoder).unwrap();
     inputs
 }
 
@@ -736,8 +761,8 @@ fn decoder_substitution_publishes_sticky_fault_and_preserves_statement_identity(
         special: false,
         terminal: false,
     };
-    let mut inputs = authenticate_decoder_inputs(routines::output_finalize::Inputs {
-        edge: output_finalize::input::DecodeEdge {
+    let mut inputs = authenticate_decoder_inputs(FinalizeCase {
+        edge: sequence_check::input::DecodeEdge {
             has_selected: true,
             generated_token_ids: vec![0, 0].into(),
             ..Default::default()
@@ -745,24 +770,19 @@ fn decoder_substitution_publishes_sticky_fault_and_preserves_statement_identity(
         decoder: DecoderTable {
             tokens: vec![token].into(),
         },
-        context: output_finalize::prompt::PromptContext {
+        context: sequence_check::prompt::PromptContext {
             max_new_tokens: 2,
             complete: true,
             ..Default::default()
         },
         descriptor: raster::BytesPage::__from_parts(0, 0, vec![]),
-        witness: output_finalize::input::DecoderWitness {
+        witness: sequence_check::input::DecoderWitness {
             token_count: 0,
             paths: List::new(),
         },
     });
     let id = inputs.context.model_id.clone();
-    assert_eq!(
-        routines::output_finalize::run_direct(&inputs)
-            .unwrap()
-            .model_fault,
-        0
-    );
+    assert_eq!(inputs.run().model_fault, 0);
     inputs.decoder = DecoderTable {
         tokens: vec![DecoderToken {
             token: "substituted".into(),
@@ -771,7 +791,7 @@ fn decoder_substitution_publishes_sticky_fault_and_preserves_statement_identity(
         }]
         .into(),
     };
-    let result = routines::output_finalize::run_direct(&inputs).unwrap();
+    let result = inputs.run();
     assert_eq!(result.model_fault, 1);
     assert_eq!(result.model_id, id);
     assert!(result.generated_text.is_empty());
@@ -782,11 +802,6 @@ fn decoder_substitution_publishes_sticky_fault_and_preserves_statement_identity(
     inputs.edge.model = inputs.context.model.clone();
     inputs.edge.model.producer = model_identity::context::DECODE;
     inputs.edge.model.completed_layers = inputs.edge.model.layers;
-    inputs.witness = output_finalize::decoder_witness(&inputs.decoder).unwrap();
-    assert_eq!(
-        routines::output_finalize::run_direct(&inputs)
-            .unwrap()
-            .model_fault,
-        1
-    );
+    inputs.witness = sequence_check::decoder_witness(&inputs.decoder).unwrap();
+    assert_eq!(inputs.run().model_fault, 1);
 }

@@ -98,7 +98,7 @@ pub fn authenticated_finalize_state(
     descriptor: &BytesPage,
     model_id: &str,
 ) -> crate::input::FinalizeState {
-    let mut state = crate::initial_finalize_state();
+    let mut state = crate::finalize::initial_finalize_state();
     let valid = (|| {
         let id = expected_id(model_id)?;
         let d = ModelDescriptor::decode(descriptor.as_slice())?;
@@ -141,7 +141,7 @@ pub fn advance_authenticated_finalize(
             terminal: false,
         }
     };
-    crate::advance_finalize_state(state, token_id, safe_token)
+    crate::finalize::advance_finalize_state(state, token_id, safe_token)
 }
 
 #[tile(kind = iter, description = "Authenticate and consume a generated decoder entry")]

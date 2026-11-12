@@ -44,7 +44,6 @@ points given.
 
 | stage | trace steps | at or under 128 |
 | --- | --- | --- |
-| `output_finalize` | 35 at 8 output tokens: 3 a token and 10 | 39 output tokens or fewer |
 | `embed_p{j}`, `embed_c{k}` | 138 at 8 tokens in the range, 2,440 at 185, 6,690 at 512: 13 a token and 34 | 7 tokens or fewer in the range |
 | `aux_p{j}_l{l}`, `aux_c{k}_l{l}` | 297 at 8 tokens in the range, 5,961 at 185, 16,425 at 512: 32 a token and 41 | 2 tokens or fewer in the range |
 | `prompt_bind_p{j}` | 9,874 at 185 tokens in the range, 27,746 at 512: about 11 for each atom of its slice of the text | a slice of about 8 atoms or fewer |
@@ -54,7 +53,8 @@ at 512), `check_c{k}` (131,209 at 8 tokens) and `prompt_check_p{j}` (2,730,134 a
 512 tokens; it replays at the pinned model's six-token ranges, and was not measured
 on fewer).
 
-The chain has no origin stages (see below), so no stage is short at every size.
+The chain has no origin stages and no `output_finalize` stage (see below), so no
+stage is short at every size, and none is short because the output is.
 
 The bind stages are new in version 11. Until then one
 `prompt_bind` stage bound the whole prompt and was long at every real size. A bind
@@ -73,8 +73,11 @@ values are committed constants written by the import, and range 0's stages bind
 them directly (see [raster-chain.md](../internals/raster-chain.md)). A claim that
 binds another constant differs from honest execution at the stage that reads it.
 
-`output_finalize` holds the output commitment, so on a small claim that commitment
-cannot be challenged.
+`output_finalize` held the output commitment and was three steps a token and ten
+(35 at 8 output tokens on E4B), so on a claim of under 40 output tokens that
+commitment could not be challenged. Since version 12 every check states the output
+record itself, and the claim's is the last check's, a stage of about 16,400 steps a
+token.
 
 ## A direction that was tried
 

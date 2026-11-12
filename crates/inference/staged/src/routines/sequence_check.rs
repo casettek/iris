@@ -8,11 +8,14 @@ use crate::{
     verified_weights::{input_documents_from_args, raster_inputs},
 };
 use anyhow::Result;
+use inference_kernels::kernels::finalize::{output_record, FinalizeInputs};
 use inference_kernels::kernels::sequence_check::{
     check_frame, check_positions, decode_edge, run_sequence_check_direct, scorable,
     CheckHeadParams, SequenceCheckDirectInputs,
 };
-use sequence_check::input::{unpack_i32s, ActivationSequence, DecodeEdge, FinalHead};
+use sequence_check::input::{
+    unpack_i32s, ActivationSequence, DecodeEdge, DecoderTable, DecoderWitness, FinalHead,
+};
 use sequence_check::prompt::{PromptContext, PromptState};
 use std::{path::Path, sync::Arc};
 
@@ -24,6 +27,11 @@ pub struct Inputs {
     /// The last prompt range's context: the range limit and the prompt's length.
     pub context: PromptContext,
     head: Weights,
+    /// What the output record is stated from: the committed decoder table,
+    /// its membership paths and the model descriptor.
+    pub decoder: Arc<DecoderTable>,
+    pub descriptor: raster::BytesPage,
+    pub witness: Arc<DecoderWitness>,
 }
 enum Weights {
     Eager(Arc<FinalHead>),
@@ -31,12 +39,16 @@ enum Weights {
 }
 impl Inputs {
     /// Already-materialized comparison path; indexed Raster inputs use the paged head.
+    #[allow(clippy::too_many_arguments)]
     pub fn eager(
         activations: ActivationSequence,
         previous: ActivationSequence,
         prior: DecodeEdge,
         head: Arc<FinalHead>,
         context: PromptContext,
+        decoder: Arc<DecoderTable>,
+        descriptor: raster::BytesPage,
+        witness: Arc<DecoderWitness>,
     ) -> Self {
         Self {
             component_root: model_identity::stream::digest(head.as_ref()),
@@ -45,6 +57,9 @@ impl Inputs {
             prior,
             context,
             head: Weights::Eager(head),
+            decoder,
+            descriptor,
+            witness,
         }
     }
 }
@@ -112,6 +127,17 @@ pub fn run_direct(inputs: &Inputs) -> Result<DecodeEdge> {
     );
     edge.model
         .require(!inputs.prior.model.is_origin() || inputs.prior.generated_token_ids.is_empty());
+    // The transcript so far, finalized. It reads the edge's model context,
+    // so it is stated last.
+    edge.record = output_record(
+        &edge,
+        &FinalizeInputs {
+            decoder: &inputs.decoder,
+            context: &inputs.context,
+            descriptor: &inputs.descriptor,
+            witness: &inputs.witness,
+        },
+    )?;
     Ok(edge)
 }
 fn run_paged(inputs: &Inputs, head: &PagedHead) -> Result<DecodeEdge> {
@@ -165,6 +191,9 @@ fn load_inputs_from_initialized_runtime(
         raster::entry_argument_spec::<DecodeEdge>("prior"),
         raster::entry_argument_spec::<FinalHead>("head"),
         raster::entry_argument_spec::<PromptState>("prompt"),
+        raster::entry_argument_spec::<DecoderTable>("decoder"),
+        raster::entry_argument_spec::<raster::BytesPage>("descriptor"),
+        raster::entry_argument_spec::<DecoderWitness>("witness"),
     ])?;
     let component_root = model_identity::stream::page(
         &binding
@@ -203,6 +232,17 @@ fn load_inputs_from_initialized_runtime(
             .context
         }
     };
+    let decoder = Arc::new(raster::materialize_auth_return(
+        raster::entry_argument_auth_ref::<DecoderTable>(binding.reference.clone(), "decoder"),
+    ));
+    let descriptor = raster::materialize_auth_return(raster::entry_argument_auth_ref::<
+        raster::BytesPage,
+    >(binding.reference.clone(), "descriptor"));
+    // Never reuse a validation flag from CachedInputs: check the supplied
+    // witness against the bytes being consumed on every execution.
+    let witness = Arc::new(raster::materialize_auth_return(
+        raster::entry_argument_auth_ref::<DecoderWitness>(binding.reference.clone(), "witness"),
+    ));
     let head = if raster_inputs(&binding) {
         Weights::Paged(head::load(
             binding,
@@ -230,5 +270,8 @@ fn load_inputs_from_initialized_runtime(
         prior,
         context,
         head,
+        decoder,
+        descriptor,
+        witness,
     })
 }

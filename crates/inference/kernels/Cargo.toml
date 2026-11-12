@@ -13,7 +13,6 @@ model-identity = { path = "../../model/identity", default-features = false }
 anyhow = "1.0"
 det-num = { path = "../../det-num" }
 input-embedding = { path = "../../../raster-stages/input-embedding" }
-output-finalize = { path = "../../../raster-stages/output-finalize" }
 prefill-range = { path = "../../../raster-stages/prefill-range" }
 prefill-prepare-aux = { path = "../../../raster-stages/prefill-prepare-aux" }
 prompt-check = { path = "../../../raster-stages/prompt-check" }

@@ -4,15 +4,17 @@
 //! (`prompt_check::check`), in the order the stage's sequences run them, so
 //! its output is the stage's output. What differs is only what cannot matter:
 //! lookups read the tokenizer directly, and a pass stops once a scan finds
-//! nothing to merge, because every later round would leave the list as it is.
+//! nothing to merge. The round after such a scan drops every window that is
+//! left, and every later round sees only the end piece.
 
 use anyhow::{bail, ensure, Result};
 use prompt_check::check::{
     apply_piece, begin_apply_step, begin_number_state, begin_number_step, begin_window_step,
     count_marks, end_range_piece, finish_check_context, finish_window_step, is_last_token,
-    is_range_token, is_rest_piece, lead_piece, number_piece, observe_best, observe_final_piece,
-    plan_range, range_end, range_piece, ApplyState, CheckPiece, MarkCount, PassSummary,
-    ScanSummary, WindowBest, WindowScan, ROUNDS_PER_PASS,
+    is_rest_piece, join_claimed_piece, lead_piece, number_piece, observe_best,
+    observe_claimed_piece, observe_final_piece, plan_range, range_end, range_piece,
+    require_vocabulary_token, ApplyState, CheckPiece, ClaimSummary, MarkCount, PassSummary,
+    ScanSummary, TokenJoin, WindowBest, WindowScan, ROUNDS_PER_PASS,
 };
 use prompt_check::input::{
     join_prompt_models, merge_bucket_of, vocab_bucket_of, BindCarry, BpePiece, MergeMatch,
@@ -78,21 +80,25 @@ fn scan(
     entries
 }
 
-/// One pass: its final pieces, the closing scan and the fold over the pieces.
+/// One pass: the closing scan, and the fold over what the pass has left.
 fn pass(
     pieces: &[CheckPiece],
     pass: u32,
     tokenizer: &PromptTokenizer,
     proofs: &mut dyn BucketProofs,
-) -> Result<(Vec<CheckPiece>, ScanSummary, PassSummary)> {
+) -> Result<(ScanSummary, PassSummary)> {
     let mut current = pieces.to_vec();
     let mut entries = scan(&current, pass, tokenizer, proofs);
+    let mut settled = false;
     for _ in 0..ROUNDS_PER_PASS {
-        if !entries.iter().any(|best| best.matched) {
-            // No window merges, so this round and every later one copies the
-            // list unchanged, and the closing scan repeats this one.
+        if settled {
+            // Only the end piece is left, and a round copies it as it is.
             break;
         }
+        // After a scan that found nothing to merge, this round drops every
+        // window that is left, and the scan that follows it is the last
+        // that can differ.
+        settled = !entries.iter().any(|best| best.matched);
         let mut state = ApplyState::default();
         let mut next = Vec::with_capacity(current.len());
         for piece in current {
@@ -117,7 +123,7 @@ fn pass(
     for piece in &current {
         observe_final_piece(&mut summary, piece);
     }
-    Ok((current, closing, summary))
+    Ok((closing, summary))
 }
 
 /// `prompt-check`: checks one range against the claim's marks and publishes
@@ -182,11 +188,18 @@ pub fn run_prompt_check(
         state = numbered.state;
     }
 
-    let (merged_a, scan_a, summary_a) = pass(&pieces, 0, tokenizer, proofs)?;
-    let (_, scan_b, summary_b) = pass(&pieces, 1, tokenizer, proofs)?;
+    // What the marks claim of the range: how many tokens, and the last.
+    let mut claim = ClaimSummary::default();
+    for piece in &pieces {
+        observe_claimed_piece(&mut claim, piece);
+    }
+
+    let (scan_a, summary_a) = pass(&pieces, 0, tokenizer, proofs)?;
+    let (scan_b, summary_b) = pass(&pieces, 1, tokenizer, proofs)?;
     let mut context = finish_check_context(
         &context,
         &plan,
+        &claim,
         &summary_a,
         &scan_a,
         &summary_b,
@@ -194,30 +207,31 @@ pub fn run_prompt_check(
         bound.bind.done,
     );
 
-    // The range's tokens, as pass A left them, resolved to ids.
-    let tokens: Vec<&CheckPiece> = merged_a
-        .iter()
-        .filter(|piece| is_range_token(piece))
-        .collect();
-    for token in &tokens {
-        let index = vocab_bucket_of(&token.text, tokenizer.vocab_bucket_count);
-        context.model.require(proofs.vocab_bucket(index));
+    // The range's tokens, each the text of its claimed pieces, resolved to
+    // ids. A claimed token that is no vocabulary entry is a fault and is
+    // given id 0.
+    let mut join = TokenJoin::default();
+    let mut tokens = Vec::new();
+    for piece in &pieces {
+        tokens.extend(join_claimed_piece(&mut join, piece));
     }
-    let mut token_ids = Vec::with_capacity(tokens.len());
-    for token in &tokens {
+    let id_of = |token: &BpePiece| {
         let index = vocab_bucket_of(&token.text, tokenizer.vocab_bucket_count) as usize;
-        let Some(entry) = tokenizer.vocab_buckets[index]
+        tokenizer.vocab_buckets[index]
             .entries
             .iter()
             .find(|entry| entry.token == token.text)
-        else {
-            bail!(
-                "prepared or merged piece is absent from vocabulary: {:?}",
-                token.text
-            );
-        };
-        token_ids.push(entry.id);
+            .map(|entry| entry.id)
+    };
+    for token in &tokens {
+        let index = vocab_bucket_of(&token.text, tokenizer.vocab_bucket_count);
+        context.model.require(proofs.vocab_bucket(index));
+        require_vocabulary_token(&mut context, id_of(token).is_some());
     }
+    let token_ids: Vec<u32> = tokens
+        .iter()
+        .map(|token| id_of(token).unwrap_or(0))
+        .collect();
     for id in &token_ids {
         context.model.append_consumed_token(*id);
     }
@@ -228,7 +242,7 @@ pub fn run_prompt_check(
     // The range's last token, as the pieces it was claimed from.
     let carried = pieces
         .iter()
-        .filter(|piece| is_last_token(piece, summary_a.last_token))
+        .filter(|piece| is_last_token(piece, claim.last_token))
         .map(|piece| BpePiece {
             text: piece.text.clone(),
             segment: piece.segment,

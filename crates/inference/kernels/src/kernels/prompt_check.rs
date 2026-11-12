@@ -841,6 +841,32 @@ mod tests {
             rounds::check_range_in_rounds(&tokenizer, &pieces, 0, None, &rounds::marks_of(&long))
                 .unwrap();
         assert!(staged.fault.is_some());
+
+        // The stage's twin agrees on both. In the first, the short windows
+        // finish and leave the rounds while the long one is still merging.
+        use crate::kernels::prompt_check_stage::{marks_for, run_prompt_check, Trusted};
+        use prompt_check::input::PromptState;
+        let root = raster::BytesPage::__from_parts(0, 0, Vec::new());
+        let twin = |text: String, counts: &[usize]| {
+            let mut bound = PromptState::of_pieces(pieces_of(&text, None));
+            bound.bind.done = true;
+            run_prompt_check(
+                &tokenizer,
+                &root,
+                &bound,
+                &PromptState::default(),
+                &marks_for(counts.iter().copied()),
+                &mut Trusted,
+            )
+            .unwrap()
+        };
+        let fits = twin(format!("{}b{}", "a".repeat(40), "a".repeat(40)), &counts);
+        assert_eq!((fits.context.fault, fits.context.prompt_tokens), (0, 3));
+        assert_eq!(fits.token_ids.len(), 3);
+        let too_long = twin("a".repeat(80), &long);
+        assert_ne!(too_long.context.fault, 0);
+        // Refused, and still one id for each token it claims.
+        assert_eq!(too_long.token_ids.len(), 2);
     }
 
     /// The stage's native twin, run range by range with each range handing
@@ -968,6 +994,16 @@ mod tests {
             (other.fault, other.fault_position),
             (FAULT_NOT_THE_MERGE, 1)
         );
+        // One token for the whole text. Its pieces stop merging at [ab, c],
+        // and `abc` is no vocabulary entry. The range is refused and not
+        // stopped, and still has one id for the one token it claims.
+        let whole = run(&abc, &[1, 0, 0], 0, true);
+        assert_eq!(
+            (whole.context.fault, whole.context.fault_position),
+            (FAULT_NOT_THE_MERGE, 0)
+        );
+        assert_eq!(whole.token_ids.as_slice(), [0]);
+        assert_eq!(whole.context.prompt_tokens, 1);
         // No marks, marks past the prompt, a token across two segments, and
         // more tokens than the range size.
         assert_eq!(check(&abc, &[], 0).fault, FAULT_EMPTY_RANGE);

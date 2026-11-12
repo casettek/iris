@@ -535,6 +535,27 @@ fn head_fixture(pages: usize) -> (Fixture, FinalHead, ActivationSequence) {
             ..Default::default()
         },
     );
+    // A check also states the output record, so it is given a decoder entry
+    // for every row of the head. These tests are about the head: the
+    // descriptor is empty, and the record is not compared.
+    let vocab = (pages as u64 - 1) * HEAD_PAGE_SIZE / row_bytes(width) + 3;
+    let decoder = sequence_check::input::DecoderTable {
+        tokens: List::from(
+            (0..vocab)
+                .map(|id| sequence_check::input::DecoderToken {
+                    token: format!("t{id}"),
+                    special: false,
+                    terminal: false,
+                })
+                .collect::<Vec<_>>(),
+        ),
+    };
+    f.write("decoder", &decoder);
+    f.write("descriptor", &BytesPage::__from_parts(0, 0, Vec::new()));
+    f.write(
+        "witness",
+        &sequence_check::decoder_witness(&decoder).unwrap(),
+    );
     (f, head, activations)
 }
 impl Fixture {
@@ -550,7 +571,8 @@ impl Fixture {
             head::load(binding, input.to_str(), manifest.to_str(), cache, key)
         })
     }
-    /// The whole stage over the paged head.
+    /// The whole stage over the paged head: its edge, without the output
+    /// record the stage also states.
     fn check(&self, cache: Option<&MaterializationCache>) -> Result<DecodeEdge> {
         let inputs = routines::sequence_check::load_inputs_from_paths_with_cache(
             &self.dir.join("input.json"),
@@ -558,7 +580,9 @@ impl Fixture {
             &CachedInputs::new(),
             cache,
         )?;
-        routines::sequence_check::run_direct(&inputs)
+        let mut edge = routines::sequence_check::run_direct(&inputs)?;
+        edge.record = Default::default();
+        Ok(edge)
     }
 }
 fn eager_check(head: &FinalHead, activations: &ActivationSequence) -> DecodeEdge {

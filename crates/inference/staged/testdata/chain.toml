@@ -240,16 +240,15 @@ inputs.claimed = { input = "claimed_ids_0" }
 inputs.prior = { external = { path = "model/raster/sequence-check/empty_edge.rastered", index_path = "model/raster/sequence-check/empty_edge.rindex", commitment = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc" } }
 inputs.prompt = { from = "prompt_check_p1" }
 inputs.head = { external = { path = "model/raster/sequence-check/head.rastered", index_path = "model/raster/sequence-check/head.rindex", commitment = "b4599037cbac4aed94db1208a39e144c0f732c28ea83120cedbbbc4ba1a24fe6" } }
+inputs.decoder = { external = { path = "model/raster/sequence-check/decoder.rastered", index_path = "model/raster/sequence-check/decoder.rindex", commitment = "f7c9eb199ab52c3878257a2f21fad6f68ad57c1ed13e6b090b7ff393a92ba8b8" } }
+inputs.descriptor = { external = { path = "model/raster/sequence-check/descriptor.rastered", index_path = "model/raster/sequence-check/descriptor.rindex", commitment = "f7c9eb199ab52c3878257a2f21fad6f68ad57c1ed13e6b090b7ff393a92ba8b8" } }
+inputs.witness = { external = { path = "model/raster/sequence-check/witness.rastered", index_path = "model/raster/sequence-check/witness.rindex", commitment = "f7c9eb199ab52c3878257a2f21fad6f68ad57c1ed13e6b090b7ff393a92ba8b8" } }
 
 [[chain.repeat]]
 name = "claimed"
 index = "k"
 start = 1
 count = 1
-
-  [chain.repeat.exports.edge]
-stage = "check_c{k}"
-entry = "check_c0"
 
   [[chain.repeat.stage]]
 name = "check_c{k}"
@@ -260,10 +259,6 @@ inputs.claimed = { input = "claimed_ids_{k}" }
 inputs.prior = { from = "check_c{k-1}", first = "check_c0" }
 inputs.prompt = { from = "prompt_check_p1" }
 inputs.head = { external = { path = "model/raster/sequence-check/head.rastered", index_path = "model/raster/sequence-check/head.rindex", commitment = "b4599037cbac4aed94db1208a39e144c0f732c28ea83120cedbbbc4ba1a24fe6" } }
-
-[[chain.stage]]
-name = "output_finalize"
-project = "raster-stages/output-finalize"
-inputs.edge = { from = "claimed.edge" }
-inputs.prompt = { from = "prompt_check_p1" }
-inputs.decoder = { external = { path = "model/raster/output-finalize/decoder.rastered", index_path = "model/raster/output-finalize/decoder.rindex", commitment = "f7c9eb199ab52c3878257a2f21fad6f68ad57c1ed13e6b090b7ff393a92ba8b8" } }
+inputs.decoder = { external = { path = "model/raster/sequence-check/decoder.rastered", index_path = "model/raster/sequence-check/decoder.rindex", commitment = "f7c9eb199ab52c3878257a2f21fad6f68ad57c1ed13e6b090b7ff393a92ba8b8" } }
+inputs.descriptor = { external = { path = "model/raster/sequence-check/descriptor.rastered", index_path = "model/raster/sequence-check/descriptor.rindex", commitment = "f7c9eb199ab52c3878257a2f21fad6f68ad57c1ed13e6b090b7ff393a92ba8b8" } }
+inputs.witness = { external = { path = "model/raster/sequence-check/witness.rastered", index_path = "model/raster/sequence-check/witness.rindex", commitment = "f7c9eb199ab52c3878257a2f21fad6f68ad57c1ed13e6b090b7ff393a92ba8b8" } }

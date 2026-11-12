@@ -19,7 +19,7 @@ replay-profile = []
 
 [dependencies]
 raster = { path = "../../../../raster/crates/raster" }
-output-finalize = { path = "../../../raster-stages/output-finalize" }
+sequence-check = { path = "../../../raster-stages/sequence-check" }
 raster-core = { path = "../../../../raster/crates/raster-core" }
 raster-prover = { path = "../../../../raster/crates/raster-prover" }
 raster-compiler = { path = "../../../../raster/crates/raster-compiler" }

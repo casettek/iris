@@ -11,7 +11,7 @@ pub struct InferenceResult {
     pub generated_token_ids_sha256: String,
     pub generated_text: String,
     pub stop_reason: String,
-    /// `output-finalize`'s claim verdict: how many generated positions were
+    /// The last check's claim verdict: how many generated positions were
     /// given a claimed token that is not the greedy selection there. Only a
     /// teacher-forced chain is given claimed tokens; a teacher-forced claim
     /// stands only if this is zero.
@@ -23,7 +23,7 @@ pub struct InferenceResult {
     /// The teacher-forced check's fault and its position, or zero.
     pub check_fault: u32,
     pub check_fault_position: u32,
-    /// SHA-256 of the exact UTF-8 bytes of `generated_text`, as `output-finalize`
+    /// SHA-256 of the exact UTF-8 bytes of `generated_text`, as the last check
     /// computed it. Distinct from `generated_token_ids_sha256`.
     pub output_text_sha256: String,
     /// What the transcript breaks (token budget, EOS), or zero.

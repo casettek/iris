@@ -17,10 +17,25 @@
 //!   pieces left by the check before, this range's bind ──fold──▶ how many there are
 //!   previous range's last token, the range's pieces ──copy──▶ list ending in an end piece
 //!   list × marks ──number──▶ every piece's token
+//!   numbered list ──fold──▶ how many tokens the claim makes, and each one's text
 //!   pass A, pass B:  64 × [ scan: one merge lookup per piece, best pair per window
-//!                           apply: at most one merge per window ]
+//!                           apply: at most one merge per window; a window with
+//!                                  nothing to merge is finished and leaves the list ]
 //!                    then: nothing left to merge, every token one piece
 //! ```
+//!
+//! A window's pieces change only when one of its own pairs merges, so a
+//! window whose scan finds no pair will never merge again. The apply step
+//! checks it there, that each of its tokens has become one piece, and drops
+//! its pieces from the rounds that follow. Most windows finish within a few
+//! rounds, so most rounds run over little more than the end piece. A window
+//! that the last round still merged is checked after the pass, as before.
+//!
+//! The range's tokens are read from the numbered pieces and not from a
+//! pass's result, which no longer holds the finished windows: a token's text
+//! is its pieces joined. When every check passes that is exactly the one
+//! piece the merge made of them. When one fails the claim is refused, and a
+//! joined text that is no vocabulary entry is one more way it fails.
 //!
 //! Tokens are paired (0,1), (2,3), … in pass A and (1,2), (3,4), … in pass B,
 //! so every neighbouring pair shares a window in exactly one pass. Token 0 is
@@ -291,6 +306,71 @@ pub fn number_piece(step: NumberStep, mark: u32) -> Numbered {
 }
 
 // ---------------------------------------------------------------------------
+// What the marks claim: the range's tokens
+// ---------------------------------------------------------------------------
+
+/// The most pieces of one claimed token whose text is joined. A merge's
+/// result is at most 33 characters, so a token of more pieces is not one;
+/// its text stops growing here and its lookup fails as it should.
+pub const MAX_TOKEN_PIECES: u32 = 64;
+
+/// The range's tokens as the marks number them.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
+pub struct ClaimSummary {
+    pub started: bool,
+    pub token: u32,
+    /// The range's own tokens.
+    pub tokens: u64,
+    /// The highest token number seen, for the next range's neighbour.
+    pub last_token: u32,
+}
+
+pub fn observe_claimed_piece(summary: &mut ClaimSummary, piece: &CheckPiece) {
+    if piece.token == END_TOKEN {
+        return;
+    }
+    if piece.token != LEAD_TOKEN && (!summary.started || piece.token != summary.token) {
+        summary.tokens = summary.tokens.saturating_add(1);
+        summary.last_token = piece.token;
+    }
+    summary.started = true;
+    summary.token = piece.token;
+}
+
+/// The claimed token being read off the numbered pieces: its text so far.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
+pub struct TokenJoin {
+    pub started: bool,
+    pub token: u32,
+    pub segment: u32,
+    pub text: String,
+    pub pieces: u32,
+}
+
+/// Adds a numbered piece to the token being read. Returns the token the
+/// piece ends, when that is one of the range's own: every list ends with
+/// the end piece, which ends the last.
+pub fn join_claimed_piece(join: &mut TokenJoin, piece: &CheckPiece) -> Option<BpePiece> {
+    let begins = !join.started || join.token != piece.token;
+    let ended = (join.started && begins && join.token != LEAD_TOKEN).then(|| BpePiece {
+        text: core::mem::take(&mut join.text),
+        segment: join.segment,
+    });
+    if begins {
+        join.started = true;
+        join.token = piece.token;
+        join.segment = piece.segment;
+        join.text.clear();
+        join.pieces = 0;
+    }
+    if piece.token != END_TOKEN && join.pieces < MAX_TOKEN_PIECES {
+        join.text.push_str(&piece.text);
+        join.pieces += 1;
+    }
+    ended
+}
+
+// ---------------------------------------------------------------------------
 // A round's scan: the best pair of every window
 // ---------------------------------------------------------------------------
 
@@ -408,7 +488,8 @@ pub struct ApplyState {
     /// Windows begun so far, which is also the current window's entry.
     pub ordinal: u64,
     pub local: u64,
-    /// The token of the last piece kept.
+    /// The token of the window's piece before this one: the last kept, or
+    /// in a finished window the last dropped.
     pub token: u32,
     pub carried: Carried,
 }
@@ -469,6 +550,22 @@ pub fn apply_piece(step: ApplyStep, best: WindowBest) -> ApplyAction {
     state.carried.model_fault |= best.model_fault;
     let local = state.local;
     state.local = local.saturating_add(1);
+    if !best.matched {
+        // Nothing in this window merges, now or in any later round: it is
+        // finished. Each of its tokens must have become one piece, and its
+        // pieces leave the list.
+        if local > 0 && piece.token == state.token {
+            state
+                .carried
+                .record(FAULT_NOT_THE_MERGE, u64::from(piece.token));
+        }
+        state.token = piece.token;
+        return ApplyAction {
+            push: false,
+            piece,
+            state,
+        };
+    }
     if best.matched && local == best.left.saturating_add(1) {
         // The right piece of the window's merge. Its left piece took the
         // merged text; joining two tokens is what the check refuses.
@@ -510,15 +607,14 @@ pub fn observe_best(summary: &mut ScanSummary, best: &WindowBest) {
     summary.model_fault |= best.model_fault;
 }
 
-/// A pass's final pieces: every token must be exactly one of them.
+/// What is left of a pass: the end piece, with what the rounds carried, and
+/// the pieces of any window the last round still merged. Each token among
+/// those must be exactly one piece, as each token of a finished window was
+/// when it left.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
 pub struct PassSummary {
     pub started: bool,
     pub token: u32,
-    /// Pieces of the range's own tokens.
-    pub tokens: u64,
-    /// The highest token number seen, for the next range's neighbour.
-    pub last_token: u32,
     pub split: Carried,
     pub carried: Carried,
 }
@@ -533,10 +629,6 @@ pub fn observe_final_piece(summary: &mut PassSummary, piece: &CheckPiece) {
             .split
             .record(FAULT_NOT_THE_MERGE, u64::from(piece.token));
     }
-    if piece.token != LEAD_TOKEN {
-        summary.tokens = summary.tokens.saturating_add(1);
-        summary.last_token = piece.token;
-    }
     summary.started = true;
     summary.token = piece.token;
 }
@@ -548,6 +640,7 @@ pub fn observe_final_piece(summary: &mut PassSummary, piece: &CheckPiece) {
 pub fn finish_check_context(
     context: &PromptContext,
     plan: &RangePlan,
+    claim: &ClaimSummary,
     pass_a: &PassSummary,
     scan_a: &ScanSummary,
     pass_b: &PassSummary,
@@ -578,7 +671,7 @@ pub fn finish_check_context(
         }
         next.model.fault |= pass.carried.model_fault | scan.model_fault;
     }
-    if next.range_size > 0 && pass_a.tokens > u64::from(next.range_size) {
+    if next.range_size > 0 && claim.tokens > u64::from(next.range_size) {
         record_fault(&mut next, FAULT_RANGE_TOO_LARGE, base);
     }
     if plan.stop > plan.start {
@@ -587,13 +680,18 @@ pub fn finish_check_context(
     next.complete = bound_done && next.next_piece >= plan.total;
     next.prompt_tokens = next
         .prompt_tokens
-        .saturating_add(u32::try_from(pass_a.tokens).unwrap_or(u32::MAX));
+        .saturating_add(u32::try_from(claim.tokens).unwrap_or(u32::MAX));
     next
 }
 
-/// Whether a final piece of pass A is one of the range's own tokens.
-pub fn is_range_token(piece: &CheckPiece) -> bool {
-    piece.token != LEAD_TOKEN && piece.token != END_TOKEN
+/// A claimed token whose text is no vocabulary entry is not a token the
+/// merge produces. Every check of its pairs has already said so; this is
+/// recorded as well so that the lookup's own result is never trusted.
+pub fn require_vocabulary_token(context: &mut PromptContext, found: bool) {
+    if !found {
+        let position = u64::from(context.prompt_tokens);
+        record_fault(context, FAULT_NOT_THE_MERGE, position);
+    }
 }
 
 /// Whether a numbered piece belongs to the range's last token, whose pieces

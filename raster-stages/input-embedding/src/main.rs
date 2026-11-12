@@ -47,7 +47,7 @@ fn embed_prompt_token(
 /// `prompt` is this range's chain-tokenized prompt ids (empty for a range of
 /// claimed output); `claimed` is this range's claimed output ids (empty for a
 /// prompt range); `previous` is the previous range's embedding, or
-/// `range-origin` for the first; `embedding` is a committed external.
+/// the empty sequence for the first; `embedding` is a committed external.
 ///
 /// The claimed ids are embedded after the prompt's by a second push-only
 /// site deriving from the first, so the rows are `prompt ‖ claimed` in order.

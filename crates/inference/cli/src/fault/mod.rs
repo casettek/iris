@@ -586,8 +586,8 @@ count = 1
 name = "check_c{k}"
 project = "/opt/check"
 [[chain.stage]]
-name = "output_finalize"
-project = "finalize"
+name = "check_c0"
+project = "first-check"
 "#,
         )
         .unwrap();
@@ -598,15 +598,15 @@ project = "finalize"
                 PathBuf::from("/model/bind"),
                 PathBuf::from("/model/range"),
                 PathBuf::from("/opt/check"),
-                PathBuf::from("/model/finalize")
+                PathBuf::from("/model/first-check")
             ]
             .into()
         );
         let only_top_level: toml::Value = toml::from_str(
             r#"
 [[chain.stage]]
-name = "output_finalize"
-project = "finalize"
+name = "check_c0"
+project = "first-check"
 "#,
         )
         .unwrap();

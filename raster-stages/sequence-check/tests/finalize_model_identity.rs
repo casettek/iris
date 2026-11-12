@@ -1,7 +1,7 @@
 use model_identity::ModelDescriptor;
-use output_finalize::input::{DecoderTable, DecoderToken};
-use output_finalize::model::decoder_membership;
 use raster::{BytesPage, List};
+use sequence_check::finalize_model::decoder_membership;
+use sequence_check::input::{DecoderTable, DecoderToken};
 
 fn page(bytes: Vec<u8>) -> BytesPage {
     BytesPage::__from_parts(0, 0, bytes)
@@ -127,7 +127,7 @@ fn decoder_proofs_bind_positions_and_handle_odd_tree_widths() {
 
 #[test]
 fn faults_survive_later_valid_tokens_and_verification_continues_after_eos() {
-    use output_finalize::{
+    use sequence_check::{
         advance_authenticated_finalize, authenticated_finalize_state, decoder_witness,
     };
     let token = DecoderToken {

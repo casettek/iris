@@ -5,8 +5,8 @@
 //! out" — and a chain run long enough to make a real model emit `<turn|>` costs
 //! hours of stage execution.
 
-use output_finalize::input::DecoderToken;
-use output_finalize::{advance_finalize_state, initial_finalize_state};
+use sequence_check::input::DecoderToken;
+use sequence_check::{advance_finalize_state, initial_finalize_state};
 
 fn word(text: &str) -> DecoderToken {
     DecoderToken {

@@ -351,10 +351,12 @@ fn main(
     );
     let model = call!(binding_validate_aux, model, aux_layer, aux_count, row_count);
     let filtered = call!(begin_layer_output, start_position.clone(), model.clone());
+    // Sixteen rows a call: a row is the model's width, and at 2,560 wide
+    // sixty-four of them made this the heaviest call in the chain.
     let valid_rows = call_recur!(
         tile = binding_copy_rows,
         input = rows,
-        chunk = 64,
+        chunk = 16,
         output = filtered,
         args = (model.clone(),)
     );

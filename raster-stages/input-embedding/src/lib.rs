@@ -78,7 +78,7 @@ pub fn count_row_chunk(
 
 /// Where this range starts: right after the previous range's last row.
 ///
-/// The previous range is `range-origin` (start 0, no rows) for the first
+/// The previous range is the empty sequence (start 0, no rows) for the first
 /// range, so positions are never chosen by run preparation: they follow from
 /// how many ids the in-chain tokenizer produced for every earlier range.
 #[tile(kind = iter, description = "Start position after the previous range")]

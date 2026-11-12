@@ -325,7 +325,7 @@ pub fn import_model(args: ImportConfig) -> Result<ImportResult, Box<dyn Error>> 
             external_line(
                 "decoder",
                 &layout,
-                "raster-stages/output-finalize",
+                "raster-stages/sequence-check",
                 "decoder",
                 &decoder_commitment
             )
@@ -335,7 +335,7 @@ pub fn import_model(args: ImportConfig) -> Result<ImportResult, Box<dyn Error>> 
             external_line(
                 "witness",
                 &layout,
-                "raster-stages/output-finalize",
+                "raster-stages/sequence-check",
                 "witness",
                 &witness_commitment
             )
@@ -444,7 +444,7 @@ pub fn import_model(args: ImportConfig) -> Result<ImportResult, Box<dyn Error>> 
     let descriptor_commitment = write_external(
         &descriptor,
         &layout,
-        "raster-stages/output-finalize",
+        "raster-stages/sequence-check",
         "descriptor",
     )?;
     let identity_inputs = format!(
@@ -452,14 +452,14 @@ pub fn import_model(args: ImportConfig) -> Result<ImportResult, Box<dyn Error>> 
         external_line(
             "descriptor",
             &layout,
-            "raster-stages/output-finalize",
+            "raster-stages/sequence-check",
             "descriptor",
             &descriptor_commitment
         ),
         external_line(
             "witness",
             &layout,
-            "raster-stages/output-finalize",
+            "raster-stages/sequence-check",
             "witness",
             &witness_commitment
         ),
@@ -887,6 +887,16 @@ fn chain_template(
         "head",
         &head,
     );
+    // A check also states the output record of the transcript so far, from
+    // the decoder table, its membership paths and the model descriptor. The
+    // last range's check is the chain's last stage, and its record the claim's.
+    let decoder_line = external_line(
+        "decoder",
+        layout,
+        "raster-stages/sequence-check",
+        "decoder",
+        decoder_commitment,
+    );
     let check_stage = |header: &str, k: &str, previous: String, prior: String| -> String {
         format!(
             "\n{header}\n\
@@ -896,7 +906,9 @@ fn chain_template(
              {previous}\
              {prior}\
              inputs.prompt = {{ from = \"prompt_check_p{LAST_PROMPT_RANGE}\" }}\n\
-             {head_line}"
+             {head_line}\
+             {decoder_line}\
+             {identity_inputs}"
         )
     };
     out.push_str(&check_stage(
@@ -912,11 +924,6 @@ fn chain_template(
         ),
     ));
     out.push_str("\n[[chain.repeat]]\nname = \"claimed\"\nindex = \"k\"\nstart = 1\ncount = 0\n");
-    out.push_str(
-        "\n  [chain.repeat.exports.edge]\n\
-         stage = \"check_c{k}\"\n\
-         entry = \"check_c0\"\n",
-    );
     out.push_str(&check_stage(
         "  [[chain.repeat.stage]]",
         "{k}",
@@ -925,22 +932,6 @@ fn chain_template(
         ),
         String::from("inputs.prior = { from = \"check_c{k-1}\", first = \"check_c0\" }\n"),
     ));
-    out.push_str(&format!(
-        "\n[[chain.stage]]\n\
-         name = \"output_finalize\"\n\
-         project = \"raster-stages/output-finalize\"\n\
-         inputs.edge = {{ from = \"claimed.edge\" }}\n\
-         inputs.prompt = {{ from = \"prompt_check_p{LAST_PROMPT_RANGE}\" }}\n\
-         {}",
-        external_line(
-            "decoder",
-            layout,
-            "raster-stages/output-finalize",
-            "decoder",
-            decoder_commitment
-        )
-    ));
-    out.push_str(identity_inputs);
     Ok(out)
 }
 
@@ -1135,13 +1126,13 @@ fn write_tokenizer(
     let decoder_table = DecoderTable {
         tokens: decoder_tokens.into(),
     };
-    let witness = output_finalize::decoder_witness(&decoder_table).map_err(|f| format!("{f:?}"))?;
+    let witness = sequence_check::decoder_witness(&decoder_table).map_err(|f| format!("{f:?}"))?;
     let witness_commitment =
-        write_external(&witness, layout, "raster-stages/output-finalize", "witness")?;
+        write_external(&witness, layout, "raster-stages/sequence-check", "witness")?;
     let decoder_commitment = write_external(
         &decoder_table,
         layout,
-        "raster-stages/output-finalize",
+        "raster-stages/sequence-check",
         "decoder",
     )?;
 

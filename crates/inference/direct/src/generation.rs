@@ -49,6 +49,8 @@ pub fn select_next_token(logits: &PrefillLogits, prior: &DecodeEdge) -> Result<D
         first_claim_mismatch_position: 0,
         check_fault: 0,
         check_fault_position: 0,
+        // Stated when the run's output is finalized.
+        record: Default::default(),
         generated_token_ids: List::from(generated_token_ids),
     })
 }

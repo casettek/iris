@@ -36,7 +36,7 @@ impl RangedShape {
 
 /// The ranged teacher-forced chain: every prompt range bound, tokenized and
 /// embedded, every claimed range embedded, each layer across all ranges, then
-/// each claimed range checked.
+/// each claimed range checked. The last check is the chain's last stage.
 pub(super) fn teacher_forced_names(shape: RangedShape) -> Vec<String> {
     let mut names = Vec::new();
     for j in 0..shape.prompt_ranges {
@@ -55,7 +55,6 @@ pub(super) fn teacher_forced_names(shape: RangedShape) -> Vec<String> {
         names.extend((0..shape.claimed_ranges).map(|k| format!("range_c{k}_l{l}")));
     }
     names.extend((0..shape.claimed_ranges).map(|k| format!("check_c{k}")));
-    names.push(String::from("output_finalize"));
     names
 }
 
@@ -223,8 +222,8 @@ pub(crate) fn value_json(value: &RasterValue) -> Result<Value> {
 }
 
 pub(super) fn validate_errors(stage: &str, value: &Value) -> Result<()> {
-    // `decode_init` is direct inference's name for its empty edge; no chain
-    // stage has it.
+    // `decode_init` and `output_finalize` are direct inference's names for
+    // its empty edge and its final one; no chain stage has them.
     if stage != "prompt_prepare"
         && !stage.starts_with("prompt_bind_p")
         && stage != "decode_init"
@@ -242,6 +241,25 @@ pub(super) fn validate_errors(stage: &str, value: &Value) -> Result<()> {
         );
     }
     Ok(())
+}
+
+/// A final edge as host code reads a claim's output: the output record,
+/// with the edge's verdict and transcript beside it.
+pub(super) fn final_record(edge: &Value) -> Result<Value> {
+    let mut record = edge["record"]
+        .as_object()
+        .context("the final edge has no output record")?
+        .clone();
+    for field in [
+        "claim_mismatches",
+        "first_claim_mismatch_position",
+        "check_fault",
+        "check_fault_position",
+        "generated_token_ids",
+    ] {
+        record.insert(field.to_string(), edge[field].clone());
+    }
+    Ok(Value::Object(record))
 }
 
 pub(super) fn compare(stage: &str, left: &Boundary, right: &Boundary) -> Result<()> {
@@ -394,11 +412,11 @@ mod tests {
         };
         let names = teacher_forced_names(shape);
         // 3 × (bind + check + embed + 8 layer stages),
-        // 2 × (embed + 8 layer stages + check), output.
-        assert_eq!(names.len(), 3 * 11 + 2 * 10 + 1);
+        // 2 × (embed + 8 layer stages + check).
+        assert_eq!(names.len(), 3 * 11 + 2 * 10);
         assert_eq!(names.first().map(String::as_str), Some("prompt_bind_p0"));
         assert_eq!(RangedShape::from_names(&names), shape);
-        assert_eq!(names.last().map(String::as_str), Some("output_finalize"));
+        assert_eq!(names.last().map(String::as_str), Some("check_c1"));
         assert!(!names.iter().any(|name| name.starts_with("decode_")));
     }
 

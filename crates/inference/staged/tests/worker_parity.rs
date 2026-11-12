@@ -116,14 +116,14 @@ impl Fixture {
         )
     }
     fn manifest(&mut self) {
-        let decoder_table = output_finalize::input::DecoderTable {
+        let decoder_table = sequence_check::input::DecoderTable {
             tokens: List::from(vec![
-                output_finalize::input::DecoderToken {
+                sequence_check::input::DecoderToken {
                     token: "a".into(),
                     special: false,
                     terminal: false,
                 },
-                output_finalize::input::DecoderToken {
+                sequence_check::input::DecoderToken {
                     token: "b".into(),
                     special: false,
                     terminal: false,
@@ -183,7 +183,7 @@ impl Fixture {
         let decoder = self.external("decoder", &decoder_table);
         let witness = self.external(
             "witness",
-            &output_finalize::decoder_witness(&decoder_table).unwrap(),
+            &sequence_check::decoder_witness(&decoder_table).unwrap(),
         );
         let mut aux = Vec::new();
         let mut layers = Vec::new();
@@ -394,20 +394,14 @@ impl Fixture {
                     ),
                     ("prompt", prompt.clone()),
                     ("head", head.clone()),
+                    // Every check states the output record so far; the last
+                    // one's is the chain's result.
+                    ("decoder", decoder.clone()),
+                    ("descriptor", descriptor.clone()),
+                    ("witness", witness.clone()),
                 ],
             );
         }
-        add(
-            "output_finalize".into(),
-            "output-finalize",
-            vec![
-                ("edge", from("check_c2")),
-                ("decoder", decoder),
-                ("descriptor", descriptor),
-                ("witness", witness),
-                ("prompt", prompt),
-            ],
-        );
         fs::write(self.base.join("Raster.toml"), text).unwrap();
     }
     fn run(&self, budget: usize, workers: usize, subprocess: bool) -> PathBuf {
@@ -509,6 +503,54 @@ fn repeated_ranges_have_identical_checkpoints_with_worker_and_cache_reuse() {
                 .any(|s| !s["worker"].is_null() && s["cache"]["hits"].as_u64().unwrap() > 0));
         }
     }
+}
+
+/// Inference without checkpoints runs the same chain and reads its result
+/// from the last check's record, as a checkpointed run does.
+#[test]
+fn uncheckpointed_inference_gives_the_checkpointed_result() {
+    use staged_infer::chain_runner::StagedExecutionBackend;
+    use staged_infer::{
+        CheckpointedInferenceConfig, CheckpointedInferenceExecutor, UncheckpointedInferenceConfig,
+        UncheckpointedInferenceExecutor,
+    };
+    let mut f = Fixture::new();
+    f.manifest();
+    let report = UncheckpointedInferenceExecutor
+        .run_with_report(UncheckpointedInferenceConfig {
+            base_dir: f.base.clone(),
+            manifest_path: f.base.join("Raster.toml"),
+        })
+        .unwrap();
+    assert!(
+        !f.base.join("target").exists(),
+        "infer should not write checkpoint artifacts under the imported workspace"
+    );
+    assert_eq!(report.timings.stages.len(), f.stages.len());
+    let checkpointed = CheckpointedInferenceExecutor
+        .run(CheckpointedInferenceConfig {
+            base_dir: f.base.clone(),
+            manifest_path: f.base.join("Raster.toml"),
+            // The auxiliary stages run in worker processes of this binary.
+            current_exe: PathBuf::from(env!("CARGO_BIN_EXE_staged-infer")),
+            staged_backend: StagedExecutionBackend::InProcess,
+            parity_policy: staged_infer::ParityPolicy::Skip,
+        })
+        .unwrap();
+    let result = checkpointed
+        .final_result
+        .expect("a checkpointed chain ends in a check with its output record");
+    assert_eq!(report.result, result);
+    // Three claimed ranges of one token each, and the last check is the
+    // last stage.
+    assert_eq!(result.generated_token_count, 3);
+    assert_eq!(result.generated_token_ids.len(), 3);
+    // This fixture's prompt context binds no statement or schedule, so its
+    // record is not a clean one; a clean record is tested on its own
+    // (`routines.rs`) and on a whole chain by the parity gate.
+    assert_ne!(result.model_fault, 0);
+    assert_eq!(f.stages.last().unwrap().0, "check_c2");
+    assert!(checkpointed.chain_dir.join("check_c2/output.bin").is_file());
 }
 
 #[test]

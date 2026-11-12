@@ -9,7 +9,6 @@ use crate::artifact_io::{encode_output, write_output, EncodedArtifact};
 use crate::cache::{CachedInputs, CachedStageValue, MaterializationCache};
 
 pub mod input_embedding;
-pub mod output_finalize;
 pub mod prefill_prepare_aux;
 pub mod prefill_range;
 pub mod prompt_bind;
@@ -23,7 +22,6 @@ pub enum StageKind {
     InputEmbedding,
     PrefillPrepareAux { layer: usize },
     PrefillRange { layer: usize },
-    OutputFinalize,
     SequenceCheck,
 }
 
@@ -73,7 +71,6 @@ impl StageKind {
             "prefill-range" => Ok(Self::PrefillRange {
                 layer: parse_trailing_layer_index(name)?,
             }),
-            "output-finalize" if name == "output_finalize" => Ok(Self::OutputFinalize),
             "sequence-check" if name == "sequence_check" || name.starts_with("check_") => {
                 Ok(Self::SequenceCheck)
             }
@@ -94,7 +91,6 @@ impl StageKind {
             _ if name.starts_with("prompt_bind_p") => Ok(Self::PromptBind),
             _ if name.starts_with("prompt_check_p") => Ok(Self::PromptCheck),
             _ if name.starts_with("embed_") => Ok(Self::InputEmbedding),
-            "output_finalize" => Ok(Self::OutputFinalize),
             "sequence_check" => Ok(Self::SequenceCheck),
             _ if name.starts_with("check_") => Ok(Self::SequenceCheck),
             _ if name.starts_with("aux_") => Ok(Self::PrefillPrepareAux {
@@ -116,7 +112,6 @@ impl StageKind {
             Self::InputEmbedding => "input-embedding",
             Self::PrefillPrepareAux { .. } => "prefill-prepare-aux",
             Self::PrefillRange { .. } => "prefill-range",
-            Self::OutputFinalize => "output-finalize",
             Self::SequenceCheck => "sequence-check",
         }
     }
@@ -128,7 +123,6 @@ impl StageKind {
             Self::InputEmbedding => "input_embedding",
             Self::PrefillPrepareAux { .. } => "prefill_prepare_aux",
             Self::PrefillRange { .. } => "prefill_range",
-            Self::OutputFinalize => "output_finalize",
             Self::SequenceCheck => "sequence_check",
         }
     }
@@ -136,11 +130,9 @@ impl StageKind {
     pub fn instance(&self) -> Option<usize> {
         match self {
             Self::PrefillPrepareAux { layer } | Self::PrefillRange { layer } => Some(*layer),
-            Self::PromptBind
-            | Self::PromptCheck
-            | Self::InputEmbedding
-            | Self::OutputFinalize
-            | Self::SequenceCheck => None,
+            Self::PromptBind | Self::PromptCheck | Self::InputEmbedding | Self::SequenceCheck => {
+                None
+            }
         }
     }
 }
@@ -171,11 +163,6 @@ pub fn run_for_compare(kind: &StageKind) -> Result<DirectCompareOutput> {
             prefill_range::load_inputs_from_args,
             prefill_range::run_direct,
             "prefill_range",
-        ),
-        StageKind::OutputFinalize => compare(
-            output_finalize::load_inputs_from_args,
-            output_finalize::run_direct,
-            "output_finalize",
         ),
         StageKind::SequenceCheck => compare(
             sequence_check::load_inputs_from_args,
@@ -216,12 +203,6 @@ pub fn run_and_publish(kind: &StageKind) -> Result<DirectPublishOutput> {
             prefill_range::run_direct,
             "prefill_range",
             CachedStageValue::RangeActivations,
-        ),
-        StageKind::OutputFinalize => publish(
-            output_finalize::load_inputs_from_args,
-            output_finalize::run_direct,
-            "output_finalize",
-            CachedStageValue::GeneratedOutput,
         ),
         StageKind::SequenceCheck => publish(
             sequence_check::load_inputs_from_args,
@@ -322,18 +303,6 @@ pub fn run_and_publish_from_paths_with_caches(
             "prefill_range",
             CachedStageValue::RangeActivations,
         ),
-        StageKind::OutputFinalize => publish(
-            || {
-                output_finalize::load_inputs_from_paths(
-                    input_path,
-                    input_manifest_path,
-                    cached_inputs,
-                )
-            },
-            output_finalize::run_direct,
-            "output_finalize",
-            CachedStageValue::GeneratedOutput,
-        ),
         StageKind::SequenceCheck => publish(
             || {
                 sequence_check::load_inputs_from_paths_with_cache(
@@ -424,18 +393,6 @@ pub fn run_cached_from_paths_with_caches(
             },
             "prefill_range",
             CachedStageValue::RangeActivations,
-        ),
-        StageKind::OutputFinalize => cache(
-            || {
-                output_finalize::load_inputs_from_paths(
-                    input_path,
-                    input_manifest_path,
-                    cached_inputs,
-                )
-            },
-            output_finalize::run_direct,
-            "output_finalize",
-            CachedStageValue::GeneratedOutput,
         ),
         StageKind::SequenceCheck => cache(
             || {

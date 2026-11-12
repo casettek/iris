@@ -782,7 +782,7 @@ mod tests {
     fn claim_result_writes_existing_artifact_names() {
         let base = temp_dir("claim-result");
         fs::create_dir_all(&base).unwrap();
-        write_stage(&base, "output_finalize", "abc", b"output");
+        write_stage(&base, "check_c0", "abc", b"output");
         let manifest_path = base.join("Raster.toml");
         fs::write(&manifest_path, "[chain]\nname = \"test\"\n").unwrap();
 

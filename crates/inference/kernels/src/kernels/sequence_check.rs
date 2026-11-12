@@ -142,7 +142,7 @@ pub fn check_frame(
     }
 }
 
-/// Publishes the selections in the `DecodeEdge` shape `output-finalize`
+/// Publishes the selections as a `DecodeEdge`, the shape the next check
 /// consumes, after the earlier ranges' transcript. `selections` holds one entry
 /// per position that has a normalised row.
 ///
@@ -204,6 +204,8 @@ pub fn decode_edge(
         },
         check_fault: fault.fault,
         check_fault_position: fault.position,
+        // Stated by the stage once the edge's model context is known.
+        record: Default::default(),
         generated_token_ids: List::from(generated_token_ids),
     })
 }

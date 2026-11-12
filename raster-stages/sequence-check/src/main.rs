@@ -15,7 +15,7 @@
 use raster::prelude::*;
 
 use sequence_check::input::*;
-use sequence_check::prompt::PromptState;
+use sequence_check::prompt::{PromptContext, PromptState};
 use sequence_check::*;
 
 /// One generated position: locate the row that predicts it, norm it, sweep
@@ -49,14 +49,45 @@ fn check_position(
     (state, output)
 }
 
+/// Resolves one token of the transcript by its authorized id and advances the
+/// bounded detokenization and commitment state.
+#[sequence(kind = recur)]
+fn decode_generated_token(
+    input: RecurSequenceInput<u32>,
+    state: RecurSequenceState<FinalizeState>,
+    tokens: List<DecoderToken>,
+    paths: List<DecoderProof>,
+    descriptor: BytesPage,
+    model_id: String,
+    token_count: u64,
+) -> RecurSequenceState<FinalizeState> {
+    let token_id = into_ref!(input);
+    let token = select!(DecoderToken, tokens[token_id]);
+    let proof = select!(DecoderProof, paths[token_id]);
+    call!(
+        consume_authenticated_decoder,
+        state,
+        descriptor,
+        model_id,
+        token_id,
+        token_count,
+        proof,
+        token
+    )
+}
+
 /// Teacher-forced check entrypoint for one range of claimed tokens.
 ///
 /// `activations` is the last transformer layer's output for this range;
 /// `previous` is its output for the range before, whose last row predicts
 /// this range's first token; each activation row carries its consumed ID; `prior`
-/// is the previous range's check (or the empty `decode_init` edge); `head` is
+/// is the previous range's check (or the empty edge); `head` is
 /// the committed output head; `prompt` is the last prompt range's output, whose
 /// context says how many tokens the prompt became and how large a range may be.
+///
+/// The check also finalizes the transcript so far: `decoder` is the committed
+/// decoder table, `witness` its membership paths and `descriptor` the model's.
+/// The record of the last claimed range is the claim's output.
 #[sequence]
 fn main(
     activations: ActivationSequence,
@@ -64,6 +95,9 @@ fn main(
     prior: DecodeEdge,
     head: FinalHead,
     prompt: PromptState,
+    decoder: DecoderTable,
+    descriptor: BytesPage,
+    witness: DecoderWitness,
 ) -> Result<DecodeEdge> {
     let input_model = select!(ModelContext, activations.clone().model);
     let checked_rows = select!(List<ActivationRow>, activations.clone().rows);
@@ -162,7 +196,7 @@ fn main(
     let prior_fault = select!(u32, prior.clone().check_fault);
     let prior_fault_position = select!(u32, prior.clone().check_fault_position);
     let range_size = select!(u32, prompt.clone().context.range_size);
-    let prompt_tokens = select!(u32, prompt.context.prompt_tokens);
+    let prompt_tokens = select!(u32, prompt.clone().context.prompt_tokens);
     let frame = call!(
         begin_check_frame,
         start_position,
@@ -175,33 +209,79 @@ fn main(
     );
     let fault = call!(find_check_fault, summary.clone(), error_summary, frame);
 
-    // The verdict accumulates across ranges, so the last check's edge, the
-    // one `output_finalize` publishes, covers every claimed token.
+    // The transcript so far: the earlier ranges' ids, then this range's
+    // selections. It is built before the edge because the record is stated
+    // over it, and an edge's own fields are set once, when it is opened.
     let prior_mismatches = select!(u32, prior.clone().claim_mismatches);
     let prior_first_mismatch = select!(u32, prior.clone().first_claim_mismatch_position);
-    // Push-only sites deriving in turn from the opened edge: the earlier
-    // ranges' transcript, then this range's selections.
+    let prior_ids = select!(List<u32>, prior.generated_token_ids);
+    let carried = call_recur!(
+        tile = copy_prior_token_ids,
+        input = prior_ids,
+        chunk = 64,
+        output,
+        args = ()
+    );
+    let transcript = call_recur!(
+        tile = copy_selected_token_ids,
+        input = selections,
+        chunk = 64,
+        output = carried,
+        args = ()
+    );
+    let ids = select!(List<u32>, transcript.ids);
+
+    // Finalize it: decode every id against the committed decoder table, and
+    // state what the transcript breaks. The final step belongs after the
+    // schedule's last check, so an earlier range's record carries a fault
+    // and only the last range's can be a claim's output.
+    let context = select!(PromptContext, prompt.context);
+    let model_id = select!(String, context.clone().model_id);
+    let token_count = select!(u64, witness.clone().token_count);
+    let paths = select!(List<DecoderProof>, witness.paths);
+    let tokens = select!(List<DecoderToken>, decoder.tokens);
+    let has_selected = select!(bool, summary.clone().has_selected);
+    let position = select!(u32, summary.clone().decode_position);
+    let token = select!(u32, summary.clone().token_id);
+    let state = call!(
+        begin_authenticated_finalize,
+        descriptor.clone(),
+        model_id.clone()
+    );
+    let state = call!(
+        verify_final_model_context,
+        state,
+        model.clone(),
+        context.clone(),
+        descriptor.clone(),
+        has_selected.clone(),
+        position,
+        token
+    );
+    let state = call_recur_seq!(
+        sequence = decode_generated_token,
+        input = ids.clone(),
+        state = state,
+        args = (tokens, paths, descriptor, model_id, token_count)
+    );
+    let record = call!(finish_output_record, state, has_selected, context);
+
+    // The verdict accumulates across ranges, so the last check's edge
+    // covers every claimed token.
     let base = call!(
         begin_decode_edge,
         summary,
         prior_mismatches,
         prior_first_mismatch,
         fault,
-        model
-    );
-    let prior_ids = select!(List<u32>, prior.generated_token_ids);
-    let carried = call_recur!(
-        tile = copy_prior_token_ids,
-        input = prior_ids,
-        chunk = 64,
-        output = base,
-        args = ()
+        model,
+        record
     );
     let edge = call_recur!(
-        tile = copy_selected_token_ids,
-        input = selections,
+        tile = copy_transcript,
+        input = ids,
         chunk = 64,
-        output = carried,
+        output = base,
         args = ()
     );
     raster::println!("sequence check → {:?}", edge);

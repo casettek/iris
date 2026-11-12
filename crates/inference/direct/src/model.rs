@@ -531,7 +531,7 @@ impl DirectInferenceModel {
         })
     }
 
-    pub fn decoder_table(&self) -> Result<output_finalize::input::DecoderTable> {
+    pub fn decoder_table(&self) -> Result<sequence_check::input::DecoderTable> {
         run_prep::decoder_table(&self.tokenizer, &self.manifest.eos_token_ids)
     }
 

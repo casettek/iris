@@ -46,8 +46,9 @@ the chain then checks it.
   used for selection, argmax selection, selected-token history, active PLE, cache
   growth/eviction, and position advancement.
 - The chain and direct: the prompt ranges' token ids concatenate to direct's
-  tokenization; `output_finalize` is byte-identical to direct's record; the last
-  range's check is byte-identical to direct's last `decode_select_t*`.
+  tokenization; the last range's check, its edge and its output record, is
+  byte-identical to direct's final boundary; and an earlier range's check states a
+  record that carries a fault, so it cannot stand as a claim's.
 - Position by position, stitching each layer's ranges together: every
   `embed_*`, `aux_*_l*` and `range_*_l*` row at position `i` equals direct's
   prefill row (`i < prompt_len`) or decode step `i - prompt_len`'s single row, and

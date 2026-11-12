@@ -88,7 +88,7 @@ The workflow CLI is the primary API. These lower-level commands remain useful fo
 ```bash
 cargo run -p staged-infer -- chain run
 cargo raster chain run --no-auth --show-output
-cargo raster show target/raster/chains-no-auth/latest/output_finalize/output.bin
+cargo raster show target/raster/chains-no-auth/latest/check_c0/output.bin
 ```
 
 `target/`, `*.rastered`, and `*.rindex` are generated artifacts. A chain manifest comes from `model import` (the template) and `claim build` (filled in for one run, under `target/iris/runs/<run>/`); run the commands above from that directory or pass it as the manifest.

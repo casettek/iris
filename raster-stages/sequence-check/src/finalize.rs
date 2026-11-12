@@ -1,22 +1,20 @@
-//! Finalizes the generated token transcript into IDs, a reference-compatible
-//! commitment, and decoded text.
-
-#![no_std]
-
-extern crate alloc;
+//! Finalization: the transcript so far as token ids, decoded text and the
+//! commitments to both, with what it breaks and the context the chain ran
+//! under. Every check publishes this record with its edge; the last range's
+//! is the claim's.
+//!
+//! This was the `output-finalize` stage. It is three steps a token, far too
+//! little to be a stage of its own, and the check before it has the edge it
+//! reads.
 
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use raster::prelude::*;
 use sha2::{Digest, Sha256};
 
-pub mod input;
-pub mod model;
-pub use model::*;
-pub mod prompt;
-
-use input::*;
-use prompt::PromptContext;
+use crate::finalize_model::finish_final_history;
+use crate::input::*;
+use crate::prompt::PromptContext;
 
 /// The empty state, as a plain function — see [`advance_finalize_state`].
 pub fn initial_finalize_state() -> FinalizeState {
@@ -107,15 +105,8 @@ pub fn advance_finalize_state(
     state
 }
 
-/// Flushes byte fallback and hashes exactly the JSON token-id representation
-/// used by the reference's `build_output_decode_commitment`.
-#[tile(kind = iter, description = "Finish generated text and token commitment")]
-pub fn finish_finalize_state(state: FinalizeState) -> FinalizeState {
-    finished_state(state)
-}
-
-/// The step [`finish_finalize_state`] is, as a plain function, for the native
-/// kernel.
+/// Flushes byte fallback and closes the JSON token-id representation that
+/// the reference's `build_output_decode_commitment` hashes.
 pub fn finished_state(state: FinalizeState) -> FinalizeState {
     let mut state = state;
     finish_final_history(&mut state);
@@ -149,62 +140,43 @@ pub fn sha256_hex(bytes: &[u8]) -> String {
     alloc::format!("{:x}", Sha256::digest(bytes))
 }
 
-/// Opens the final output: the finished transcript, the commitments to it, the
-/// verdict and fault carried from the edge, and the context the chain ran under.
-#[tile(kind = iter, description = "Open final generated output")]
-pub fn begin_generated_output(
+/// The record of a finished transcript: its commitments, what it breaks, and
+/// the context the chain ran under.
+pub fn output_record(
     state: FinalizeState,
     has_selected: bool,
-    claim_mismatches: u32,
-    first_claim_mismatch_position: u32,
-    check_fault: u32,
-    check_fault_position: u32,
-    context: PromptContext,
-) -> Draft<GeneratedOutput> {
-    let mut output = Draft::<GeneratedOutput>::new();
-    output.model_fault().set(state.model_fault);
-    output
-        .output_fault()
-        .set(output_fault_of(&state, has_selected, &context));
-    output
-        .output_text_sha256()
-        .set(sha256_hex(state.text.as_bytes()));
-    output.generated_token_count().set(state.count);
-    output
-        .generated_token_ids_sha256()
-        .set(sha256_hex(state.json.as_bytes()));
-    output.generated_text().set(state.text);
-    output.stop_reason().set(if state.stopped {
-        String::from("eos")
-    } else {
-        String::from("max_new_tokens")
-    });
-    output.claim_mismatches().set(claim_mismatches);
-    output
-        .first_claim_mismatch_position()
-        .set(first_claim_mismatch_position);
-    output.check_fault().set(check_fault);
-    output.check_fault_position().set(check_fault_position);
-    output.input_text_sha256().set(context.input_text_sha256);
-    output.model_id().set(context.model_id);
-    output.raw_prompt().set(context.raw_prompt);
-    output.max_new_tokens().set(context.max_new_tokens);
-    output.range_size().set(context.range_size);
-    output.prompt_tokens().set(context.prompt_tokens);
-    output.prompt_complete().set(context.complete);
-    output.prompt_fault().set(context.fault);
-    output.prompt_fault_position().set(context.fault_position);
-    output
+    context: &PromptContext,
+) -> OutputRecord {
+    OutputRecord {
+        model_fault: state.model_fault,
+        output_fault: output_fault_of(&state, has_selected, context),
+        output_text_sha256: sha256_hex(state.text.as_bytes()),
+        generated_token_count: state.count,
+        generated_token_ids_sha256: sha256_hex(state.json.as_bytes()),
+        generated_text: state.text,
+        stop_reason: if state.stopped {
+            String::from("eos")
+        } else {
+            String::from("max_new_tokens")
+        },
+        input_text_sha256: context.input_text_sha256.clone(),
+        model_id: context.model_id.clone(),
+        raw_prompt: context.raw_prompt,
+        max_new_tokens: context.max_new_tokens,
+        range_size: context.range_size,
+        prompt_tokens: context.prompt_tokens,
+        prompt_complete: context.complete,
+        prompt_fault: context.fault,
+        prompt_fault_position: context.fault_position,
+    }
 }
 
-#[tile(kind = recur, description = "Copy generated token ids to final output")]
-pub fn copy_output_token_ids(
-    input: RecurInput<Block<u32>>,
-    output: RecurOutput<GeneratedOutput>,
-) -> RecurOutput<GeneratedOutput> {
-    let mut output = output;
-    for token_id in input.into_value() {
-        output.generated_token_ids().push(token_id);
-    }
-    output
+/// Finishes the transcript and states its record.
+#[tile(kind = iter, description = "Finish the transcript and state its output record")]
+pub fn finish_output_record(
+    state: FinalizeState,
+    has_selected: bool,
+    context: PromptContext,
+) -> OutputRecord {
+    output_record(finished_state(state), has_selected, &context)
 }

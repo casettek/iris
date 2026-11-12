@@ -2,9 +2,10 @@
 //! `sequence-check` stage.
 //!
 //! Boundary types are duplicated field-for-field from the stages they link
-//! to — `ActivationSequence` from `prefill-range`, `PromptTokenization` from
-//! `prompt-prepare`, `DecodeEdge` from `decode-init` and `output-finalize` —
-//! because the chain binds by structural commitment, not by Rust type name.
+//! to — `ActivationSequence` from `prefill-range`, `PromptState` from the
+//! shared prompt source — because the chain binds by structural commitment,
+//! not by Rust type name. `DecodeEdge` is this stage's own: a check reads the
+//! edge of the check before it.
 //! The scoring numerics delegate to `det_num`, so a score is bit-identical to
 //! direct generation's score of the same activation row.
 
@@ -84,10 +85,11 @@ pub struct FinalHead {
 }
 
 /// The stage's authorized output: the greedy selection at every generated
-/// position, in the shape `output-finalize` consumes.
+/// position so far, the verdict on the claim, and the output record.
 ///
-/// MUST match `DecodeEdge` in `decode-init` and `output-finalize`. For an honest
-/// claim it is byte-identical to direct generation's final edge.
+/// For an honest claim the selection fields are byte-identical to direct
+/// generation's final edge. The next range's check reads this as its `prior`,
+/// and the last range's is the claim's final record.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
 pub struct DecodeEdge {
     pub model: ModelContext,
@@ -107,7 +109,53 @@ pub struct DecodeEdge {
     pub check_fault: u32,
     /// Absolute sequence position of that fault, or zero when there is none.
     pub check_fault_position: u32,
+    /// The transcript so far as an output: see [`OutputRecord`].
+    pub record: OutputRecord,
     pub generated_token_ids: List<u32>,
+}
+
+/// The transcript so far, finalized: its commitments, its decoded text, what
+/// it breaks, and the context the chain ran under.
+///
+/// Every check states it. Only the last claimed range's is a claim's output:
+/// an earlier range's has `model_fault` set, because the schedule puts the
+/// final step after the last check and nowhere else.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
+pub struct OutputRecord {
+    /// Nonzero when consumed model data failed authentication, or when this
+    /// is not the record of the schedule's last claimed range.
+    pub model_fault: u32,
+    pub generated_token_count: u32,
+    pub generated_token_ids_sha256: String,
+    pub generated_text: String,
+    pub stop_reason: String,
+    /// SHA-256 of the exact UTF-8 bytes of `generated_text`.
+    pub output_text_sha256: String,
+    /// What the transcript breaks, or zero: one of the `OUTPUT_FAULT_*` codes.
+    pub output_fault: u32,
+    /// SHA-256 of the exact text the chain consumed, before chat formatting.
+    pub input_text_sha256: String,
+    /// The identifier of the committed model the chain was configured with.
+    pub model_id: String,
+    pub raw_prompt: bool,
+    pub max_new_tokens: u32,
+    pub range_size: u32,
+    /// How many tokens the prompt became.
+    pub prompt_tokens: u32,
+    /// The prompt ranges covered the whole prepared prompt, in order.
+    pub prompt_complete: bool,
+    /// What failed in prompt preparation, or zero. See `FAULT_*` in the shared
+    /// prompt source.
+    pub prompt_fault: u32,
+    pub prompt_fault_position: u64,
+}
+
+/// The token ids selected so far: the earlier ranges', then this range's.
+/// Built first, because the record is stated over it and the edge's own
+/// fields are set once, when the edge is opened.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
+pub struct Transcript {
+    pub ids: List<u32>,
 }
 
 // ---------------------------------------------------------------------------
@@ -343,4 +391,155 @@ pub fn softcap(value: i32, cap: i32) -> i32 {
         return value;
     }
     softcap_act(Act::from_bits(value), Act::from_bits(cap)).to_bits()
+}
+
+// ---------------------------------------------------------------------------
+// Finalization: the decoder table and the output record
+// ---------------------------------------------------------------------------
+
+/// One dense decoder-table row. Its list position is its token id.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
+pub struct DecoderToken {
+    pub token: String,
+    pub special: bool,
+    /// In the model's `eos_token_id` set. The chain's decode loop is statically
+    /// expanded to a fixed repeat count, so it cannot stop early; this is what
+    /// lets the finalized output report where the answer actually ended.
+    pub terminal: bool,
+}
+
+/// Committed tokenizer data needed by output finalization.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
+pub struct DecoderTable {
+    pub tokens: List<DecoderToken>,
+}
+
+/// Bounded loop state. `pending_bytes` only holds one byte-fallback run. The
+/// text and JSON fields grow with the requested generation bound; the chain's
+/// static repeat count pins that bound.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
+pub struct FinalizeState {
+    pub history: ModelContext,
+    pub expected_token: u32,
+    pub last_token: u32,
+    pub model_fault: u32,
+    pub count: u32,
+    pub json: String,
+    pub text: String,
+    pub pending_bytes: BytesPage,
+    /// Set by the first terminal token. Everything after it is still counted
+    /// and committed — it was generated — but it is not the model's answer, so
+    /// it stops contributing to `text`.
+    pub stopped: bool,
+    /// A token followed the first terminal token.
+    pub past_terminal: bool,
+}
+
+/// A claim's output as host code reads it: the last check's edge and record,
+/// flattened. No stage publishes this type; see [`generated_output`].
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
+pub struct GeneratedOutput {
+    /// Nonzero when consumed model data failed authentication.
+    pub model_fault: u32,
+    pub generated_token_count: u32,
+    pub generated_token_ids: List<u32>,
+    pub generated_token_ids_sha256: String,
+    pub generated_text: String,
+    pub stop_reason: String,
+    /// How many generated positions were given a claimed token that is not
+    /// the greedy selection there. A claim stands only if this is zero.
+    pub claim_mismatches: u32,
+    /// Absolute sequence position of the first disagreement, or zero when
+    /// there is none.
+    pub first_claim_mismatch_position: u32,
+    /// The teacher-forced check's fault, or zero. See `CHECK_FAULT_*`.
+    pub check_fault: u32,
+    pub check_fault_position: u32,
+    /// SHA-256 of the exact UTF-8 bytes of `generated_text`.
+    pub output_text_sha256: String,
+    /// What the transcript breaks, or zero: one of the `OUTPUT_FAULT_*` codes.
+    pub output_fault: u32,
+    /// SHA-256 of the exact text the chain consumed, before chat formatting.
+    pub input_text_sha256: String,
+    /// The identifier of the committed model the chain was configured with.
+    pub model_id: String,
+    pub raw_prompt: bool,
+    pub max_new_tokens: u32,
+    pub range_size: u32,
+    /// How many tokens the prompt became.
+    pub prompt_tokens: u32,
+    /// The prompt ranges covered the whole prepared prompt, in order.
+    pub prompt_complete: bool,
+    /// What failed in prompt preparation, or zero. See `FAULT_*` in the shared
+    /// prompt source.
+    pub prompt_fault: u32,
+    pub prompt_fault_position: u64,
+}
+
+/// The transcript breaks no rule.
+pub const OUTPUT_FAULT_NONE: u32 = 0;
+/// The run produced no tokens.
+pub const OUTPUT_FAULT_NO_TOKENS: u32 = 1;
+/// The run produced more tokens than its budget.
+pub const OUTPUT_FAULT_OVER_BUDGET: u32 = 2;
+/// The run stopped short of its budget without reaching a terminal token.
+pub const OUTPUT_FAULT_SHORT_WITHOUT_EOS: u32 = 3;
+/// Tokens continue after a terminal token.
+pub const OUTPUT_FAULT_PAST_EOS: u32 = 4;
+/// The edge's selection flag disagrees with its transcript.
+pub const OUTPUT_FAULT_EDGE_DISAGREES: u32 = 5;
+
+/// What a published `output_fault` means.
+pub fn output_fault_description(fault: u32) -> &'static str {
+    match fault {
+        OUTPUT_FAULT_NONE => "no fault",
+        OUTPUT_FAULT_NO_TOKENS => "the output has no tokens",
+        OUTPUT_FAULT_OVER_BUDGET => "the output has more tokens than the run allows",
+        OUTPUT_FAULT_SHORT_WITHOUT_EOS => {
+            "the output stops short of the token budget without reaching EOS"
+        }
+        OUTPUT_FAULT_PAST_EOS => "the output continues past EOS",
+        OUTPUT_FAULT_EDGE_DISAGREES => "the decode edge's selection flag disagrees with its tokens",
+        _ => "an unknown fault",
+    }
+}
+
+/// Reusable membership paths; separate from the decoder's identity.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
+pub struct DecoderWitness {
+    pub token_count: u64,
+    pub paths: List<DecoderProof>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
+pub struct DecoderProof {
+    pub siblings: BytesPage,
+}
+
+/// The claim's output, read from the last range's check.
+pub fn generated_output(edge: &DecodeEdge) -> GeneratedOutput {
+    let record = edge.record.clone();
+    GeneratedOutput {
+        model_fault: record.model_fault,
+        generated_token_count: record.generated_token_count,
+        generated_token_ids: edge.generated_token_ids.clone(),
+        generated_token_ids_sha256: record.generated_token_ids_sha256,
+        generated_text: record.generated_text,
+        stop_reason: record.stop_reason,
+        claim_mismatches: edge.claim_mismatches,
+        first_claim_mismatch_position: edge.first_claim_mismatch_position,
+        check_fault: edge.check_fault,
+        check_fault_position: edge.check_fault_position,
+        output_text_sha256: record.output_text_sha256,
+        output_fault: record.output_fault,
+        input_text_sha256: record.input_text_sha256,
+        model_id: record.model_id,
+        raw_prompt: record.raw_prompt,
+        max_new_tokens: record.max_new_tokens,
+        range_size: record.range_size,
+        prompt_tokens: record.prompt_tokens,
+        prompt_complete: record.prompt_complete,
+        prompt_fault: record.prompt_fault,
+        prompt_fault_position: record.prompt_fault_position,
+    }
 }

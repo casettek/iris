@@ -44,7 +44,8 @@ pub struct CheckpointHashChallengeResult {
     pub chain_dir: PathBuf,
     pub recomputed_trace: CheckpointTrace,
     pub divergence: Option<Divergence>,
-    /// Present when recomputation reached `output_finalize` without diverging.
+    /// The output record of the last stage recomputation reached, when that
+    /// is a check. It is the claim's once the last claimed range is reached.
     pub final_result: Option<InferenceResult>,
 }
 
@@ -118,9 +119,9 @@ impl CheckpointedInferenceExecutor {
 
 fn final_result(output: Option<CachedStageValue>) -> Option<InferenceResult> {
     match output {
-        Some(CachedStageValue::GeneratedOutput(output)) => {
-            Some(inference_result_from_generated(output))
-        }
+        Some(CachedStageValue::DecodeEdge(edge)) => Some(inference_result_from_generated(
+            sequence_check::input::generated_output(&edge),
+        )),
         _ => None,
     }
 }

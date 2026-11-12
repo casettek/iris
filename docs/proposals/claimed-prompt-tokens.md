@@ -328,6 +328,15 @@ cases are in place. These points differ from the plan above:
   profile, so the model id changed.
 - **Import refuses a merge table whose results are longer than 33 characters**, the most
   the stage's rounds can check.
+- **Finished windows leave the rounds** (version 12, November 11). A window whose scan
+  finds nothing to merge cannot change again, so the round that finds it so checks that
+  each of its tokens is one piece and drops its pieces. The range's token ids are then
+  read from the claimed tokens, each one's pieces joined, and no longer from pass A's
+  result; a claimed token that is no vocabulary entry is a fault with id 0, where the
+  lookup used to assert. On Gemma 4 E4B a 512-token range fell from 2,730,134 trace
+  steps to 942,387 and its replay from 141 s to 61 s, with the same output. Each
+  merge-table lookup still walks its bucket twice, once to prove it and once to search
+  it; doing both in one walk, as `prompt-bind` does, would roughly halve what is left.
 
 The stage's logic is one set of plain functions in
 [check.rs](../../raster-stages/prompt-check/src/check.rs), called by its tiles and by the
