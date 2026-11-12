@@ -13,6 +13,9 @@ use raster_core::{
 use raster_runtime::{EntryArgumentsBinding, TraceRecorder};
 use serde::{de::DeserializeOwned, Serialize};
 
+/// First byte of a list-metadata payload, which a raw selection never is.
+const LIST_METADATA_TAG: u8 = 0x0A;
+
 /// Uses the public recorder solely as a selection-witness provider. It records
 /// one real entry binding in an in-memory root context, never a stage trace or
 /// a replacement for the authored CFS. It works even when RASTER_AUTH=0.
@@ -58,7 +61,7 @@ impl VerifiedSelections {
         cfs.sequences.push(main);
         let mut recorder = TraceRecorder::new(cfs);
         recorder.set_external_input(input, manifest)?;
-        recorder.record(TraceEvent::ProgramStart(ProgramStartEvent {
+        recorder.record(&TraceEvent::ProgramStart(ProgramStartEvent {
             arguments: binding.arguments,
         }));
         Ok(Self {
@@ -75,11 +78,19 @@ impl VerifiedSelections {
             &path,
             SelectionPayloadKind::Raw,
         )?;
+        // The selected bytes are compared with the proven ones directly, not
+        // through the hash the selection records: Raster leaves that hash zero
+        // in an unauthenticated run, which is how the staged chain runs.
         ensure!(
             selected.selection.path == path
                 && selected.selection.source_root_hash.as_slice() == self.reference.commitment
                 && selected.selection.payload_kind == SelectionPayloadKind::Raw
-                && verify_selection_witness(&selected.selection, &witness)
+                && !witness.is_reference_only()
+                && witness.proof.path == path
+                && witness.proof.root_hash.as_slice() == self.reference.commitment
+                && witness.bytes.first().is_some_and(|tag| *tag != LIST_METADATA_TAG)
+                && selected.bytes == witness.bytes
+                && verify_selection_proof(&witness.bytes, &witness.proof)
                 && verify_bytes_page_geometry(&witness),
             "weight selection failed commitment or page geometry verification: {path:?}"
         );

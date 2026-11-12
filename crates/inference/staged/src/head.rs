@@ -19,7 +19,7 @@ pub(crate) struct StaticHead {
 }
 impl RetainedWeightBytes for StaticHead {
     fn retained_weight_bytes(&self) -> usize {
-        std::mem::size_of::<Self>() + self.params.norm_weights.allocated_bytes()
+        std::mem::size_of::<Self>() + self.params.norm_weights.len()
     }
 }
 

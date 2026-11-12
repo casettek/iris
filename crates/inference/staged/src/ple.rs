@@ -60,13 +60,13 @@ pub(crate) struct StaticWeights {
 impl RetainedWeightBytes for StaticWeights {
     fn retained_weight_bytes(&self) -> usize {
         std::mem::size_of::<Self>()
-            + self.params.norm_weights.allocated_bytes()
+            + self.params.norm_weights.len()
             + self.projection.pages().capacity() * std::mem::size_of::<BytesPage>()
             + self
                 .projection
                 .pages()
                 .iter()
-                .map(BytesPage::allocated_bytes)
+                .map(BytesPage::len)
                 .sum::<usize>()
     }
 }

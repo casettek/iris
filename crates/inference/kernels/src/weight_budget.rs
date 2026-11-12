@@ -48,6 +48,7 @@ impl WeightBudget {
 }
 
 /// Struct storage plus all owned heap capacities. Allocator bookkeeping is excluded.
+/// A Raster page counts as its length: Raster exposes no capacity for one.
 pub trait RetainedWeightBytes {
     fn retained_weight_bytes(&self) -> usize;
 }
@@ -57,7 +58,7 @@ fn region<const P: u64>(value: &raster::Bytes<P>) -> usize {
         + value
             .pages()
             .iter()
-            .map(|page| page.allocated_bytes())
+            .map(|page| page.len())
             .sum::<usize>()
 }
 
@@ -77,7 +78,7 @@ impl RetainedWeightBytes for prefill_prepare_aux::input::PleLayer {
         std::mem::size_of::<Self>()
             + region(&self.embeddings)
             + region(&self.projection)
-            + self.params.norm_weights.allocated_bytes()
+            + self.params.norm_weights.len()
     }
 }
 
@@ -110,12 +111,12 @@ impl RetainedWeightBytes for prompt_check::input::TokenizerWitness {
             paths.len() * std::mem::size_of::<prompt_check::input::SparsePath>()
                 + paths
                     .iter()
-                    .map(|path| path.siblings.allocated_bytes())
+                    .map(|path| path.siblings.len())
                     .sum::<usize>()
         };
         std::mem::size_of::<Self>()
-            + self.vocab.root.allocated_bytes()
-            + self.merges.root.allocated_bytes()
+            + self.vocab.root.len()
+            + self.merges.root.len()
             + paths(&self.vocab_paths)
             + paths(&self.merge_paths)
     }
@@ -125,7 +126,7 @@ impl RetainedWeightBytes for sequence_check::input::FinalHead {
     fn retained_weight_bytes(&self) -> usize {
         std::mem::size_of::<Self>()
             + region(&self.projection)
-            + self.params.norm_weights.allocated_bytes()
+            + self.params.norm_weights.len()
     }
 }
 
@@ -157,7 +158,7 @@ impl RetainedWeightBytes for prefill_range::input::TransformerLayer {
                 &p.ple_post_norm,
             ]
             .iter()
-            .map(|p| p.allocated_bytes())
+            .map(|p| p.len())
             .sum::<usize>()
     }
 }

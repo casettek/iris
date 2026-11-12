@@ -316,7 +316,7 @@ model/execution fault makes the final claim invalid even if native and Raster
 honestly execute the same malicious wiring. `test-parity` exercises that case
 as well as divergence from the honest template; production RISC Zero tests in
 `model_identity_guest.rs` cover the corresponding guest checks. Model imports
-and prepared runs use version 13; older boundary encodings must be regenerated.
+and prepared runs use version 14; older boundary encodings must be regenerated.
 
 ### Stage schedule
 

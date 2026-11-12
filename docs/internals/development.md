@@ -46,7 +46,9 @@ cargo raster build --backend risc0
 cargo raster program --verify
 ```
 
-Do not hand-edit `Raster.lock`. Commit lock updates only when they are an expected consequence of a stage behavior or interface change.
+Do not hand-edit `Raster.lock`. Commit lock updates only when they are an expected consequence of a stage behavior or interface change, or of a Raster or guest compiler update.
+
+A lock also goes stale without a stage edit. Since Raster's path-independent guest builds (version 14 here) a tile's image id depends on the stage's sources, the local crates it reaches, this repository's `Cargo.lock`, the Raster checkout's sources, the position of that checkout relative to this one (`../raster`) and the RISC Zero Rust toolchain; it no longer depends on where the two checkouts live or what their folders are called. The lock records the toolchain and a digest of those inputs, and `cargo raster run --commit` and `chain run` refuse a stale lock before they run anything. After updating Raster, reinstall its CLI and re-lock every stage (`just build-raster-stages`).
 
 The ladder does not show a value that no proof pins. A literal passed to a tile, sequence or recur is one (`{"Direct": "Inline"}` in `target/raster/cfs.json`, outside the slot of an output a recur creates), and so is a recur `state = …` seed that is a `select!` into a larger value. Return the constant or the seed from a tile and pass the whole result. `cargo test -p iris-cli --lib stage_bindings` reads every stage's schema and fails on either; the parity gate runs the same check first.
 
