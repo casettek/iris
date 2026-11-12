@@ -55,11 +55,7 @@ pub trait RetainedWeightBytes {
 
 fn region<const P: u64>(value: &raster::Bytes<P>) -> usize {
     value.pages().capacity() * std::mem::size_of::<raster::BytesPage>()
-        + value
-            .pages()
-            .iter()
-            .map(|page| page.len())
-            .sum::<usize>()
+        + value.pages().iter().map(|page| page.len()).sum::<usize>()
 }
 
 macro_rules! embedding {
@@ -109,10 +105,7 @@ impl RetainedWeightBytes for prompt_check::input::TokenizerWitness {
     fn retained_weight_bytes(&self) -> usize {
         let paths = |paths: &raster::List<prompt_check::input::SparsePath>| {
             paths.len() * std::mem::size_of::<prompt_check::input::SparsePath>()
-                + paths
-                    .iter()
-                    .map(|path| path.siblings.len())
-                    .sum::<usize>()
+                + paths.iter().map(|path| path.siblings.len()).sum::<usize>()
         };
         std::mem::size_of::<Self>()
             + self.vocab.root.len()
@@ -124,9 +117,7 @@ impl RetainedWeightBytes for prompt_check::input::TokenizerWitness {
 
 impl RetainedWeightBytes for sequence_check::input::FinalHead {
     fn retained_weight_bytes(&self) -> usize {
-        std::mem::size_of::<Self>()
-            + region(&self.projection)
-            + self.params.norm_weights.len()
+        std::mem::size_of::<Self>() + region(&self.projection) + self.params.norm_weights.len()
     }
 }
 

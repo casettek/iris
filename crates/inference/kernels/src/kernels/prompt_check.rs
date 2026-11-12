@@ -869,6 +869,67 @@ mod tests {
         assert_eq!(too_long.token_ids.len(), 2);
     }
 
+    /// The importer admits merge results of up to 33 characters, and so
+    /// tokens of up to 33 pieces. Two of them side by side need 64 merges:
+    /// every round of a pass and not one more. An honest claim of them must
+    /// pass, or a claimer would be refused for a prompt the model tokenizes.
+    #[test]
+    fn two_longest_tokens_side_by_side_fit_the_rounds_exactly() {
+        use crate::kernels::prompt_check_stage::{marks_for, run_prompt_check, Trusted};
+        use prompt_check::check::ROUNDS_PER_PASS;
+        use prompt_check::input::PromptState;
+        assert_eq!(rounds::ROUNDS, ROUNDS_PER_PASS);
+        let longest = ROUNDS_PER_PASS / 2 + 1;
+        let root = raster::BytesPage::__from_parts(0, 0, Vec::new());
+        // Longer rules rank first, so a run of `a` grows from the left into
+        // tokens of `most` letters.
+        let run = |most: usize, counts: &[usize]| {
+            let rules: Vec<(String, String)> = (1..most)
+                .rev()
+                .map(|len| ("a".repeat(len), "a".to_string()))
+                .collect();
+            let tokenizer = tokenizer(&["a", "b"], &rules);
+            let text = "a".repeat(counts.iter().sum());
+            let pieces = pieces_of(&text, None);
+            // The marks are the merge's own result either way.
+            assert!(check_groups(&tokenizer, &pieces, 0, None, counts)
+                .unwrap()
+                .is_ok());
+            let staged = rounds::check_range_in_rounds(
+                &tokenizer,
+                &pieces,
+                0,
+                None,
+                &rounds::marks_of(counts),
+            )
+            .unwrap();
+            let mut bound = PromptState::of_pieces(pieces);
+            bound.bind.done = true;
+            let twin = run_prompt_check(
+                &tokenizer,
+                &root,
+                &bound,
+                &PromptState::default(),
+                &marks_for(counts.iter().copied()),
+                &mut Trusted,
+            )
+            .unwrap();
+            (staged.fault.is_none(), twin)
+        };
+
+        let (staged, twin) = run(longest, &[longest, longest]);
+        assert!(staged);
+        assert_eq!((twin.context.fault, twin.context.prompt_tokens), (0, 2));
+        let ids = twin.token_ids.as_slice();
+        assert_eq!(ids.len(), 2);
+        assert_eq!(ids[0], ids[1]);
+
+        // One piece more in one of the two is one merge too many.
+        let (staged, twin) = run(longest + 1, &[longest + 1, longest]);
+        assert!(!staged);
+        assert_ne!(twin.context.fault, 0);
+    }
+
     /// The stage's native twin, run range by range with each range handing
     /// its last token and the pieces it did not take to the next, ends
     /// without a fault exactly when the marks are the merge's, and then

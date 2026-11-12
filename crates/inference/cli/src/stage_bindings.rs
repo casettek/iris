@@ -157,6 +157,38 @@ mod tests {
         check_stage_programs(&root).unwrap();
     }
 
+    /// `prompt-check` unrolls its merge rounds in its sequences, where no
+    /// constant can count them. The importer admits a merge result only if
+    /// two such tokens merge within the rounds of a pass, so the rounds the
+    /// schema holds must be the ones that bound is computed from.
+    #[test]
+    fn prompt_check_unrolls_the_rounds_the_importer_counts_on() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../..")
+            .canonicalize()
+            .unwrap();
+        let project = Project::new(root.join("raster-stages/prompt-check")).unwrap();
+        let cfs = serde_json::to_value(CfsBuilder::new(&project).build().unwrap()).unwrap();
+        let calls = |sequence: &str, callee: &str| {
+            cfs["sequences"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|entry| entry["id"] == sequence)
+                .unwrap_or_else(|| panic!("no sequence {sequence}"))["items"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|item| item["Sequence"]["id"] == callee)
+                .count()
+        };
+        let rounds = calls("check_pass", "check_eight") * calls("check_eight", "check_round");
+        assert_eq!(rounds, 2 * (run_prep::MAX_MERGED_TOKEN_CHARS - 1));
+        // Both passes, and the scan that closes each.
+        assert_eq!(calls("main", "check_pass"), 2);
+        assert_eq!(calls("main", "closing_scan"), 2);
+    }
+
     fn schema(item: Value) -> Value {
         json!({ "sequences": [{ "id": "main", "items": [item] }] })
     }
