@@ -15,6 +15,7 @@ mod infer;
 mod parity;
 #[cfg(feature = "replay-profile")]
 mod replay_profile;
+mod stage_bindings;
 #[cfg(test)]
 mod test_support;
 

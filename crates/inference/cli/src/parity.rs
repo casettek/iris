@@ -68,6 +68,9 @@ pub fn run(skip_challenges: bool) -> Result<()> {
 }
 
 fn run_suite(root: &Path, run_dir: &Path, report: &mut Value, skip_challenges: bool) -> Result<()> {
+    // Before anything runs: no stage program may read a value its schema does
+    // not pin. Raster's own checks do not see one.
+    crate::stage_bindings::check_stage_programs(root)?;
     let model_bundle = root.join("model-bundles/parity-gemma");
     let checksums: BTreeMap<String, String> = read_json(&model_bundle.join("checksums.json"))?;
     ensure!(

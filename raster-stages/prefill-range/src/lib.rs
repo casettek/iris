@@ -537,6 +537,16 @@ pub fn begin_attention(row: QueryRow) -> QueryRow {
 // differently at every step, so it cannot be bit-equal. Hence two passes.
 // ---------------------------------------------------------------------------
 
+/// The source layer a layer's own cache is swept as: the value
+/// `kv_donor_layer` has on a layer that borrows no cache.
+///
+/// A tile so the sweeps read it as a stored value. Written as a literal in the
+/// sequence it would be an argument the program pins to nothing.
+#[tile(kind = iter, description = "Source layer of a layer's own cache")]
+pub fn own_cache_layer() -> i32 {
+    -1
+}
+
 #[tile(kind = iter, description = "Zero the dense attention score window")]
 pub fn zero_scores(query: QueryRow, params: LayerParams) -> ScoreAccum {
     let len = window_len(query.position, params.sliding_window);
@@ -843,174 +853,11 @@ fn window_start(query_position: u32, sliding_window: u32) -> u32 {
     }
 }
 
-#[tile(kind = iter, description = "Empty streaming-softmax state")]
-pub fn zero_attn_state() -> AttnState {
-    AttnState {
-        started: false,
-        max: pack_i32s(&[]),
-        sum: pack_i32s(&[]),
-        acc: pack_i32s(&[]),
-        error: String::new(),
-    }
-}
-
 fn visible(query_position: u32, key_position: u32, sliding_window: u32) -> bool {
     if key_position > query_position {
         return false;
     }
     sliding_window == 0 || query_position - key_position < sliding_window
-}
-
-/// Attends one `Block` of keys/values, streaming-softmax style.
-#[tile(
-    kind = recur,
-    description = "Attend one chunk of keys with streaming softmax",
-    estimated_cycles = 30000
-)]
-pub fn attend_kv_chunk(
-    input: RecurInput<KeyRow>,
-    state: RecurState<AttnState>,
-    query: QueryRow,
-    params: LayerParams,
-    source_layer: i32,
-) -> RecurState<AttnState> {
-    let mut state = state;
-    if !state.error.is_empty() {
-        return state;
-    }
-    // A sequence cannot branch, so the caller runs this over both key lists —
-    // its own and the donor's — and exactly one pass contributes. Gemma 3n's
-    // last 20 layers attend over an earlier layer's cache; the rest attend over
-    // their own. The two passes chain one `AttnState`, so the streaming softmax
-    // is identical to a single pass over whichever list applies.
-    if params.kv_donor_layer != source_layer {
-        return state;
-    }
-    let key = input.into_value();
-    if !visible(query.position, key.position, params.sliding_window) {
-        return state;
-    }
-    if let Err(error) = accumulate_key(&mut state, &query, &key, &params) {
-        state.error = error;
-    }
-    state
-}
-
-fn accumulate_key(
-    state: &mut AttnState,
-    query: &QueryRow,
-    key: &KeyRow,
-    params: &LayerParams,
-) -> core::result::Result<(), String> {
-    let head_dim = params.head_dim as usize;
-    let heads = params.num_heads as usize;
-    let kv_heads = params.num_kv_heads as usize;
-    let group = heads / kv_heads;
-
-    let q = unpack_i32s(&query.q)?;
-    let k = unpack_i32s(&key.k)?;
-    let v = unpack_i32s(&key.v)?;
-    if q.len() != heads * head_dim || k.len() != kv_heads * head_dim || v.len() != k.len() {
-        return Err(alloc::format!(
-            "attention width mismatch: q {} k {} v {} for {heads}x{head_dim} over {kv_heads} kv heads",
-            q.len(),
-            k.len(),
-            v.len()
-        ));
-    }
-
-    let (mut max, mut sum, mut acc) = if state.started {
-        (
-            unpack_i32s(&state.max)?,
-            unpack_i32s(&state.sum)?,
-            unpack_i32s(&state.acc)?,
-        )
-    } else {
-        (vec![0; heads], vec![0; heads], vec![0; heads * head_dim])
-    };
-
-    for head in 0..heads {
-        let kv_head = head / group;
-        let q_head = &q[head * head_dim..(head + 1) * head_dim];
-        let k_head = &k[kv_head * head_dim..(kv_head + 1) * head_dim];
-        let v_head = &v[kv_head * head_dim..(kv_head + 1) * head_dim];
-        // No attention scale. The reference's `attention_output_into` computes
-        // `logits[j] = requantize(dot(query, key))` with no scaling at all —
-        // grepping the whole reference for `sqrt(head_dim)`, `query_pre_attn`
-        // or `attn_scale` finds nothing. Gemma 3n folds the scaling elsewhere,
-        // so applying `1/sqrt(head_dim)` here was an extra operation the model
-        // does not perform. `attn_scale` stays on `LayerParams` until the next
-        // fixture regeneration retires it.
-        let score = dot(q_head, k_head)?;
-        let slot = &mut acc[head * head_dim..(head + 1) * head_dim];
-
-        if !state.started {
-            max[head] = score;
-            sum[head] = ONE;
-            slot.copy_from_slice(v_head);
-            continue;
-        }
-
-        if score > max[head] {
-            let factor = exp(max[head] - score);
-            for (value, new) in slot.iter_mut().zip(v_head) {
-                *value = add_sat(mul(*value, factor), *new);
-            }
-            sum[head] = add_sat(mul(sum[head], factor), ONE);
-            max[head] = score;
-        } else {
-            let weight = exp(score - max[head]);
-            for (value, new) in slot.iter_mut().zip(v_head) {
-                *value = add_sat(*value, mul(*new, weight));
-            }
-            sum[head] = add_sat(sum[head], weight);
-        }
-    }
-
-    state.started = true;
-    state.max = pack_i32s(&max);
-    state.sum = pack_i32s(&sum);
-    state.acc = pack_i32s(&acc);
-    Ok(())
-}
-
-/// Divide each head by its softmax denominator. Does not project through W_o.
-#[tile(kind = iter, description = "Normalise streaming-softmax accumulators")]
-pub fn softmax_context(state: AttnState, params: LayerParams) -> PackedVec {
-    match softmax_context_inner(&state, &params) {
-        Ok(values) => PackedVec {
-            values: pack_i32s(&values),
-            error: String::new(),
-        },
-        Err(error) => PackedVec {
-            values: pack_i32s(&vec![0; (params.num_heads * params.head_dim) as usize]),
-            error,
-        },
-    }
-}
-
-fn softmax_context_inner(
-    state: &AttnState,
-    params: &LayerParams,
-) -> core::result::Result<Vec<i32>, String> {
-    if !state.error.is_empty() {
-        return Err(state.error.clone());
-    }
-    if !state.started {
-        return Err(String::from(
-            "attention saw no keys at or before this token",
-        ));
-    }
-    let head_dim = params.head_dim as usize;
-    let sums = unpack_i32s(&state.sum)?;
-    let mut context = unpack_i32s(&state.acc)?;
-    for (head, chunk) in context.chunks_mut(head_dim).enumerate() {
-        let denominator = sums.get(head).copied().unwrap_or(0);
-        for value in chunk.iter_mut() {
-            *value = div(*value, denominator);
-        }
-    }
-    Ok(context)
 }
 
 /// Post-attention RMS norm and residual add after the W_o matvec.

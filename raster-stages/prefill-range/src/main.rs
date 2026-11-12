@@ -76,6 +76,7 @@ fn attend_token(
     ple_rows: List<PleRow>,
     ple_input_gate: List<BytesPage>,
     ple_layer_projection: List<BytesPage>,
+    own_layer: i32,
 ) -> RecurSequenceOutput<ActivationSequence> {
     let query = call!(begin_attention, input);
     // Attention in two passes, matching the reference: score every visible key,
@@ -85,7 +86,8 @@ fn attend_token(
     // Each pass sweeps the own-cache lists and both committed donor candidates.
     // Exactly one source contributes: tiles compare the source layer against
     // the exact `kv_donor_layer` model fact instead of trusting manifest
-    // topology alone.
+    // topology alone. The own-cache sweeps name their source with `own_layer`,
+    // a tile's output: a literal here would be a value no proof pins.
     //
     // Sweep order is deliberately not load-bearing. Both `score_key` and
     // `accumulate_context` address by `key.position - window_start`, so a key
@@ -100,14 +102,14 @@ fn attend_token(
         input = prior_keys.clone(),
         chunk = 64,
         state = scores,
-        args = (query.clone(), params.clone(), -1)
+        args = (query.clone(), params.clone(), own_layer.clone())
     );
     let scores = call_recur!(
         tile = score_key,
         input = keys.clone(),
         chunk = 64,
         state = scores,
-        args = (query.clone(), params.clone(), -1)
+        args = (query.clone(), params.clone(), own_layer.clone())
     );
     let scores = call_recur!(
         tile = score_key,
@@ -131,14 +133,24 @@ fn attend_token(
         input = prior_keys,
         chunk = 64,
         state = context_acc,
-        args = (query.clone(), weights.clone(), params.clone(), -1)
+        args = (
+            query.clone(),
+            weights.clone(),
+            params.clone(),
+            own_layer.clone()
+        )
     );
     let context_acc = call_recur!(
         tile = accumulate_context,
         input = keys.clone(),
         chunk = 64,
         state = context_acc,
-        args = (query.clone(), weights.clone(), params.clone(), -1)
+        args = (
+            query.clone(),
+            weights.clone(),
+            params.clone(),
+            own_layer.clone()
+        )
     );
     let context_acc = call_recur!(
         tile = accumulate_context,
@@ -392,6 +404,7 @@ fn main(
     // a new object extending its base — `rows` ends up 1 entry on a decode
     // stage while `kv` ends up `prior + 1`, which no single sweep could build.
     let base = call!(begin_layer_output, clone!(start_position), model);
+    let own_layer = call!(own_cache_layer);
     let carried = call_recur!(
         tile = carry_cached_key,
         input = prior_keys.clone(),
@@ -415,7 +428,8 @@ fn main(
             w_down,
             ple_rows,
             ple_input_gate,
-            ple_layer_projection
+            ple_layer_projection,
+            own_layer
         )
     );
     raster::println!("prefill range pass → {:?}", prepared);

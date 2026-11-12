@@ -33,6 +33,11 @@ The first invocation includes compilation. A warmed invocation reuses compiled
 binaries, but still imports the model bundle freshly and reruns every inference path.
 Elapsed time is informational; there is no timing threshold or CI integration.
 
+Before it builds anything the gate reads every stage program's control-flow
+schema and stops if a tile reads a value the schema does not pin: a literal
+argument, or a recur seed selected out of a larger value. See
+[Raster stage checks](../internals/development.md#raster-stage-checks).
+
 ## What must agree
 
 The gate imports with `--range-size 6` (six tokens per range), so every case's

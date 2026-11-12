@@ -80,14 +80,14 @@ fn main(
     let text_claim = select!(TextClaim, before.clone().claim);
     let raw_prompt = select!(bool, context.clone().raw_prompt);
     let plan = call!(plan_scan, text_claim, raw_prompt, profile.clone());
-    let pass_seed = select!(TextPass, before.clone().text);
+    let pass_seed = call!(text_pass_seed, before.clone());
     let pass = call_recur!(
         tile = fold_text_chunk,
         input = chunks.clone(),
         state = pass_seed,
         args = (plan.clone(), profile.clone())
     );
-    let scan_seed = select!(ScanState, before.clone().text.scan);
+    let scan_seed = call!(scan_state_seed, before.clone());
     let scanned = call_recur!(
         tile = scan_prompt_chunk,
         input = chunks,
@@ -107,7 +107,7 @@ fn main(
     );
     let known_atoms = select!(List<KnownAtom>, known.atoms);
 
-    let split_seed = select!(SplitState, before.clone().split);
+    let split_seed = call!(split_state_seed, before.clone());
     let tail_seed = call!(begin_tail, split_seed.clone());
     let tail = call_recur!(
         tile = advance_tail,

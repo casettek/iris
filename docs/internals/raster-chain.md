@@ -182,6 +182,25 @@ stage is `prompt_bind_p0`.
 
 ## Soundness
 
+Every value a tile reads is the stored result of an earlier step or a committed
+input. Two spellings in a sequence would compile, run, commit and audit and still
+leave a value to whoever writes the trace, so no stage uses them:
+
+- A literal as an argument. The control-flow schema records it as inline and
+  holds no bytes for it, and the transition guest checks only that it is inline.
+  The source layer a layer's own cache is swept as is `own_cache_layer`'s output
+  for that reason, not a `-1` in `attend_token`.
+- A recur's state seed selected out of a larger value. The guest ties a loop's
+  first step to its seed only when the seed is a whole stored value. `prompt-bind`
+  starts its text fold, its scan and its split from `text_pass_seed`,
+  `scan_state_seed` and `split_state_seed`, each the whole output of a tile. With
+  a selected seed a trace could have started a later range's hash from the state
+  of a text the earlier ranges never bound.
+
+Through version 12 the chain had both: those three seeds, and four literal
+arguments in `prefill-range`. The parity gate and `cargo test` now refuse a stage
+with either (`crates/inference/cli/src/stage_bindings.rs`).
+
 Causal attention means row `i` sees exactly the tokens direct generation's decode
 step at position `i` saw. For an honest claim every row and K/V entry equals
 direct generation's, and the last check's `DecodeEdge`, with its record, is byte
@@ -297,7 +316,7 @@ model/execution fault makes the final claim invalid even if native and Raster
 honestly execute the same malicious wiring. `test-parity` exercises that case
 as well as divergence from the honest template; production RISC Zero tests in
 `model_identity_guest.rs` cover the corresponding guest checks. Model imports
-and prepared runs use version 12; older boundary encodings must be regenerated.
+and prepared runs use version 13; older boundary encodings must be regenerated.
 
 ### Stage schedule
 

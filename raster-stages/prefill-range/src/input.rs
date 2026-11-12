@@ -10,7 +10,7 @@ extern crate alloc;
 use alloc::string::String;
 use alloc::vec::Vec;
 use det_num::ops::{
-    div_act, gelu_pytorch_tanh_act, mac_bits, mul_sat, requantize, rms_norm_in_place,
+    gelu_pytorch_tanh_act, mac_bits, mul_sat, requantize, rms_norm_in_place,
     value_rms_norm_in_place,
 };
 use det_num::{Acc, Act, Wgt};
@@ -316,17 +316,6 @@ pub fn unpack_i64s(page: &BytesPage) -> core::result::Result<Vec<i64>, String> {
         .collect())
 }
 
-/// Streaming softmax state — one running max, sum and weighted accumulator
-/// per head.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
-pub struct AttnState {
-    pub started: bool,
-    pub max: BytesPage,
-    pub sum: BytesPage,
-    pub acc: BytesPage,
-    pub error: String,
-}
-
 /// A packed vector that may carry a failure from an earlier step.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
 pub struct PackedVec {
@@ -391,16 +380,6 @@ pub fn unpack_i32s(page: &BytesPage) -> core::result::Result<Vec<i32>, String> {
 // Q16.16 kernels
 // ---------------------------------------------------------------------------
 
-fn clamp_i64(value: i64) -> i32 {
-    if value > i32::MAX as i64 {
-        i32::MAX
-    } else if value < i32::MIN as i64 {
-        i32::MIN
-    } else {
-        value as i32
-    }
-}
-
 pub fn mul(a: i32, b: i32) -> i32 {
     // Canonical multiply: widen, then requantize ties-to-even and saturate.
     // The previous version truncated with `>> FRAC_BITS`, which rounds toward
@@ -408,47 +387,8 @@ pub fn mul(a: i32, b: i32) -> i32 {
     mul_sat(Act::from_bits(a), Act::from_bits(b)).to_bits()
 }
 
-pub fn div(a: i32, b: i32) -> i32 {
-    if b == 0 {
-        return 0;
-    }
-    // Canonical divide: ties-to-even, not the truncating shift-and-divide this
-    // replaces.
-    div_act(Act::from_bits(a), Act::from_bits(b)).to_bits()
-}
-
 pub fn add_sat(a: i32, b: i32) -> i32 {
     a.saturating_add(b)
-}
-
-pub fn exp(x: i32) -> i32 {
-    const LOG2E: i32 = 94548;
-    const A1: i32 = 45426;
-    const A2: i32 = 15743;
-    const A3: i32 = 3634;
-
-    if x <= -(20 * ONE) {
-        return 0;
-    }
-    if x >= 20 * ONE {
-        return i32::MAX;
-    }
-
-    let y = mul(x, LOG2E);
-    let int_part = y >> FRAC_BITS;
-    let frac = y - (int_part << FRAC_BITS);
-    let poly = ONE + mul(frac, A1 + mul(frac, A2 + mul(frac, A3)));
-
-    if int_part >= 0 {
-        clamp_i64((poly as i64) << int_part)
-    } else {
-        let shift = (-int_part) as u32;
-        if shift >= 31 {
-            0
-        } else {
-            poly >> shift
-        }
-    }
 }
 
 pub fn gelu(x: i32) -> i32 {

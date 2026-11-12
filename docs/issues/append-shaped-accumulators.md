@@ -166,6 +166,9 @@ cost after both rewrites is this tile, and it is the larger of the two today.
 
 ## 6. `attend_kv_chunk` is dead
 
+Deleted in version 13, with `zero_attn_state`, `softmax_context` and the `AttnState` type; the
+last source with them is commit `84267d0`. What follows describes the tree before that.
+
 `raster-stages/prefill-range/src/lib.rs:642` and its `softmax_context` finisher (`:755`) implement streaming
 softmax with a running max, and are **never called** — `attend_token` uses the two-pass
 `score_key` → `softmax_scores` → `accumulate_context` path instead (`main.rs:82`–`:110`), which

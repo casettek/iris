@@ -2,49 +2,6 @@ use crate::input::*;
 use model_identity::stream;
 use raster::prelude::*;
 #[tile(kind=iter)]
-pub fn identity_empty() -> BytesPage {
-    stream::empty()
-}
-#[tile(kind=iter)]
-pub fn identity_finish(state: BytesPage) -> BytesPage {
-    stream::finish(&state)
-}
-#[tile(kind=recur)]
-pub fn identity_page(
-    input: RecurInput<BytesPage>,
-    state: RecurState<BytesPage>,
-) -> RecurState<BytesPage> {
-    RecurState::new(stream::append(&state, &stream::digest(&input.into_value())))
-}
-#[tile(kind=iter)]
-pub fn identity_hash_i32(value: i32) -> BytesPage {
-    stream::digest(&value)
-}
-#[tile(kind=iter)]
-pub fn identity_hash_u32(value: u32) -> BytesPage {
-    stream::digest(&value)
-}
-#[tile(kind=iter)]
-pub fn identity_bytes(byte_len: u64, page_size: u64, pages: BytesPage) -> BytesPage {
-    stream::structure(&[
-        ("byte_len", stream::digest(&byte_len)),
-        ("page_size", stream::digest(&page_size)),
-        ("pages", pages),
-    ])
-}
-#[tile(kind=iter)]
-pub fn identity_component(
-    hidden_size: BytesPage,
-    embedding_scale: BytesPage,
-    values: BytesPage,
-) -> BytesPage {
-    stream::structure(&[
-        ("hidden_size", hidden_size),
-        ("embedding_scale", embedding_scale),
-        ("values", values),
-    ])
-}
-#[tile(kind=iter)]
 pub fn identity_embedding_context(
     prompt: ModelContext,
     previous: ModelContext,

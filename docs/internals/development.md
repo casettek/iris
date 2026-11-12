@@ -48,6 +48,8 @@ cargo raster program --verify
 
 Do not hand-edit `Raster.lock`. Commit lock updates only when they are an expected consequence of a stage behavior or interface change.
 
+The ladder does not show a value that no proof pins. A literal passed to a tile, sequence or recur is one (`{"Direct": "Inline"}` in `target/raster/cfs.json`, outside the slot of an output a recur creates), and so is a recur `state = …` seed that is a `select!` into a larger value. Return the constant or the seed from a tile and pass the whole result. `cargo test -p iris-cli --lib stage_bindings` reads every stage's schema and fails on either; the parity gate runs the same check first.
+
 ## GPU Kernels
 
 The `gpu-kernels` feature moves the layer's `Q8_0` matrix products to an NVIDIA

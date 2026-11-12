@@ -244,7 +244,7 @@ fn component_roles_and_sticky_context_are_enforced_in_guests() {
 #[ignore = "executes bounded page hashing and model-context joins in RISC Zero"]
 fn page_bytes_and_final_context_are_checked_in_guests() {
     let stage = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../../raster-stages/input-embedding")
+        .join("../../../raster-stages/prefill-range")
         .canonicalize()
         .unwrap();
     let project = Project::new(stage.clone()).unwrap();

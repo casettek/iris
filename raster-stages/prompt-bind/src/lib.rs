@@ -54,6 +54,29 @@ pub fn plan_scan(claim: TextClaim, raw_prompt: bool, profile: TokenizerProfile) 
     claimed_scan_plan(&claim, raw_prompt, &profile)
 }
 
+// The three loops below each start from part of what the range before left.
+// Each part is returned by a tile so the loop's seed is a whole stored value:
+// Raster ties a loop's first step to a seed only when it is one, and takes the
+// first step's word for a seed selected out of a larger value.
+
+/// The text fold and the scan's position the range before left.
+#[tile(kind = iter, description = "Where the range's text fold starts")]
+pub fn text_pass_seed(before: BindCarry) -> TextPass {
+    before.text
+}
+
+/// The scan's position the range before left.
+#[tile(kind = iter, description = "Where the range's scan starts")]
+pub fn scan_state_seed(before: BindCarry) -> ScanState {
+    before.text.scan
+}
+
+/// The split the range before left.
+#[tile(kind = iter, description = "Where the range's split starts")]
+pub fn split_state_seed(before: BindCarry) -> SplitState {
+    before.split
+}
+
 /// Hashes and measures one chunk of the range's text, and moves the scan's
 /// position past it.
 #[tile(kind = recur, description = "Hash and measure one chunk of the prompt")]
