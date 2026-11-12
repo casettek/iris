@@ -9,6 +9,7 @@ Start with the workflow docs when you want to run the repo, and the internals do
 - [Claim build](workflows/claim-build.md)
 - [Challenge build](workflows/challenge-build.md)
 - [Replay profiling](workflows/replay-profile.md)
+- [Testing](workflows/testing.md): the three tiers, and what each check shows
 - [Three-path parity](workflows/test-parity.md)
 
 ## Internals

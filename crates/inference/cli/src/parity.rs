@@ -57,6 +57,7 @@ pub fn run(skip_challenges: bool) -> Result<()> {
     if let Err(error) = &result {
         report["error"] = json!(format!("{error:#}"));
     }
+    report["outcomes"] = outcomes(&report);
     write_json(&run_dir.join("report.json"), &report)?;
     result
         .with_context(|| format!("parity failed; artifacts and report: {}", run_dir.display()))?;
@@ -64,7 +65,187 @@ pub fn run(skip_challenges: bool) -> Result<()> {
         "PASS: 3 cases, 3 independent paths, exact parity ({:.2}s total).",
         started.elapsed().as_secs_f64()
     );
+    for line in outcome_lines(&report["outcomes"]) {
+        println!("  {line}");
+    }
     Ok(())
+}
+
+/// The Raster program that runs a chain stage, from the stage's name.
+fn stage_program(stage: &str) -> &'static str {
+    [
+        ("prompt_bind_", "prompt-bind"),
+        ("prompt_check_", "prompt-check"),
+        ("embed_", "input-embedding"),
+        ("aux_", "prefill-prepare-aux"),
+        ("range_", "prefill-range"),
+        ("check_", "sequence-check"),
+    ]
+    .iter()
+    .find(|(prefix, _)| stage.starts_with(prefix))
+    .map_or("unknown", |(_, program)| program)
+}
+
+/// What a run covered, by what each part of the gate is there to show. One
+/// `PASS` says nothing about which stage programs a falsified claim was
+/// replayed through, and on this model most stages are too short to replay.
+fn outcomes(report: &Value) -> Value {
+    let cases = report["cases"].as_array().cloned().unwrap_or_default();
+    let sum = |field: &str| -> u64 {
+        cases
+            .iter()
+            .filter_map(|case| case["comparison"][field].as_u64())
+            .sum()
+    };
+    let listed = |field: &str| -> usize {
+        cases
+            .iter()
+            .filter_map(|case| case["comparison"][field].as_array())
+            .map(Vec::len)
+            .sum()
+    };
+    let mut replayed = BTreeMap::<&str, u64>::new();
+    let mut found_only = BTreeMap::<&str, u64>::new();
+    let mut rejected = 0u64;
+    for entry in cases
+        .iter()
+        .filter_map(|case| case["comparison"]["challenges"].as_array())
+        .flatten()
+    {
+        if let Some(stage) = entry["stage"].as_str() {
+            let by_program = if entry["replayed"] == json!(true) {
+                &mut replayed
+            } else {
+                &mut found_only
+            };
+            *by_program.entry(stage_program(stage)).or_default() += 1;
+        } else if entry["rejected"] == json!(true) {
+            rejected += 1;
+        }
+    }
+    let caught = if report["challenge_leg"] == json!("run") {
+        json!({
+            "found_at_expected_stage":
+                replayed.values().sum::<u64>() + found_only.values().sum::<u64>(),
+            "replayed_through_authenticated_raster": replayed,
+            "found_but_too_short_to_replay": found_only,
+            "consistent_executions_rejected_on_their_record": rejected,
+        })
+    } else {
+        json!("skipped")
+    };
+    json!({
+        "honest_runs_agree": {
+            "cases": cases.iter().filter(|case| case["passed"] == json!(true)).count(),
+            "checkpoints": sum("checkpoints"),
+            "rows_compared": sum("rows_compared"),
+            "kv_entries_compared": sum("kv_entries_compared"),
+        },
+        "faults_are_published": {
+            "prompt_cases": listed("prompt_faults"),
+            "chain_cases": listed("chain_faults"),
+        },
+        "cheating_is_caught": caught,
+    })
+}
+
+/// [`outcomes`] as the lines printed under the final `PASS`.
+fn outcome_lines(outcomes: &Value) -> Vec<String> {
+    let by_program = |value: &Value| -> String {
+        let counts: Vec<String> = value
+            .as_object()
+            .into_iter()
+            .flatten()
+            .map(|(program, count)| format!("{program} {count}"))
+            .collect();
+        if counts.is_empty() {
+            "none".into()
+        } else {
+            counts.join(", ")
+        }
+    };
+    let honest = &outcomes["honest_runs_agree"];
+    let faults = &outcomes["faults_are_published"];
+    let mut lines = vec![
+        format!(
+            "honest runs agree: {} cases, {} checkpoints the same through Raster and natively, {} rows and {} cache entries the same as direct inference",
+            honest["cases"], honest["checkpoints"], honest["rows_compared"], honest["kv_entries_compared"]
+        ),
+        format!(
+            "faults are published: {} bad prompts and {} bad chains finish through both and record the fault",
+            faults["prompt_cases"], faults["chain_cases"]
+        ),
+    ];
+    let caught = &outcomes["cheating_is_caught"];
+    if caught.is_object() {
+        lines.push(format!(
+            "cheating is caught: {} claims found at the expected stage; {} executions that agree but are dishonest rejected on their record",
+            caught["found_at_expected_stage"], caught["consistent_executions_rejected_on_their_record"]
+        ));
+        lines.push(format!(
+            "  replayed through authenticated Raster: {}",
+            by_program(&caught["replayed_through_authenticated_raster"])
+        ));
+        lines.push(format!(
+            "  found, but the stage is too short to replay here: {}",
+            by_program(&caught["found_but_too_short_to_replay"])
+        ));
+    } else {
+        lines.push("cheating is caught: not run (--skip-challenges)".into());
+    }
+    lines
+}
+
+#[cfg(test)]
+mod outcome_tests {
+    use super::*;
+
+    #[test]
+    fn challenges_are_counted_by_the_program_that_runs_the_stage() {
+        let report = json!({
+            "challenge_leg": "run",
+            "cases": [
+                {"passed": true, "comparison": {"checkpoints": 21, "rows_compared": 45, "kv_entries_compared": 40}},
+                {"passed": true, "comparison": {
+                    "checkpoints": 86, "rows_compared": 369, "kv_entries_compared": 678,
+                    "prompt_faults": [{}, {}], "chain_faults": [{}],
+                    "challenges": [
+                        {"case": "a", "stage": "range_p1_l2", "replayed": true},
+                        {"case": "b", "stage": "prompt_check_p0", "replayed": true},
+                        {"case": "c", "stage": "prompt_bind_p0", "replayed": false},
+                        {"case": "d", "stage": "check_c0", "replayed": false},
+                        {"case": "e", "stage": "embed_c0", "replayed": false},
+                        {"case": "f", "stage": "aux_p0_l0", "replayed": false},
+                        {"name": "g", "rejected": true, "matching_checkpoints": 86},
+                    ],
+                }},
+            ],
+        });
+        let found = outcomes(&report);
+        assert_eq!(found["honest_runs_agree"]["checkpoints"], 107);
+        assert_eq!(
+            found["faults_are_published"],
+            json!({"prompt_cases": 2, "chain_cases": 1})
+        );
+        let caught = &found["cheating_is_caught"];
+        assert_eq!(caught["found_at_expected_stage"], 6);
+        assert_eq!(
+            caught["replayed_through_authenticated_raster"],
+            json!({"prefill-range": 1, "prompt-check": 1})
+        );
+        assert_eq!(
+            caught["found_but_too_short_to_replay"],
+            json!({"input-embedding": 1, "prefill-prepare-aux": 1, "prompt-bind": 1, "sequence-check": 1})
+        );
+        assert_eq!(caught["consistent_executions_rejected_on_their_record"], 1);
+        assert_eq!(outcome_lines(&found).len(), 5);
+
+        let mut skipped = report.clone();
+        skipped["challenge_leg"] = json!("skipped");
+        let found = outcomes(&skipped);
+        assert_eq!(found["cheating_is_caught"], "skipped");
+        assert_eq!(outcome_lines(&found).len(), 3);
+    }
 }
 
 fn run_suite(root: &Path, run_dir: &Path, report: &mut Value, skip_challenges: bool) -> Result<()> {

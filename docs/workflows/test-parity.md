@@ -146,6 +146,14 @@ counts, results, timings, and any failure. Case directories contain their run
 spec, preparation artifacts, independent execution outputs, and separate logs.
 Build/import logs are at the run root. Files are retained on success and failure.
 
+Under the final `PASS` the command prints what the run covered, and the report
+holds the same as `outcomes`: how many honest checkpoints, rows and cache entries
+agreed; how many bad prompts and bad chains published their fault; and, for the
+challenge leg, how many claims were found at the expected stage, which stage
+programs a falsified claim was replayed through authenticated Raster, and which
+were found only because the stage is shorter than the replay window. See
+[testing](testing.md) for where this gate sits among the other checks.
+
 The command exits nonzero on any failed build, execution, coverage assertion, or
 comparison. Numerical differences identify the execution pair, case, semantic
 stage, first differing value where available, and byte offset. Execution failures

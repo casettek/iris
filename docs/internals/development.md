@@ -28,6 +28,17 @@ just test-parity
 retains logs and reports under `target/parity/`; see the
 [parity workflow](../workflows/test-parity.md) for prerequisites and exact checks.
 
+Those are the pieces. What to run for a change is one of three tiers:
+
+```bash
+just test-fast      # unit tests, the stage schema check, every Raster.lock
+just test-full      # fast, the parity gate, all six stage programs through authenticated Raster
+just test-release   # full, the ignored tests (guests, a fault proof), the real-model check
+```
+
+[Testing](../workflows/testing.md) says what a pass of each check means, what
+none of them covers, and how to update the real-model reference.
+
 ## Raster Stage Checks
 
 Any change to a Raster tile, sequence, stage input type, fixture, or `Raster.toml` needs the Raster check ladder appropriate to that change. At minimum, keep no-std posture intact:
