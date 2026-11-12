@@ -584,6 +584,17 @@ impl Fixture {
         edge.record = Default::default();
         Ok(edge)
     }
+    /// The edge as a stage publishes it, with the output record `check` blanks
+    /// for comparison with the eager head.
+    fn published_check(&self) -> Result<DecodeEdge> {
+        let inputs = routines::sequence_check::load_inputs_from_paths_with_cache(
+            &self.dir.join("input.json"),
+            &self.dir.join("input_manifest.json"),
+            &CachedInputs::new(),
+            None,
+        )?;
+        routines::sequence_check::run_direct(&inputs)
+    }
 }
 fn eager_check(head: &FinalHead, activations: &ActivationSequence) -> DecodeEdge {
     inference_kernels::kernels::sequence_check::run_sequence_check_direct(
@@ -822,7 +833,7 @@ fn head_multi_page_authenticated_raster_parity() {
         }
         f.compare_raster(
             "sequence-check",
-            &f.check(None).unwrap(),
+            &f.published_check().unwrap(),
             &format!("head-raster-{boundary}"),
         );
     }
@@ -1021,7 +1032,7 @@ impl Fixture {
 #[test]
 #[ignore = "requires built staged-infer binary"]
 fn standalone_publishes_exact_outputs_and_rejects_corruption_before_publication() {
-    let (f, _, _) = prompt_fixture(4, 4);
+    let (f, _, _) = prompt_fixture(4, 32);
     let expected = f.prompt(None).unwrap();
     let (result, dest) = f.standalone("embed_p0", "valid");
     assert!(
@@ -1043,7 +1054,7 @@ fn standalone_publishes_exact_outputs_and_rejects_corruption_before_publication(
         assert!(!dest.join(file).exists());
     }
     let (f, _, _) = head_fixture(34);
-    let expected = f.check(None).unwrap();
+    let expected = f.published_check().unwrap();
     let (result, dest) = f.standalone("check_c0", "valid");
     assert!(
         result.status.success(),

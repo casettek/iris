@@ -139,7 +139,8 @@ risc0-zkvm={{path={:?}}}
     )
     .unwrap();
     let prepared = dir.join("prepared.json");
-    write_json(&prepared,&json!({"version":2,"run_spec_path":dir.join("inference.toml"),"model_manifest_path":model,
+    write_json(&prepared,&json!({"version":inference_artifacts::PREPARED_RUN_VERSION,"run_spec_path":dir.join("inference.toml"),"model_manifest_path":model,
+        "model_id":"","raw_prompt":true,
         "model_manifest_sha256":file_sha256(&model).unwrap(),"prompt":{"resolved_prompt":"","rendered_prompt":"","initial_pieces":[],"eos_token_ids":[]},
         "tokens":1,"run_manifest_path":manifest,"run_manifest_sha256":file_sha256(&manifest).unwrap()})).unwrap();
     let checkpoints = dir.join("checkpoint_trace.json");

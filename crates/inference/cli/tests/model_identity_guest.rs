@@ -497,9 +497,10 @@ fn prompt_statement_substitution_is_rejected_in_guest() {
     let mut model = model_identity::ModelContext::bind(&descriptor.encode().unwrap(), &model_id);
     model.bind_statement(&"11".repeat(32), false, 8, 4);
     model.bind_schedule(model_identity::pipeline_core::StageSchedule {
-        prompt_ranges: 1,
+        prompt_ranges: 2,
         claimed_ranges: 1,
     });
+    // The first range's bind, and the second's, which continues it.
     let bound = PromptContext {
         input_text_sha256: "11".repeat(32),
         model,
@@ -508,19 +509,28 @@ fn prompt_statement_substitution_is_rejected_in_guest() {
         range_size: 4,
         ..Default::default()
     };
-    let mut changed = bound.clone();
+    let mut next = bound.clone();
+    next.model.continue_bind();
+    // The first range's check as the second range receives it: opened from
+    // its own bind, one token consumed, finished without completing the prompt.
+    let mut first = join_prompt_models(PromptContext::default(), &bound);
+    first.model.append_consumed_token(7);
+    first.model.finish_prompt_range(false, 1, 0);
+    assert_eq!((first.fault, first.model.fault), (0, 0));
+    let mut changed = first.clone();
     changed.input_text_sha256 = "substituted".into();
-    let mut config = bound.clone();
+    let mut config = first.clone();
     config.max_new_tokens += 1;
-    for (previous, fault) in [
-        (bound.clone(), 0),
-        (changed, FAULT_CONTEXT_MISMATCH),
-        (config, FAULT_CONTEXT_MISMATCH),
+    for (previous, bound, fault) in [
+        (PromptContext::default(), &bound, 0),
+        (first.clone(), &next, 0),
+        (changed, &next, FAULT_CONTEXT_MISMATCH),
+        (config, &next, FAULT_CONTEXT_MISMATCH),
     ] {
-        let expected = join_prompt_models(previous.clone(), &bound);
+        let expected = join_prompt_models(previous.clone(), bound);
         let execution = runner
             .run(
-                &postcard::to_allocvec(&(previous, &bound)).unwrap(),
+                &postcard::to_allocvec(&(previous, bound)).unwrap(),
                 ExecutionMode::Estimate,
             )
             .unwrap();

@@ -351,7 +351,7 @@ fn native_decode_rotary_outputs_match_prefill_across_chunks() {
 #[ignore = "requires local Gemma model artifacts and runs the full direct inference path"]
 fn current_say_ciao_direct_first_token_matches_claim_reference() {
     let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../..")
+        .join("../../..")
         .canonicalize()
         .expect("repo root should resolve");
     let result = DirectInferenceExecutor
@@ -362,7 +362,8 @@ fn current_say_ciao_direct_first_token_matches_claim_reference() {
         .unwrap();
 
     assert_eq!(result.generated_token_ids.first().copied(), Some(150917));
-    assert_eq!(result.generated_text, "Ciao");
+    // The run spec may ask for more than one token.
+    assert!(result.generated_text.starts_with("Ciao"));
 }
 
 #[test]
