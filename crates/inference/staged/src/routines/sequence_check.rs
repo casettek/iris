@@ -8,7 +8,7 @@ use crate::{
     verified_weights::{input_documents_from_args, raster_inputs},
 };
 use anyhow::Result;
-use inference_kernels::kernels::finalize::{output_record, FinalizeInputs};
+use inference_kernels::kernels::finalize::{claim_record, output_record, FinalizeInputs};
 use inference_kernels::kernels::sequence_check::{
     check_frame, check_positions, decode_edge, run_sequence_check_direct, scorable,
     CheckHeadParams, SequenceCheckDirectInputs,
@@ -138,6 +138,7 @@ pub fn run_direct(inputs: &Inputs) -> Result<DecodeEdge> {
             witness: &inputs.witness,
         },
     )?;
+    edge.claim = claim_record(&edge);
     Ok(edge)
 }
 fn run_paged(inputs: &Inputs, head: &PagedHead) -> Result<DecodeEdge> {

@@ -596,9 +596,33 @@ fn run_case(
         record["check_fault"] == json!(0)
             && record["output_fault"] == json!(0)
             && record["model_fault"] == json!(0)
-            && record["claim_mismatches"] == json!(0),
+            && record["claim_mismatches"] == json!(0)
+            && record["valid"] == json!(true),
         "an honest claim published a fault: {record}"
     );
+    // What a contract would check on the native claim, and that each of its
+    // checkpoints is the boundary the Raster run of the same chain committed:
+    // the program id, the input manifest and the output.
+    let contract = crate::contract::check_claim(crate::contract::ClaimCheckOptions {
+        base_dir: dir.to_path_buf(),
+        run_spec_path: spec.clone(),
+        submission_path: native_dir.join(inference_artifacts::contract::CLAIM_SUBMISSION_JSON),
+        raster_run: Some(raster_dir.clone()),
+    })
+    .context("contract checks")?;
+    for line in &contract.lines {
+        ensure!(
+            line.rejection.is_none(),
+            "a contract would reject an honest claim at `{}`: {}",
+            line.check,
+            line.rejection.as_deref().unwrap_or_default()
+        );
+    }
+    ensure!(
+        contract.lines.len() == 5,
+        "the contract checks did not reach the Raster run"
+    );
+    comparison["contract_checks"] = json!(contract.lines.len());
     ensure!(
         native_info["result"] == *record,
         "the result artifact is not the chain's final record"

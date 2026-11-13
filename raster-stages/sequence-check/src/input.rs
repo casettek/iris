@@ -111,7 +111,44 @@ pub struct DecodeEdge {
     pub check_fault_position: u32,
     /// The transcript so far as an output: see [`OutputRecord`].
     pub record: OutputRecord,
+    /// What a contract reads of this edge: see [`ClaimRecord`].
+    pub claim: ClaimRecord,
     pub generated_token_ids: List<u32>,
+}
+
+/// What a contract reads of a claim: one statement, one output commitment and
+/// one verdict. Three fixed-size values, so a contract holds them without
+/// parsing the record or the transcript.
+///
+/// Every check states it beside its record, from that record and the edge's
+/// own verdict. Only the schedule's last claimed range can state a valid one:
+/// an earlier range's record carries a model fault.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
+pub struct ClaimRecord {
+    /// `Statement::digest()` over the input text hash, the model id, the raw
+    /// prompt flag, the token budget and the range size the record names: 32
+    /// bytes, all zero when either id is not a 32-byte hash.
+    pub statement: BytesPage,
+    /// SHA-256 of the exact UTF-8 bytes of the generated text: 32 bytes.
+    pub output_text_sha256: BytesPage,
+    /// The chain found nothing wrong with its own run: the prompt is complete
+    /// and without a fault, consumed model data authenticated, every claimed
+    /// token is the greedy selection, and the check and the transcript broke
+    /// no rule. See [`crate::claim_record`].
+    pub valid: bool,
+}
+
+/// No statement, no output and no verdict: what an edge holds before a check
+/// has stated its claim. Written out because a page has no default value; no
+/// tile reads it.
+impl Default for ClaimRecord {
+    fn default() -> Self {
+        Self {
+            statement: BytesPage::__from_parts(0, 0, alloc::vec![0; 32]),
+            output_text_sha256: BytesPage::__from_parts(0, 0, alloc::vec![0; 32]),
+            valid: false,
+        }
+    }
 }
 
 /// The transcript so far, finalized: its commitments, its decoded text, what
@@ -474,6 +511,8 @@ pub struct GeneratedOutput {
     /// prompt source.
     pub prompt_fault: u32,
     pub prompt_fault_position: u64,
+    /// The last check's statement digest, output commitment and verdict.
+    pub claim: ClaimRecord,
 }
 
 /// The transcript breaks no rule.
@@ -541,5 +580,6 @@ pub fn generated_output(edge: &DecodeEdge) -> GeneratedOutput {
         prompt_complete: record.prompt_complete,
         prompt_fault: record.prompt_fault,
         prompt_fault_position: record.prompt_fault_position,
+        claim: edge.claim.clone(),
     }
 }

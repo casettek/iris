@@ -44,7 +44,9 @@ an instruction to re-import.
 A checkpoint trace is an ordered list of per-stage records:
 
 - Stage name.
+- The stage program's id, as its project's `Raster.lock` holds it. The native runner records it in the stage directory as `program.json`; a stage whose project is not locked names none.
 - SHA-256 of `input_manifest.json`.
+- For each input taken from an earlier stage, that stage's position in the trace. The native runner records it in `program.json` too.
 - Output structural commitment from `output_manifest.json`.
 - SHA-256 of `output.bin`.
 
@@ -63,8 +65,11 @@ Every checkpointed stage directory must include:
 - `checkpoint_trace.json`
 - `checkpoints.txt`
 - `claim_bundle.json`
+- `claim_submission.json`
 
 The claim bundle records the first checkpoint input commitment, final checkpoint output commitment, checkpoint trace path, and prepared-run metadata path.
+
+The claim submission is what a claimer would post to a [contract](contract.md): the output text, the input text hash, the last check's claim record (statement digest, output text hash, valid flag) and the SHA-256 of `checkpoints.txt`, which commits to every stage boundary. A model import's `contract_pins.json` is the other side: what the contract pins, as a pipeline entry (the stage programs and the inputs each takes from earlier stages) and a model entry.
 
 ## Challenges
 

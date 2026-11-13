@@ -108,9 +108,12 @@ impl FinalizeCase {
             },
         )
         .unwrap();
-        // Finalizing changes nothing of the edge but its record.
+        // Finalizing changes nothing of the edge but its record and the claim
+        // record stated from it.
+        assert_eq!(edge.claim, kernels::finalize::claim_record(&edge));
         let mut unchanged = edge.clone();
         unchanged.record = Default::default();
+        unchanged.claim = Default::default();
         assert_same_json(&unchanged, &self.edge);
         sequence_check::input::generated_output(&edge)
     }
@@ -135,6 +138,7 @@ fn finalization_decodes_generated_ids() {
             check_fault: 0,
             check_fault_position: 0,
             record: Default::default(),
+            claim: Default::default(),
             generated_token_ids: List::from(vec![0, 1]),
         },
         decoder: DecoderTable {
@@ -636,7 +640,7 @@ fn sequence_check_matches_a_greedy_oracle_at_every_position() {
     assert_ne!(honest_edge.model.fault, 0);
     let mut actual = serde_json::to_value(&honest_edge).unwrap();
     let mut expected = serde_json::to_value(&prior).unwrap();
-    for field in ["model", "record"] {
+    for field in ["model", "record", "claim"] {
         actual.as_object_mut().unwrap().remove(field);
         expected.as_object_mut().unwrap().remove(field);
     }

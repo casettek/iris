@@ -159,6 +159,14 @@ chain ran under (`input_text_sha256`, `model_id`, `raw_prompt`, `max_new_tokens`
 `prompt_fault_position`). The host copies this record into `InferenceResult` and
 computes none of it.
 
+The claim record: beside the output record, every check states the three values a
+[contract](contract.md) reads. They are the digest of the statement the record names
+(`Statement::digest()`), the output text hash as 32 bytes, and one `valid` flag,
+set only when the model fault, the prompt fault, the check fault, the mismatch
+count and the output fault are all zero and the prompt is complete. The host
+computes none of this either: `challenge build` and `claim build` reject a record
+whose flag is not set.
+
 The repeat counts, the last prompt range's index, the text, configuration and
 stage schedule, and the per-range externals (`marks_{j}`, `claimed_{k}`) are filled in by run preparation
 into the frozen run
@@ -240,15 +248,17 @@ context says what happened to them: the text's SHA-256, the model id, and whethe
 every piece was prepared without a fault.
 
 A stage program cannot read its inputs' commitments, so the model id is a hash of
-the import's commitments by role, carried as a claimed value. It is checked from
-outside the chain: recompute it from the role list, and compare a stage's
-`input_manifest.json` entry against the role it binds. To challenge a claim,
-`challenge build` prepares the claim's prompt, token budget
-and claimed ids from the model `--run` selects. A claim that names or ran other
-weights therefore differs at some stage's committed inputs, and that stage is the
-divergence to replay. A replay reruns the stage on the claim's own committed
-inputs, so it shows what those inputs produce; what convicts a claim of using the
-wrong weights is that comparison, which a contract can make without a replay.
+the import's commitments by role: the model descriptor, a committed input of the
+stages. Each stage holds the model data it consumes to the descriptor's entry for
+its role, by recomputing that component's root or by checking a membership path,
+and holds the descriptor to the model id in the statement. A mismatch is a sticky
+model fault that reaches the final record's `model_fault` and clears its `valid`
+flag. So a chain run honestly on other weights refutes itself, as one run on
+non-greedy ids does. A claimer that ran other weights and still published a clean
+record has doctored a stage, and that stage is the divergence to replay. To
+challenge a claim, `challenge build` prepares the claim's prompt, token budget and
+claimed ids from the model `--run` selects. What a contract pins is the model id;
+see [what a contract holds and checks](contract.md).
 
 ## Cost
 
@@ -316,7 +326,7 @@ model/execution fault makes the final claim invalid even if native and Raster
 honestly execute the same malicious wiring. `test-parity` exercises that case
 as well as divergence from the honest template; production RISC Zero tests in
 `model_identity_guest.rs` cover the corresponding guest checks. Model imports
-and prepared runs use version 14; older boundary encodings must be regenerated.
+and prepared runs use version 15; older boundary encodings must be regenerated.
 
 ### Stage schedule
 

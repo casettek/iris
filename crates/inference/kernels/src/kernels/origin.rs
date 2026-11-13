@@ -34,6 +34,7 @@ pub fn empty_decode_edge() -> DecodeEdge {
         check_fault: 0,
         check_fault_position: 0,
         record: Default::default(),
+        claim: Default::default(),
         generated_token_ids: List::new(),
     }
 }

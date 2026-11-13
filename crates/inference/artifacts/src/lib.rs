@@ -1,6 +1,7 @@
 pub mod challenge;
 pub mod checkpoint;
 pub mod claim;
+pub mod contract;
 pub mod direct;
 pub mod inference;
 pub mod io;
@@ -17,8 +18,9 @@ pub use challenge::{
 pub use checkpoint::{
     build_checkpoint_trace, checkpoint_hash, checkpoint_hashes, read_checkpoint_from_stage_dir,
     read_checkpoint_hashes, read_checkpoint_trace, read_stage_order, write_checkpoint_hashes,
-    write_checkpoint_hashes_artifact, write_checkpoint_trace_artifact, Checkpoint, CheckpointTrace,
-    CHECKPOINTS_TXT, CHECKPOINT_HASHES_TXT, CHECKPOINT_TRACE_JSON, EXECUTION_TIMES_JSON,
+    write_checkpoint_hashes_artifact, write_checkpoint_trace_artifact, write_stage_program,
+    Checkpoint, CheckpointTrace, CHECKPOINTS_TXT, CHECKPOINT_HASHES_TXT, CHECKPOINT_TRACE_JSON,
+    EXECUTION_TIMES_JSON, STAGE_PROGRAM_JSON,
 };
 pub use claim::{
     read_claim_bundle, write_claim_artifacts, write_claim_artifacts_with_prepared_run, ClaimBundle,
@@ -219,6 +221,8 @@ mod tests {
         let trace = CheckpointTrace {
             checkpoints: vec![Checkpoint {
                 stage: String::from("check_c0"),
+                program_commitment: String::from("program"),
+                input_sources: Default::default(),
                 input_commitment: String::from("input"),
                 output_commitment: String::from("abc"),
                 output_sha256: String::from("deadbeef"),

@@ -15,6 +15,7 @@
 //!     claim_mismatches    = earlier ranges' + #{k : selected_k ≠ claimed_k},
 //!     check_fault         = the earliest range's fault, else this range's,
 //!     record,
+//!     claim               = statement digest, text hash, one verdict over all of the above,
 //!     generated_token_ids = transcript,
 //!   }
 //! ```
@@ -459,7 +460,8 @@ pub fn check_fault_of(
 
 /// Opens the output edge with the last selection's scalars and the claim
 /// verdict: the earlier ranges' disagreements plus this range's, keeping the
-/// earliest position.
+/// earliest position. It states the claim record here, where the record and
+/// the accumulated verdict are both in hand.
 ///
 /// The transcript list stays empty here: the copy site below derives from
 /// this object and only pushes the transcript's ids.
@@ -472,18 +474,20 @@ pub fn begin_decode_edge(
     model: ModelContext,
     record: OutputRecord,
 ) -> Draft<DecodeEdge> {
+    // Saturating: any non-zero count rejects the claim, and a saturated count
+    // stays non-zero.
+    let claim_mismatches = prior_mismatches.saturating_add(summary.mismatches);
     let mut output = Draft::<DecodeEdge>::new();
+    output
+        .claim()
+        .set(claim_record(&record, claim_mismatches, fault.fault));
     output.model().set(model);
     output.record().set(record);
     output.has_selected().set(summary.has_selected);
     output.decode_position().set(summary.decode_position);
     output.token_id().set(summary.token_id);
     output.value().set(summary.value);
-    // Saturating: any non-zero count rejects the claim, and a saturated count
-    // stays non-zero.
-    output
-        .claim_mismatches()
-        .set(prior_mismatches.saturating_add(summary.mismatches));
+    output.claim_mismatches().set(claim_mismatches);
     output
         .first_claim_mismatch_position()
         .set(if prior_mismatches > 0 {

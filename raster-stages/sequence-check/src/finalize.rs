@@ -9,6 +9,8 @@
 
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
+use model_identity::context::parse_id;
+use model_identity::pipeline_core::Statement;
 use raster::prelude::*;
 use sha2::{Digest, Sha256};
 
@@ -168,6 +170,50 @@ pub fn output_record(
         prompt_complete: context.complete,
         prompt_fault: context.fault,
         prompt_fault_position: context.fault_position,
+    }
+}
+
+/// The statement a record names, hashed as every stage boundary binds it, or
+/// `None` when either id is not a 32-byte hash in lowercase hex.
+fn statement_digest(record: &OutputRecord) -> Option<[u8; 32]> {
+    Some(
+        Statement {
+            input_text: parse_id(&record.input_text_sha256)?,
+            model: parse_id(&record.model_id)?,
+            raw_prompt: record.raw_prompt,
+            max_new_tokens: record.max_new_tokens,
+            range_size: record.range_size,
+        }
+        .digest(),
+    )
+}
+
+fn hash_page(hash: Option<[u8; 32]>) -> BytesPage {
+    BytesPage::__from_parts(0, 0, hash.unwrap_or([0; 32]).to_vec())
+}
+
+/// What a contract reads of an edge: the statement its record names, the
+/// commitment to its text, and whether the chain found anything wrong with
+/// its own run.
+///
+/// `claim_mismatches` and `check_fault` are the edge's, accumulated over every
+/// range so far; the rest is the record's. The verdict is the whole of what
+/// rejects a claim, so nothing outside the chain has to combine these fields.
+pub fn claim_record(record: &OutputRecord, claim_mismatches: u32, check_fault: u32) -> ClaimRecord {
+    let statement = statement_digest(record);
+    let output_text = parse_id(&record.output_text_sha256);
+    let valid = statement.is_some()
+        && output_text.is_some()
+        && record.model_fault == 0
+        && record.prompt_fault == 0
+        && record.prompt_complete
+        && check_fault == CHECK_FAULT_NONE
+        && claim_mismatches == 0
+        && record.output_fault == OUTPUT_FAULT_NONE;
+    ClaimRecord {
+        statement: hash_page(statement),
+        output_text_sha256: hash_page(output_text),
+        valid,
     }
 }
 

@@ -51,6 +51,7 @@ pub fn select_next_token(logits: &PrefillLogits, prior: &DecodeEdge) -> Result<D
         check_fault_position: 0,
         // Stated when the run's output is finalized.
         record: Default::default(),
+        claim: Default::default(),
         generated_token_ids: List::from(generated_token_ids),
     })
 }

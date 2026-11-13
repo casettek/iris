@@ -258,7 +258,7 @@ pub fn run(args: ProfileArgs) -> Result<PathBuf> {
             .filter(|c| c.stage == bundle.stage)
             .count()
             == 1
-            && trace.checkpoints.iter().any(|c| c == &baseline),
+            && trace.checkpoints.iter().any(|c| c.same_boundary(&baseline)),
         "challenge differs from claim checkpoint"
     );
     let original_path = fs::canonicalize(reference(&challenge_path, &bundle.raster_commit_path))?;

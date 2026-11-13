@@ -15,6 +15,7 @@ Start with the workflow docs when you want to run the repo, and the internals do
 ## Internals
 
 - [Raster chain](internals/raster-chain.md)
+- [What a contract holds and checks](internals/contract.md)
 - [Numerics](internals/numerics.md)
 - [Artifacts](internals/artifacts.md)
 - [Model families](internals/model-families.md)

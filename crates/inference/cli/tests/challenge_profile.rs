@@ -125,8 +125,12 @@ risc0-zkvm={{path={:?}}}
     );
     fs::copy(&inputs, stage_dir.join("input_manifest.json")).unwrap();
     let stage = "heavy_fixture";
-    let checkpoint =
+    // A claim's checkpoint names the stage's locked program. The stage
+    // directory is Raster's, which records none, so it is read from the lock.
+    let mut checkpoint =
         inference_artifacts::read_checkpoint_from_stage_dir(stage, &stage_dir).unwrap();
+    checkpoint.program_commitment =
+        inference_artifacts::contract::locked_program_commitment(&project).unwrap();
     let model = dir.join("model.json");
     fs::write(&model, "{}").unwrap();
     let manifest = dir.join("Raster.toml");

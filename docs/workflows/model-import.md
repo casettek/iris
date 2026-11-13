@@ -36,6 +36,7 @@ Outputs:
 - `runtime/model-artifacts/<model-id>/Raster.toml`, the prompt-free [chain](../internals/raster-chain.md) template, saved on every full import. Its path and SHA-256 are recorded in the model manifest. `--range-size <positions>` (default 512) sets the largest range, in prompt tokens or claimed ids. It is recorded in the manifest and a run's configuration, so it is a per-model setting, not a per-claim one.
 - Reusable Raster externals under `runtime/model-artifacts/<model-id>/raster/*`, written as `.rastered` and `.rindex` pairs with manifest commitments.
 - `runtime/model-artifacts/<model-id>/manifest.json`, the prompt-free model manifest consumed by run specs.
+- `runtime/model-artifacts/<model-id>/contract_pins.json`, what a [contract](../internals/contract.md) would pin, as two entries. The pipeline entry holds the program id each stage project has locked and, read from the chain template, the inputs each program takes from earlier stages. The model entry holds the model id with the commitments it hashes, and the range size. Import from the repository root, after any re-lock: an import that cannot read the stage locks writes no pins and says so.
 
 ## Converting a GGUF model
 

@@ -449,10 +449,11 @@ impl Fixture {
                 inference_artifacts::read_checkpoint_from_stage_dir(name, &a.join(name)).unwrap();
             let bc =
                 inference_artifacts::read_checkpoint_from_stage_dir(name, &b.join(name)).unwrap();
-            assert_eq!(
-                inference_artifacts::checkpoint_hash(&ac).unwrap(),
-                inference_artifacts::checkpoint_hash(&bc).unwrap(),
-                "{name} checkpoint hash"
+            // One side may be a directory Raster wrote, which records no
+            // program id or producers: the boundary is what both state.
+            assert!(
+                ac.same_boundary(&bc),
+                "{name} checkpoint boundary: {ac:?} against {bc:?}"
             );
         }
     }

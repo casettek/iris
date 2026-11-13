@@ -1034,6 +1034,7 @@ fn run_one_stage(
     finish_stage(
         idx,
         stage,
+        stage_index,
         stage_run,
         stage_dir,
         recomputed_trace_path,
@@ -1101,6 +1102,7 @@ fn run_prepared_stage(
 fn finish_stage(
     idx: usize,
     stage: &StageSpec,
+    stage_index: &BTreeMap<String, usize>,
     stage_run: DirectStageRun,
     stage_dir: PathBuf,
     recomputed_trace_path: &Path,
@@ -1115,6 +1117,7 @@ fn finish_stage(
         });
     }
     state.execution_times[idx] = Some(stage_run.duration);
+    record_stage_program(stage, &stage_dir, stage_index)?;
     let output = collect_output(&stage_dir)?;
     if let Some(value) = stage_run.output {
         state.last_output = Some(value.clone());
@@ -1131,6 +1134,36 @@ fn finish_stage(
     state.output_commitments[idx] = Some(output.structural_commitment);
     observe_checkpoint(idx, &stage.name, &stage_dir, recomputed_trace_path, state)?;
     Ok(())
+}
+
+/// Names in the stage directory the program this stage stands for, and where
+/// each of its chained inputs came from. The checkpoint commits to both.
+///
+/// The program is the one the stage's project has locked, which is what a
+/// Raster replay of the stage runs; a project with no lock leaves the
+/// checkpoint naming no program. A chained input's producer is named by its
+/// position in the run, which is its position in the claim's checkpoint list.
+fn record_stage_program(
+    stage: &StageSpec,
+    stage_dir: &Path,
+    stage_index: &BTreeMap<String, usize>,
+) -> Result<()> {
+    let program =
+        inference_artifacts::contract::locked_program_commitment(Path::new(&stage.project))
+            .unwrap_or_default();
+    let mut input_sources = BTreeMap::new();
+    for (param, binding) in &stage.inputs {
+        if let InputBinding::From(producer) = binding {
+            let index = stage_index.get(producer).with_context(|| {
+                format!(
+                    "stage `{}` takes `{param}` from `{producer}`, which the chain does not run",
+                    stage.name
+                )
+            })?;
+            input_sources.insert(param.clone(), u32::try_from(*index)?);
+        }
+    }
+    inference_artifacts::write_stage_program(stage_dir, &program, &input_sources)
 }
 
 fn observe_checkpoint(
@@ -1274,6 +1307,7 @@ fn run_aux_wave(
         state.execution_times[result.idx] = Some(result.duration);
         print_stage_output(&result.output);
         state.output_commitments[result.idx] = Some(result.output.structural_commitment);
+        record_stage_program(&stages[result.idx], &result.stage_dir, stage_index)?;
         observe_checkpoint(
             result.idx,
             &result.name,

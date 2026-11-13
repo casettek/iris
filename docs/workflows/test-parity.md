@@ -67,6 +67,18 @@ the chain then checks it.
 - The final record: its context is the last prompt context's, its
   `output_text_sha256` is the SHA-256 of its own text, its faults and verdict are
   clean, and the native result artifact and direct's result are exactly this record.
+- The [contract checks](../internals/contract.md): the native claim's submission
+  passes the submission checks against the import's pins, every checkpoint names
+  an approved program, every input a stage takes from an earlier stage is that
+  stage's committed output, and the submitted claim record is the one in the last
+  stage's output. Every checkpoint of the native claim is also the boundary the
+  Raster run committed: the same program id, input manifest commitment, producers
+  and output commitments at every stage.
+- For each falsified claim whose stage replays: which rule settles the
+  difference between the claimed checkpoint and the honest one. Where that is a
+  replay, the Raster stage challenge built from the claimer's checkpoint and the
+  challenger's trace is one Raster's own admission accepts, about that
+  checkpoint, and the same trace against the honest checkpoint is refused.
 - Over wrong token marks, on the templated case: the prompt stages finish through
   both Raster and native-staged, agree byte for byte, and record the expected fault.
   This includes marks past the end of the prompt, a range with no marks, a token

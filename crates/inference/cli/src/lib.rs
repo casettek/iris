@@ -9,6 +9,7 @@ use clap::{Args, Parser, Subcommand};
 mod challenge;
 mod challenge_profile;
 mod claim;
+mod contract;
 mod convert;
 mod fault;
 mod infer;
@@ -27,6 +28,7 @@ pub use claim::{
     build_claim, corrupt_checkpoint_hashes, ClaimBuildOptions, ClaimBuildResult,
     CorruptCheckpointHashesOptions, CorruptCheckpointHashesResult, CorruptCheckpointSelection,
 };
+pub use contract::{check_claim, CheckLine, ClaimCheckOptions, ClaimCheckReport};
 pub use infer::run_infer;
 pub use inference_artifacts::{
     build_checkpoint_trace, write_claim_artifacts, ChallengeBundle, ChallengeTrace, Checkpoint,
@@ -196,6 +198,25 @@ enum ClaimCommand {
     Build(ClaimBuildArgs),
     /// Copy and corrupt one claimed checkpoint hash for manual challenge tests.
     Corrupt(ClaimCorruptHashesArgs),
+    /// Make the checks a contract would make on a claim's submission.
+    Check(ClaimCheckArgs),
+}
+
+#[derive(Debug, Args)]
+struct ClaimCheckArgs {
+    /// Run spec naming the model and the parameters the contract requires.
+    #[arg(long, default_value = inference_artifacts::INFERENCE_RUN_SPEC_TOML)]
+    run: PathBuf,
+
+    /// The `claim_submission.json` that `claim build` wrote.
+    #[arg(long)]
+    submission: PathBuf,
+
+    /// A Raster chain run directory of the same claim. With it, every
+    /// checkpoint of the claim is held to the boundary that run committed:
+    /// the same program, input manifest and output at every stage.
+    #[arg(long = "raster-run")]
+    raster_run: Option<PathBuf>,
 }
 
 #[derive(Debug, Args)]
@@ -385,7 +406,32 @@ fn execute(cli: Cli) -> Result<ExitCode> {
             );
             println!("checkpoints: {}", result.checkpoint_hashes_path.display());
             println!("claim bundle: {}", result.claim_bundle_path.display());
+            if let Some(path) = result.claim_submission_path.as_ref() {
+                println!("claim submission: {}", path.display());
+            }
             Ok(ExitCode::SUCCESS)
+        }
+        Some(Commands::Claim {
+            command: ClaimCommand::Check(args),
+        }) => {
+            let report = check_claim(ClaimCheckOptions {
+                base_dir: std::env::current_dir()
+                    .context("failed to resolve current directory")?,
+                run_spec_path: args.run,
+                submission_path: args.submission,
+                raster_run: args.raster_run,
+            })?;
+            for line in &report.lines {
+                match &line.rejection {
+                    None => println!("ok        {}", line.check),
+                    Some(reason) => println!("REJECTED  {}: {reason}", line.check),
+                }
+            }
+            Ok(if report.accepted() {
+                ExitCode::SUCCESS
+            } else {
+                ExitCode::FAILURE
+            })
         }
         Some(Commands::Claim {
             command: ClaimCommand::Corrupt(args),
@@ -594,6 +640,9 @@ fn print_infer_result(result: &staged_infer::InferenceResult, run_spec_path: Opt
         result.model_fault,
         result.claim_mismatches
     );
+    // The claim record a contract reads, beside the fields it is stated from.
+    println!("statement sha256: {}", result.statement_sha256);
+    println!("valid: {}", result.valid);
     println!("generated text:");
     println!("{}", result.generated_text);
 }

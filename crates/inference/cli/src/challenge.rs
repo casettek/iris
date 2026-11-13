@@ -435,6 +435,11 @@ fn divergence_reason(
             Some(DivergenceReason::StageName)
         }
         (Some(claimed), Some(recomputed))
+            if claimed.program_commitment != recomputed.program_commitment =>
+        {
+            Some(DivergenceReason::ProgramCommitment)
+        }
+        (Some(claimed), Some(recomputed))
             if claimed.input_commitment != recomputed.input_commitment =>
         {
             Some(DivergenceReason::InputCommitment)
@@ -695,6 +700,14 @@ fn final_record_rejection(result: &inference_artifacts::InferenceResult) -> Opti
             result.output_fault
         ));
     }
+    // The chain states one verdict over the same fields. It is what a contract
+    // reads, so a record whose verdict disagrees with its fields is rejected
+    // here too.
+    if !result.valid {
+        return Some(String::from(
+            "the chain's own verdict on its run is not valid, though no fault field says why",
+        ));
+    }
     None
 }
 
@@ -941,6 +954,29 @@ mod tests {
     }
 
     #[test]
+    fn a_stage_that_names_another_program_is_a_divergence() {
+        let recomputed = trace(vec![
+            checkpoint("stage_a", "aaa", "111"),
+            checkpoint("stage_b", "bbb", "222"),
+        ]);
+        // Same inputs and outputs: only the program the claim says ran differs.
+        let mut claimed = recomputed.clone();
+        claimed.checkpoints[1].program_commitment = String::from("another-program");
+
+        let divergence = locate_divergence(
+            Path::new("claimed.json"),
+            &claimed,
+            Path::new("recomputed.json"),
+            &recomputed,
+        )
+        .unwrap();
+
+        assert_eq!(divergence.checkpoint_index, 1);
+        assert_eq!(divergence.stage, "stage_b");
+        assert_eq!(divergence.reason, DivergenceReason::ProgramCommitment);
+    }
+
+    #[test]
     fn missing_checkpoint_is_divergence() {
         let claimed = trace(vec![checkpoint("stage_a", "aaa", "111")]);
         let recomputed = trace(vec![
@@ -1106,6 +1142,7 @@ mod tests {
     fn a_claim_is_judged_by_its_final_record() {
         let clean = inference_artifacts::InferenceResult {
             prompt_complete: true,
+            valid: true,
             ..Default::default()
         };
         let rejection = |result: inference_artifacts::InferenceResult| {
@@ -1159,6 +1196,13 @@ mod tests {
                     ..clean.clone()
                 },
                 "without reaching EOS",
+            ),
+            (
+                inference_artifacts::InferenceResult {
+                    valid: false,
+                    ..clean.clone()
+                },
+                "own verdict",
             ),
         ] {
             let reason = rejection(result).expect("the record is not clean");
@@ -1353,6 +1397,8 @@ mod tests {
     fn checkpoint(stage: &str, commitment: &str, sha: &str) -> Checkpoint {
         Checkpoint {
             stage: stage.to_string(),
+            program_commitment: String::from("program"),
+            input_sources: Default::default(),
             input_commitment: String::from("input"),
             output_commitment: commitment.to_string(),
             output_sha256: sha.to_string(),

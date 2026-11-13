@@ -41,6 +41,19 @@ pub struct InferenceResult {
     /// What failed in prompt preparation and where, or zero.
     pub prompt_fault: u32,
     pub prompt_fault_position: u64,
+    /// The last check's claim record, which is what a contract reads: the
+    /// digest of the statement the chain ran under, in lowercase hex.
+    #[serde(default)]
+    pub statement_sha256: String,
+    /// The chain's own verdict on its run. False when absent: a result
+    /// without a verdict is not a valid one.
+    #[serde(default)]
+    pub valid: bool,
+}
+
+/// Lowercase hex, the form every hash in an [`InferenceResult`] takes.
+pub fn lower_hex(bytes: &[u8]) -> String {
+    hex::encode(bytes)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

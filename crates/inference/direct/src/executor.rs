@@ -253,6 +253,10 @@ impl DirectInferenceExecutor {
             prompt_complete: output.prompt_complete,
             prompt_fault: output.prompt_fault,
             prompt_fault_position: output.prompt_fault_position,
+            statement_sha256: inference_artifacts::inference::lower_hex(
+                output.claim.statement.as_slice(),
+            ),
+            valid: output.claim.valid,
         };
         timings.push(phase_timing("output_finalize", finalize_started.elapsed()));
 

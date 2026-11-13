@@ -38,12 +38,14 @@ Per-stage checkpoint files live under `target/staged-infer/runs/<run>/<stage>/`:
 - `output.bin`
 - `output.rindex`
 - `output_manifest.json`
+- `program.json`: the program id the stage's project has locked, and for each input taken from an earlier stage, that stage's position in the run. The stage's checkpoint commits to both.
 
 Claim files live beside the generated checkpoint tree:
 
 - `checkpoint_trace.json`: ordered checkpoint records.
 - `checkpoints.txt`: one SHA-256 per checkpoint record.
 - `claim_bundle.json`: whole-claim input/output commitments plus the checkpoint trace and prepared-run metadata references.
+- `claim_submission.json`: what a claimer would submit to a [contract](../internals/contract.md): the plaintext, the input text hash, the claim record and the SHA-256 of `checkpoints.txt`. Claim build fails if a contract holding the import's pins would not accept the claim: its statement, its output, the program every checkpoint names, every input a stage takes from an earlier stage, and the record in the last stage's output. `iris claim check --run <spec> --submission <file>` makes the same checks afterwards.
 
 `checkpoints.txt` is the compact public checkpoint reference used by the hash-based challenge flow. For manual challenge testing, copy and corrupt one hash:
 

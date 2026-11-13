@@ -572,7 +572,7 @@ impl Fixture {
         })
     }
     /// The whole stage over the paged head: its edge, without the output
-    /// record the stage also states.
+    /// record and the claim record the stage also states.
     fn check(&self, cache: Option<&MaterializationCache>) -> Result<DecodeEdge> {
         let inputs = routines::sequence_check::load_inputs_from_paths_with_cache(
             &self.dir.join("input.json"),
@@ -582,10 +582,11 @@ impl Fixture {
         )?;
         let mut edge = routines::sequence_check::run_direct(&inputs)?;
         edge.record = Default::default();
+        edge.claim = Default::default();
         Ok(edge)
     }
-    /// The edge as a stage publishes it, with the output record `check` blanks
-    /// for comparison with the eager head.
+    /// The edge as a stage publishes it, with the records `check` blanks for
+    /// comparison with the eager head.
     fn published_check(&self) -> Result<DecodeEdge> {
         let inputs = routines::sequence_check::load_inputs_from_paths_with_cache(
             &self.dir.join("input.json"),

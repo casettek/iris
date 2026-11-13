@@ -231,11 +231,24 @@ pub fn prove(args: ProveArgs) -> Result<()> {
     ensure!(package.stage == bundle.stage, "challenge stage mismatch");
     let baseline =
         inference_artifacts::read_checkpoint_from_stage_dir(&bundle.stage, &package.stage_dir)?;
+    // The replayed stage directory is Raster's: it states the boundary and
+    // not the program id or producers the claimer's checkpoint also names.
     ensure!(
-        baseline == claim_trace.checkpoints[index],
+        baseline.same_boundary(&claim_trace.checkpoints[index]),
         "challenge does not match original claimer checkpoint"
     );
     let disputed = commitment(&disputed_path)?;
+    // The challenge as Raster states it, about the claimer's checkpoint: the
+    // disputed trace commitment, and the output the challenger's run ended in.
+    let claimed_checkpoint = &claim_trace.checkpoints[index];
+    let challenge = inference_artifacts::contract::stage_challenge(
+        claimed_checkpoint,
+        disputed.header(),
+        &baseline.output_sha256,
+    )
+    .context(
+        "the claimer's checkpoint names no program, so no proof can be held to it",
+    )?;
     let original = commitment(&reference(&challenge_path, &bundle.raster_commit_path))?;
     ensure!(
         disputed.len() == original.len() && disputed.window_size() == original.window_size(),
@@ -360,6 +373,15 @@ pub fn prove(args: ProveArgs) -> Result<()> {
     }
     if args.estimate {
         validate_estimate_report(&report, &disputed)?;
+        // An estimate proves nothing, so its journal is held to the checkpoint
+        // and not to a pinned guest.
+        let journal: TransitionJournal = serde_json::from_value(report["final_journal"].clone())?;
+        defends(
+            claimed_checkpoint,
+            &challenge,
+            &journal,
+            &journal.transition_image_id,
+        )?;
         let estimation_ms = (execution_started.elapsed().as_secs_f64() * 1000.0
             - report["audit_duration_ms"].as_f64().unwrap_or(0.0))
         .max(0.0);
@@ -394,6 +416,12 @@ pub fn prove(args: ProveArgs) -> Result<()> {
         "proof has not reached a fraud verdict"
     );
     verify_refuted_commitment(&journal.refuted_trace_commitment, &disputed)?;
+    defends(
+        claimed_checkpoint,
+        &challenge,
+        &journal,
+        &raster_prover::chain_fraud::transition_guest_image_id(),
+    )?;
     if !selected_window.is_null() {
         ensure!(
             Some(journal.init_state.init_frontier.position)
@@ -415,6 +443,7 @@ pub fn prove(args: ProveArgs) -> Result<()> {
         &output.join("fault_bundle.json"),
         &json!({"version":1,"outcome":"proved","verified":true,
         "stage":bundle.stage,"commitment_sha256":file_sha256(&disputed_path)?,
+        "dispute_commitment_sha256":inference_artifacts::contract::dispute_digest(claimed_checkpoint).map(hex::encode),
         "proof_path":proof_path,"proof_sha256":file_sha256(&proof_path)?,"proof_bytes":fs::metadata(&proof_path)?.len(),"proof_seal_bytes":receipt.seal_size()}),
     )?;
     Ok(())
@@ -457,6 +486,24 @@ fn validate_estimate_report(report: &serde_json::Value, disputed: &CommitmentFil
         "estimate window binding mismatch"
     );
     Ok(())
+}
+
+/// A proof that knocks down the challenger's trace counts only when it is
+/// about the claimer's checkpoint: its program, on its inputs. This is
+/// Raster's own defence rule, applied to the checkpoint.
+fn defends(
+    checkpoint: &inference_artifacts::Checkpoint,
+    challenge: &raster_core::chain::StageChallenge,
+    journal: &TransitionJournal,
+    transition_image_id: &[u8],
+) -> Result<()> {
+    inference_artifacts::contract::check_defence(checkpoint, challenge, journal, transition_image_id)
+        .map(|_| ())
+        .map_err(|rejection| {
+            anyhow::anyhow!(
+                "the proof does not dismiss the challenge to the claimer's checkpoint: {rejection}"
+            )
+        })
 }
 
 // The transition guest binds to Raster's canonical header digest, not the

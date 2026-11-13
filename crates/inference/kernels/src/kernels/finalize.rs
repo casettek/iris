@@ -1,7 +1,9 @@
 //! Output finalization, natively: the record a check states with its edge,
 //! and direct inference's output.
 use anyhow::Result;
-use sequence_check::input::{DecodeEdge, DecoderTable, DecoderWitness, OutputRecord};
+use sequence_check::input::{
+    ClaimRecord, DecodeEdge, DecoderTable, DecoderWitness, OutputRecord,
+};
 use sequence_check::prompt::PromptContext;
 
 /// What finalization reads besides the edge.
@@ -65,7 +67,14 @@ pub fn run_output_finalize_direct(
 ) -> Result<DecodeEdge> {
     let mut edge = edge.clone();
     edge.record = output_record(&edge, inputs)?;
+    edge.claim = claim_record(&edge);
     Ok(edge)
+}
+
+/// The claim record of an edge whose output record is already stated, as the
+/// check stage states it when it opens the edge.
+pub fn claim_record(edge: &DecodeEdge) -> ClaimRecord {
+    sequence_check::claim_record(&edge.record, edge.claim_mismatches, edge.check_fault)
 }
 
 /// Output discovery for direct-only imports without a staged commitment package.
@@ -90,5 +99,6 @@ pub fn run_output_finalize_discovery(
         edge.has_selected,
         context,
     );
+    edge.claim = claim_record(&edge);
     Ok(edge)
 }

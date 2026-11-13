@@ -475,7 +475,7 @@ pub fn import_model(args: ImportConfig) -> Result<ImportResult, Box<dyn Error>> 
             &stages,
         )?,
     )?;
-    direct_manifest::write_model_manifest(
+    let model_manifest_path = direct_manifest::write_model_manifest(
         &args,
         &eos_ids,
         family,
@@ -483,11 +483,31 @@ pub fn import_model(args: ImportConfig) -> Result<ImportResult, Box<dyn Error>> 
         Some((&template_path, &template)),
         &commitments,
     )?;
+    write_contract_pins(&model_manifest_path, &template);
     Ok(ImportResult {
         manifest_path: Some(template_path),
         manifest_text: None,
         stage_count,
     })
+}
+
+/// Writes what a contract pins for this import beside its manifest, as two
+/// entries. The pipeline: the program id each stage project has locked, and
+/// for each program the inputs it takes from earlier stages, read from the
+/// chain template. The model: its id with the commitments it hashes, and the
+/// range size.
+///
+/// An import made where the stage projects are not locked gets no pins and
+/// says so. It can still run; it cannot have a claim checked against it.
+fn write_contract_pins(model_manifest_path: &Path, template: &str) {
+    let pins = inference_artifacts::ModelManifest::load_verified(model_manifest_path).and_then(
+        |manifest| inference_artifacts::contract::ContractPins::from_import(&manifest, template),
+    );
+    let path = model_manifest_path.with_file_name(inference_artifacts::contract::CONTRACT_PINS_JSON);
+    match pins.and_then(|pins| inference_artifacts::write_json(&path, &pins)) {
+        Ok(()) => println!("wrote {}", path.display()),
+        Err(error) => println!("no contract pins written: {error:#}"),
+    }
 }
 
 fn save_model_template(

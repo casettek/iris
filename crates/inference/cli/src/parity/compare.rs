@@ -259,6 +259,21 @@ pub(super) fn final_record(edge: &Value) -> Result<Value> {
     ] {
         record.insert(field.to_string(), edge[field].clone());
     }
+    // The claim record's statement digest and verdict, as a result names them.
+    let claim = &edge["claim"];
+    ensure!(
+        claim["statement"]["bytes"].is_string() && claim["valid"].is_boolean(),
+        "the final edge has no claim record"
+    );
+    ensure!(
+        Some(&claim["output_text_sha256"]["bytes"]) == record.get("output_text_sha256"),
+        "the claim record and the output record commit to different text"
+    );
+    record.insert(
+        "statement_sha256".to_string(),
+        claim["statement"]["bytes"].clone(),
+    );
+    record.insert("valid".to_string(), claim["valid"].clone());
     Ok(Value::Object(record))
 }
 

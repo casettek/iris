@@ -206,6 +206,7 @@ pub fn decode_edge(
         check_fault_position: fault.position,
         // Stated by the stage once the edge's model context is known.
         record: Default::default(),
+        claim: Default::default(),
         generated_token_ids: List::from(generated_token_ids),
     })
 }

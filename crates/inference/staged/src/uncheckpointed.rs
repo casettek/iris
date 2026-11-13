@@ -180,6 +180,8 @@ pub(crate) fn inference_result_from_generated(output: GeneratedOutput) -> Infere
         prompt_complete: output.prompt_complete,
         prompt_fault: output.prompt_fault,
         prompt_fault_position: output.prompt_fault_position,
+        statement_sha256: hex::encode(output.claim.statement.as_slice()),
+        valid: output.claim.valid,
     }
 }
 

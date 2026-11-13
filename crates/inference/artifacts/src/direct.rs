@@ -9,7 +9,7 @@ use sha2::{Digest, Sha256};
 pub const MODEL_ARTIFACTS_DIR: &str = "runtime/model-artifacts";
 pub const MODEL_MANIFEST_JSON: &str = "manifest.json";
 
-pub const MODEL_MANIFEST_VERSION: u32 = 14;
+pub const MODEL_MANIFEST_VERSION: u32 = 15;
 
 /// Which layer mathematics, tokenizer rules and stage programs a model uses.
 ///

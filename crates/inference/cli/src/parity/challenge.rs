@@ -11,8 +11,9 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use anyhow::{ensure, Context, Result};
+use inference_artifacts::contract::{dispute_digest, settlement, stage_challenge, Settlement};
 use inference_artifacts::{
-    build_checkpoint_trace, checkpoint_hashes, read_checkpoint_trace, read_json,
+    build_checkpoint_trace, checkpoint_hashes, file_sha256, read_checkpoint_trace, read_json,
     write_checkpoint_hashes, CheckpointTrace, ModelManifest,
 };
 use raster_prover::commitment_file::CommitmentFile;
@@ -118,9 +119,24 @@ pub(super) fn run_challenge_leg(leg: &Leg) -> Result<Value> {
             output_path: Some(hashes.clone()),
             selection: CorruptCheckpointSelection::Stage(stage.to_string()),
         })?;
-        replays.push(expect_divergence(
-            leg, &name, &spec, context, &hashes, stage,
-        )?);
+        let outcome = expect_divergence(leg, &name, &spec, context, &hashes, stage)?;
+        // The same replay, against a claimer that ran this stage on the honest
+        // inputs and stated another output for it. A falsified hash has no
+        // checkpoint behind it, so this is the claim a contract would see: a
+        // replay settles it, and Raster must admit the challenge.
+        let mut lying = honest_trace.clone();
+        let stated = lying
+            .checkpoints
+            .iter_mut()
+            .find(|checkpoint| checkpoint.stage == stage)
+            .with_context(|| format!("the honest claim has no `{stage}`"))?;
+        stated.output_sha256 = "5a".repeat(32);
+        let outcome = dispute_tie(leg, &name, &lying, &honest_trace, stage, outcome)?;
+        ensure!(
+            outcome["settled_by"] == "replay" && outcome["raster_admits"] == true,
+            "`{name}`: a claim that states another output was not settled by a replay Raster admits"
+        );
+        replays.push(outcome);
     }
 
     // Correct execution over ids that are not the greedy output: every
@@ -491,7 +507,8 @@ fn expect_claim_found(
     );
     let (context, hashes) = (&claim.claim_bundle_path, &claim.checkpoint_hashes_path);
     if long_enough_to_challenge(stage) {
-        return expect_divergence(leg, name, spec, context, hashes, stage);
+        let outcome = expect_divergence(leg, name, spec, context, hashes, stage)?;
+        return dispute_tie(leg, name, &claimed, honest, stage, outcome);
     }
     // The replay of a stage this short is refused, so whether the command
     // built a challenge is not this case's result.
@@ -570,9 +587,88 @@ fn expect_found(
         found.stage
     );
     if long_enough_to_challenge(stage) {
-        return expect_divergence(leg, name, spec, context, &hashes, stage);
+        let outcome = expect_divergence(leg, name, spec, context, &hashes, stage)?;
+        return dispute_tie(leg, name, &claimed, honest, stage, outcome);
     }
     Ok(json!({"case": name, "stage": stage, "replayed": false}))
+}
+
+/// Where the challenger's authenticated replay of `stage` was written.
+fn replay_stage_dir(leg: &Leg, name: &str, stage: &str) -> Result<PathBuf> {
+    let runs = leg
+        .dir
+        .join(name)
+        .join("challenge/target/staged-infer/runs");
+    let run = fs::read_dir(&runs)?
+        .next()
+        .with_context(|| format!("challenge `{name}` recorded no run"))??
+        .path();
+    Ok(run
+        .join("challenge")
+        .join(stage)
+        .join("raster-replay")
+        .join(stage))
+}
+
+/// Ties the challenger's replay to the claimer's own checkpoint for the stage,
+/// as a contract would. Records which rule settles the difference between the
+/// claimed checkpoint and the honest one. When that rule is a replay, the
+/// Raster stage challenge built from the claimer's checkpoint and the
+/// challenger's trace must be one Raster itself admits, about that checkpoint.
+fn dispute_tie(
+    leg: &Leg,
+    name: &str,
+    claimed: &CheckpointTrace,
+    honest: &CheckpointTrace,
+    stage: &str,
+    mut outcome: Value,
+) -> Result<Value> {
+    let of = |trace: &CheckpointTrace| trace.checkpoints.iter().find(|c| c.stage == stage).cloned();
+    let (Some(claimed), Some(honest)) = (of(claimed), of(honest)) else {
+        outcome["settled_by"] = json!("missing checkpoint");
+        return Ok(outcome);
+    };
+    let rule = settlement(&claimed, &honest);
+    outcome["settled_by"] = json!(match rule {
+        Settlement::StageOrder => "stage order",
+        Settlement::ProgramCheck => "program check",
+        Settlement::Inputs => "inputs",
+        Settlement::Replay => "replay",
+        Settlement::Nothing => "nothing",
+    });
+    if rule != Settlement::Replay {
+        return Ok(outcome);
+    }
+    let replay = replay_stage_dir(leg, name, stage)?;
+    let commitment = CommitmentFile::read_memory(&replay.join("commit.bin"))?;
+    let challenge = stage_challenge(
+        &claimed,
+        commitment.header(),
+        &file_sha256(&replay.join("output.bin"))?,
+    )
+    .with_context(|| format!("`{name}`: no Raster challenge can be built from the claimed checkpoint"))?;
+    let admitted = raster_prover::challenge::verify_challenge(&challenge)
+        .map_err(|refusal| anyhow::anyhow!("`{name}`: Raster refuses the challenge: {refusal}"))?;
+    ensure!(
+        Some(admitted.chain_digest) == dispute_digest(&claimed)
+            && hex::encode(&admitted.stage.program_commitment) == claimed.program_commitment
+            && hex::encode(&admitted.stage.input_manifest_commitment) == claimed.input_commitment,
+        "`{name}`: the admitted challenge is not about the claimed checkpoint"
+    );
+    // The same trace against the honest checkpoint disputes nothing, and
+    // Raster refuses it: a challenge has to state another output.
+    let undisputed = stage_challenge(
+        &honest,
+        commitment.header(),
+        &file_sha256(&replay.join("output.bin"))?,
+    )
+    .context("no Raster challenge can be built from the honest checkpoint")?;
+    ensure!(
+        raster_prover::challenge::verify_challenge(&undisputed).is_err(),
+        "`{name}`: Raster admitted a challenge that disputes nothing"
+    );
+    outcome["raster_admits"] = json!(true);
+    Ok(outcome)
 }
 
 /// What the honest claim binds: the same text, configuration, cuts and ids a

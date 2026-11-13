@@ -16,6 +16,7 @@ use inference_artifacts::{
     InferenceResult, InferenceRunSpec, ModelManifest, PreparedRun, CHECKPOINT_TRACE_JSON,
     PREPARED_RUN_JSON,
 };
+use inference_artifacts::contract::{ClaimSubmission, CLAIM_SUBMISSION_JSON};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 
@@ -51,6 +52,9 @@ pub struct ClaimBuildResult {
     pub checkpoint_trace_path: PathBuf,
     pub checkpoint_hashes_path: PathBuf,
     pub claim_bundle_path: PathBuf,
+    /// What a claimer would submit to a contract. Absent when the chain
+    /// published no final record to submit.
+    pub claim_submission_path: Option<PathBuf>,
     pub final_result: Option<InferenceResult>,
 }
 
@@ -123,11 +127,27 @@ pub fn build_claim(options: ClaimBuildOptions) -> Result<ClaimBuildResult> {
         }
         eprintln!("warning: {reason}; writing the claim anyway because --claimed-ids was given");
     }
-    write_claim_result(
+    let result = write_claim_result(
         checkpointed,
         &prepared.manifest_path,
         &prepared.prepared_run,
-    )
+    )?;
+    // And the rules a contract will: the statement the chain bound is the one
+    // recomputed from the pinned model and this run's parameters, every
+    // checkpoint names an approved program, and the record is the last
+    // stage's.
+    if let Some(path) = result.claim_submission_path.as_ref() {
+        if let Some(reason) = crate::contract::claim_rejection(&prepared.prepared_run, path)? {
+            if options.claimed_token_ids.is_none() {
+                anyhow::bail!("a contract would not accept this claim: {reason}");
+            }
+            eprintln!(
+                "warning: a contract would not accept this claim: {reason}; it was written \
+                 anyway because --claimed-ids was given"
+            );
+        }
+    }
+    Ok(result)
 }
 
 pub fn corrupt_checkpoint_hashes(
@@ -202,11 +222,23 @@ fn write_claim_result(
             manifest_path,
             prepared_run_path.as_deref(),
         )?;
+    // The submission is stated over the checkpoint list written just above.
+    let claim_submission_path = checkpointed
+        .final_result
+        .as_ref()
+        .map(|result| -> Result<PathBuf> {
+            let submission = ClaimSubmission::from_run(result, &checkpointed.chain_dir)?;
+            let path = checkpointed.chain_dir.join(CLAIM_SUBMISSION_JSON);
+            inference_artifacts::write_json(&path, &submission)?;
+            Ok(path)
+        })
+        .transpose()?;
     Ok(ClaimBuildResult {
         chain_dir: checkpointed.chain_dir,
         checkpoint_trace_path,
         checkpoint_hashes_path,
         claim_bundle_path,
+        claim_submission_path,
         final_result: checkpointed.final_result,
     })
 }
@@ -876,12 +908,16 @@ mod tests {
             checkpoints: vec![
                 inference_artifacts::Checkpoint {
                     stage: String::from("stage_a"),
+                    program_commitment: String::from("program-a"),
+                    input_sources: Default::default(),
                     input_commitment: String::from("input-a"),
                     output_commitment: String::from("output-a"),
                     output_sha256: String::from("sha-a"),
                 },
                 inference_artifacts::Checkpoint {
                     stage: String::from("stage_b"),
+                    program_commitment: String::from("program-b"),
+                    input_sources: Default::default(),
                     input_commitment: String::from("input-b"),
                     output_commitment: String::from("output-b"),
                     output_sha256: String::from("sha-b"),
