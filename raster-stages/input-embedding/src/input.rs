@@ -1,5 +1,6 @@
 //! Shared Rastered data types for the `input-embedding` stage.
 
+pub use model_identity::ModelContext;
 extern crate alloc;
 
 use alloc::string::String;
@@ -7,18 +8,21 @@ use alloc::vec::Vec;
 use raster::{Bytes, BytesPage, List};
 use serde::{Deserialize, Serialize};
 
-/// Replay-unit page size for the embedding table. A multiple of every
-/// `hidden_size * 4` this chain is imported with (4 and 1536).
-pub const PAGE_SIZE: u64 = 196_608;
+/// Replay-unit page size for the embedding table: whole `Q8_0` rows of
+/// `hidden_size / 32 · 34` bytes for every width this chain is imported with
+/// (128 → 136, 1536 → 1632). MUST match the importer's `Q8_PAGE_SIZE`.
+pub const PAGE_SIZE: u64 = 195_840;
 
 /// The stage's committed first input, bound by the chain to `prompt_prepare`'s
-/// authorized output.
+/// authorized output. The stage reads only its `token_ids`.
+pub use crate::prompt::{PromptState, PromptTokenization};
+
+/// A teacher-forced claim's output ids, embedded after the prompt so one pass
+/// covers `prompt ‖ claimed`. A prompt range binds an empty one.
 ///
-/// The field layout MUST match `PromptTokenization` in `prompt-prepare`
-/// field-for-field: the chain links the two stages by the structural
-/// commitment of this value, not by Rust type name.
+/// MUST match `ClaimedOutput` in `sequence-check`.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
-pub struct PromptTokenization {
+pub struct ClaimedOutput {
     pub token_ids: List<u32>,
 }
 
@@ -34,8 +38,15 @@ pub struct EmbeddingTable {
     /// first layer. Committed as Q16.16 bits so the tile applies exactly the
     /// scalar the importer derived, with no float anywhere near a replay.
     pub embedding_scale: i32,
-    #[page_size = 196_608]
-    pub values: Bytes<196_608>,
+    /// `Q8_0` rows: per 32 values, a half-precision scale then 32 signed bytes.
+    #[page_size = 195_840]
+    pub values: Bytes<195_840>,
+}
+
+/// Loop-carried count of the previous range's rows.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
+pub struct RowCount {
+    pub count: u32,
 }
 
 /// Loop-carried summary of failed rows: how many, and the first message.
@@ -70,6 +81,7 @@ pub struct KeyRow {
 /// The stage's authorized output, and the pipeline's activation type.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
 pub struct ActivationSequence {
+    pub model: ModelContext,
     pub rows: List<ActivationRow>,
     pub errors: List<String>,
     /// This layer's K/V cache after this stage: everything it was handed as
@@ -121,7 +133,7 @@ pub fn unpack_i32s(page: &BytesPage) -> core::result::Result<Vec<i32>, String> {
 }
 
 /// Reads `n_values` i32s starting at global `byte_off` inside `page`.
-pub fn unpack_i32s_at(
+pub fn q8_row_at(
     page: &BytesPage,
     byte_off: u64,
     n_values: u32,
@@ -129,15 +141,17 @@ pub fn unpack_i32s_at(
     let local = byte_off
         .checked_sub(page.offset())
         .ok_or_else(|| String::from("row offset is before this page"))? as usize;
-    let len = n_values as usize * 4;
+    let len = det_num::q8::row_bytes(n_values as usize)
+        .ok_or_else(|| alloc::format!("row width {n_values} is not whole Q8_0 blocks"))?;
     let bytes = page.as_slice().get(local..local + len).ok_or_else(|| {
         alloc::format!(
             "row at byte {byte_off} spans past this page (local {local}, need {len}, have {})",
             page.len()
         )
     })?;
-    Ok(bytes
-        .chunks_exact(4)
-        .map(|chunk| i32::from_le_bytes(chunk.try_into().expect("chunks_exact(4)")))
-        .collect())
+    let mut values = alloc::vec![0; n_values as usize];
+    det_num::q8::dequantize_row(bytes, &mut values).map_err(String::from)?;
+    Ok(values)
 }
+
+pub use model_identity::sparse::{SparseHeader, SparsePath, SparseWitness};

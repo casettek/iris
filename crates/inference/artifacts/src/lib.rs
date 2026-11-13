@@ -1,12 +1,14 @@
 pub mod challenge;
 pub mod checkpoint;
 pub mod claim;
+pub mod contract;
 pub mod direct;
 pub mod inference;
 pub mod io;
 pub mod manifest;
-pub mod run;
+pub mod model_identity;
 pub mod replay_profile;
+pub mod run;
 
 pub use challenge::{
     read_challenge_bundle, write_challenge_artifacts, ChallengeBundle, ChallengeSourcePath,
@@ -16,16 +18,18 @@ pub use challenge::{
 pub use checkpoint::{
     build_checkpoint_trace, checkpoint_hash, checkpoint_hashes, read_checkpoint_from_stage_dir,
     read_checkpoint_hashes, read_checkpoint_trace, read_stage_order, write_checkpoint_hashes,
-    write_checkpoint_hashes_artifact, write_checkpoint_trace_artifact, Checkpoint, CheckpointTrace,
-    CHECKPOINTS_TXT, CHECKPOINT_HASHES_TXT, CHECKPOINT_TRACE_JSON, EXECUTION_TIMES_JSON,
+    write_checkpoint_hashes_artifact, write_checkpoint_trace_artifact, write_stage_program,
+    Checkpoint, CheckpointTrace, CHECKPOINTS_TXT, CHECKPOINT_HASHES_TXT, CHECKPOINT_TRACE_JSON,
+    EXECUTION_TIMES_JSON, STAGE_PROGRAM_JSON,
 };
 pub use claim::{
     read_claim_bundle, write_claim_artifacts, write_claim_artifacts_with_prepared_run, ClaimBundle,
     ClaimEndpoint, CLAIM_BUNDLE_JSON,
 };
 pub use direct::{
-    file_sha256, verify_file_sha256, DirectInferBundle, DirectInferProvenance, DirectInferShape,
-    ModelManifest, MODEL_ARTIFACTS_DIR, MODEL_MANIFEST_JSON,
+    file_sha256, model_id_of, verify_file_sha256, DirectInferBundle, DirectInferProvenance,
+    DirectInferShape, ModelCommitment, ModelFamily, ModelManifest, MODEL_ARTIFACTS_DIR,
+    MODEL_MANIFEST_JSON, MODEL_MANIFEST_VERSION,
 };
 pub use inference::{
     InferAuxWaveTiming, InferStageTiming, InferenceResult, InferenceRunReport, InferenceTimings,
@@ -120,13 +124,13 @@ mod tests {
         use raster_core::chain::{ChainCommitment, ChainShape, StageCheckpoint};
         let base = temp_dir("chain-commitment-order");
         fs::create_dir_all(&base).unwrap();
-        for name in ["prompt_merge_seed", "prompt_merge_b0", "prompt_prepare"] {
+        for name in ["prompt_bind", "prompt_check_p0", "embed_p0"] {
             write_stage(&base, name, "abc", name.as_bytes());
         }
         let expected = vec![
-            "prompt_merge_seed".to_string(),
-            "prompt_merge_b0".to_string(),
-            "prompt_prepare".to_string(),
+            "prompt_bind".to_string(),
+            "prompt_check_p0".to_string(),
+            "embed_p0".to_string(),
         ];
         let chain = ChainCommitment {
             stages: expected
@@ -165,7 +169,7 @@ mod tests {
         // A present but damaged commitment must not be hidden by legacy timing data.
         fs::write(
             base.join(EXECUTION_TIMES_JSON),
-            r#"{"stages":[{"name":"prompt_prepare"}]}"#,
+            r#"{"stages":[{"name":"embed_p0"}]}"#,
         )
         .unwrap();
         fs::write(base.join("chain-commitment"), b"invalid").unwrap();
@@ -216,7 +220,9 @@ mod tests {
     fn claim_artifacts_round_trip_as_json() {
         let trace = CheckpointTrace {
             checkpoints: vec![Checkpoint {
-                stage: String::from("output_finalize"),
+                stage: String::from("check_c0"),
+                program_commitment: String::from("program"),
+                input_sources: Default::default(),
                 input_commitment: String::from("input"),
                 output_commitment: String::from("abc"),
                 output_sha256: String::from("deadbeef"),
@@ -226,11 +232,11 @@ mod tests {
             version: 1,
             checkpoint_trace_path: PathBuf::from("checkpoint_trace.json"),
             input: ClaimEndpoint {
-                stage: String::from("prompt_prepare"),
+                stage: String::from("prompt_bind"),
                 commitment: String::from("input"),
             },
             output: ClaimEndpoint {
-                stage: String::from("output_finalize"),
+                stage: String::from("check_c0"),
                 commitment: String::from("abc"),
             },
             prepared_run_path: None,
@@ -248,9 +254,100 @@ mod tests {
     }
 
     #[test]
+    fn the_model_id_covers_every_role_and_commitment_in_order() {
+        let entry = |role: &str, commitment: &str| ModelCommitment {
+            role: role.to_string(),
+            commitment: commitment.to_string(),
+        };
+        let id = model_id_of(&[entry("embedding", "a"), entry("head", "b")]);
+        assert_eq!(
+            id,
+            model_id_of(&[entry("embedding", "a"), entry("head", "b")])
+        );
+        for other in [
+            vec![entry("embedding", "x"), entry("head", "b")],
+            vec![entry("head", "a"), entry("embedding", "b")],
+            vec![entry("head", "b"), entry("embedding", "a")],
+            vec![entry("embedding", "a")],
+            vec![entry("embeddinga", ""), entry("head", "b")],
+        ] {
+            assert_ne!(id, model_id_of(&other), "{other:?}");
+        }
+    }
+
+    #[test]
+    fn a_model_id_that_does_not_match_its_commitments_is_refused() {
+        let dir = std::env::temp_dir().join(format!(
+            "iris-model-id-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        for file in ["model.detwgt", "config.json", "tokenizer.json"] {
+            std::fs::write(dir.join(file), file).unwrap();
+        }
+        let hash = |file: &str| file_sha256(&dir.join(file)).unwrap();
+        let commitments = vec![ModelCommitment {
+            role: String::from("embedding"),
+            commitment: String::from("abc"),
+        }];
+        let mut value = serde_json::json!({
+            "version": MODEL_MANIFEST_VERSION,
+            "model_id": model_id_of(&commitments),
+            "model_commitments": commitments,
+            "bundle": {
+                "model_detwgt_path": "model.detwgt", "model_detwgt_sha256": hash("model.detwgt"),
+                "config_path": "config.json", "config_sha256": hash("config.json"),
+                "tokenizer_path": "tokenizer.json", "tokenizer_sha256": hash("tokenizer.json"),
+            },
+            "shape": {
+                "hidden_size": 2, "num_hidden_layers": 0, "num_attention_heads": 1,
+                "num_key_value_heads": 1, "head_dim": 2, "global_head_dim": 2,
+                "vocab_size": 1, "hidden_size_per_layer_input": 1, "sliding_window": 0,
+                "layer_types": [], "num_kv_shared_layers": 0, "norm_eps": 0,
+                "rope_base_sliding": 0, "rope_base_full": 0, "full_partial_rotary_factor_q16": 0,
+                "embedding_scale": 0, "ple_embedding_scale": 0, "ple_projection_scalar": 0,
+                "ple_input_scale": 0, "final_logit_softcap": 0
+            },
+            "eos_token_ids": [],
+            "range_size": 4,
+        });
+        let path = dir.join("manifest.json");
+        write_json(&path, &value).unwrap();
+        // A manifest written before families were recorded is the first family's.
+        let loaded = ModelManifest::load_verified(&path).unwrap();
+        assert_eq!(loaded.family().unwrap(), ModelFamily::GemmaDense);
+        assert_eq!(
+            serde_json::to_value(&loaded).unwrap()["family"],
+            serde_json::json!("gemma-dense")
+        );
+        // One this build has no layer for is refused before anything runs.
+        value["family"] = serde_json::json!("qwen");
+        write_json(&path, &value).unwrap();
+        let error = ModelManifest::load_verified(&path).unwrap_err().to_string();
+        assert!(
+            error.contains("model family `qwen` is not supported"),
+            "{error}"
+        );
+        assert!(error.contains("gemma-dense"), "{error}");
+        value["family"] = serde_json::json!("gemma-dense");
+        value["model_commitments"][0]["commitment"] = serde_json::json!("other");
+        write_json(&path, &value).unwrap();
+        assert!(ModelManifest::load_verified(&path)
+            .unwrap_err()
+            .to_string()
+            .contains("model id does not match"));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
     fn model_manifest_round_trips_without_run_prompt() {
         let manifest = ModelManifest {
-            version: 2,
+            version: MODEL_MANIFEST_VERSION,
+            family: ModelFamily::GemmaDense.name().to_string(),
+            model_id: model_id_of(&[]),
+            model_commitments: Vec::new(),
+            range_size: 512,
             bundle: DirectInferBundle {
                 model_detwgt_path: PathBuf::from("../model.detwgt"),
                 model_detwgt_sha256: String::from("model-sha"),
@@ -325,12 +422,33 @@ mod tests {
     }
 
     #[test]
+    fn a_run_spec_cannot_ask_for_the_removed_chain() {
+        let base = temp_dir("run-spec-chain");
+        fs::create_dir_all(&base).unwrap();
+        let path = base.join("inference.toml");
+        let spec = "model_manifest = \"m.json\"\nprompt = \"hi\"\n";
+        fs::write(&path, spec).unwrap();
+        assert_eq!(read_run_spec(&path).unwrap().prompt.as_deref(), Some("hi"));
+        fs::write(&path, format!("{spec}chain = \"teacher-forced\"\n")).unwrap();
+        assert!(read_run_spec(&path).is_ok());
+        fs::write(&path, format!("{spec}chain = \"autoregressive\"\n")).unwrap();
+        let error = read_run_spec(&path).unwrap_err().to_string();
+        assert!(
+            error.contains("teacher-forced is the only staged chain"),
+            "{error}"
+        );
+        fs::remove_dir_all(base).unwrap();
+    }
+
+    #[test]
     fn prepared_run_metadata_round_trips_as_json() {
         let prepared = PreparedRun {
             version: PREPARED_RUN_VERSION,
             run_spec_path: PathBuf::from("inference.toml"),
             model_manifest_path: PathBuf::from("model-artifacts/manifest.json"),
             model_manifest_sha256: String::from("model-sha"),
+            model_id: String::from("model-id"),
+            raw_prompt: false,
             prompt: PreparedPrompt {
                 resolved_prompt: String::from("hello"),
                 rendered_prompt: String::from("hello"),
@@ -628,9 +746,6 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        std::env::temp_dir().join(format!(
-            "iris-cli-{label}-{}-{nanos}",
-            std::process::id()
-        ))
+        std::env::temp_dir().join(format!("iris-cli-{label}-{}-{nanos}", std::process::id()))
     }
 }

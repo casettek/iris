@@ -72,12 +72,55 @@ impl DirectInferenceExecutor {
 
         let prompt_started = Instant::now();
         let prepared_prompt = model.prepare_prompt(run_spec_dir, &run_spec)?;
-        trace.configure(
-            model.shape().num_hidden_layers,
-            run_spec.tokens,
-            run_prep::tokenizer_repeat_count(prepared_prompt.initial_pieces.len())?,
-        )?;
+        trace.configure(model.shape().num_hidden_layers, run_spec.tokens);
         let prompt = model.prompt_inputs(&prepared_prompt)?;
+        // Direct inference is the independent numerical oracle; construct its
+        // diagnostic statement/history from the actual prompt and selected IDs.
+        let prompt_ranges = model.prompt_ranges(&prepared_prompt);
+        let execution_context = |generated: Option<&[u32]>, claimed_tokens: usize| {
+            let mut context = crate::view_kernels::bound_model_context(&model);
+            context.bind_statement(
+                &sequence_check::sha256_hex(prepared_prompt.resolved_prompt.as_bytes()),
+                run_spec.raw_prompt,
+                run_spec.tokens,
+                model.manifest().range_size,
+            );
+            // The schedule the chain runs this output under, so the two final
+            // records agree byte for byte.
+            if let Some(prompt_ranges) = prompt_ranges {
+                let claimed_ranges = claimed_tokens.div_ceil(model.manifest().range_size as usize);
+                context.bind_schedule(model_identity::pipeline_core::StageSchedule {
+                    prompt_ranges,
+                    claimed_ranges: u32::try_from(claimed_ranges).unwrap_or(u32::MAX),
+                });
+            }
+            if let Some(mut e) = context.execution_context() {
+                for id in prompt.token_ids.iter() {
+                    context.require_execution(e.end.append(*id).is_ok());
+                }
+                e.prompt = Some(e.end);
+                e.phase = model_identity::pipeline_core::PREPARED;
+                // The steps the chain's last prompt range and last check record.
+                e.step = model_identity::pipeline_core::Step::tokens(
+                    e.schedule.prompt_ranges.saturating_sub(1),
+                );
+                if let Some(ids) = generated {
+                    e.before = e.end;
+                    e.claimed = true;
+                    for id in ids {
+                        context.require_execution(e.end.append(*id).is_ok());
+                    }
+                    e.phase = model_identity::pipeline_core::CHECKED;
+                    e.step = model_identity::pipeline_core::Step::check(
+                        e.schedule.claimed_ranges.saturating_sub(1),
+                    );
+                    context.completed_layers = context.layers;
+                    context.producer = model_identity::context::DECODE;
+                }
+                context.set_execution(&e);
+            }
+            context
+        };
         trace.record("prompt_prepare", &prompt)?;
         timings.push(phase_timing("prompt_prepare", prompt_started.elapsed()));
 
@@ -99,18 +142,20 @@ impl DirectInferenceExecutor {
         timings.push(phase_timing("prefill", prefill_started.elapsed()));
 
         let decode_started = Instant::now();
-        let mut edge = inference_kernels::kernels::decode_init::run_decode_init_direct(
-            inference_kernels::kernels::decode_init::DecodeInitDirectInputs,
-        )?;
+        let mut edge = inference_kernels::kernels::origin::empty_decode_edge();
         trace.record("decode_init", &edge)?;
         for token_idx in 0..run_spec.tokens {
-            edge = inference_kernels::kernels::decode_select_token::run_decode_select_token_direct(
-                inference_kernels::kernels::decode_select_token::DecodeSelectTokenDirectInputs {
-                    logits: &logits,
-                    prior: &edge,
-                },
-            )?;
+            edge = crate::generation::select_next_token(&logits, &edge)?;
+            edge.model = execution_context(
+                Some(edge.generated_token_ids.as_slice()),
+                edge.generated_token_ids.len(),
+            );
             trace.record(&format!("decode_select_t{token_idx}"), &edge)?;
+            if prepared_prompt.eos_token_ids.contains(&edge.token_id) {
+                // Keep EOS in the result, but never run another decode pass.
+                trace.stop_at_eos(model.shape().num_hidden_layers, token_idx + 1);
+                break;
+            }
             if token_idx + 1 == run_spec.tokens {
                 break;
             }
@@ -131,32 +176,93 @@ impl DirectInferenceExecutor {
         timings.push(phase_timing("decode", decode_started.elapsed()));
 
         let finalize_started = Instant::now();
-        let output_edge = output_finalize::input::DecodeEdge {
-            has_selected: edge.has_selected,
-            decode_position: edge.decode_position,
-            token_id: edge.token_id,
-            value: edge.value,
-            generated_token_ids: edge.generated_token_ids.clone(),
-        };
+        let output_edge = edge.clone();
         let decoder = model.decoder_table()?;
-        let output = inference_kernels::kernels::output_finalize::run_output_finalize_direct(
-            inference_kernels::kernels::output_finalize::OutputFinalizeDirectInputs {
-                edge: &output_edge,
-                decoder: &decoder,
+        let descriptor = raster::BytesPage::__from_parts(
+            0,
+            0,
+            if model.manifest().model_commitments.is_empty() {
+                Vec::new()
+            } else {
+                model
+                    .manifest()
+                    .descriptor()?
+                    .encode()
+                    .map_err(|f| anyhow::anyhow!("{f:?}"))?
             },
-        )?;
-        trace.record("output_finalize", &output)?;
+        );
+        let witness =
+            sequence_check::decoder_witness(&decoder).map_err(|f| anyhow::anyhow!("{f:?}"))?;
+        let finalize_inputs = inference_kernels::kernels::finalize::FinalizeInputs {
+            decoder: &decoder,
+            descriptor: &descriptor,
+            witness: &witness,
+            // The record the chain publishes for this run: a direct result
+            // and an honest claim's final record are the same bytes.
+            context: &sequence_check::prompt::PromptContext {
+                model: execution_context(None, output_edge.generated_token_ids.len()),
+                input_text_sha256: sequence_check::sha256_hex(
+                    prepared_prompt.resolved_prompt.as_bytes(),
+                ),
+                model_id: model.manifest().model_id.clone(),
+                raw_prompt: run_spec.raw_prompt,
+                max_new_tokens: run_spec.tokens,
+                range_size: model.manifest().range_size,
+                next_piece: prepared_prompt.initial_pieces.len() as u64,
+                prompt_tokens: prompt.token_ids.len() as u32,
+                complete: true,
+                fault: 0,
+                fault_position: 0,
+            },
+        };
+        let final_edge = if model.manifest().model_commitments.is_empty() {
+            inference_kernels::kernels::finalize::run_output_finalize_discovery(
+                &output_edge,
+                finalize_inputs.decoder,
+                finalize_inputs.context,
+            )?
+        } else {
+            inference_kernels::kernels::finalize::run_output_finalize_direct(
+                &output_edge,
+                &finalize_inputs,
+            )?
+        };
+
+        // The run's last boundary is its final edge with the output record.
+        trace.record("output_finalize", &final_edge)?;
+        let output = sequence_check::input::generated_output(&final_edge);
         let result = InferenceResult {
+            model_fault: output.model_fault,
             generated_token_count: output.generated_token_count,
             generated_token_ids: output.generated_token_ids.iter().copied().collect(),
             generated_token_ids_sha256: output.generated_token_ids_sha256,
             generated_text: output.generated_text,
             stop_reason: output.stop_reason,
+            claim_mismatches: output.claim_mismatches,
+            first_claim_mismatch_position: output.first_claim_mismatch_position,
+            check_fault: output.check_fault,
+            check_fault_position: output.check_fault_position,
+            output_text_sha256: output.output_text_sha256,
+            output_fault: output.output_fault,
+            input_text_sha256: output.input_text_sha256,
+            model_id: output.model_id,
+            raw_prompt: output.raw_prompt,
+            max_new_tokens: output.max_new_tokens,
+            range_size: output.range_size,
+            prompt_tokens: output.prompt_tokens,
+            prompt_complete: output.prompt_complete,
+            prompt_fault: output.prompt_fault,
+            prompt_fault_position: output.prompt_fault_position,
+            statement_sha256: inference_artifacts::inference::lower_hex(
+                output.claim.statement.as_slice(),
+            ),
+            valid: output.claim.valid,
         };
         timings.push(phase_timing("output_finalize", finalize_started.elapsed()));
 
         trace.finish()?;
         Ok(InferenceRunReport {
+            input_token_count: Some(prompt.token_ids.len()),
             result,
             timings: InferenceTimings {
                 total_duration: infer_started.elapsed(),
@@ -177,7 +283,7 @@ fn run_layers_and_logits(
     trace: &mut DirectTrace,
 ) -> Result<(
     Vec<prefill_range::input::ActivationSequence>,
-    decode_select_token::input::PrefillLogits,
+    crate::generation::PrefillLogits,
 )> {
     let ple_source = seed.clone();
     let mut current = seed;
@@ -197,7 +303,11 @@ fn run_layers_and_logits(
         let prior_kv = prior_layers
             .and_then(|layers| layers.get(layer_idx))
             .cloned()
-            .unwrap_or_else(|| empty_or_embedding.clone());
+            .unwrap_or_else(|| {
+                let mut empty = empty_or_embedding.clone();
+                empty.model = Default::default();
+                empty
+            });
         let donor_a_kv = donor_input(
             &layer_outputs,
             layer.params.donor_a_layer,

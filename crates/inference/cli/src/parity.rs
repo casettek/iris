@@ -1,5 +1,8 @@
-//! The local three-path regression gate. Every worker owns its runtime state.
-mod compare;
+//! The local three-path regression gate: the chain through Raster and natively,
+//! checked against direct generation position by position. Every worker owns its
+//! runtime state.
+mod challenge;
+pub(crate) mod compare;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, File};
@@ -16,7 +19,10 @@ use sha2::{Digest, Sha256};
 use staged_infer::chain_runner::StagedExecutionBackend;
 
 use crate::claim::{build_claim, prepare_claim_run, ClaimBuildOptions};
-use compare::{compare, read_boundaries, staged_names, Boundary};
+use compare::{
+    check_inventory, compare, final_record, read_boundaries, teacher_forced_names, Boundary,
+    RangedShape,
+};
 
 #[derive(Debug, Deserialize)]
 struct Case {
@@ -27,7 +33,7 @@ struct Case {
     input_token_ids: Vec<u32>,
 }
 
-pub fn run() -> Result<()> {
+pub fn run(skip_challenges: bool) -> Result<()> {
     ensure!(
         !cfg!(debug_assertions),
         "test-parity requires a release build; run `just test-parity`"
@@ -44,12 +50,14 @@ pub fn run() -> Result<()> {
     println!("Three-path parity artifacts: {}", run_dir.display());
     let started = Instant::now();
     let mut report = json!({"version": 1, "mode": "host_no_auth", "passed": false, "cases": []});
-    let result = run_suite(&root, &run_dir, &mut report);
+    report["challenge_leg"] = json!(if skip_challenges { "skipped" } else { "run" });
+    let result = run_suite(&root, &run_dir, &mut report, skip_challenges);
     report["elapsed_seconds"] = json!(started.elapsed().as_secs_f64());
     report["passed"] = json!(result.is_ok());
     if let Err(error) = &result {
         report["error"] = json!(format!("{error:#}"));
     }
+    report["outcomes"] = outcomes(&report);
     write_json(&run_dir.join("report.json"), &report)?;
     result
         .with_context(|| format!("parity failed; artifacts and report: {}", run_dir.display()))?;
@@ -57,10 +65,193 @@ pub fn run() -> Result<()> {
         "PASS: 3 cases, 3 independent paths, exact parity ({:.2}s total).",
         started.elapsed().as_secs_f64()
     );
+    for line in outcome_lines(&report["outcomes"]) {
+        println!("  {line}");
+    }
     Ok(())
 }
 
-fn run_suite(root: &Path, run_dir: &Path, report: &mut Value) -> Result<()> {
+/// The Raster program that runs a chain stage, from the stage's name.
+fn stage_program(stage: &str) -> &'static str {
+    [
+        ("prompt_bind_", "prompt-bind"),
+        ("prompt_check_", "prompt-check"),
+        ("embed_", "input-embedding"),
+        ("aux_", "prefill-prepare-aux"),
+        ("range_", "prefill-range"),
+        ("check_", "sequence-check"),
+    ]
+    .iter()
+    .find(|(prefix, _)| stage.starts_with(prefix))
+    .map_or("unknown", |(_, program)| program)
+}
+
+/// What a run covered, by what each part of the gate is there to show. One
+/// `PASS` says nothing about which stage programs a falsified claim was
+/// replayed through, and on this model most stages are too short to replay.
+fn outcomes(report: &Value) -> Value {
+    let cases = report["cases"].as_array().cloned().unwrap_or_default();
+    let sum = |field: &str| -> u64 {
+        cases
+            .iter()
+            .filter_map(|case| case["comparison"][field].as_u64())
+            .sum()
+    };
+    let listed = |field: &str| -> usize {
+        cases
+            .iter()
+            .filter_map(|case| case["comparison"][field].as_array())
+            .map(Vec::len)
+            .sum()
+    };
+    let mut replayed = BTreeMap::<&str, u64>::new();
+    let mut found_only = BTreeMap::<&str, u64>::new();
+    let mut rejected = 0u64;
+    for entry in cases
+        .iter()
+        .filter_map(|case| case["comparison"]["challenges"].as_array())
+        .flatten()
+    {
+        if let Some(stage) = entry["stage"].as_str() {
+            let by_program = if entry["replayed"] == json!(true) {
+                &mut replayed
+            } else {
+                &mut found_only
+            };
+            *by_program.entry(stage_program(stage)).or_default() += 1;
+        } else if entry["rejected"] == json!(true) {
+            rejected += 1;
+        }
+    }
+    let caught = if report["challenge_leg"] == json!("run") {
+        json!({
+            "found_at_expected_stage":
+                replayed.values().sum::<u64>() + found_only.values().sum::<u64>(),
+            "replayed_through_authenticated_raster": replayed,
+            "found_but_too_short_to_replay": found_only,
+            "consistent_executions_rejected_on_their_record": rejected,
+        })
+    } else {
+        json!("skipped")
+    };
+    json!({
+        "honest_runs_agree": {
+            "cases": cases.iter().filter(|case| case["passed"] == json!(true)).count(),
+            "checkpoints": sum("checkpoints"),
+            "rows_compared": sum("rows_compared"),
+            "kv_entries_compared": sum("kv_entries_compared"),
+        },
+        "faults_are_published": {
+            "prompt_cases": listed("prompt_faults"),
+            "chain_cases": listed("chain_faults"),
+        },
+        "cheating_is_caught": caught,
+    })
+}
+
+/// [`outcomes`] as the lines printed under the final `PASS`.
+fn outcome_lines(outcomes: &Value) -> Vec<String> {
+    let by_program = |value: &Value| -> String {
+        let counts: Vec<String> = value
+            .as_object()
+            .into_iter()
+            .flatten()
+            .map(|(program, count)| format!("{program} {count}"))
+            .collect();
+        if counts.is_empty() {
+            "none".into()
+        } else {
+            counts.join(", ")
+        }
+    };
+    let honest = &outcomes["honest_runs_agree"];
+    let faults = &outcomes["faults_are_published"];
+    let mut lines = vec![
+        format!(
+            "honest runs agree: {} cases, {} checkpoints the same through Raster and natively, {} rows and {} cache entries the same as direct inference",
+            honest["cases"], honest["checkpoints"], honest["rows_compared"], honest["kv_entries_compared"]
+        ),
+        format!(
+            "faults are published: {} bad prompts and {} bad chains finish through both and record the fault",
+            faults["prompt_cases"], faults["chain_cases"]
+        ),
+    ];
+    let caught = &outcomes["cheating_is_caught"];
+    if caught.is_object() {
+        lines.push(format!(
+            "cheating is caught: {} claims found at the expected stage; {} executions that agree but are dishonest rejected on their record",
+            caught["found_at_expected_stage"], caught["consistent_executions_rejected_on_their_record"]
+        ));
+        lines.push(format!(
+            "  replayed through authenticated Raster: {}",
+            by_program(&caught["replayed_through_authenticated_raster"])
+        ));
+        lines.push(format!(
+            "  found, but the stage is too short to replay here: {}",
+            by_program(&caught["found_but_too_short_to_replay"])
+        ));
+    } else {
+        lines.push("cheating is caught: not run (--skip-challenges)".into());
+    }
+    lines
+}
+
+#[cfg(test)]
+mod outcome_tests {
+    use super::*;
+
+    #[test]
+    fn challenges_are_counted_by_the_program_that_runs_the_stage() {
+        let report = json!({
+            "challenge_leg": "run",
+            "cases": [
+                {"passed": true, "comparison": {"checkpoints": 21, "rows_compared": 45, "kv_entries_compared": 40}},
+                {"passed": true, "comparison": {
+                    "checkpoints": 86, "rows_compared": 369, "kv_entries_compared": 678,
+                    "prompt_faults": [{}, {}], "chain_faults": [{}],
+                    "challenges": [
+                        {"case": "a", "stage": "range_p1_l2", "replayed": true},
+                        {"case": "b", "stage": "prompt_check_p0", "replayed": true},
+                        {"case": "c", "stage": "prompt_bind_p0", "replayed": false},
+                        {"case": "d", "stage": "check_c0", "replayed": false},
+                        {"case": "e", "stage": "embed_c0", "replayed": false},
+                        {"case": "f", "stage": "aux_p0_l0", "replayed": false},
+                        {"name": "g", "rejected": true, "matching_checkpoints": 86},
+                    ],
+                }},
+            ],
+        });
+        let found = outcomes(&report);
+        assert_eq!(found["honest_runs_agree"]["checkpoints"], 107);
+        assert_eq!(
+            found["faults_are_published"],
+            json!({"prompt_cases": 2, "chain_cases": 1})
+        );
+        let caught = &found["cheating_is_caught"];
+        assert_eq!(caught["found_at_expected_stage"], 6);
+        assert_eq!(
+            caught["replayed_through_authenticated_raster"],
+            json!({"prefill-range": 1, "prompt-check": 1})
+        );
+        assert_eq!(
+            caught["found_but_too_short_to_replay"],
+            json!({"input-embedding": 1, "prefill-prepare-aux": 1, "prompt-bind": 1, "sequence-check": 1})
+        );
+        assert_eq!(caught["consistent_executions_rejected_on_their_record"], 1);
+        assert_eq!(outcome_lines(&found).len(), 5);
+
+        let mut skipped = report.clone();
+        skipped["challenge_leg"] = json!("skipped");
+        let found = outcomes(&skipped);
+        assert_eq!(found["cheating_is_caught"], "skipped");
+        assert_eq!(outcome_lines(&found).len(), 3);
+    }
+}
+
+fn run_suite(root: &Path, run_dir: &Path, report: &mut Value, skip_challenges: bool) -> Result<()> {
+    // Before anything runs: no stage program may read a value its schema does
+    // not pin. Raster's own checks do not see one.
+    crate::stage_bindings::check_stage_programs(root)?;
     let model_bundle = root.join("model-bundles/parity-gemma");
     let checksums: BTreeMap<String, String> = read_json(&model_bundle.join("checksums.json"))?;
     ensure!(
@@ -138,7 +329,10 @@ fn run_suite(root: &Path, run_dir: &Path, report: &mut Value) -> Result<()> {
         .arg(&model_bundle)
         .arg("--artifact-root")
         .arg(&artifact_root)
-        .args(["--model-id", "parity-gemma", "--no-stage-fixtures"]);
+        .args(["--model-id", "parity-gemma", "--no-stage-fixtures"])
+        // Small enough that every case's prompt and 8-token outputs split into
+        // several ranges.
+        .args(["--range-size", "6"]);
     logged(import, &run_dir.join("import.log"))?;
     report["import_seconds"] = json!(import_started.elapsed().as_secs_f64());
     let model_dir = artifact_root.join("parity-gemma");
@@ -189,6 +383,7 @@ fn run_suite(root: &Path, run_dir: &Path, report: &mut Value) -> Result<()> {
             &mut case_report,
             &mut selected,
             &mut logit_vectors,
+            skip_challenges,
         );
         case_report["passed"] = json!(result.is_ok());
         if let Err(error) = &result {
@@ -223,6 +418,7 @@ fn run_case(
     report: &mut Value,
     selected: &mut BTreeSet<u32>,
     logit_vectors: &mut BTreeSet<String>,
+    skip_challenges: bool,
 ) -> Result<()> {
     let started = Instant::now();
     let spec = dir.join("inference.toml");
@@ -237,12 +433,16 @@ fn run_case(
             case.tokens
         ),
     )?;
+    // Preparation discovers the claimed ids with direct decode.
     let prepared = prepare_claim_run(&ClaimBuildOptions {
         base_dir: dir.to_path_buf(),
         run_spec_path: spec.clone(),
         current_exe: exe.to_path_buf(),
         staged_backend: StagedExecutionBackend::InProcess,
+        claimed_token_ids: None,
+        direct_output_ids: None,
     })?;
+    let claimed = prepared.claimed_token_ids.clone();
     let raster_dir = dir.join("raster");
     fs::create_dir(&raster_dir)?;
     let mut run = command(raster, root);
@@ -272,70 +472,1033 @@ fn run_case(
             .as_str()
             .context("missing native chain directory")?,
     );
-    let names = staged_names(
-        model.shape.num_hidden_layers,
-        case.tokens,
-        run_prep::tokenizer_repeat_count(prepared.prepared_run.prompt.initial_pieces.len())?,
+    let direct_dir = dir.join("native-direct");
+
+    // Raster and native-staged, byte for byte, in the expected order.
+    let order = inference_artifacts::read_stage_order(&native_dir)?
+        .context("native chain recorded no stage inventory")?;
+    let shape = RangedShape::from_names(&order);
+    ensure!(
+        shape.layers == model.shape.num_hidden_layers,
+        "the chain has {} layers per range, the model has {}",
+        shape.layers,
+        model.shape.num_hidden_layers
     );
-    let direct_names =
-        direct_infer::diagnostics::boundary_names(model.shape.num_hidden_layers, case.tokens);
+    let names = teacher_forced_names(shape);
     let raster_outputs =
         read_boundaries(&raster_dir, &names, false).context("Raster-staged artifacts")?;
     let native = read_boundaries(&native_dir, &names, false).context("native-staged artifacts")?;
-    let direct = read_boundaries(&dir.join("native-direct"), &direct_names, true)
-        .context("native-direct artifacts")?;
     for name in &names {
         compare(name, &raster_outputs[name], &native[name])
             .context("Raster-staged ↔ native-staged")?;
     }
-    // Use staged semantic order for failure localization; never infer which
-    // comparisons are required from the intersection of actual outputs.
-    for name in names.iter().filter(|name| direct_names.contains(name)) {
-        compare(name, &native[name], &direct[name]).context("native-staged ↔ native-direct")?;
-    }
-    for (name, outputs, trailing) in [
-        ("Raster-staged", &raster_outputs, true),
-        ("native-staged", &native, true),
-        ("native-direct", &direct, false),
-    ] {
-        validate_case(case, model, outputs, trailing)
-            .with_context(|| format!("{name} coverage"))?;
-    }
-    validate_donor_bindings(&raster_dir, &raster_outputs, case.tokens)?;
-    validate_donor_bindings(&native_dir, &native, case.tokens)?;
-    let final_value = &native["output_finalize"].value;
+    validate_donor_bindings(&raster_dir, &raster_outputs, shape)?;
+    validate_donor_bindings(&native_dir, &native, shape)?;
+
+    // Direct generation: its own coverage, then the chain position by position.
     ensure!(
-        native_info["result"] == *final_value,
-        "native-staged returned result differs from output artifact"
+        claimed.len() == case.tokens as usize,
+        "direct decode produced {} of {} tokens; the pinned corpus fills its budget",
+        claimed.len(),
+        case.tokens
     );
-    let direct_result: Value = read_json(&dir.join("native-direct/result.json"))?;
-    ensure!(
-        direct_result == *final_value,
-        "native-direct returned result differs from output artifact"
-    );
-    for token in final_value["generated_token_ids"]
-        .as_array()
-        .context("missing generated tokens")?
-    {
-        selected.insert(u32::try_from(token.as_u64().context("invalid token")?)?);
+    let direct_names =
+        direct_infer::diagnostics::boundary_names(model.shape.num_hidden_layers, case.tokens);
+    let direct =
+        read_boundaries(&direct_dir, &direct_names, true).context("native-direct artifacts")?;
+    validate_case(case, model, &direct).context("native-direct coverage")?;
+    for token in &claimed {
+        selected.insert(*token);
     }
     for step in 0..case.tokens {
         let stage = logits_stage(step);
-        logit_vectors.insert(serde_json::to_string(&native[&stage].value["logits"])?);
+        logit_vectors.insert(serde_json::to_string(&direct[&stage].value["logits"])?);
     }
-    report["raster_native_boundaries"] = json!(names.len());
-    report["native_direct_boundaries"] = json!(direct_names.len());
-    report["logit_vectors_compared"] = json!(case.tokens);
-    report["result"] = final_value.clone();
-    report["elapsed_seconds"] = json!(started.elapsed().as_secs_f64());
+    let mut comparison = compare_teacher_forced(&native_dir, &direct_dir)?;
+    ensure!(
+        comparison["prompt_token_ids"] == json!(case.input_token_ids),
+        "the prompt ranges' ids differ from the pinned ids"
+    );
+    ensure!(
+        comparison["generated_token_ids"] == json!(claimed),
+        "the chain's output differs from the claimed ids"
+    );
+    let checkpoints = inference_artifacts::read_checkpoint_hashes(
+        &native_dir.join(inference_artifacts::CHECKPOINT_HASHES_TXT),
+    )?;
+    comparison["checkpoints"] = json!(names.len());
+    comparison["final_checkpoint_sha256"] = json!(checkpoints.last());
+
+    // The last prompt context is the chain's record of what it was given.
+    let last = shape
+        .prompt_ranges
+        .checked_sub(1)
+        .context("the chain has no prompt ranges")?;
+    let context = &native[&format!("prompt_check_p{last}")].value["context"];
+    ensure!(
+        context["fault"] == json!(0) && context["complete"] == json!(true),
+        "an honest prompt recorded a preparation fault: {context}"
+    );
+    ensure!(
+        context["input_text_sha256"]
+            == json!(format!("{:x}", Sha256::digest(case.prompt.as_bytes())))
+            && context["model_id"] == json!(model.model_id)
+            && context["prompt_tokens"] == json!(case.input_token_ids.len()),
+        "the prompt context does not identify the run: {context}"
+    );
+    // The final record is what a contract reads: the context it reports is the
+    // one the prompt stages established, and its commitment hashes its own text.
+    let last_check = format!("check_c{}", shape.claimed_ranges - 1);
+    let record = &final_record(&raster_outputs[&last_check].value)?;
+    // Every check states a record, and only the last range's is a claim's:
+    // an earlier one carries a fault, so it cannot be presented as final.
+    for earlier in 0..shape.claimed_ranges - 1 {
+        let stage = format!("check_c{earlier}");
+        ensure!(
+            raster_outputs[&stage].value["record"]["model_fault"] != json!(0),
+            "{stage} is not the last claimed range and states a clean output record"
+        );
+    }
+    ensure!(
+        record["model_fault"] == json!(0),
+        "the final record carries a model fault: {record}"
+    );
+    for (field, source) in [
+        ("input_text_sha256", "input_text_sha256"),
+        ("model_id", "model_id"),
+        ("raw_prompt", "raw_prompt"),
+        ("max_new_tokens", "max_new_tokens"),
+        ("range_size", "range_size"),
+        ("prompt_tokens", "prompt_tokens"),
+        ("prompt_complete", "complete"),
+        ("prompt_fault", "fault"),
+        ("prompt_fault_position", "fault_position"),
+    ] {
+        ensure!(
+            record[field] == context[source],
+            "the final record's {field} is {}; the prompt context says {}",
+            record[field],
+            context[source]
+        );
+    }
+    ensure!(
+        record["max_new_tokens"] == json!(case.tokens),
+        "the final record does not report the run's token budget"
+    );
+    let text = record["generated_text"]
+        .as_str()
+        .context("the final record has no text")?;
+    ensure!(
+        record["output_text_sha256"] == json!(format!("{:x}", Sha256::digest(text.as_bytes()))),
+        "the output commitment is not the hash of the emitted text"
+    );
+    ensure!(
+        record["check_fault"] == json!(0)
+            && record["output_fault"] == json!(0)
+            && record["model_fault"] == json!(0)
+            && record["claim_mismatches"] == json!(0)
+            && record["valid"] == json!(true),
+        "an honest claim published a fault: {record}"
+    );
+    // What a contract would check on the native claim, and that each of its
+    // checkpoints is the boundary the Raster run of the same chain committed:
+    // the program id, the input manifest and the output.
+    let contract = crate::contract::check_claim(crate::contract::ClaimCheckOptions {
+        base_dir: dir.to_path_buf(),
+        run_spec_path: spec.clone(),
+        submission_path: native_dir.join(inference_artifacts::contract::CLAIM_SUBMISSION_JSON),
+        raster_run: Some(raster_dir.clone()),
+    })
+    .context("contract checks")?;
+    for line in &contract.lines {
+        ensure!(
+            line.rejection.is_none(),
+            "a contract would reject an honest claim at `{}`: {}",
+            line.check,
+            line.rejection.as_deref().unwrap_or_default()
+        );
+    }
+    ensure!(
+        contract.lines.len() == 5,
+        "the contract checks did not reach the Raster run"
+    );
+    comparison["contract_checks"] = json!(contract.lines.len());
+    ensure!(
+        native_info["result"] == *record,
+        "the result artifact is not the chain's final record"
+    );
+    let direct_result: Value = read_json(&direct_dir.join("result.json"))?;
+    ensure!(
+        direct_result == *record,
+        "direct generation's result is not the chain's final record"
+    );
+
+    // Only the templated case has a safe first cut to build these from.
+    if !case.raw_prompt {
+        comparison["prompt_faults"] =
+            run_prompt_fault_leg(root, dir, exe, raster, model_path, model, &prepared)?;
+        comparison["chain_faults"] = run_chain_fault_leg(
+            root, dir, exe, raster, model_path, model, case, &prepared, &claimed,
+        )?;
+    }
+    if !case.raw_prompt && skip_challenges {
+        comparison["challenges"] = json!("skipped");
+    } else if !case.raw_prompt {
+        comparison["challenges"] = challenge::run_challenge_leg(&challenge::Leg {
+            root,
+            dir: dir.join("challenges"),
+            exe,
+            raster,
+            model_path,
+            model,
+            case,
+            prepared: &prepared,
+            claimed: &claimed,
+        })
+        .context("challenge leg")?;
+    }
     println!(
-        "  PASS: {} staged checkpoints, {} direct boundaries, {} complete logit vectors ({:.2}s)",
+        "  PASS: {} checkpoints, {} direct boundaries, {} complete logit vectors, {} rows in {} prompt + {} claimed ranges ({:.2}s)",
         names.len(),
         direct_names.len(),
         case.tokens,
+        comparison["rows_compared"],
+        comparison["prompt_ranges"],
+        comparison["claimed_ranges"],
         started.elapsed().as_secs_f64()
     );
+    report["checkpoints"] = json!(names.len());
+    report["direct_boundaries"] = json!(direct_names.len());
+    report["logit_vectors_compared"] = json!(case.tokens);
+    report["result"] = record.clone();
+    report["comparison"] = comparison;
+    report["elapsed_seconds"] = json!(started.elapsed().as_secs_f64());
     Ok(())
+}
+
+/// A false claim must reach the final record. Runs whole chains through Raster
+/// and native-staged over wrong preparations and wrong claims, and checks that
+/// every stage finishes, both agree byte for byte, and the record says which.
+#[allow(clippy::too_many_arguments)]
+fn run_chain_fault_leg(
+    root: &Path,
+    case_dir: &Path,
+    exe: &Path,
+    raster: &Path,
+    model_path: &Path,
+    model: &ModelManifest,
+    case: &Case,
+    prepared: &crate::claim::PreparedClaimRun,
+    claimed: &[u32],
+) -> Result<Value> {
+    let prompt = &prepared.prepared_run.prompt;
+    let range_size = model.range_size;
+    let model_dir = model_path
+        .parent()
+        .context("model manifest has no parent directory")?;
+    let tokenizer: Value = read_json(&model_dir.join(&model.bundle.tokenizer_path))?;
+    let ranges = run_prep::marked_ranges(
+        &prompt.initial_pieces,
+        range_size as usize,
+        &run_prep::prompt_tokenizer(&tokenizer)?,
+    )?;
+    let canonical: Vec<Vec<u32>> = ranges.iter().map(|range| range.marks.clone()).collect();
+    // Every piece's mark, and the first place after the start where a token begins.
+    let all: Vec<u32> = canonical.concat();
+    let second_token = all
+        .iter()
+        .skip(1)
+        .position(|mark| *mark != 0)
+        .map(|index| index + 1)
+        .context("the pinned case's prompt is a single token")?;
+    let (template_path, template) = model.verified_raster_template(model_path)?;
+    let template_dir = template_path
+        .parent()
+        .context("manifest template has no parent directory")?;
+
+    let greedy = claimed
+        .get(..2)
+        .context("the pinned case claims too few tokens")?;
+    let not_greedy = [(greedy[0] + 1) % model.shape.vocab_size as u32, greedy[1]];
+    // Just past the tables, and far enough past that its page does not exist.
+    let unknown = [model.shape.vocab_size as u32, u32::MAX];
+    let positions = case.input_token_ids.len() as u32;
+    // Name, marks, claimed ids, budget, what the record must say, then what to
+    // add to the schedule's three counts.
+    // Invalid prompt histories suppress downstream rows and retain the fault.
+    let cases = [
+        (
+            "empty-middle-range",
+            vec![
+                all[..second_token].to_vec(),
+                Vec::new(),
+                all[second_token..].to_vec(),
+            ],
+            greedy,
+            2,
+            true,
+            run_prep::CHECK_FAULT_NO_CLAIMED_TOKENS,
+            positions,
+            [0, 0],
+        ),
+        (
+            "empty-last-range",
+            vec![all.clone(), Vec::new()],
+            greedy,
+            2,
+            true,
+            run_prep::CHECK_FAULT_NO_CLAIMED_TOKENS,
+            positions,
+            [0, 0],
+        ),
+        (
+            "not-greedy",
+            canonical.clone(),
+            &not_greedy[..],
+            2,
+            false,
+            0,
+            0,
+            [0, 0],
+        ),
+        (
+            "unknown-ids",
+            canonical.clone(),
+            &unknown[..],
+            2,
+            false,
+            0,
+            0,
+            [0, 0],
+        ),
+        (
+            "short-of-budget",
+            canonical.clone(),
+            greedy,
+            8,
+            false,
+            0,
+            0,
+            [0, 0],
+        ),
+        // A run that does not follow its schedule: the schedule names counts the
+        // manifest's stages do not run. The last is refused when it is bound, the
+        // others by the stages that reach the difference.
+        (
+            "schedule-extra-prompt-range",
+            canonical.clone(),
+            greedy,
+            2,
+            false,
+            0,
+            0,
+            [1, 0],
+        ),
+        (
+            "schedule-extra-claimed-range",
+            canonical,
+            greedy,
+            2,
+            false,
+            0,
+            0,
+            [0, 1_i64],
+        ),
+    ];
+
+    let mut report = Vec::new();
+    for (name, marks, ids, budget, prompt_fault, check_fault, check_position, skew) in cases {
+        let dir = case_dir.join("chain-faults").join(name);
+        let files = dir.join("prompt");
+        let manifest = dir.join("Raster.toml");
+        let mark_files = run_prep::write_marks(&marks, &files)?;
+        let claimed_files = run_prep::write_claimed_ranges(ids, range_size as usize, &files)?;
+        let (slices, text_claim) = run_prep::text_for_ranges(
+            &prompt.resolved_prompt,
+            case.raw_prompt,
+            range_size as usize,
+            &run_prep::prompt_tokenizer(&tokenizer)?,
+            marks.len(),
+        )?;
+        let rendered = crate::claim::render_ranged_manifest(
+            &template,
+            template_dir,
+            &run_prep::write_text_slices(&slices, &files)?,
+            &run_prep::write_run_config(
+                &run_prep::RunConfig {
+                    model_id: model.model_id.clone(),
+                    raw_prompt: case.raw_prompt,
+                    max_new_tokens: budget,
+                    range_size,
+                },
+                &files,
+            )?,
+            &run_prep::write_run_schedule(
+                (mark_files.len() as i64 + skew[0]) as usize,
+                (claimed_files.len() as i64 + skew[1]) as usize,
+                &files,
+            )?,
+            &run_prep::write_text_claim(&text_claim, &files)?,
+            &mark_files,
+            &claimed_files,
+        )?;
+        fs::write(&manifest, rendered)?;
+
+        let raster_dir = dir.join("raster");
+        fs::create_dir(&raster_dir)?;
+        let mut run = command(raster, root);
+        run.args(["raster", "chain", "run"])
+            .arg(&manifest)
+            .args(["--no-auth", "--run"])
+            .arg(&raster_dir);
+        logged(run, &dir.join("raster.log"))
+            .with_context(|| format!("chain fault `{name}`: a Raster stage did not finish"))?;
+        let native_run = staged_infer::CheckpointedInferenceExecutor
+            .run(staged_infer::CheckpointedInferenceConfig {
+                base_dir: dir.clone(),
+                manifest_path: manifest.clone(),
+                current_exe: exe.to_path_buf(),
+                staged_backend: StagedExecutionBackend::InProcess,
+                parity_policy: staged_infer::ParityPolicy::Skip,
+            })
+            .with_context(|| format!("chain fault `{name}`: a native stage did not finish"))?;
+
+        let order = inference_artifacts::read_stage_order(&raster_dir)?
+            .with_context(|| format!("chain fault `{name}`: no stage inventory"))?;
+        let raster_outputs = read_boundaries(&raster_dir, &order, false)?;
+        let native = read_boundaries(&native_run.chain_dir, &order, false)?;
+        for stage in &order {
+            compare(stage, &raster_outputs[stage], &native[stage])
+                .with_context(|| format!("chain fault `{name}`"))?;
+        }
+
+        let last = order.last().context("the chain ran no stage")?;
+        let record = &final_record(&raster_outputs[last].value)?;
+        ensure!(
+            (record["prompt_fault"] != json!(0)) == prompt_fault,
+            "chain fault `{name}`: expected a prompt fault: {prompt_fault}; got {record}"
+        );
+        if skew == [0, 0] {
+            ensure!(
+                record["check_fault"] == json!(check_fault)
+                    && record["check_fault_position"] == json!(check_position),
+                "chain fault `{name}`: expected check fault {check_fault} at {check_position}; got {record}"
+            );
+        } else {
+            ensure!(
+                record["model_fault"] != json!(0),
+                "chain fault `{name}`: a run that left its schedule kept a clean record: {record}"
+            );
+        }
+        if prompt_fault {
+            ensure!(
+                record["model_fault"] != json!(0),
+                "chain fault `{name}` lost its execution fault"
+            );
+        }
+        match name {
+            "not-greedy" => ensure!(
+                record["claim_mismatches"].as_u64().unwrap_or(0) > 0
+                    && record["first_claim_mismatch_position"] == json!(positions),
+                "chain fault `{name}`: the verdict does not name the changed token: {record}"
+            ),
+            "unknown-ids" => ensure!(
+                record["claim_mismatches"] == json!(2)
+                    && record["first_claim_mismatch_position"] == json!(positions),
+                "chain fault `{name}`: the verdict does not reject both ids: {record}"
+            ),
+            "short-of-budget" => ensure!(
+                record["claim_mismatches"] == json!(0)
+                    && record["output_fault"] == json!(run_prep::OUTPUT_FAULT_SHORT_WITHOUT_EOS),
+                "chain fault `{name}`: the output fault is not published: {record}"
+            ),
+            _ => {}
+        }
+        let result: InferenceResult = serde_json::from_value(record.clone())?;
+        ensure!(
+            native_run.final_result.as_ref() == Some(&result),
+            "chain fault `{name}`: the native result is not the final record"
+        );
+        report.push(json!({
+            "case": name,
+            "stages": order.len(),
+            "model_fault": record["model_fault"],
+            "prompt_fault": record["prompt_fault"],
+            "check_fault": record["check_fault"],
+            "claim_mismatches": record["claim_mismatches"],
+            "output_fault": record["output_fault"],
+        }));
+    }
+    Ok(json!(report))
+}
+
+/// A wrong preparation must not stop a prompt stage: an aborting stage has no
+/// output to compare or replay. Runs the prompt stages over wrong marks through
+/// Raster and native-staged, and checks that both finish, agree byte for byte,
+/// and record the fault.
+fn run_prompt_fault_leg(
+    root: &Path,
+    case_dir: &Path,
+    exe: &Path,
+    raster: &Path,
+    model_path: &Path,
+    model: &ModelManifest,
+    prepared: &crate::claim::PreparedClaimRun,
+) -> Result<Value> {
+    use run_prep::{
+        RunFile, FAULT_CUT_BEYOND_TEXT, FAULT_EMPTY_RANGE, FAULT_NONE, FAULT_NOT_THE_MERGE,
+        FAULT_TEXT_CLAIM,
+    };
+    let pieces = &prepared.prepared_run.prompt.initial_pieces;
+    let tokenizer: Value = read_json(
+        &model_path
+            .parent()
+            .context("model manifest has no parent directory")?
+            .join(&model.bundle.tokenizer_path),
+    )?;
+    // The merge's own marks, range by range.
+    let canonical: Vec<Vec<u32>> = run_prep::marked_ranges(
+        pieces,
+        model.range_size as usize,
+        &run_prep::prompt_tokenizer(&tokenizer)?,
+    )?
+    .into_iter()
+    .map(|range| range.marks)
+    .collect();
+    let first = canonical[0].clone();
+    let with_first = |first: Vec<u32>| {
+        let mut ranges = canonical.clone();
+        ranges[0] = first;
+        ranges
+    };
+    let second_token = first
+        .iter()
+        .skip(1)
+        .position(|mark| *mark != 0)
+        .map(|index| index + 1)
+        .context("the pinned case's first range is a single token")?;
+    let mut past_the_end = canonical.clone();
+    past_the_end
+        .last_mut()
+        .context("the prompt has no range")?
+        .extend([1; 5]);
+    let mut empty_range = canonical.clone();
+    empty_range.insert(1, Vec::new());
+    let mut cases = vec![
+        ("past-the-end", past_the_end, FAULT_CUT_BEYOND_TEXT, true),
+        ("empty-range", empty_range, FAULT_EMPTY_RANGE, true),
+        (
+            "left-out",
+            vec![first[..second_token].to_vec()],
+            FAULT_NONE,
+            false,
+        ),
+    ];
+    // A token claimed as two: its pieces are vocabulary entries, and the merge
+    // joins them, so the claim is not the merge's result.
+    let inside = canonical.iter().enumerate().find_map(|(range, marks)| {
+        marks
+            .iter()
+            .position(|mark| *mark == 0)
+            .map(|index| (range, index))
+    });
+    if let Some((range, index)) = inside {
+        let mut split = canonical.clone();
+        split[range][index] = 1;
+        cases.push(("split-token", split, FAULT_NOT_THE_MERGE, true));
+    }
+    // Two neighbouring tokens of one segment, claimed as one token and as the
+    // ends of two ranges.
+    let same_segment = (1..first.len())
+        .find(|&index| first[index] != 0 && pieces[index - 1].segment == pieces[index].segment);
+    if let Some(boundary) = same_segment {
+        let mut joined = first.clone();
+        joined[boundary] = 0;
+        cases.push((
+            "joined-tokens",
+            with_first(joined),
+            FAULT_NOT_THE_MERGE,
+            true,
+        ));
+        // A range may end between any two tokens, even inside a word.
+        let mut ranges = vec![first[..boundary].to_vec(), first[boundary..].to_vec()];
+        ranges.extend(canonical[1..].iter().cloned());
+        cases.push(("cut-inside-a-segment", ranges, FAULT_NONE, true));
+    }
+
+    // The merge's own marks over a text that is not what was claimed, or
+    // not all there. A wrong hash is found where the text ends. A length the
+    // text never reaches, and a text whose last slice is withheld, never end:
+    // the pieces the end would have released are marked and missing.
+    cases.push(("claimed-hash", canonical.clone(), FAULT_TEXT_CLAIM, false));
+    cases.push((
+        "claimed-length",
+        canonical.clone(),
+        FAULT_CUT_BEYOND_TEXT,
+        false,
+    ));
+    cases.push((
+        "text-withheld",
+        canonical.clone(),
+        FAULT_CUT_BEYOND_TEXT,
+        false,
+    ));
+
+    let template = fs::read_to_string(&prepared.manifest_path)?;
+    let prompt_tokenizer = run_prep::prompt_tokenizer(&tokenizer)?;
+    let text = &prepared.prepared_run.prompt.resolved_prompt;
+    let raw_prompt = prepared.prepared_run.raw_prompt;
+    let mut report = Vec::new();
+    for (name, marks, fault, complete) in cases {
+        let dir = case_dir.join("prompt-faults").join(name);
+        let files: Vec<RunFile> = run_prep::write_marks(&marks, &dir.join("prompt"))?;
+        // The same text and the same claim of it, for however many ranges
+        // these marks make.
+        let (mut slices, mut claim) = run_prep::text_for_ranges(
+            text,
+            raw_prompt,
+            model.range_size as usize,
+            &prompt_tokenizer,
+            marks.len(),
+        )?;
+        let other_claim = match name {
+            "claimed-hash" => {
+                claim.input_text_sha256 = "00".repeat(32);
+                true
+            }
+            "claimed-length" => {
+                claim.total += 1;
+                true
+            }
+            "text-withheld" => {
+                let last = slices
+                    .iter()
+                    .rposition(|slice| !slice.chunks.is_empty())
+                    .filter(|last| *last > 0)
+                    .context("the pinned case's text is all in its first range")?;
+                slices[last] = Default::default();
+                false
+            }
+            _ => false,
+        };
+        let texts = run_prep::write_text_slices(&slices, &dir.join("prompt"))?;
+        let claim = other_claim
+            .then(|| run_prep::write_text_claim(&claim, &dir.join("prompt")))
+            .transpose()?;
+        let manifest = dir.join("Raster.toml");
+        fs::write(
+            &manifest,
+            prompt_only_manifest(&template, &texts, &files, claim.as_ref())?,
+        )?;
+
+        let raster_dir = dir.join("raster");
+        fs::create_dir(&raster_dir)?;
+        let mut run = command(raster, root);
+        run.args(["raster", "chain", "run"])
+            .arg(&manifest)
+            .args(["--no-auth", "--run"])
+            .arg(&raster_dir);
+        logged(run, &dir.join("raster.log"))
+            .with_context(|| format!("prompt fault `{name}`: a Raster stage did not finish"))?;
+        let native_dir = staged_infer::CheckpointedInferenceExecutor
+            .run(staged_infer::CheckpointedInferenceConfig {
+                base_dir: dir.clone(),
+                manifest_path: manifest.clone(),
+                current_exe: exe.to_path_buf(),
+                staged_backend: StagedExecutionBackend::InProcess,
+                parity_policy: staged_infer::ParityPolicy::Skip,
+            })
+            .with_context(|| format!("prompt fault `{name}`: a native stage did not finish"))?
+            .chain_dir;
+
+        let order = inference_artifacts::read_stage_order(&raster_dir)?
+            .with_context(|| format!("prompt fault `{name}`: no stage inventory"))?;
+        let raster_outputs = read_boundaries(&raster_dir, &order, false)?;
+        let native = read_boundaries(&native_dir, &order, false)?;
+        for stage in &order {
+            compare(stage, &raster_outputs[stage], &native[stage])
+                .with_context(|| format!("prompt fault `{name}`"))?;
+        }
+        let last = format!("prompt_check_p{}", marks.len() - 1);
+        let context = &raster_outputs[&last].value["context"];
+        ensure!(
+            context["fault"] == json!(fault) && context["complete"] == json!(complete),
+            "prompt fault `{name}`: expected fault {fault}, complete {complete}; got {context}"
+        );
+        report.push(json!({"case": name, "stages": order.len(), "context": context}));
+    }
+    report.push(run_long_text_case(
+        root,
+        case_dir,
+        exe,
+        raster,
+        &template,
+        raw_prompt,
+        &prompt_tokenizer,
+    )?);
+    Ok(json!(report))
+}
+
+/// The most a prompt-stage tile writes per chunk of text: one single-byte atom
+/// per byte. Raster limits that and native does not, so only running it through
+/// Raster shows that the chunk size fits.
+fn run_long_text_case(
+    root: &Path,
+    case_dir: &Path,
+    exe: &Path,
+    raster: &Path,
+    template: &str,
+    raw_prompt: bool,
+    tokenizer: &run_prep::PromptTokenizer,
+) -> Result<Value> {
+    let dir = case_dir.join("prompt-faults/long-text");
+    let files = dir.join("prompt");
+    let text = "ab ".repeat(1024);
+    // All of it in one range, with what is true of it claimed.
+    let (slices, claim) = run_prep::text_for_ranges(&text, raw_prompt, usize::MAX, tokenizer, 1)?;
+    let texts = run_prep::write_text_slices(&slices, &files)?;
+    let claim = run_prep::write_text_claim(&claim, &files)?;
+    let manifest = dir.join("Raster.toml");
+    fs::write(
+        &manifest,
+        prompt_only_manifest(template, &texts, &[], Some(&claim))?,
+    )?;
+
+    let raster_dir = dir.join("raster");
+    fs::create_dir(&raster_dir)?;
+    let mut run = command(raster, root);
+    run.args(["raster", "chain", "run"])
+        .arg(&manifest)
+        .args(["--no-auth", "--run"])
+        .arg(&raster_dir);
+    logged(run, &dir.join("raster.log")).context("a long text did not finish through Raster")?;
+    let native_dir = staged_infer::CheckpointedInferenceExecutor
+        .run(staged_infer::CheckpointedInferenceConfig {
+            base_dir: dir.clone(),
+            manifest_path: manifest,
+            current_exe: exe.to_path_buf(),
+            staged_backend: StagedExecutionBackend::InProcess,
+            parity_policy: staged_infer::ParityPolicy::Skip,
+        })
+        .context("a long text did not finish natively")?
+        .chain_dir;
+    let names = vec![String::from("prompt_bind_p0")];
+    let bound = read_boundaries(&raster_dir, &names, false)?;
+    let native = read_boundaries(&native_dir, &names, false)?;
+    for name in &names {
+        compare(name, &bound[name], &native[name]).context("a long text")?;
+    }
+    let output = &bound["prompt_bind_p0"].value;
+    let context = &output["context"];
+    ensure!(
+        context["fault"] == json!(0)
+            && output["bind"]["done"] == json!(true)
+            && context["input_text_sha256"]
+                == json!(format!("{:x}", Sha256::digest(text.as_bytes()))),
+        "a long text was not bound: {output}"
+    );
+    Ok(json!({"case": "long-text", "stages": names.len(), "context": context}))
+}
+
+/// A manifest's lines, split at each table header.
+fn manifest_blocks(manifest: &str) -> Vec<Vec<&str>> {
+    let mut blocks: Vec<Vec<&str>> = Vec::new();
+    for line in manifest.lines() {
+        if line.trim_start().starts_with('[') || blocks.is_empty() {
+            blocks.push(Vec::new());
+        }
+        blocks.last_mut().expect("a block was pushed").push(line);
+    }
+    blocks
+}
+
+/// The name a manifest table gives its stage or repeat.
+fn block_name(block: &[&str]) -> String {
+    block
+        .iter()
+        .find_map(|line| line.trim().strip_prefix("name = \""))
+        .map(|name| name.trim_end_matches('"').to_string())
+        .unwrap_or_default()
+}
+
+/// A run manifest's prompt stages alone: a bind of each of these slices of
+/// text, and a check of each range over these marks. With no marks, only the
+/// binds. `claim`, when given, replaces what the run claims of the text.
+fn prompt_only_manifest(
+    template: &str,
+    texts: &[run_prep::RunFile],
+    cuts: &[run_prep::RunFile],
+    claim: Option<&run_prep::RunFile>,
+) -> Result<String> {
+    let input = |name: &str, family: &str, files: &[run_prep::RunFile]| -> Result<String> {
+        let dir = files[0]
+            .path
+            .parent()
+            .context("run file has no directory")?;
+        Ok(format!(
+            "\n[chain.input.{name}]\nindex = \"j\"\npath = {:?}\nindex_path = {:?}\ncommitments = {:?}\n",
+            dir.join(format!("{family}_{{j}}.rastered")),
+            dir.join(format!("{family}_{{j}}.rindex")),
+            files.iter().map(|file| &file.commitment).collect::<Vec<_>>(),
+        ))
+    };
+    ensure!(!texts.is_empty(), "a prompt needs at least one range");
+    ensure!(
+        cuts.is_empty() || cuts.len() == texts.len(),
+        "each range needs its own text and its own marks"
+    );
+    // Range 0's stages are plain stages; the later ranges' are the prompt
+    // repeat's.
+    let prompt_stage =
+        |block: &[&str], in_prompt: bool| in_prompt || block[0].trim() == "[[chain.stage]]";
+    let mut out = String::new();
+    let mut in_prompt = false;
+    for block in &manifest_blocks(template) {
+        let name = block_name(block);
+        match block[0].trim() {
+            "[chain]" => out.push_str(&(block.join("\n") + "\n")),
+            "[chain.input.prompt_text]" => out.push_str(&input("prompt_text", "text", texts)?),
+            "[chain.input.prompt_marks]" if !cuts.is_empty() => {
+                out.push_str(&input("prompt_marks", "marks", cuts)?)
+            }
+            "[[chain.repeat]]" => {
+                in_prompt = name == "prompt";
+                if in_prompt {
+                    // Range 0 is the plain stages before this block.
+                    for line in block {
+                        if line.trim().starts_with("count =") {
+                            out.push_str(&format!("count = {}\n", texts.len() - 1));
+                        } else {
+                            out.push_str(line);
+                            out.push('\n');
+                        }
+                    }
+                }
+            }
+            "[[chain.stage]]" | "[[chain.repeat.stage]]"
+                if prompt_stage(block, in_prompt) && name.starts_with("prompt_bind_p") =>
+            {
+                for line in block {
+                    match claim {
+                        Some(claim) if line.trim().starts_with("inputs.claim =") => {
+                            out.push_str(
+                                &crate::claim::RunExternal::new(
+                                    &claim.path,
+                                    &claim.index_path,
+                                    &claim.commitment,
+                                )
+                                .binding("claim"),
+                            );
+                        }
+                        _ => out.push_str(line),
+                    }
+                    out.push('\n');
+                }
+            }
+            "[[chain.stage]]" | "[[chain.repeat.stage]]"
+                if prompt_stage(block, in_prompt)
+                    && !cuts.is_empty()
+                    && name.starts_with("prompt_check_p") =>
+            {
+                out.push_str(&(block.join("\n") + "\n"));
+            }
+            _ => {}
+        }
+    }
+    Ok(out)
+}
+
+/// Compares a chain with direct generation for the same prompt and output, bit
+/// for bit and position by position.
+///
+/// The prompt ranges' token ids must concatenate to direct's tokenization.
+/// Stitching each layer's ranges together, row `i` of every embedding, PLE and
+/// layer stage must equal direct's prefill row `i` (`i < prompt_len`) or decode
+/// step `i - prompt_len`'s single row, and every K/V entry a range publishes,
+/// inherited or its own, direct's entry at the same position. Direct never runs a
+/// pass for its last token, so the chain's row for it has no reference; nothing
+/// is scored from that row. The last range's check must be direct's final edge and record, and the
+/// last range's check the same edge as direct's last selection.
+///
+/// Stages are read one layer at a time, so real-model chains with hundreds of
+/// rows fit in memory.
+pub(crate) fn compare_teacher_forced(tf_dir: &Path, direct_dir: &Path) -> Result<Value> {
+    let load = |dir: &Path, stage: &str| -> Result<Boundary> {
+        let boundary = compare::read_boundary(&dir.join(stage))
+            .with_context(|| format!("{stage} in {}", dir.display()))?;
+        compare::validate_errors(stage, &boundary.value)?;
+        Ok(boundary)
+    };
+    let tf_names = inference_artifacts::read_stage_order(tf_dir)?
+        .with_context(|| format!("{}: missing recorded stage inventory", tf_dir.display()))?;
+    let shape = RangedShape::from_names(&tf_names);
+    ensure!(
+        tf_names == teacher_forced_names(shape),
+        "{}: not a chain run",
+        tf_dir.display()
+    );
+    let direct_names: Vec<String> = read_json(&direct_dir.join("boundary-order.json"))?;
+
+    let prompt_ids = load(direct_dir, "prompt_prepare")?.value["token_ids"].clone();
+    let generated = load(direct_dir, "output_finalize")?.value["generated_token_ids"].clone();
+    let prompt_len = prompt_ids.as_array().context("missing prompt ids")?.len();
+    let tokens = generated.as_array().context("missing generated ids")?.len();
+    ensure!(tokens > 0, "direct generation produced no tokens");
+    check_inventory(
+        &direct_infer::diagnostics::boundary_names(shape.layers, tokens as u32),
+        &direct_names,
+    )
+    .with_context(|| format!("{}: not a direct run", direct_dir.display()))?;
+
+    let mut ranged_prompt = Vec::new();
+    for j in 0..shape.prompt_ranges {
+        let ids = load(tf_dir, &format!("prompt_check_p{j}"))?.value["token_ids"].clone();
+        ranged_prompt.extend(ids.as_array().cloned().unwrap_or_default());
+    }
+    ensure!(
+        json!(ranged_prompt) == prompt_ids,
+        "prompt ranges tokenize differently from the whole prompt"
+    );
+    // The last check publishes the final edge with the output record, and
+    // direct generation's final boundary is the same bytes.
+    let last_check = format!("check_c{}", shape.claimed_ranges - 1);
+    compare(
+        &last_check,
+        &load(tf_dir, &last_check)?,
+        &load(direct_dir, "output_finalize")?,
+    )
+    .with_context(|| format!("chain {last_check} ↔ direct final edge and record"))?;
+
+    // The same family of stages, ranged and direct.
+    let ranges = (0..shape.prompt_ranges)
+        .map(|j| format!("p{j}"))
+        .chain((0..shape.claimed_ranges).map(|k| format!("c{k}")))
+        .collect::<Vec<_>>();
+    let passes = tokens - 1;
+    let mut families = vec![(
+        ranges
+            .iter()
+            .map(|r| format!("embed_{r}"))
+            .collect::<Vec<_>>(),
+        String::from("input_embedding"),
+        (0..passes)
+            .map(|t| format!("decode_embed_t{t}"))
+            .collect::<Vec<_>>(),
+    )];
+    for layer in 0..shape.layers {
+        families.push((
+            ranges.iter().map(|r| format!("aux_{r}_l{layer}")).collect(),
+            format!("prefill_prepare_aux_l{layer}"),
+            (0..passes)
+                .map(|t| format!("decode_aux_t{t}_l{layer}"))
+                .collect(),
+        ));
+        families.push((
+            ranges
+                .iter()
+                .map(|r| format!("range_{r}_l{layer}"))
+                .collect(),
+            format!("prefill_range_l{layer}"),
+            (0..passes)
+                .map(|t| format!("decode_range_t{t}_l{layer}"))
+                .collect(),
+        ));
+    }
+    let mut rows_compared = 0;
+    let mut keys_compared = 0;
+    for (ranged, prefill, decode) in &families {
+        // Position `prompt_len + t` comes from decode step `t`, which embeds
+        // the token selected at step `t`.
+        let prefill_boundary = load(direct_dir, prefill)?;
+        let decode_boundaries = decode
+            .iter()
+            .map(|stage| load(direct_dir, stage))
+            .collect::<Result<Vec<_>>>()?;
+        let source = |position: usize| {
+            if position < prompt_len {
+                Some((&prefill_boundary, position))
+            } else {
+                decode_boundaries
+                    .get(position - prompt_len)
+                    .map(|boundary| (boundary, 0))
+            }
+        };
+        let mut position = 0;
+        for stage in ranged {
+            let teacher = load(tf_dir, stage)?;
+            // PLE inputs carry no position; activations must start where the
+            // previous range ended.
+            if let Some(start) = teacher.value.get("start_position") {
+                ensure!(
+                    *start == json!(position),
+                    "{stage}: starts at {start}, expected {position}"
+                );
+            }
+            let rows = teacher.value["rows"]
+                .as_array()
+                .with_context(|| format!("{stage}: missing rows"))?;
+            for row in rows {
+                ensure!(
+                    position < prompt_len + tokens,
+                    "{stage}: more rows than prompt ‖ output positions"
+                );
+                if let Some((source, index)) = source(position) {
+                    ensure!(
+                        source.value["rows"][index] == *row,
+                        "{stage}: position {position} differs from direct's row"
+                    );
+                    rows_compared += 1;
+                }
+                position += 1;
+            }
+            if !prefill.starts_with("prefill_range_") {
+                continue;
+            }
+            for key in teacher.value["kv"]
+                .as_array()
+                .with_context(|| format!("{stage}: missing KV"))?
+            {
+                let key_position = key["position"]
+                    .as_u64()
+                    .with_context(|| format!("{stage}: KV entry without a position"))?
+                    as usize;
+                ensure!(
+                    key_position < position,
+                    "{stage}: publishes K/V for position {key_position}, not yet reached"
+                );
+                let Some((source, _)) = source(key_position) else {
+                    continue;
+                };
+                let expected = source.value["kv"]
+                    .as_array()
+                    .with_context(|| format!("{stage}: direct's source has no KV"))?
+                    .iter()
+                    .find(|entry| entry["position"] == key["position"])
+                    .with_context(|| {
+                        format!("{stage}: no direct K/V entry for position {key_position}")
+                    })?;
+                ensure!(
+                    expected == key,
+                    "{stage}: K/V at position {key_position} differs from direct's entry"
+                );
+                keys_compared += 1;
+            }
+        }
+        ensure!(
+            position == prompt_len + tokens,
+            "{prefill}: ranges cover {position} positions, expected {}",
+            prompt_len + tokens
+        );
+    }
+    Ok(json!({
+        "layers": shape.layers,
+        "prompt_ranges": shape.prompt_ranges,
+        "claimed_ranges": shape.claimed_ranges,
+        "prompt_token_ids": prompt_ids,
+        "generated_token_ids": generated,
+        "rows_compared": rows_compared,
+        "kv_entries_compared": keys_compared,
+    }))
 }
 
 fn logits_stage(step: u32) -> String {
@@ -346,11 +1509,12 @@ fn logits_stage(step: u32) -> String {
     }
 }
 
+/// Direct generation's own coverage: active PLE, full logit vectors whose argmax
+/// is the selection, and K/V growth and eviction over its decode passes.
 fn validate_case(
     case: &Case,
     model: &ModelManifest,
     outputs: &BTreeMap<String, Boundary>,
-    trailing: bool,
 ) -> Result<()> {
     ensure!(
         outputs["prompt_prepare"].value["token_ids"] == json!(case.input_token_ids),
@@ -372,8 +1536,8 @@ fn validate_case(
             );
         }
     }
-    let final_value = &outputs["output_finalize"].value;
-    let result: InferenceResult = serde_json::from_value(final_value.clone())?;
+    let result: InferenceResult =
+        serde_json::from_value(final_record(&outputs["output_finalize"].value)?)?;
     ensure!(
         result.generated_token_count == case.tokens
             && result.generated_token_ids.len() == case.tokens as usize,
@@ -387,7 +1551,7 @@ fn validate_case(
             ),
         "incorrect generated token hash"
     );
-    for step in 0..case.tokens + u32::from(trailing) {
+    for step in 0..case.tokens {
         let stage = logits_stage(step);
         let value = &outputs[&stage].value;
         ensure!(
@@ -426,25 +1590,17 @@ fn validate_case(
                 > 1,
             "{stage}: constant logits"
         );
-        if step < case.tokens {
-            let edge = &outputs[&format!("decode_select_t{step}")].value;
-            ensure!(
-                edge["generated_token_ids"] == json!(&result.generated_token_ids[..=step as usize]),
-                "step {step}: incorrect selected-token history"
-            );
-            ensure!(
-                edge["token_id"] == json!(best.unwrap().0)
-                    && edge["value"] == json!(best.unwrap().1),
-                "step {step}: selection does not match full-vector argmax"
-            );
-        }
+        let edge = &outputs[&format!("decode_select_t{step}")].value;
+        ensure!(
+            edge["generated_token_ids"] == json!(&result.generated_token_ids[..=step as usize]),
+            "step {step}: incorrect selected-token history"
+        );
+        ensure!(
+            edge["token_id"] == json!(best.unwrap().0) && edge["value"] == json!(best.unwrap().1),
+            "step {step}: selection does not match full-vector argmax"
+        );
     }
-    let passes = if trailing {
-        case.tokens
-    } else {
-        case.tokens.saturating_sub(1)
-    };
-    for token in 0..passes {
+    for token in 0..case.tokens.saturating_sub(1) {
         let position = case.input_token_ids.len() as u32 + token;
         for layer in 0..model.shape.num_hidden_layers {
             let stage = format!("decode_range_t{token}_l{layer}");
@@ -495,19 +1651,17 @@ fn has_nonzero_payload(value: &Value) -> bool {
     }
 }
 
+/// Layers 2 and 3 of every range borrow layers 0 and 1 of the same range.
 fn validate_donor_bindings(
     dir: &Path,
     outputs: &BTreeMap<String, Boundary>,
-    tokens: u32,
+    shape: RangedShape,
 ) -> Result<()> {
-    for pass in 0..=tokens {
-        let stage = |layer| {
-            if pass == 0 {
-                format!("prefill_range_l{layer}")
-            } else {
-                format!("decode_range_t{}_l{layer}", pass - 1)
-            }
-        };
+    let ranges = (0..shape.prompt_ranges)
+        .map(|j| format!("p{j}"))
+        .chain((0..shape.claimed_ranges).map(|k| format!("c{k}")));
+    for range in ranges {
+        let stage = |layer| format!("range_{range}_l{layer}");
         for layer in [2, 3] {
             let input: Value = read_json(&dir.join(stage(layer)).join("input_manifest.json"))?;
             ensure!(
@@ -537,7 +1691,7 @@ fn validate_model_bundle(
             && shape.num_attention_heads == 4
             && shape.num_key_value_heads == 2
             && shape.head_dim == 32
-            && shape.hidden_size_per_layer_input == 8
+            && shape.hidden_size_per_layer_input == 32
             && shape.sliding_window == 16
             && shape.num_kv_shared_layers == 2
             && shape.vocab_size == 512
@@ -552,17 +1706,21 @@ fn validate_model_bundle(
             "mlp.up_proj.weight",
             "mlp.down_proj.weight",
         ] {
-            let values =
-                weights.values(&format!("model.language_model.layers.{layer}.{tensor}"))?;
+            let matrix =
+                weights.q8_matrix(&format!("model.language_model.layers.{layer}.{tensor}"))?;
+            let bytes = matrix.rows() * det_num::q8::row_bytes(matrix.cols()).unwrap_or(0);
             ensure!(
-                values.len() == 128 * 512
-                    && values.len() * 4 > 196_608
-                    && (values.len() * 4) % 196_608 != 0,
-                "model bundle does not cross a page with a partial tail"
+                matrix.rows() * matrix.cols() == 128 * 2048
+                    && bytes > 195_840
+                    && bytes % 195_840 != 0,
+                "model bundle does not cross a Q8_0 page with a partial tail"
             );
+            let values = (0..matrix.rows())
+                .map(|row| matrix.row_dequantized(row))
+                .collect::<Result<Vec<_>>>()?
+                .concat();
             ensure!(
-                values.iter().all(|v| *v != 0)
-                    && values.iter().any(|v| *v < 0)
+                values.iter().any(|v| *v < 0)
                     && values.iter().any(|v| *v > 0)
                     && values.iter().any(|v| v % 65536 != 0),
                 "model bundle weights are not dense signed fractional values"
@@ -585,17 +1743,17 @@ fn validate_model_bundle(
                 .as_array()
                 .context("missing imported matrix pages")?;
             ensure!(
-                matrix["page_size"] == json!(196_608)
-                    && matrix["byte_len"] == json!(262_144)
+                matrix["page_size"] == json!(195_840)
+                    && matrix["byte_len"] == json!(278_528)
                     && pages.len() == 2
-                    && pages[0]["bytes"].as_str().map(str::len) == Some(196_608 * 2)
-                    && pages[1]["bytes"].as_str().map(str::len) == Some(65_536 * 2),
+                    && pages[0]["bytes"].as_str().map(str::len) == Some(195_840 * 2)
+                    && pages[1]["bytes"].as_str().map(str::len) == Some(82_688 * 2),
                 "layer{layer}.{name}: imported matrix must contain a full page and a partial tail"
             );
         }
         let params = &value["params"];
         ensure!(
-            params["ffn_size"] == json!(512) && params["ple_width"] == json!(8),
+            params["ffn_size"] == json!(2048) && params["ple_width"] == json!(32),
             "incorrect imported FFN or PLE shape"
         );
         ensure!(
@@ -646,6 +1804,8 @@ pub fn worker(spec: &Path, output: &Path, direct: bool) -> Result<()> {
             run_spec_path: spec.to_path_buf(),
             current_exe: std::env::current_exe()?,
             staged_backend: StagedExecutionBackend::InProcess,
+            claimed_token_ids: None,
+            direct_output_ids: None,
         })?;
         write_json(
             &output.join("result.json"),
@@ -671,7 +1831,6 @@ fn command(program: impl AsRef<std::ffi::OsStr>, root: &Path) -> Command {
     // Do not inherit debugging instrumentation or cache-disable settings into
     // the canonical gate. Each worker installs its own stage input environment.
     for name in [
-        "DIRECT_INFER_COMPARE_TRACE",
         "DIRECT_INFER_TRACE_COMMITMENTS",
         "STAGED_INFER_MATERIALIZATION_CACHE_ENTRIES",
         "DIRECT_NATIVE_MATERIALIZATION_CACHE_ENTRIES",

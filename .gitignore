@@ -20,3 +20,6 @@ profile.json
 tile_census.json
 cfs.json
 *.log
+
+# Local rollback copies of regenerated model imports.
+/runtime/model-artifact-backups/

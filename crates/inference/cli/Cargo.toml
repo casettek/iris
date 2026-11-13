@@ -9,20 +9,34 @@ name = "iris"
 path = "src/main.rs"
 
 [features]
-# Needs `raster_analysis::replay_profile` and `cargo raster` replay-profile
-# flags, which only exist on Raster's `risc0-estimator` branch.
-replay-profile = ["dep:raster-analysis"]
+# NVIDIA acceleration for local RISC0 proof generation.
+cuda = ["risc0-zkvm/cuda", "raster-backend-risc0/cuda"]
+# NVIDIA acceleration for native inference: the layer's Q8_0 matrix products run
+# on the GPU with results identical to the CPU's. Independent of `cuda`.
+gpu-kernels = ["direct-infer/gpu-kernels", "staged-infer/gpu-kernels"]
+# Optional standalone stage profiling command; challenge profiling is always available.
+replay-profile = []
 
 [dependencies]
+raster = { path = "../../../../raster/crates/raster" }
+sequence-check = { path = "../../../raster-stages/sequence-check" }
+raster-core = { path = "../../../../raster/crates/raster-core" }
+raster-prover = { path = "../../../../raster/crates/raster-prover" }
+raster-compiler = { path = "../../../../raster/crates/raster-compiler" }
+raster-backend = { path = "../../../../raster/crates/raster-backend" }
+raster-backend-risc0 = { path = "../../../../raster/crates/raster-backend-risc0" }
+risc0-zkvm = { version = "3.0", default-features = false, features = ["prove", "std"] }
+postcard = { version = "1", features = ["alloc"] }
 anyhow = "1.0"
 clap = { version = "4.5", features = ["derive"] }
 direct-infer = { path = "../direct" }
+det-num = { path = "../../det-num" }
 staged-infer = { path = "../staged" }
 hex = "0.4"
 inference-artifacts = { path = "../artifacts" }
 model-import = { path = "../../model/import" }
 raster-runtime = { path = "../../../../raster/crates/raster-runtime" }
-raster-analysis = { path = "../../../../raster/crates/raster-analysis", optional = true }
+raster-analysis = { path = "../../../../raster/crates/raster-analysis" }
 run-prep = { path = "../../model/run-prep" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
@@ -32,4 +46,5 @@ toml = "0.8"
 
 [dev-dependencies]
 postcard = { version = "1", default-features = false, features = ["alloc"] }
-raster = { path = "../../../../raster/crates/raster" }
+
+model-identity = { path = "../../model/identity" }

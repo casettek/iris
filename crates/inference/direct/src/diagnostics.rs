@@ -1,8 +1,7 @@
 //! Opt-in canonical boundaries; ordinary inference does not serialize them.
-use std::collections::{BTreeMap, BTreeSet};
-use std::path::PathBuf;
+use std::collections::BTreeSet;
 
-use anyhow::{bail, ensure, Context, Result};
+use anyhow::{bail, ensure, Result};
 use inference_artifacts::InferenceRunReport;
 use serde::Serialize;
 
@@ -51,7 +50,6 @@ fn decode_pass_names(layers: u32, token: u32) -> Vec<String> {
 pub(crate) struct DirectTrace {
     print: bool,
     collect: bool,
-    expected: Option<BTreeMap<String, String>>,
     required: BTreeSet<String>,
     seen: BTreeSet<String>,
     pub records: Vec<DirectBoundaryRecord>,
@@ -59,35 +57,15 @@ pub(crate) struct DirectTrace {
 
 impl DirectTrace {
     pub fn new(collect: bool) -> Result<Self> {
-        let expected = std::env::var_os("DIRECT_INFER_COMPARE_TRACE")
-            .map(|path| {
-                let path = PathBuf::from(path);
-                let trace = inference_artifacts::read_checkpoint_trace(&path)
-                    .with_context(|| format!("failed to read {}", path.display()))?;
-                let mut expected = BTreeMap::new();
-                for checkpoint in trace.checkpoints {
-                    ensure!(
-                        expected
-                            .insert(checkpoint.stage.clone(), checkpoint.output_commitment)
-                            .is_none(),
-                        "duplicate reference boundary {}",
-                        checkpoint.stage
-                    );
-                }
-                Ok::<_, anyhow::Error>(expected)
-            })
-            .transpose()?;
         let print = std::env::var("DIRECT_INFER_TRACE_COMMITMENTS")
             .map(|value| !value.eq_ignore_ascii_case("off") && value != "0")
-            .unwrap_or(false)
-            || expected.is_some();
+            .unwrap_or(false);
         if print || collect {
             raster::init();
         }
         Ok(Self {
             print,
             collect,
-            expected,
             required: BTreeSet::new(),
             seen: BTreeSet::new(),
             records: Vec::new(),
@@ -98,28 +76,18 @@ impl DirectTrace {
         self.print || self.collect
     }
 
-    pub fn configure(&mut self, layers: u32, tokens: u32, tokenizer_repeats: u32) -> Result<()> {
-        if !self.enabled() {
-            return Ok(());
+    pub fn configure(&mut self, layers: u32, tokens: u32) {
+        if self.enabled() {
+            self.required = boundary_names(layers, tokens).into_iter().collect();
         }
-        self.required = boundary_names(layers, tokens).into_iter().collect();
-        if let Some(expected) = &self.expected {
-            // A checkpointed chain includes the unused pass following its last
-            // selection. It must be present in the reference, but direct mode
-            // must not execute it just to satisfy diagnostics.
-            let mut reference_names = self.required.clone();
-            reference_names.insert("prompt_merge_seed".into());
-            reference_names.extend((0..tokenizer_repeats).map(|b| format!("prompt_merge_b{b}")));
-            if tokens > 0 {
-                reference_names.extend(decode_pass_names(layers, tokens - 1));
-            }
-            check_names(
-                &reference_names,
-                &expected.keys().cloned().collect(),
-                "reference",
-            )?;
+    }
+
+    pub fn stop_at_eos(&mut self, layers: u32, generated_tokens: u32) {
+        if self.enabled() {
+            self.required = boundary_names(layers, generated_tokens)
+                .into_iter()
+                .collect();
         }
-        Ok(())
     }
 
     pub fn record<T: Serialize>(&mut self, stage: &str, value: &T) -> Result<()> {
@@ -135,11 +103,6 @@ impl DirectTrace {
             "duplicate direct boundary {stage}"
         );
         let (output_bytes, output_index, output_commitment) = raster::encode_raster_value(value)?;
-        if let Some(expected) = &self.expected {
-            let reference = expected.get(stage).context("missing reference boundary")?;
-            ensure!(reference == &output_commitment,
-                "direct-infer boundary {stage}: MISMATCH expected={reference} actual={output_commitment}");
-        }
         if self.print {
             eprintln!("direct-infer trace {stage}: structural={output_commitment}");
         }
@@ -176,64 +139,27 @@ fn check_names(required: &BTreeSet<String>, actual: &BTreeSet<String>, label: &s
 mod tests {
     use super::*;
 
-    fn trace() -> DirectTrace {
-        DirectTrace {
+    #[test]
+    fn inventory_has_no_pass_after_the_last_selection() {
+        let names = boundary_names(4, 8);
+        assert_eq!(names.len(), 91);
+        assert!(names.contains(&String::from("decode_range_t6_l3")));
+        assert!(!names.contains(&String::from("decode_embed_t7")));
+    }
+
+    #[test]
+    fn missing_duplicate_and_unexpected_boundaries_fail() {
+        let mut trace = DirectTrace {
             print: false,
             collect: true,
-            expected: None,
             required: BTreeSet::new(),
             seen: BTreeSet::new(),
             records: Vec::new(),
-        }
-    }
-
-    #[test]
-    fn inventory_and_trailing_pass_are_explicit() {
-        let mut trace = trace();
-        let mut names = boundary_names(4, 8);
-        assert_eq!(names.len(), 91);
-        names.extend(decode_pass_names(4, 7));
-        assert_eq!(names.len(), 101);
-        names.push("prompt_merge_seed".into());
-        trace.expected = Some(
-            names
-                .into_iter()
-                .map(|name| (name, String::new()))
-                .collect(),
-        );
-        trace.configure(4, 8, 0).unwrap();
-        trace
-            .expected
-            .as_mut()
-            .unwrap()
-            .remove("decode_range_t6_l3");
-        assert!(trace
-            .configure(4, 8, 0)
-            .unwrap_err()
-            .to_string()
-            .contains("missing reference"));
-    }
-
-    #[test]
-    fn missing_duplicate_unexpected_and_mismatched_boundaries_fail() {
-        let mut trace = trace();
-        trace.configure(4, 1, 0).unwrap();
+        };
+        trace.configure(4, 1);
         assert!(trace.finish().is_err());
         assert!(trace.record("unknown", &1u32).is_err());
         trace.record("prompt_prepare", &1u32).unwrap();
         assert!(trace.record("prompt_prepare", &1u32).is_err());
-        trace.expected = Some(BTreeMap::from([("input_embedding".into(), "wrong".into())]));
-        assert!(trace
-            .record("input_embedding", &1u32)
-            .unwrap_err()
-            .to_string()
-            .contains("MISMATCH"));
-    }
-
-    #[test]
-    fn empty_reference_is_not_a_disabled_comparison() {
-        let mut trace = trace();
-        trace.expected = Some(BTreeMap::new());
-        assert!(trace.configure(4, 1, 0).is_err());
     }
 }

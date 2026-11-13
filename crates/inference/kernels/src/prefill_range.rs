@@ -1,5 +1,7 @@
+use crate::weight_budget::WeightBudget;
 use std::collections::{BTreeMap, VecDeque};
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 use anyhow::{bail, Result};
 use det_num::ops::{attention_softmax, rope_rotate_pairs_in_place};
@@ -8,8 +10,8 @@ use raster::List;
 use rayon::prelude::*;
 
 use crate::tensor::{
-    dot_bits, linear_slab, mac_weighted_value, pack_i32_page, requantize_acc, unpack_page_i32s,
-    Matrix, Slab,
+    dot_bits, linear_slab_from_source, mac_weighted_value, pack_i32_page, requantize_acc,
+    unpack_page_i32s, Matrix, MatrixSource, Q8Matrix, Slab,
 };
 use crate::MaterializationCacheKey;
 use ::prefill_range::input::{
@@ -30,6 +32,7 @@ pub struct PrefillRangeDirectInputs<'a> {
 pub struct PrefillRangeWeightCache {
     state: Mutex<PrefillRangeWeightCacheState>,
     capacity: usize,
+    budget: Option<Arc<WeightBudget>>,
 }
 
 #[derive(Default)]
@@ -48,6 +51,7 @@ impl Default for PrefillRangeWeightCache {
         Self {
             state: Mutex::new(PrefillRangeWeightCacheState::default()),
             capacity,
+            budget: None,
         }
     }
 }
@@ -80,38 +84,77 @@ pub fn run_prefill_range_direct_with_weight_cache(
     weight_cache: Option<&PrefillRangeWeightCache>,
 ) -> Result<ActivationSequence> {
     let params = validate_layer_params(&inputs.layer.params)?;
-    let weights = match (weight_cache, inputs.layer_cache_key) {
-        (Some(cache), Some(key)) => cache.get_or_prepare(inputs.layer, &params, key)?,
-        _ => Arc::new(LayerWeights::from_layer(inputs.layer, &params)?),
-    };
-    let input_rows = activation_rows(inputs.activations, params.hidden_size as usize)?;
-
-    if input_rows.rows() == 0 {
+    let mut checked_model = inputs.activations.model.layer(
+        params.layer_idx,
+        &inputs.ple.model,
+        &inputs.prior_kv.model,
+        &inputs.donor_a_kv.model,
+        &inputs.donor_b_kv.model,
+        params.kv_donor_layer,
+        params.donor_a_layer,
+        params.donor_b_layer,
+    );
+    checked_model.validate_rows(
+        inputs.activations.start_position,
+        inputs.activations.rows.len() as u64,
+    );
+    let mut coverage =
+        ::prefill_range::cache_coverage(&inputs.prior_kv.model, params.sliding_window);
+    for key in inputs.prior_kv.kv.iter() {
+        ::prefill_range::consume_cache_position(&mut coverage, key.position);
+    }
+    checked_model = ::prefill_range::validate_cache_coverage(checked_model, coverage);
+    checked_model = ::prefill_range::validate_aux_coverage(
+        checked_model,
+        inputs.ple.layer_idx,
+        inputs.ple.rows.len() as u64,
+        inputs.activations.rows.len() as u64,
+    );
+    if checked_model.execution_fault != 0 && !checked_model.execution.as_slice().is_empty() {
         return Ok(ActivationSequence {
+            model: checked_model,
             rows: List::new(),
             errors: List::new(),
-            kv: List::new(),
+            kv: List::from(output_kv(
+                inputs.prior_kv.kv.as_slice(),
+                &[],
+                inputs.activations.start_position,
+                params.sliding_window,
+            )),
             start_position: inputs.activations.start_position,
         });
     }
 
-    let (queries, own_keys) = project_tokens(
-        &input_rows,
-        &weights,
-        &params,
-        inputs.activations.start_position,
-    )?;
-    let ple_rows = inputs.ple.rows.as_slice();
-    let output_rows = attend_tokens(
-        &queries,
+    let weights = match (weight_cache, inputs.layer_cache_key) {
+        (Some(cache), Some(key)) => cache.get_or_prepare(inputs.layer, &params, key)?,
+        _ => Arc::new(LayerWeights::from_layer(inputs.layer, &params)?),
+    };
+    let computed = layer_rows_and_keys(
+        inputs.activations,
         inputs.prior_kv.kv.as_slice(),
-        &own_keys,
         inputs.donor_a_kv.kv.as_slice(),
         inputs.donor_b_kv.kv.as_slice(),
-        ple_rows,
-        &weights,
+        inputs.ple.rows.as_slice(),
+        &weights.matrices(),
         &params,
     )?;
+
+    // A range with no rows attends to nothing but still carries the cache, as
+    // the stage's push-only K/V site does: the next range's keys come through it.
+    let Some((output_rows, own_keys)) = computed else {
+        return Ok(ActivationSequence {
+            model: checked_model,
+            rows: List::new(),
+            errors: List::new(),
+            kv: List::from(output_kv(
+                inputs.prior_kv.kv.as_slice(),
+                &[],
+                inputs.activations.start_position,
+                params.sliding_window,
+            )),
+            start_position: inputs.activations.start_position,
+        });
+    };
     let output_kv = output_kv(
         inputs.prior_kv.kv.as_slice(),
         &own_keys,
@@ -120,6 +163,7 @@ pub fn run_prefill_range_direct_with_weight_cache(
     );
 
     Ok(ActivationSequence {
+        model: checked_model,
         rows: List::from(output_rows),
         errors: List::new(),
         kv: List::from(output_kv),
@@ -128,11 +172,19 @@ pub fn run_prefill_range_direct_with_weight_cache(
 }
 
 impl PrefillRangeWeightCache {
+    pub fn with_budget(budget: Arc<WeightBudget>) -> Self {
+        Self {
+            state: Mutex::new(PrefillRangeWeightCacheState::default()),
+            capacity: usize::MAX,
+            budget: Some(budget),
+        }
+    }
     #[cfg(test)]
     fn with_capacity(capacity: usize) -> Self {
         Self {
             state: Mutex::new(PrefillRangeWeightCacheState::default()),
             capacity,
+            budget: None,
         }
     }
 
@@ -151,19 +203,40 @@ impl PrefillRangeWeightCache {
             params: LayerWeightCacheKey::from(params),
         };
         if let Some(weights) = self.state.lock().unwrap().weights.get(&key).cloned() {
+            if let Some(budget) = &self.budget {
+                budget.hit();
+            }
             return Ok(weights);
         }
+        if let Some(budget) = &self.budget {
+            budget.miss();
+        }
+        let started = Instant::now();
         let weights = Arc::new(LayerWeights::from_layer(layer, params)?);
+        if let Some(budget) = &self.budget {
+            budget.prepared(started.elapsed().as_nanos());
+        }
         let mut state = self.state.lock().unwrap();
         if let Some(existing) = state.weights.get(&key).cloned() {
             return Ok(existing);
+        }
+        if let Some(budget) = &self.budget {
+            let bytes = weights
+                .retained_bytes()
+                .saturating_add(key.materialization.retained_bytes())
+                .saturating_add(std::mem::size_of::<LayerWeightCacheKey>() + 4096);
+            if !budget.reserve(bytes) {
+                return Ok(weights);
+            }
         }
         if state.weights.len() >= self.capacity {
             if let Some(evicted) = state.order.pop_front() {
                 state.weights.remove(&evicted);
             }
         }
-        state.order.push_back(key.clone());
+        if self.budget.is_none() {
+            state.order.push_back(key.clone());
+        }
         state.weights.insert(key, weights.clone());
         Ok(weights)
     }
@@ -203,18 +276,94 @@ struct QueryState {
 }
 
 struct LayerWeights {
-    w_q: Matrix,
-    w_k: Matrix,
-    w_v: Matrix,
-    w_o: Matrix,
-    w_gate: Matrix,
-    w_up: Matrix,
-    w_down: Matrix,
+    w_q: Q8Matrix,
+    w_k: Q8Matrix,
+    w_v: Q8Matrix,
+    w_o: Q8Matrix,
+    w_gate: Q8Matrix,
+    w_up: Q8Matrix,
+    w_down: Q8Matrix,
     ple_input_gate: Matrix,
     ple_layer_projection: Matrix,
 }
 
+/// One layer's matrices, wherever their bytes live: prepared in memory for
+/// the staged pass, memory-mapped for direct inference.
+pub struct LayerMatrices<'a, Q: MatrixSource, D: MatrixSource> {
+    pub w_q: &'a Q,
+    pub w_k: &'a Q,
+    pub w_v: &'a Q,
+    pub w_o: &'a Q,
+    pub w_gate: &'a Q,
+    pub w_up: &'a Q,
+    pub w_down: &'a Q,
+    pub ple_input_gate: &'a D,
+    pub ple_layer_projection: &'a D,
+}
+
+/// The activation rows and keys one layer produces for one range, or `None`
+/// for a range with no rows. The staged pass and direct inference both
+/// compute a layer here, so the two cannot disagree.
+pub fn layer_rows_and_keys<Q: MatrixSource, D: MatrixSource>(
+    activations: &ActivationSequence,
+    prior_keys: &[KeyRow],
+    donor_a_keys: &[KeyRow],
+    donor_b_keys: &[KeyRow],
+    ple_rows: &[PleRow],
+    weights: &LayerMatrices<'_, Q, D>,
+    params: &LayerParams,
+) -> Result<Option<(Vec<ActivationRow>, Vec<KeyRow>)>> {
+    let input_rows = activation_rows(activations, params.hidden_size as usize)?;
+    if input_rows.rows() == 0 {
+        return Ok(None);
+    }
+    let (queries, own_keys) =
+        project_tokens(&input_rows, weights, params, activations.start_position)?;
+    let output_rows = attend_tokens(
+        &queries,
+        prior_keys,
+        &own_keys,
+        donor_a_keys,
+        donor_b_keys,
+        ple_rows,
+        weights,
+        params,
+    )?;
+    Ok(Some((output_rows, own_keys)))
+}
+
 impl LayerWeights {
+    fn matrices(&self) -> LayerMatrices<'_, Q8Matrix, Matrix> {
+        LayerMatrices {
+            w_q: &self.w_q,
+            w_k: &self.w_k,
+            w_v: &self.w_v,
+            w_o: &self.w_o,
+            w_gate: &self.w_gate,
+            w_up: &self.w_up,
+            w_down: &self.w_down,
+            ple_input_gate: &self.ple_input_gate,
+            ple_layer_projection: &self.ple_layer_projection,
+        }
+    }
+
+    fn retained_bytes(&self) -> usize {
+        std::mem::size_of::<Self>()
+            + [
+                &self.w_q,
+                &self.w_k,
+                &self.w_v,
+                &self.w_o,
+                &self.w_gate,
+                &self.w_up,
+                &self.w_down,
+            ]
+            .iter()
+            .map(|m| m.allocated_bytes())
+            .sum::<usize>()
+            + self.ple_input_gate.allocated_bytes()
+            + self.ple_layer_projection.allocated_bytes()
+    }
     fn from_layer(layer: &TransformerLayer, params: &LayerParams) -> Result<Self> {
         let hidden = params.hidden_size as usize;
         let ffn = params.ffn_size as usize;
@@ -222,13 +371,13 @@ impl LayerWeights {
         let kv_len = params.num_kv_heads as usize * params.head_dim as usize;
         let ple_width = params.ple_width as usize;
         Ok(Self {
-            w_q: Matrix::from_region("w_q", &layer.w_q, q_len, hidden)?,
-            w_k: Matrix::from_region("w_k", &layer.w_k, kv_len, hidden)?,
-            w_v: Matrix::from_region("w_v", &layer.w_v, kv_len, hidden)?,
-            w_o: Matrix::from_region("w_o", &layer.w_o, hidden, q_len)?,
-            w_gate: Matrix::from_region("w_gate", &layer.w_gate, ffn, hidden)?,
-            w_up: Matrix::from_region("w_up", &layer.w_up, ffn, hidden)?,
-            w_down: Matrix::from_region("w_down", &layer.w_down, hidden, ffn)?,
+            w_q: Q8Matrix::from_region("w_q", &layer.w_q, q_len, hidden)?,
+            w_k: Q8Matrix::from_region("w_k", &layer.w_k, kv_len, hidden)?,
+            w_v: Q8Matrix::from_region("w_v", &layer.w_v, kv_len, hidden)?,
+            w_o: Q8Matrix::from_region("w_o", &layer.w_o, hidden, q_len)?,
+            w_gate: Q8Matrix::from_region("w_gate", &layer.w_gate, ffn, hidden)?,
+            w_up: Q8Matrix::from_region("w_up", &layer.w_up, ffn, hidden)?,
+            w_down: Q8Matrix::from_region("w_down", &layer.w_down, hidden, ffn)?,
             ple_input_gate: Matrix::from_region(
                 "ple_input_gate",
                 &layer.ple_input_gate,
@@ -345,9 +494,9 @@ fn activation_rows(activations: &ActivationSequence, hidden: usize) -> Result<In
     })
 }
 
-fn project_tokens(
+fn project_tokens<Q: MatrixSource, D: MatrixSource>(
     rows: &InputRows,
-    weights: &LayerWeights,
+    weights: &LayerMatrices<'_, Q, D>,
     params: &LayerParams,
     start_position: u32,
 ) -> Result<(Vec<QueryState>, Vec<KeyRow>)> {
@@ -356,22 +505,43 @@ fn project_tokens(
     let k_norm = unpack_page_i32s(&params.k_norm)?;
     let hidden = params.hidden_size as usize;
     let normed = normed_input_slab(rows, &norm_input, params.norm_eps, hidden)?;
-    let mut q = linear_slab(&normed, &weights.w_q)?;
-    let mut k = linear_slab(&normed, &weights.w_k)?;
-    let mut v = linear_slab(&normed, &weights.w_v)?;
+    let mut q = linear_slab_from_source(&normed, weights.w_q)?;
+    let mut k = linear_slab_from_source(&normed, weights.w_k)?;
+    let mut v = linear_slab_from_source(&normed, weights.w_v)?;
 
     let head_dim = params.head_dim as usize;
-    for row_idx in 0..rows.rows() {
-        // RoPE follows the absolute Raster cursor, including during decode.
-        finish_qkv_row(
-            start_position + row_idx as u32,
-            q.row_mut(row_idx),
-            k.row_mut(row_idx),
-            v.row_mut(row_idx),
-            &q_norm,
-            &k_norm,
-            params,
-        )?;
+    // RoPE follows the absolute Raster cursor, including during decode. A row
+    // is finished from its own values only, so rows run in parallel.
+    let (q_cols, k_cols, v_cols) = (q.cols().max(1), k.cols().max(1), v.cols().max(1));
+    if crate::tensor::use_parallel() {
+        q.as_flat_mut()
+            .par_chunks_mut(q_cols)
+            .zip(k.as_flat_mut().par_chunks_mut(k_cols))
+            .zip(v.as_flat_mut().par_chunks_mut(v_cols))
+            .enumerate()
+            .try_for_each(|(row_idx, ((q_row, k_row), v_row))| {
+                finish_qkv_row(
+                    start_position + row_idx as u32,
+                    q_row,
+                    k_row,
+                    v_row,
+                    &q_norm,
+                    &k_norm,
+                    params,
+                )
+            })?;
+    } else {
+        for row_idx in 0..rows.rows() {
+            finish_qkv_row(
+                start_position + row_idx as u32,
+                q.row_mut(row_idx),
+                k.row_mut(row_idx),
+                v.row_mut(row_idx),
+                &q_norm,
+                &k_norm,
+                params,
+            )?;
+        }
     }
 
     let mut queries = Vec::with_capacity(rows.rows());
@@ -476,67 +646,29 @@ fn apply_rope(head: &mut [i32], params: &LayerParams, position: u32) {
     }
 }
 
-fn attend_tokens(
+/// Tokens attended together. Bounds the working memory of a pass over a long
+/// prompt; the gate and up products hold `ffn_size` values per token.
+const ATTEND_CHUNK_ROWS: usize = 256;
+
+fn attend_tokens<Q: MatrixSource, D: MatrixSource>(
     queries: &[QueryState],
     prior_keys: &[KeyRow],
     own_keys: &[KeyRow],
     donor_a_keys: &[KeyRow],
     donor_b_keys: &[KeyRow],
     ple_rows: &[PleRow],
-    weights: &LayerWeights,
+    weights: &LayerMatrices<'_, Q, D>,
     params: &LayerParams,
 ) -> Result<Vec<ActivationRow>> {
-    if crate::tensor::use_parallel() {
-        queries
-            .par_iter()
-            .map(|query| {
-                attend_token(
-                    query,
-                    prior_keys,
-                    own_keys,
-                    donor_a_keys,
-                    donor_b_keys,
-                    ple_rows,
-                    weights,
-                    params,
-                )
-            })
-            .collect()
-    } else {
-        queries
-            .iter()
-            .map(|query| {
-                attend_token(
-                    query,
-                    prior_keys,
-                    own_keys,
-                    donor_a_keys,
-                    donor_b_keys,
-                    ple_rows,
-                    weights,
-                    params,
-                )
-            })
-            .collect()
-    }
-}
-
-fn attend_token(
-    query: &QueryState,
-    prior_keys: &[KeyRow],
-    own_keys: &[KeyRow],
-    donor_a_keys: &[KeyRow],
-    donor_b_keys: &[KeyRow],
-    ple_rows: &[PleRow],
-    weights: &LayerWeights,
-    params: &LayerParams,
-) -> Result<ActivationRow> {
-    let context = if params.kv_donor_layer == -1 {
-        attention_context(query, &[prior_keys, own_keys], params)?
+    let own_sources = [prior_keys, own_keys];
+    let donor_a_sources = [donor_a_keys];
+    let donor_b_sources = [donor_b_keys];
+    let key_sources: &[&[KeyRow]] = if params.kv_donor_layer == -1 {
+        &own_sources
     } else if params.kv_donor_layer == params.donor_a_layer {
-        attention_context(query, &[donor_a_keys], params)?
+        &donor_a_sources
     } else if params.kv_donor_layer == params.donor_b_layer {
-        attention_context(query, &[donor_b_keys], params)?
+        &donor_b_sources
     } else {
         bail!(
             "layer {} borrows K/V from {}, outside committed candidates {} and {}",
@@ -546,25 +678,78 @@ fn attend_token(
             params.donor_b_layer
         );
     };
-    let attn_proj = weights.w_o.matvec(&context)?;
-    let residual = attn_residual(query, attn_proj, params)?;
-    let ff_in = pre_ff_norm(&residual, params)?;
-    let gate = weights.w_gate.matvec(&ff_in)?;
-    let up = weights.w_up.matvec(&ff_in)?;
-    let gated = gelu_mul(gate, up)?;
-    let ff = weights.w_down.matvec(&gated)?;
-    let xs = finish_mlp(&residual, &ff_in, ff, params)?;
-    let ple_row = ple_rows
-        .get(query.local as usize)
-        .ok_or_else(|| anyhow::anyhow!("missing PLE row at local position {}", query.local))?;
-    let ple_gate = weights.ple_input_gate.matvec(&xs)?;
-    let ple_gated = ple_gate_mul(ple_gate, ple_row)?;
-    let projected = weights.ple_layer_projection.matvec(&ple_gated)?;
-    let values = finish_layer(&xs, projected, params)?;
-    Ok(ActivationRow {
-        token_id: query.token_id,
-        values: pack_i32_page(&values),
-    })
+    let mut output = Vec::with_capacity(queries.len());
+    for chunk in queries.chunks(ATTEND_CHUNK_ROWS) {
+        attend_chunk(chunk, key_sources, ple_rows, weights, params, &mut output)?;
+    }
+    Ok(output)
+}
+
+/// One token's layer, step by step, for a chunk of tokens at once: each step
+/// runs for every token before the next begins, so each weight matrix is
+/// applied to the whole chunk in one product. A token's values never depend
+/// on another token's within a step.
+fn attend_chunk<Q: MatrixSource, D: MatrixSource>(
+    queries: &[QueryState],
+    key_sources: &[&[KeyRow]],
+    ple_rows: &[PleRow],
+    weights: &LayerMatrices<'_, Q, D>,
+    params: &LayerParams,
+    output: &mut Vec<ActivationRow>,
+) -> Result<()> {
+    let count = queries.len();
+    let contexts = map_rows(count, |idx| {
+        attention_context(&queries[idx], key_sources, params)
+    })?;
+    let attn_proj = linear_slab_from_source(&contexts, weights.w_o)?;
+    let residual = map_rows(count, |idx| {
+        attn_residual(&queries[idx], attn_proj.row(idx).to_vec(), params)
+    })?;
+    let ff_in = map_rows(count, |idx| pre_ff_norm(residual.row(idx), params))?;
+    let gate = linear_slab_from_source(&ff_in, weights.w_gate)?;
+    let up = linear_slab_from_source(&ff_in, weights.w_up)?;
+    let gated = map_rows(count, |idx| {
+        gelu_mul(gate.row(idx).to_vec(), up.row(idx).to_vec())
+    })?;
+    let ff = linear_slab_from_source(&gated, weights.w_down)?;
+    let xs = map_rows(count, |idx| {
+        finish_mlp(
+            residual.row(idx),
+            ff_in.row(idx),
+            ff.row(idx).to_vec(),
+            params,
+        )
+    })?;
+    let ple_gate = linear_slab_from_source(&xs, weights.ple_input_gate)?;
+    let ple_gated = map_rows(count, |idx| {
+        let local = queries[idx].local;
+        let ple_row = ple_rows
+            .get(local as usize)
+            .ok_or_else(|| anyhow::anyhow!("missing PLE row at local position {local}"))?;
+        ple_gate_mul(ple_gate.row(idx).to_vec(), ple_row)
+    })?;
+    let projected = linear_slab_from_source(&ple_gated, weights.ple_layer_projection)?;
+    for (idx, query) in queries.iter().enumerate() {
+        let values = finish_layer(xs.row(idx), projected.row(idx).to_vec(), params)?;
+        output.push(ActivationRow {
+            token_id: query.token_id,
+            values: pack_i32_page(&values),
+        });
+    }
+    Ok(())
+}
+
+/// One row per token from a per-token step, in token order.
+fn map_rows(count: usize, step: impl Fn(usize) -> Result<Vec<i32>> + Sync) -> Result<Slab> {
+    let rows = if crate::tensor::use_parallel() {
+        (0..count)
+            .into_par_iter()
+            .map(&step)
+            .collect::<Result<Vec<_>>>()?
+    } else {
+        (0..count).map(&step).collect::<Result<Vec<_>>>()?
+    };
+    Slab::from_rows(rows)
 }
 
 fn attention_context(
@@ -659,7 +844,9 @@ fn attention_context(
     Ok(acc.into_iter().map(requantize_acc).collect())
 }
 
-fn output_kv(
+/// The keys a range hands to the next one: what the window still holds of
+/// the keys it inherited, then its own.
+pub fn output_kv(
     prior_keys: &[KeyRow],
     own_keys: &[KeyRow],
     start_position: u32,
@@ -777,14 +964,21 @@ mod tests {
     use raster::Bytes;
     use std::sync::Arc;
 
+    /// One `Q8_0` block wide: the smallest width an int8 matrix can have.
+    const N: usize = 32;
+
+    fn ones() -> raster::BytesPage {
+        pack_i32s(&[1 << 16; N])
+    }
+
     fn tiny_params() -> LayerParams {
         LayerParams {
             layer_idx: 0,
-            hidden_size: 2,
-            ffn_size: 2,
+            hidden_size: N as u32,
+            ffn_size: N as u32,
             num_heads: 1,
             num_kv_heads: 1,
-            head_dim: 2,
+            head_dim: N as u32,
             sliding_window: 0,
             attn_scale: 0,
             layer_scalar: 0,
@@ -795,27 +989,37 @@ mod tests {
             kv_donor_layer: -1,
             donor_a_layer: -2,
             donor_b_layer: -3,
-            norm_input: pack_i32s(&[1 << 16, 1 << 16]),
-            norm_post_attn: pack_i32s(&[1 << 16, 1 << 16]),
-            norm_pre_ffw: pack_i32s(&[1 << 16, 1 << 16]),
-            norm_post_ffw: pack_i32s(&[1 << 16, 1 << 16]),
-            q_norm: pack_i32s(&[1 << 16, 1 << 16]),
-            k_norm: pack_i32s(&[1 << 16, 1 << 16]),
-            ple_width: 2,
-            ple_post_norm: pack_i32s(&[1 << 16, 1 << 16]),
+            norm_input: ones(),
+            norm_post_attn: ones(),
+            norm_pre_ffw: ones(),
+            norm_post_ffw: ones(),
+            q_norm: ones(),
+            k_norm: ones(),
+            ple_width: N as u32,
+            ple_post_norm: ones(),
         }
     }
 
-    fn paged(values: &[i32]) -> Bytes<196_608> {
-        let mut bytes = Vec::with_capacity(values.len() * 4);
-        for value in values {
-            bytes.extend_from_slice(&value.to_le_bytes());
+    /// The `N`-wide identity in Q16.16.
+    fn identity() -> Bytes<184_320> {
+        let bytes: Vec<u8> = (0..N * N)
+            .flat_map(|i| (if i % (N + 1) == 0 { 1 << 16 } else { 0_i32 }).to_le_bytes())
+            .collect();
+        Bytes::<184_320>::paged(bytes).unwrap()
+    }
+
+    /// The `N`-wide identity as `Q8_0`: scale 1.0, a single 1 per row. Exact.
+    fn q8_identity() -> Bytes<195_840> {
+        let mut bytes = Vec::with_capacity(N * 34);
+        for row in 0..N {
+            bytes.extend_from_slice(&0x3c00_u16.to_le_bytes());
+            bytes.extend((0..N).map(|col| u8::from(col == row)));
         }
-        Bytes::<196_608>::paged(bytes).unwrap()
+        Bytes::<195_840>::paged(bytes).unwrap()
     }
 
     fn tiny_layer() -> TransformerLayer {
-        let matrix = paged(&[1 << 16, 0, 0, 1 << 16]);
+        let matrix = q8_identity();
         TransformerLayer {
             params: tiny_params(),
             w_q: matrix.clone(),
@@ -824,9 +1028,9 @@ mod tests {
             w_o: matrix.clone(),
             w_gate: matrix.clone(),
             w_up: matrix.clone(),
-            w_down: matrix.clone(),
-            ple_input_gate: matrix.clone(),
-            ple_layer_projection: matrix,
+            w_down: matrix,
+            ple_input_gate: identity(),
+            ple_layer_projection: identity(),
         }
     }
 
@@ -835,10 +1039,12 @@ mod tests {
         const ONE: i32 = 1 << 16;
         let mut layer = tiny_layer();
         layer.params.rotary_dim = 2;
-        // Identity projections of [ONE, ONE] normalise exactly; these weights
-        // leave the rotary pair [ONE, 0] in both Q and K.
-        layer.params.q_norm = pack_i32s(&[ONE, 0]);
-        layer.params.k_norm = pack_i32s(&[ONE, 0]);
+        // Identity projections of all-ONE rows normalise exactly; these
+        // weights leave the rotary pair [ONE, 0] and zeros in both Q and K.
+        let mut unit = [0; N];
+        unit[0] = ONE;
+        layer.params.q_norm = pack_i32s(&unit);
+        layer.params.k_norm = pack_i32s(&unit);
         let params = &layer.params;
         let weights = LayerWeights::from_layer(&layer, params).unwrap();
 
@@ -847,13 +1053,14 @@ mod tests {
             for row_count in [1, 2] {
                 let rows = InputRows {
                     token_ids: vec![7; row_count],
-                    slab: Slab::from_rows(vec![vec![ONE, ONE]; row_count]).unwrap(),
+                    slab: Slab::from_rows(vec![vec![ONE; N]; row_count]).unwrap(),
                 };
                 let (queries, keys) =
-                    project_tokens(&rows, &weights, params, positions[0]).unwrap();
+                    project_tokens(&rows, &weights.matrices(), params, positions[0]).unwrap();
                 for (local, (query, key)) in queries.iter().zip(&keys).enumerate() {
                     let position = positions[local];
-                    let mut expected = [Act::from_bits(ONE), Act::from_bits(0)];
+                    let mut expected = [Act::from_bits(0); N];
+                    expected[0] = Act::from_bits(ONE);
                     rope_rotate_pairs_in_place(
                         &mut expected,
                         2,
@@ -863,14 +1070,14 @@ mod tests {
                     );
                     let expected = expected.map(|lane| lane.to_bits());
                     if position == 1 {
-                        assert_eq!(expected, [35408, 55146]);
+                        assert_eq!(expected[..2], [35408, 55146]);
                     }
                     assert_eq!(query.position, position);
                     assert_eq!(query.local, local as u32);
                     assert_eq!(key.position, position);
                     assert_eq!(query.q, expected, "Q at position {position}");
                     assert_eq!(unpack_page_i32s(&key.k).unwrap(), expected);
-                    assert_eq!(unpack_page_i32s(&key.v).unwrap(), [ONE, ONE]);
+                    assert_eq!(unpack_page_i32s(&key.v).unwrap(), [ONE; N]);
                 }
             }
         }
@@ -913,5 +1120,40 @@ mod tests {
 
         assert!(Arc::ptr_eq(&first, &second));
         assert_eq!(cache.state.lock().unwrap().weights.len(), 1);
+    }
+
+    #[test]
+    fn byte_budget_separates_preparation_parameters_and_commitments() {
+        let budget = Arc::new(WeightBudget::new(1 << 20));
+        let cache = PrefillRangeWeightCache::with_budget(Arc::clone(&budget));
+        let layer = tiny_layer();
+        let mut params = validate_layer_params(&layer.params).unwrap();
+        let mut key = MaterializationCacheKey {
+            param: "layer".into(),
+            path: "layer.rastered".into(),
+            index_path: "layer.rindex".into(),
+            commitment: "first".into(),
+            type_name: std::any::type_name::<TransformerLayer>(),
+        };
+        let first = cache.get_or_prepare(&layer, &params, &key).unwrap();
+        assert!(Arc::ptr_eq(
+            &first,
+            &cache.get_or_prepare(&layer, &params, &key).unwrap()
+        ));
+        params.layer_idx += 1;
+        assert!(!Arc::ptr_eq(
+            &first,
+            &cache.get_or_prepare(&layer, &params, &key).unwrap()
+        ));
+        key.commitment = "different".into();
+        cache.get_or_prepare(&layer, &params, &key).unwrap();
+        assert_eq!(budget.stats().hits, 1);
+        assert_eq!(budget.stats().misses, 3);
+        assert!(budget.stats().retained_bytes <= budget.stats().budget_bytes);
+        let zero = Arc::new(WeightBudget::new(0));
+        let uncached = PrefillRangeWeightCache::with_budget(Arc::clone(&zero));
+        uncached.get_or_prepare(&layer, &params, &key).unwrap();
+        assert_eq!(zero.stats().retained_bytes, 0);
+        assert_eq!(zero.stats().bypasses, 1);
     }
 }

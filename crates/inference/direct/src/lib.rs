@@ -3,6 +3,7 @@ pub mod diagnostics;
 pub use detwgt;
 pub use diagnostics::{DirectBoundaryRecord, DirectDiagnosticRunReport};
 pub mod executor;
+pub mod generation;
 pub mod model;
 pub mod state;
 pub mod view_kernels;

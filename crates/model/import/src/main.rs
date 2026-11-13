@@ -1,4 +1,10 @@
-//! Import a Gemma model bundle into this chain's committed externals.
+//! Import a model bundle into this chain's committed externals.
+//!
+//! This file is what every model family shares: the command line, the artifact
+//! layout, the tokenizer externals, commitments, the chain template and the
+//! manifest. What is particular to a family (its config, its tensors and how
+//! they become stage externals) is in that family's module; today that is
+//! [`gemma`] alone, and [`bundle_family`] refuses anything else.
 //!
 //! ```sh
 //! cargo run -p model-import -- \
@@ -16,18 +22,26 @@
 
 mod direct_manifest;
 mod externals;
+mod gemma;
+mod mapped_weights;
 
 use externals::*;
+use gemma::*;
+use inference_artifacts::ModelFamily;
 use std::collections::BTreeMap;
 use std::error::Error;
 use std::fs;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 
 /// Q16.16 one.
 const ONE: i32 = 1 << 16;
 
 const INITIAL_PIECES_PLACEHOLDER_COMMITMENT: &str =
     "0000000000000000000000000000000000000000000000000000000000000000";
+
+/// Run preparation replaces every external under this directory with the
+/// run's own prompt pieces and, for teacher-forced runs, claimed output.
+const RUN_PLACEHOLDER_DIR: &str = "target/iris/run-prompt-placeholder";
 
 fn main() {
     if let Err(error) = run_from_env() {
@@ -49,7 +63,7 @@ pub struct ImportConfig {
     /// Rewrite only the tokenizer externals, leaving the weight externals
     /// alone. The weights are ~9 GB and depend on nothing the tokenizer
     /// touches, so a prompt or vocabulary-layout change has no reason to
-    /// re-emit them. Prints only the `prompt_prepare` stage.
+    /// re-emit them. Prints only the `prompt_bind` stage's tokenizer bindings.
     pub only_tokenizer: bool,
     /// Rewrite only the transformer-layer externals (`prefill-range`). Nothing
     /// else depends on `LayerParams`, so a per-layer shape correction has no
@@ -64,9 +78,18 @@ pub struct ImportConfig {
     /// Write only the host-side direct-infer manifest, without regenerating
     /// committed Raster stage externals.
     pub only_direct: bool,
-    /// Leave stage-local input.json and input_manifest.json fixtures untouched.
+    /// Accepted and ignored. Import once wrote input fixtures into a stage's
+    /// directory and this kept them; it writes nothing there now.
     pub no_stage_fixtures: bool,
+    /// Largest teacher-forced range, in prompt tokens or claimed ids. Every
+    /// per-position stage of the teacher-forced chain covers at most this many
+    /// positions, which bounds the cost of replaying any one of them.
+    pub range_size: u32,
 }
+
+/// Default teacher-forced range size. On Gemma 4 E2B one transformer-layer
+/// stage replays at roughly 0.4 s per row, so 512 rows is a few minutes.
+pub const DEFAULT_RANGE_SIZE: u32 = 512;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ImportResult {
@@ -95,6 +118,7 @@ fn parse_args_from(args: impl IntoIterator<Item = String>) -> Result<ImportConfi
     let mut only_ple = false;
     let mut only_direct = false;
     let mut no_stage_fixtures = false;
+    let mut range_size = DEFAULT_RANGE_SIZE;
     let mut args = args.into_iter();
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -116,6 +140,15 @@ fn parse_args_from(args: impl IntoIterator<Item = String>) -> Result<ImportConfi
             "--only-ple" => only_ple = true,
             "--only-direct" => only_direct = true,
             "--no-stage-fixtures" => no_stage_fixtures = true,
+            "--range-size" => {
+                range_size = args
+                    .next()
+                    .ok_or("--range-size <tokens> is required")?
+                    .parse()?;
+                if range_size < 2 {
+                    return Err("--range-size must be at least 2".into());
+                }
+            }
             other => return Err(format!("unknown argument '{other}'").into()),
         }
     }
@@ -133,6 +166,7 @@ fn parse_args_from(args: impl IntoIterator<Item = String>) -> Result<ImportConfi
         only_ple,
         only_direct,
         no_stage_fixtures,
+        range_size,
     })
 }
 
@@ -151,14 +185,12 @@ impl ImportConfig {
 #[derive(Debug, Clone)]
 struct ArtifactLayout {
     model_dir: PathBuf,
-    no_stage_fixtures: bool,
 }
 
 impl ArtifactLayout {
     fn from_config(args: &ImportConfig) -> Self {
         Self {
             model_dir: args.artifact_dir(),
-            no_stage_fixtures: args.no_stage_fixtures,
         }
     }
 
@@ -217,6 +249,34 @@ fn stage_artifact_dir_name(stage_dir: &str) -> String {
         .to_string()
 }
 
+/// The family a bundle's `config.json` declares.
+///
+/// A config says what it is in `model_type`, on the text model or on the whole
+/// model. Bundles made for this chain before families existed say nothing, and
+/// are Gemma's. Two families can share a `model_type` (a dense and a
+/// mixture-of-experts Gemma both say `gemma4`), so this is the first check and
+/// the family's own tensor inventory is the second.
+fn bundle_family(config: &serde_json::Value) -> Result<ModelFamily, Box<dyn Error>> {
+    let declared = [config.get("text_config"), Some(config)]
+        .into_iter()
+        .flatten()
+        .find_map(|section| {
+            section
+                .get("model_type")
+                .and_then(serde_json::Value::as_str)
+        });
+    match declared {
+        None => Ok(ModelFamily::GemmaDense),
+        Some(model_type) if model_type.starts_with("gemma") => Ok(ModelFamily::GemmaDense),
+        Some(model_type) => Err(format!(
+            "config.json declares model type `{model_type}`, which is not a family this build \
+             imports (supported: {})",
+            ModelFamily::ALL.map(ModelFamily::name).join(", ")
+        )
+        .into()),
+    }
+}
+
 pub fn import_model(args: ImportConfig) -> Result<ImportResult, Box<dyn Error>> {
     let layout = ArtifactLayout::from_config(&args);
     let tokenizer: serde_json::Value =
@@ -230,10 +290,18 @@ pub fn import_model(args: ImportConfig) -> Result<ImportResult, Box<dyn Error>> 
         let text = config
             .get("text_config")
             .ok_or("config.json has no text_config")?;
+        let family = bundle_family(&config)?;
         let shape = Shape::from_config(text)?;
         // A direct-only refresh cannot attest that existing Raster externals
         // were generated from this bundle. Only a full import binds a template.
-        direct_manifest::write_model_manifest(&args, &eos_ids, &shape, text, None)?;
+        direct_manifest::write_model_manifest(
+            &args,
+            &eos_ids,
+            family,
+            shape.manifest_shape(text),
+            None,
+            &[],
+        )?;
         return Ok(ImportResult {
             manifest_path: None,
             manifest_text: None,
@@ -243,9 +311,10 @@ pub fn import_model(args: ImportConfig) -> Result<ImportResult, Box<dyn Error>> 
 
     if args.only_tokenizer {
         let mut stages = Vec::new();
-        let decoder_commitment = write_tokenizer(&tokenizer, &eos_ids, &layout, &mut stages)?;
+        let (decoder_commitment, witness_commitment) =
+            write_tokenizer(&tokenizer, &eos_ids, &layout, &mut stages)?;
         println!();
-        println!("# ---- replaces tokenizer and decoder externals in the root Raster.toml ----");
+        println!("# ---- tokenizer and decoder externals ----");
         for stage in &stages {
             println!();
             print!("{stage}");
@@ -256,9 +325,19 @@ pub fn import_model(args: ImportConfig) -> Result<ImportResult, Box<dyn Error>> 
             external_line(
                 "decoder",
                 &layout,
-                "raster-stages/output-finalize",
+                "raster-stages/sequence-check",
                 "decoder",
                 &decoder_commitment
+            )
+        );
+        print!(
+            "{}",
+            external_line(
+                "witness",
+                &layout,
+                "raster-stages/sequence-check",
+                "witness",
+                &witness_commitment
             )
         );
         direct_manifest::warn_partial_direct_manifest_not_refreshed(&args);
@@ -269,19 +348,27 @@ pub fn import_model(args: ImportConfig) -> Result<ImportResult, Box<dyn Error>> 
         });
     }
 
-    let weights = detwgt::load(&args.model_dir.join("model.detwgt"))?;
+    // Keep the bundle file-backed instead of owning the entire file plus all
+    // decoded tensors. Writers pack only the current external into pages.
+    let weights = detwgt::MmapDetwgt::open(&args.model_dir.join("model.detwgt"))?;
     let config: serde_json::Value =
         serde_json::from_slice(&fs::read(args.model_dir.join("config.json"))?)?;
     let text = config
         .get("text_config")
         .ok_or("config.json has no text_config")?;
+    let family = bundle_family(&config)?;
+    match family {
+        ModelFamily::GemmaDense => {
+            require_known_tensors(weights.names(), Shape::from_config(text)?.layers)?
+        }
+    }
 
     if args.only_ple {
         let shape = Shape::from_config(text)?;
         let mut stages = Vec::new();
         write_ple_layers(&weights, &shape, &layout, &mut stages)?;
         println!();
-        println!("# ---- replaces the prefill_prepare_aux_* stages in the root Raster.toml ----");
+        println!("# ---- PLE layer externals ----");
         for stage in &stages {
             println!();
             print!("{stage}");
@@ -299,7 +386,7 @@ pub fn import_model(args: ImportConfig) -> Result<ImportResult, Box<dyn Error>> 
         let mut stages = Vec::new();
         write_embedding(&weights, &shape, &layout, &mut stages)?;
         println!();
-        println!("# ---- replaces the input_embedding stage in the root Raster.toml ----");
+        println!("# ---- embedding external ----");
         for stage in &stages {
             println!();
             print!("{stage}");
@@ -317,7 +404,7 @@ pub fn import_model(args: ImportConfig) -> Result<ImportResult, Box<dyn Error>> 
         let mut stages = Vec::new();
         write_transformer_layers(&weights, &shape, &layout, &mut stages)?;
         println!();
-        println!("# ---- replaces the prefill_range_* stages in the root Raster.toml ----");
+        println!("# ---- transformer layer externals ----");
         for stage in &stages {
             println!();
             print!("{stage}");
@@ -336,43 +423,91 @@ pub fn import_model(args: ImportConfig) -> Result<ImportResult, Box<dyn Error>> 
         shape.hidden, shape.layers, shape.heads, shape.kv_heads, shape.head_dim, shape.ffn,
         shape.vocab, shape.ple_width
     );
-    println!("tensors: {}", weights.names().count());
+    println!("weights: memory-mapped DETWGT");
     println!();
 
     let mut stages = Vec::new();
-    let decoder_commitment = write_tokenizer(&tokenizer, &eos_ids, &layout, &mut stages)?;
+    let (decoder_commitment, witness_commitment) =
+        write_tokenizer(&tokenizer, &eos_ids, &layout, &mut stages)?;
     write_embedding(&weights, &shape, &layout, &mut stages)?;
     write_ple_layers(&weights, &shape, &layout, &mut stages)?;
     write_transformer_layers(&weights, &shape, &layout, &mut stages)?;
     write_head(&weights, &shape, text, &layout, &mut stages)?;
 
-    let mut manifest = String::from("[chain]\nname = \"iris\"\nversion = \"0.1.0\"\n");
-    manifest.push_str(&indexed_model_inputs(&shape, &layout, &stages)?);
-    for stage in &stages {
-        manifest.push('\n');
-        manifest.push_str(stage);
-    }
-    manifest.push_str(&generation_stages(
-        &shape,
+    let commitments = model_commitments(&shape, &decoder_commitment, &stages)?;
+    let descriptor = inference_artifacts::model_identity::descriptor_from_commitments(
+        &commitments,
+        shape.layers,
+    )?;
+    let descriptor =
+        raster::BytesPage::__from_parts(0, 0, descriptor.encode().map_err(|f| format!("{f:?}"))?);
+    let descriptor_commitment = write_external(
+        &descriptor,
         &layout,
-        &decoder_commitment,
-        0,
-        &stages,
-    )?);
+        "raster-stages/sequence-check",
+        "descriptor",
+    )?;
+    let identity_inputs = format!(
+        "{}{}",
+        external_line(
+            "descriptor",
+            &layout,
+            "raster-stages/sequence-check",
+            "descriptor",
+            &descriptor_commitment
+        ),
+        external_line(
+            "witness",
+            &layout,
+            "raster-stages/sequence-check",
+            "witness",
+            &witness_commitment
+        ),
+    );
     let stage_count = stages.len();
-    let (template_path, template) = save_model_template(&args, &manifest)?;
-    direct_manifest::write_model_manifest(
+    let (template_path, template) = save_model_template(
+        &args,
+        &chain_template(
+            &shape,
+            &layout,
+            &decoder_commitment,
+            &identity_inputs,
+            &stages,
+        )?,
+    )?;
+    let model_manifest_path = direct_manifest::write_model_manifest(
         &args,
         &eos_ids,
-        &shape,
-        text,
+        family,
+        shape.manifest_shape(text),
         Some((&template_path, &template)),
+        &commitments,
     )?;
+    write_contract_pins(&model_manifest_path, &template);
     Ok(ImportResult {
         manifest_path: Some(template_path),
         manifest_text: None,
         stage_count,
     })
+}
+
+/// Writes what a contract pins for this import beside its manifest, as two
+/// entries. The pipeline: the program id each stage project has locked, and
+/// for each program the inputs it takes from earlier stages, read from the
+/// chain template. The model: its id with the commitments it hashes, and the
+/// range size.
+///
+/// An import made where the stage projects are not locked gets no pins and
+/// says so. It can still run; it cannot have a claim checked against it.
+fn write_contract_pins(model_manifest_path: &Path, template: &str) {
+    let pins = inference_artifacts::ModelManifest::load_verified(model_manifest_path).and_then(
+        |manifest| inference_artifacts::contract::ContractPins::from_import(&manifest, template),
+    );
+    let path = model_manifest_path.with_file_name(inference_artifacts::contract::CONTRACT_PINS_JSON);
+    match pins.and_then(|pins| inference_artifacts::write_json(&path, &pins)) {
+        Ok(()) => println!("wrote {}", path.display()),
+        Err(error) => println!("no contract pins written: {error:#}"),
+    }
 }
 
 fn save_model_template(
@@ -399,6 +534,438 @@ fn save_model_template(
         println!("wrote {}", copy.display());
     }
     Ok((path, template))
+}
+
+/// Every committed model input by role, in the order the model id hashes them.
+///
+/// These are the commitments a stage's `input_manifest.json` binds, so a claim
+/// that ran other weights can be held to the model it names by comparing them.
+fn model_commitments(
+    shape: &Shape,
+    decoder_commitment: &str,
+    stages: &[String],
+) -> Result<Vec<inference_artifacts::ModelCommitment>, Box<dyn Error>> {
+    let entry = |role: String, commitment: String| inference_artifacts::ModelCommitment {
+        role,
+        commitment,
+    };
+    let mut entries = vec![
+        entry(
+            String::from("tokenizer"),
+            stage_external_commitment(stages, "prompt_bind", "tokenizer")?,
+        ),
+        entry(String::from("decoder"), decoder_commitment.to_string()),
+        entry(
+            String::from("embedding"),
+            stage_external_commitment(stages, "input_embedding", "embedding")?,
+        ),
+        entry(
+            String::from("head"),
+            stage_external_commitment(stages, "final_head", "head")?,
+        ),
+    ];
+    for layer in 0..shape.layers {
+        entries.push(entry(
+            format!("aux_layer_{layer}"),
+            stage_external_commitment(stages, &format!("prefill_prepare_aux_l{layer}"), "layer")?,
+        ));
+    }
+    for layer in 0..shape.layers {
+        entries.push(entry(
+            format!("transformer_layer_{layer}"),
+            stage_external_commitment(stages, &format!("prefill_range_l{layer}"), "layer")?,
+        ));
+    }
+    Ok(entries)
+}
+
+/// The chain template: one pass over `prompt ‖ claimed output`, cut into ranges of at most `range_size`
+/// positions so no stage's cost grows with the prompt.
+///
+/// Run preparation tokenizes the prompt and cuts the tokens into ranges of at
+/// most `range_size`, and the text into one slice per range.
+/// `prompt_bind_p{j}` hashes its slice and splits it, and `prompt_check_p{j}`
+/// checks the range's tokens against the merge. The claimed ids are cut into
+/// ranges of the same size.
+/// Every prompt range is checked and embedded, every claimed range embedded; then each
+/// layer runs across all ranges in order (`range_p{j}_l{l}`, then
+/// `range_c{k}_l{l}`), and `check_c{k}` re-derives the greedy selection for
+/// each claimed range. A layer's range takes its rows from the layer below and
+/// its inherited K/V cache from its own previous range, exactly as a decode
+/// step does.
+///
+/// Range 0 has nothing before it. Where a later range takes the range before,
+/// its stages take an empty value, written here as a committed constant, and
+/// check that it is empty. A repeat's `first` can only name a stage, so range
+/// 0 is written out as plain stages and each repeat starts at range 1 with
+/// range 0 as its `first`. No stage exists only to produce an empty value.
+///
+/// Counts, the last prompt range's index, the text, the configuration and the
+/// per-range externals are filled in by run preparation. Wrong marks do not
+/// stop a stage: the fault is recorded in the prompt context, which the last
+/// range's `prompt_check` publishes for the whole prompt.
+fn chain_template(
+    shape: &Shape,
+    layout: &ArtifactLayout,
+    decoder_commitment: &str,
+    identity_inputs: &str,
+    prefill_stages: &[String],
+) -> Result<String, Box<dyn Error>> {
+    let descriptor_line = identity_inputs
+        .lines()
+        .find(|line| line.starts_with("inputs.descriptor ="))
+        .ok_or("missing model descriptor binding")?;
+    let tokenizer = stage_external_commitment(prefill_stages, "prompt_bind", "tokenizer")?;
+    let embedding = stage_external_commitment(prefill_stages, "input_embedding", "embedding")?;
+    let no_claim = stage_external_commitment(prefill_stages, "input_embedding", "claimed")?;
+    let head = stage_external_commitment(prefill_stages, "final_head", "head")?;
+    let no_prompt = no_prompt_commitment(layout)?;
+    let tokenizer_witness = stage_external_commitment(prefill_stages, "prompt_bind", "witness")?;
+    let tokenizer_line = external_line(
+        "tokenizer",
+        layout,
+        "raster-stages/prompt-bind",
+        "tokenizer",
+        &tokenizer,
+    ) + &external_line(
+        "witness",
+        layout,
+        "raster-stages/prompt-bind",
+        "witness",
+        &tokenizer_witness,
+    );
+    let embedding_witness =
+        stage_external_commitment(prefill_stages, "input_embedding", "witness")?;
+    let embedding_line = external_line(
+        "embedding",
+        layout,
+        "raster-stages/input-embedding",
+        "embedding",
+        &embedding,
+    ) + &external_line(
+        "witness",
+        layout,
+        "raster-stages/input-embedding",
+        "witness",
+        &embedding_witness,
+    );
+    let range_input = |name: &str, family: &str, index: &str| {
+        let path = |extension: &str| {
+            path_string(
+                &Path::new(RUN_PLACEHOLDER_DIR).join(format!("{family}_{{{index}}}.{extension}")),
+            )
+        };
+        format!(
+            "\n[chain.input.{name}]\nindex = \"{index}\"\npath = {:?}\nindex_path = {:?}\ncommitments = []\n",
+            path("rastered"),
+            path("rindex"),
+        )
+    };
+    let last_layer = shape.layers - 1;
+    let first_shared = shape.layers.saturating_sub(shape.num_kv_shared_layers);
+    let mut donors = (0..shape.layers)
+        .map(|layer| shape.kv_donor_layer(layer))
+        .filter(|donor| *donor >= 0)
+        .collect::<Vec<_>>();
+    donors.sort_unstable();
+    donors.dedup();
+    if donors.len() > 2 {
+        return Err(format!(
+            "ranges support at most two donor candidates, model declares {}",
+            donors.len()
+        )
+        .into());
+    }
+
+    let mut out = String::from("[chain]\nname = \"iris\"\nversion = \"0.1.0\"\n");
+    out.push_str(&indexed_model_inputs(shape, layout, prefill_stages)?);
+    out.push_str(&range_input("prompt_text", "text", "j"));
+    out.push_str(&range_input("prompt_marks", "marks", "j"));
+    out.push_str(&range_input("claimed_ids", "claimed", "k"));
+    // The empty values range 0 starts from.
+    use inference_kernels::kernels::origin;
+    let empty_sequence = write_external(
+        &origin::empty_sequence(),
+        layout,
+        "raster-stages/input-embedding",
+        "empty_sequence",
+    )?;
+    let empty_prompt = write_external(
+        &origin::empty_prompt(),
+        layout,
+        "raster-stages/prompt-bind",
+        "empty_prompt",
+    )?;
+    let empty_edge = write_external(
+        &origin::empty_decode_edge(),
+        layout,
+        "raster-stages/sequence-check",
+        "empty_edge",
+    )?;
+    let no_sequence = |param: &str| {
+        external_line(
+            param,
+            layout,
+            "raster-stages/input-embedding",
+            "empty_sequence",
+            &empty_sequence,
+        )
+    };
+    let no_prompt_state = |param: &str| {
+        external_line(
+            param,
+            layout,
+            "raster-stages/prompt-bind",
+            "empty_prompt",
+            &empty_prompt,
+        )
+    };
+
+    // For every range: bind its slice of the text and split it into pieces,
+    // check its tokens against them, and embed it. The first range's bind
+    // also binds the configuration, the stage schedule and what the run
+    // claims of the whole text; later ones are given the same three and
+    // read none of them.
+    let run_external = |param: &str| {
+        external_line(
+            param,
+            layout,
+            RUN_PLACEHOLDER_DIR,
+            param,
+            INITIAL_PIECES_PLACEHOLDER_COMMITMENT,
+        )
+    };
+    let no_claim_line = external_line(
+        "claimed",
+        layout,
+        "raster-stages/input-embedding",
+        "no_claim",
+        &no_claim,
+    );
+    // `j` is the range as the names spell it: `0`, or `{j}` inside the repeat.
+    // `previous` binds what the bind, the check and the embedding continue.
+    let prompt_stages = |header: &str, j: &str, previous: [String; 3]| -> String {
+        let [bind_previous, check_previous, embed_previous] = previous;
+        format!(
+            "\n{header}\n\
+             name = \"prompt_bind_p{j}\"\n\
+             project = \"raster-stages/prompt-bind\"\n\
+             {descriptor_line}\n\
+             {tokenizer_line}\
+             inputs.text = {{ input = \"prompt_text_{j}\" }}\n\
+             {}\
+             {}\
+             {}\
+             {bind_previous}\
+             \n{header}\n\
+             name = \"prompt_check_p{j}\"\n\
+             project = \"raster-stages/prompt-check\"\n\
+             {tokenizer_line}\
+             inputs.bound = {{ from = \"prompt_bind_p{j}\" }}\n\
+             {check_previous}\
+             inputs.marks = {{ input = \"prompt_marks_{j}\" }}\n\
+             \n{header}\n\
+             name = \"embed_p{j}\"\n\
+             project = \"raster-stages/input-embedding\"\n\
+             inputs.prompt = {{ from = \"prompt_check_p{j}\" }}\n\
+             {no_claim_line}\
+             {embed_previous}\
+             {embedding_line}",
+            run_external("config"),
+            run_external("schedule"),
+            run_external("claim"),
+        )
+    };
+    out.push_str(&prompt_stages(
+        "[[chain.stage]]",
+        "0",
+        [
+            no_prompt_state("previous"),
+            no_prompt_state("previous"),
+            no_sequence("previous"),
+        ],
+    ));
+    out.push_str("\n[[chain.repeat]]\nname = \"prompt\"\nindex = \"j\"\nstart = 1\ncount = 0\n");
+    out.push_str(&prompt_stages(
+        "  [[chain.repeat.stage]]",
+        "{j}",
+        ["prompt_bind", "prompt_check", "embed"].map(|stage| {
+            format!("inputs.previous = {{ from = \"{stage}_p{{j-1}}\", first = \"{stage}_p0\" }}\n")
+        }),
+    ));
+    out.push_str("\n[[chain.repeat]]\nname = \"claimed_embed\"\nindex = \"k\"\ncount = 0\n");
+    out.push_str(&format!(
+        "\n  [[chain.repeat.stage]]\n\
+         name = \"embed_c{{k}}\"\n\
+         project = \"raster-stages/input-embedding\"\n\
+         {}\
+         inputs.claimed = {{ input = \"claimed_ids_{{k}}\" }}\n\
+         inputs.previous = {{ from = \"embed_c{{k-1}}\", first = \"embed_p{LAST_PROMPT_RANGE}\" }}\n\
+         {embedding_line}",
+        external_line("prompt", layout, "raster-stages/input-embedding", "no_prompt", &no_prompt),
+    ));
+
+    // Then each layer across every range, so a layer's weights are loaded
+    // once per claim rather than once per range. Range `j` of layer `l`
+    // needs layer `l - 1`'s range `j` and layer `l`'s range `j - 1`, both
+    // already computed in this order. The inner fans' counts are the range
+    // counts, filled in by run preparation. Prompt range 0 inherits no K/V
+    // cache, so it is its own entry and the fan of the others starts at 1.
+    //
+    // `first_rows` and `donor` are given the range as the names spell it.
+    let layer_block = |name: &str,
+                       start: usize,
+                       count: usize,
+                       first_rows: &dyn Fn(&str, &str) -> String,
+                       donor: &dyn Fn(&str, Option<&i32>, &str, &str) -> String|
+     -> String {
+        let mut text = format!(
+            "\n[[chain.repeat]]\nname = \"{name}\"\nindex = \"l\"\nstart = {start}\ncount = {count}\n"
+        );
+        for (p, r) in [("p", "j"), ("c", "k")] {
+            text.push_str(&format!(
+                "\n  [[chain.repeat.stage]]\n\
+                 name = \"aux_{p}{{{r}}}_l{{l}}\"\n\
+                 index = \"{r}\"\n\
+                 count = 0\n\
+                 project = \"raster-stages/prefill-prepare-aux\"\n\
+                 inputs.embedded = {{ from = \"embed_{p}{{{r}}}\" }}\n\
+                 inputs.layer = {{ input = \"aux_layer_{{l}}\" }}\n\
+                 inputs.witness = {{ input = \"aux_witness_{{l}}\" }}\n"
+            ));
+        }
+        let prior_of_later_prompt_ranges = String::from(
+            "inputs.prior_kv = { from = \"range_p{j-1}_l{l}\", first = \"range_p0_l{l}\" }\n",
+        );
+        let prior_of_claimed_ranges = format!(
+            "inputs.prior_kv = {{ from = \"range_c{{k-1}}_l{{l}}\", first = \"range_p{LAST_PROMPT_RANGE}_l{{l}}\" }}\n"
+        );
+        for (p, range, fan, prior_kv) in [
+            ("p", "0", "", no_sequence("prior_kv")),
+            (
+                "p",
+                "{j}",
+                "index = \"j\"\nstart = 1\ncount = 0\n",
+                prior_of_later_prompt_ranges,
+            ),
+            (
+                "c",
+                "{k}",
+                "index = \"k\"\ncount = 0\n",
+                prior_of_claimed_ranges,
+            ),
+        ] {
+            text.push_str(&format!(
+                "\n  [[chain.repeat.stage]]\n\
+                 name = \"range_{p}{range}_l{{l}}\"\n\
+                 {fan}\
+                 project = \"raster-stages/prefill-range\"\n\
+                 inputs.activations = {{ from = \"range_{p}{range}_l{{l-1}}\", first = \"{}\" }}\n\
+                 {prior_kv}\
+                 {}\
+                 {}\
+                 inputs.ple = {{ from = \"aux_{p}{range}_l{{l}}\" }}\n\
+                 inputs.layer = {{ input = \"transformer_layer_{{l}}\" }}\n",
+                first_rows(p, range),
+                donor("donor_a_kv", donors.first(), p, range),
+                donor("donor_b_kv", donors.get(1), p, range),
+            ));
+        }
+        text
+    };
+    if first_shared > 0 {
+        out.push_str(&layer_block(
+            "layers",
+            0,
+            first_shared,
+            &|p, range| format!("embed_{p}{range}"),
+            &|param, _, _, _| no_sequence(param),
+        ));
+    }
+    if shape.num_kv_shared_layers > 0 {
+        let last_own = first_shared.saturating_sub(1);
+        out.push_str(&layer_block(
+            "shared_layers",
+            first_shared,
+            shape.num_kv_shared_layers,
+            &|p, range| format!("range_{p}{range}_l{last_own}"),
+            &|param, donor, p, range| match donor {
+                Some(layer) => {
+                    format!("inputs.{param} = {{ from = \"range_{p}{range}_l{layer}\" }}\n")
+                }
+                None => no_sequence(param),
+            },
+        ));
+    }
+
+    // Each claimed range's check continues the verdict of the one before. The
+    // first has none before it and takes the empty edge.
+    let head_line = external_line(
+        "head",
+        layout,
+        "raster-stages/sequence-check",
+        "head",
+        &head,
+    );
+    // A check also states the output record of the transcript so far, from
+    // the decoder table, its membership paths and the model descriptor. The
+    // last range's check is the chain's last stage, and its record the claim's.
+    let decoder_line = external_line(
+        "decoder",
+        layout,
+        "raster-stages/sequence-check",
+        "decoder",
+        decoder_commitment,
+    );
+    let check_stage = |header: &str, k: &str, previous: String, prior: String| -> String {
+        format!(
+            "\n{header}\n\
+             name = \"check_c{k}\"\n\
+             project = \"raster-stages/sequence-check\"\n\
+             inputs.activations = {{ from = \"range_c{k}_l{last_layer}\" }}\n\
+             {previous}\
+             {prior}\
+             inputs.prompt = {{ from = \"prompt_check_p{LAST_PROMPT_RANGE}\" }}\n\
+             {head_line}\
+             {decoder_line}\
+             {identity_inputs}"
+        )
+    };
+    out.push_str(&check_stage(
+        "[[chain.stage]]",
+        "0",
+        format!("inputs.previous = {{ from = \"range_p{LAST_PROMPT_RANGE}_l{last_layer}\" }}\n"),
+        external_line(
+            "prior",
+            layout,
+            "raster-stages/sequence-check",
+            "empty_edge",
+            &empty_edge,
+        ),
+    ));
+    out.push_str("\n[[chain.repeat]]\nname = \"claimed\"\nindex = \"k\"\nstart = 1\ncount = 0\n");
+    out.push_str(&check_stage(
+        "  [[chain.repeat.stage]]",
+        "{k}",
+        format!(
+            "inputs.previous = {{ from = \"range_c{{k-1}}_l{last_layer}\", first = \"range_c0_l{last_layer}\" }}\n"
+        ),
+        String::from("inputs.prior = { from = \"check_c{k-1}\", first = \"check_c0\" }\n"),
+    ));
+    Ok(out)
+}
+
+/// Run preparation replaces this with the index of the last prompt range.
+const LAST_PROMPT_RANGE: &str = "@LAST_PROMPT_RANGE@";
+
+/// The empty prompt a claimed range embeds before its claimed ids.
+fn no_prompt_commitment(layout: &ArtifactLayout) -> Result<String, Box<dyn Error>> {
+    write_external(
+        &PromptTokenization::default(),
+        layout,
+        "raster-stages/input-embedding",
+        "no_prompt",
+    )
 }
 
 fn stage_external_commitment(
@@ -439,6 +1006,11 @@ fn indexed_model_inputs(
             stage_external_commitment(stages, &format!("prefill_prepare_aux_l{layer}"), "layer")
         })
         .collect::<Result<Vec<_>, _>>()?;
+    let aux_witness = (0..shape.layers)
+        .map(|layer| {
+            stage_external_commitment(stages, &format!("prefill_prepare_aux_l{layer}"), "witness")
+        })
+        .collect::<Result<Vec<_>, _>>()?;
     let transformer = (0..shape.layers)
         .map(|layer| stage_external_commitment(stages, &format!("prefill_range_l{layer}"), "layer"))
         .collect::<Result<Vec<_>, _>>()?;
@@ -460,7 +1032,13 @@ fn indexed_model_inputs(
         )
     };
     Ok(format!(
-        "{}{}",
+        "{}{}{}",
+        render(
+            "aux_witness",
+            "raster-stages/prefill-prepare-aux",
+            &aux_witness
+        )
+        .replace("layer{l}", "witness{l}"),
         render("aux_layer", "raster-stages/prefill-prepare-aux", &aux),
         render(
             "transformer_layer",
@@ -470,318 +1048,11 @@ fn indexed_model_inputs(
     ))
 }
 
-/// Emits exactly `tokens` select+transition iterations as one static repeat.
-/// Expansion still produces one auditable chain stage per program invocation.
-fn generation_stages(
-    shape: &Shape,
-    layout: &ArtifactLayout,
-    decoder_commitment: &str,
-    tokens: u32,
-    prefill_stages: &[String],
-) -> Result<String, Box<dyn Error>> {
-    let embedding = stage_external_commitment(prefill_stages, "input_embedding", "embedding")?;
-    let head = stage_external_commitment(prefill_stages, "prefill_finalize", "head")?;
-    let first_shared = shape.layers.saturating_sub(shape.num_kv_shared_layers);
-    let mut donors = (0..shape.layers)
-        .map(|layer| shape.kv_donor_layer(layer))
-        .filter(|donor| *donor >= 0)
-        .collect::<Vec<_>>();
-    donors.sort_unstable();
-    donors.dedup();
-    if donors.len() > 2 {
-        return Err(format!(
-            "decode repeat supports at most two donor candidates, model declares {}",
-            donors.len()
-        )
-        .into());
-    }
-    let donor_a = donors.first().copied();
-    let donor_b = donors.get(1).copied();
-
-    let mut out = String::from(
-        "\n[[chain.stage]]\nname = \"decode_init\"\nproject = \"raster-stages/decode-init\"\n\
-         \n[[chain.repeat]]\nname = \"decode\"\nindex = \"t\"\n",
-    );
-    out.push_str(&format!("count = {tokens}\n"));
-    out.push_str(
-        "\n  [chain.repeat.exports.edge]\n\
-         stage = \"decode_select_t{t}\"\n\
-         entry = \"decode_init\"\n\
-         \n  [chain.repeat.exports.logits]\n\
-         stage = \"decode_finalize_t{t}\"\n\
-         entry = \"prefill_finalize\"\n\
-         \n  [[chain.repeat.stage]]\n\
-         name = \"decode_select_t{t}\"\n\
-         project = \"raster-stages/decode-select-token\"\n\
-         inputs.logits = { from = \"decode_finalize_t{t-1}\", first = \"prefill_finalize\" }\n\
-         inputs.prior = { from = \"decode_select_t{t-1}\", first = \"decode_init\" }\n\
-         \n  [[chain.repeat.stage]]\n\
-         name = \"decode_embed_t{t}\"\n\
-         project = \"raster-stages/decode-embed\"\n\
-         inputs.selected = { from = \"decode_select_t{t}\" }\n",
-    );
-    out.push_str(&format!(
-        "  inputs.embedding = {{ external = {{ path = {:?}, index_path = {:?}, commitment = \"{embedding}\" }} }}\n",
-        path_string(&layout.external_path("raster-stages/input-embedding", "embedding", "rastered")),
-        path_string(&layout.external_path("raster-stages/input-embedding", "embedding", "rindex")),
-    ));
-    out.push_str(&format!(
-        "\n  [[chain.repeat.stage]]\n\
-         name = \"decode_aux_t{{t}}_l{{l}}\"\n\
-         index = \"l\"\n\
-         count = {}\n\
-         project = \"raster-stages/prefill-prepare-aux\"\n\
-         inputs.embedded = {{ from = \"decode_embed_t{{t}}\" }}\n\
-         inputs.layer = {{ input = \"aux_layer_{{l}}\" }}\n",
-        shape.layers
-    ));
-
-    if first_shared > 0 {
-        out.push_str(&format!(
-            "\n  [[chain.repeat.stage]]\n\
-             name = \"decode_range_t{{t}}_l{{l}}\"\n\
-             index = \"l\"\n\
-             start = 0\n\
-             count = {first_shared}\n\
-             project = \"raster-stages/prefill-range\"\n\
-             inputs.activations = {{ from = \"decode_range_t{{t}}_l{{l-1}}\", first = \"decode_embed_t{{t}}\" }}\n\
-             inputs.prior_kv = {{ from = \"decode_range_t{{t-1}}_l{{l}}\", first = \"prefill_range_l{{l}}\" }}\n\
-             inputs.donor_a_kv = {{ from = \"input_embedding\" }}\n\
-             inputs.donor_b_kv = {{ from = \"input_embedding\" }}\n\
-             inputs.ple = {{ from = \"decode_aux_t{{t}}_l{{l}}\" }}\n\
-             inputs.layer = {{ input = \"transformer_layer_{{l}}\" }}\n"
-        ));
-    }
-
-    if shape.num_kv_shared_layers > 0 {
-        let donor_a_from = donor_a
-            .map(|layer| format!("decode_range_t{{t}}_l{layer}"))
-            .unwrap_or_else(|| String::from("input_embedding"));
-        let donor_b_from = donor_b
-            .map(|layer| format!("decode_range_t{{t}}_l{layer}"))
-            .unwrap_or_else(|| String::from("input_embedding"));
-        out.push_str(&format!(
-            "\n  [[chain.repeat.stage]]\n\
-             name = \"decode_range_t{{t}}_l{{l}}\"\n\
-             index = \"l\"\n\
-             start = {first_shared}\n\
-             count = {}\n\
-             project = \"raster-stages/prefill-range\"\n\
-             inputs.activations = {{ from = \"decode_range_t{{t}}_l{{l-1}}\", first = \"decode_range_t{{t}}_l{}\" }}\n\
-             inputs.prior_kv = {{ from = \"decode_range_t{{t-1}}_l{{l}}\", first = \"prefill_range_l{{l}}\" }}\n\
-             inputs.donor_a_kv = {{ from = \"{donor_a_from}\" }}\n\
-             inputs.donor_b_kv = {{ from = \"{donor_b_from}\" }}\n\
-             inputs.ple = {{ from = \"decode_aux_t{{t}}_l{{l}}\" }}\n\
-             inputs.layer = {{ input = \"transformer_layer_{{l}}\" }}\n",
-            shape.num_kv_shared_layers,
-            first_shared.saturating_sub(1)
-        ));
-    }
-
-    out.push_str(&format!(
-        "\n  [[chain.repeat.stage]]\n\
-         name = \"decode_finalize_t{{t}}\"\n\
-         project = \"raster-stages/prefill-finalize\"\n\
-         inputs.activations = {{ from = \"decode_range_t{{t}}_l{}\" }}\n\
-         inputs.head = {{ external = {{ path = {:?}, index_path = {:?}, commitment = \"{head}\" }} }}\n\
-         \n[[chain.stage]]\n\
-         name = \"output_finalize\"\n\
-         project = \"raster-stages/output-finalize\"\n\
-         inputs.edge = {{ from = \"decode.edge\" }}\n\
-         {}",
-        shape.layers - 1,
-        path_string(&layout.external_path("raster-stages/prefill-finalize", "head", "rastered")),
-        path_string(&layout.external_path("raster-stages/prefill-finalize", "head", "rindex")),
-        external_line(
-            "decoder",
-            layout,
-            "raster-stages/output-finalize",
-            "decoder",
-            decoder_commitment
-        )
-    ));
-    Ok(out)
-}
-
 /// Q16.16 bits of an `f32`, through the local deterministic conversion so the
 /// committed scalar is the same value the deterministic path uses, not a
 /// near one.
 fn det_act_bits(value: f32) -> i32 {
     det_num::f32_to_act(value).to_bits()
-}
-
-fn as_f64(value: &serde_json::Value) -> Option<f64> {
-    value.as_f64()
-}
-
-/// One key out of `rope_parameters.<attention_type>`, which is where Gemma 3n
-/// puts its per-family RoPE settings.
-fn rope_param(text: &serde_json::Value, attention_type: &str, key: &str) -> Option<f64> {
-    text.get("rope_parameters")?
-        .get(attention_type)?
-        .get(key)
-        .and_then(as_f64)
-}
-
-/// The shapes every stage needs, read from `config.json`.
-struct Shape {
-    hidden: usize,
-    ffn: usize,
-    layers: usize,
-    heads: usize,
-    kv_heads: usize,
-    head_dim: usize,
-    /// Head dim of the *full-attention* ("global") layers, which is not the
-    /// same as `head_dim` on Gemma 3n: E2B declares `head_dim: 256` for the
-    /// sliding layers and `global_head_dim: 512` for the full ones, and the
-    /// weights follow — a full layer's `q_proj` is [heads · 512, hidden] and
-    /// its `q_norm` has 512 values. Defaults to `head_dim` for models that
-    /// declare no such split.
-    global_head_dim: usize,
-    /// RoPE base per attention type, from `rope_parameters`. Gemma 3n gives the
-    /// two families different bases — 10 000 local, 1 000 000 global — so a
-    /// single `rope_theta` would silently detune half the layers.
-    rope_base_sliding: f64,
-    rope_base_full: f64,
-    /// Fraction of a full-attention head that rotates (`0.25` here). Sliding
-    /// layers rotate the whole head.
-    full_partial_rotary_factor: f64,
-    /// How many trailing layers borrow their K/V from an earlier donor.
-    num_kv_shared_layers: usize,
-    vocab: usize,
-    ple_width: usize,
-    sliding_window: u32,
-    layer_types: Vec<String>,
-    norm_eps: i64,
-}
-
-impl Shape {
-    fn is_sliding(&self, idx: usize) -> bool {
-        matches!(
-            self.layer_types.get(idx).map(String::as_str),
-            Some("sliding_attention")
-        )
-    }
-
-    /// Head dim of layer `idx` — `global_head_dim` for a full-attention layer,
-    /// `head_dim` for a sliding one.
-    fn head_dim_at(&self, idx: usize) -> usize {
-        if self.is_sliding(idx) {
-            self.head_dim
-        } else {
-            self.global_head_dim
-        }
-    }
-
-    /// The layer whose K/V cache layer `idx` borrows, or `-1` if it computes
-    /// its own.
-    ///
-    /// Mirrors `casettek/.../shared/model/gemma/io.rs:171` exactly: sharing
-    /// starts at `num_hidden_layers - num_kv_shared_layers`, and a sharing
-    /// layer's donor is the **last layer before that boundary with the same
-    /// attention type**. For this model that resolves to layer 13 for every
-    /// sliding layer and layer 14 for every full one — 20 layers in all, which
-    /// is the count the config declares.
-    fn kv_donor_layer(&self, idx: usize) -> i32 {
-        let first_shared = self.layers.saturating_sub(self.num_kv_shared_layers);
-        if self.num_kv_shared_layers == 0 || idx < first_shared {
-            return -1;
-        }
-        let Some(attention_type) = self.layer_types.get(idx) else {
-            return -1;
-        };
-        self.layer_types[..first_shared]
-            .iter()
-            .rposition(|candidate| candidate == attention_type)
-            .map(|donor| donor as i32)
-            .unwrap_or(-1)
-    }
-
-    /// RoPE parameters for layer `idx`: `(base_bits, rotary_dim, freq_base_dim)`.
-    ///
-    /// `base_bits` is the base as `Acc` (Q32.32) bits. Both bases this model
-    /// declares are exact integers, so the encoding is a plain shift — asserted
-    /// against local `f32_to_acc` in `det-num/tests/equivalence.rs`.
-    ///
-    /// `freq_base_dim` is the layer's `head_dim`, which is *not* `rotary_dim`
-    /// once the rotation is partial: a full-attention head is 512 wide and
-    /// rotates its first 128 lanes against a ladder built over 512.
-    fn rope_at(&self, idx: usize) -> (i64, u32, u32) {
-        let head_dim = self.head_dim_at(idx);
-        let (base, rotary_dim) = if self.is_sliding(idx) {
-            (self.rope_base_sliding, head_dim)
-        } else {
-            (
-                self.rope_base_full,
-                (head_dim as f64 * self.full_partial_rotary_factor) as usize,
-            )
-        };
-        ((base as i64) << 32, rotary_dim as u32, head_dim as u32)
-    }
-}
-
-impl Shape {
-    fn from_config(text: &serde_json::Value) -> Result<Self, Box<dyn Error>> {
-        let usize_at = |key: &str| -> Result<usize, Box<dyn Error>> {
-            text.get(key)
-                .and_then(serde_json::Value::as_u64)
-                .map(|value| value as usize)
-                .ok_or_else(|| format!("config.json text_config has no {key}").into())
-        };
-        let layer_types = text
-            .get("layer_types")
-            .and_then(serde_json::Value::as_array)
-            .map(|types| {
-                types
-                    .iter()
-                    .filter_map(|value| value.as_str().map(str::to_string))
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default();
-        // The MLP width is not in this config; it is the gate projection's rows.
-        Ok(Self {
-            hidden: usize_at("hidden_size")?,
-            ffn: 0,
-            layers: usize_at("num_hidden_layers")?,
-            heads: usize_at("num_attention_heads")?,
-            kv_heads: usize_at("num_key_value_heads")?,
-            head_dim: usize_at("head_dim")?,
-            global_head_dim: text
-                .get("global_head_dim")
-                .and_then(serde_json::Value::as_u64)
-                .map(|value| value as usize)
-                .unwrap_or(usize_at("head_dim")?),
-            rope_base_sliding: rope_param(text, "sliding_attention", "rope_theta")
-                .or_else(|| text.get("rope_local_base_freq").and_then(as_f64))
-                .unwrap_or(10_000.0),
-            rope_base_full: rope_param(text, "full_attention", "rope_theta")
-                .or_else(|| text.get("rope_theta").and_then(as_f64))
-                .unwrap_or(1_000_000.0),
-            full_partial_rotary_factor: rope_param(text, "full_attention", "partial_rotary_factor")
-                .unwrap_or(1.0),
-            num_kv_shared_layers: text
-                .get("num_kv_shared_layers")
-                .and_then(serde_json::Value::as_u64)
-                .unwrap_or(0) as usize,
-            vocab: usize_at("vocab_size")?,
-            ple_width: usize_at("hidden_size_per_layer_input")?,
-            sliding_window: text
-                .get("sliding_window")
-                .and_then(serde_json::Value::as_u64)
-                .unwrap_or(0) as u32,
-            layer_types,
-            // `Acc` (Q32.32) bits, not Q16.16: the canonical `rms_norm` takes its
-            // epsilon in accumulator units. Encoded through local
-            // `f32_to_acc` so it is the same value, not a near one — 1e-6 in
-            // Q16.16 rounds to zero, which is how this was silently disabled.
-            norm_eps: det_num::f32_to_acc(
-                text.get("rms_norm_eps")
-                    .and_then(serde_json::Value::as_f64)
-                    .unwrap_or(1e-6) as f32,
-            )
-            .to_bits(),
-        })
-    }
 }
 
 /// Converts a config float to Q16.16, the representation everything else uses.
@@ -830,7 +1101,7 @@ fn write_tokenizer(
     eos_ids: &std::collections::BTreeSet<u32>,
     layout: &ArtifactLayout,
     stages: &mut Vec<String>,
-) -> Result<String, Box<dyn Error>> {
+) -> Result<(String, String), Box<dyn Error>> {
     // Reject unsupported profiles, invalid IDs and malformed merge tables
     // before replacing any existing tokenizer/decoder artifact.
     let prepared_tokenizer = run_prep::prompt_tokenizer(tokenizer)?;
@@ -872,466 +1143,52 @@ fn write_tokenizer(
             terminal: eos_ids.contains(&entry.id),
         };
     }
+    let decoder_table = DecoderTable {
+        tokens: decoder_tokens.into(),
+    };
+    let witness = sequence_check::decoder_witness(&decoder_table).map_err(|f| format!("{f:?}"))?;
+    let witness_commitment =
+        write_external(&witness, layout, "raster-stages/sequence-check", "witness")?;
     let decoder_commitment = write_external(
-        &DecoderTable {
-            tokens: decoder_tokens.into(),
-        },
+        &decoder_table,
         layout,
-        "raster-stages/output-finalize",
+        "raster-stages/sequence-check",
         "decoder",
     )?;
 
     let tokenizer_commitment = write_external(
         &prepared_tokenizer,
         layout,
-        "raster-stages/prompt-prepare",
+        "raster-stages/prompt-bind",
         "tokenizer",
     )?;
-    // Run preparation supplies the prompt-specific merged_pieces binding.
-    write_stage_fixtures(
-        "raster-stages/prompt-prepare",
+    let tokenizer_witness = prompt_check::input::tokenizer_witness(&prepared_tokenizer)
+        .map_err(|f| format!("{f:?}"))?;
+    let tokenizer_witness_commitment = write_external(
+        &tokenizer_witness,
         layout,
-        &[("tokenizer", "tokenizer", &tokenizer_commitment)],
+        "raster-stages/prompt-bind",
+        "witness",
     )?;
     let tokenizer_line = external_line(
         "tokenizer",
         layout,
-        "raster-stages/prompt-prepare",
+        "raster-stages/prompt-bind",
         "tokenizer",
         &tokenizer_commitment,
-    );
-    let pieces_line = external_line(
-        "initial_pieces",
+    ) + &external_line(
+        "witness",
         layout,
-        "target/iris/run-prompt-placeholder",
-        "initial_pieces",
-        INITIAL_PIECES_PLACEHOLDER_COMMITMENT,
+        "raster-stages/prompt-bind",
+        "witness",
+        &tokenizer_witness_commitment,
     );
+    // The stages that take the tokenizer also take run-specific inputs, which
+    // run preparation supplies.
     stages.push(format!(
-        r#"[[chain.stage]]
-name = "prompt_merge_seed"
-project = "raster-stages/prompt-merge"
-{tokenizer_line}{pieces_line}
-[[chain.repeat]]
-name = "tokenize"
-index = "b"
-count = 0
-
-[[chain.repeat.stage]]
-name = "prompt_merge_b{{b}}"
-project = "raster-stages/prompt-merge"
-inputs.initial_pieces = {{ from = "prompt_merge_b{{b-1}}", first = "prompt_merge_seed" }}
-{tokenizer_line}
-[chain.repeat.exports.pieces]
-stage = "prompt_merge_b{{b}}"
-entry = "prompt_merge_seed"
-
-[[chain.stage]]
-name = "prompt_prepare"
-project = "raster-stages/prompt-prepare"
-inputs.merged_pieces = {{ from = "tokenize.pieces" }}
-{tokenizer_line}"#
+        "[[chain.stage]]\nname = \"prompt_bind\"\nproject = \"raster-stages/prompt-bind\"\n{tokenizer_line}"
     ));
-    Ok(decoder_commitment)
-}
-
-// ---------------------------------------------------------------------------
-// Stage 2 — input embedding
-// ---------------------------------------------------------------------------
-
-fn write_embedding(
-    weights: &detwgt::Artifact,
-    shape: &Shape,
-    layout: &ArtifactLayout,
-    stages: &mut Vec<String>,
-) -> Result<(), Box<dyn Error>> {
-    let embed = weights.get("model.language_model.embed_tokens.weight")?;
-    let mut values = Vec::with_capacity(shape.vocab * shape.hidden);
-    for token_id in 0..shape.vocab {
-        values.extend_from_slice(embed.row(token_id)?);
-    }
-
-    let commitment = write_external(
-        &EmbeddingTable {
-            hidden_size: shape.hidden as u32,
-            // Gemma scales token embeddings by sqrt(hidden) before layer 0. Converted
-            // by local `f32_to_act` so the committed bits match the
-            // deterministic path exactly rather than approximately.
-            embedding_scale: det_num::f32_to_act((shape.hidden as f32).sqrt()).to_bits(),
-            values: paged_i32s(&values).map_err(|error| error.to_string())?,
-        },
-        layout,
-        "raster-stages/input-embedding",
-        "embedding",
-    )?;
-
-    stages.push(format!(
-        concat!(
-            "[[chain.stage]]\n",
-            "name = \"input_embedding\"\n",
-            "project = \"raster-stages/input-embedding\"\n",
-            "inputs.prompt = {{ from = \"prompt_prepare\" }}\n",
-            "{}"
-        ),
-        external_line(
-            "embedding",
-            layout,
-            "raster-stages/input-embedding",
-            "embedding",
-            &commitment
-        )
-    ));
-    Ok(())
-}
-
-// ---------------------------------------------------------------------------
-// Stage 3 — per-layer embeddings
-// ---------------------------------------------------------------------------
-
-fn write_ple_layers(
-    weights: &detwgt::Artifact,
-    shape: &Shape,
-    layout: &ArtifactLayout,
-    stages: &mut Vec<String>,
-) -> Result<(), Box<dyn Error>> {
-    let per_layer = weights.get("model.language_model.embed_tokens_per_layer.weight")?;
-    let projection = weights.get("model.language_model.per_layer_model_projection.weight")?;
-    let projection_norm = weights.get("model.language_model.per_layer_projection_norm.weight")?;
-
-    for layer_idx in 0..shape.layers {
-        let start = layer_idx * shape.ple_width;
-        let end = start + shape.ple_width;
-
-        // The packed [vocab, layers · width] table gives this layer its slice.
-        let slice = per_layer.column_slice(start, end)?;
-
-        let layer = PleLayer {
-            params: PleLayerParams {
-                layer_idx: layer_idx as u32,
-                hidden_size: shape.hidden as u32,
-                ple_width: shape.ple_width as u32,
-                // Derived, not stored in the artifact — the comment this
-                // replaces claimed unit scaling was "faithful", but the model
-                // loader computes real values and hardcoding 1.0 silently
-                // dropped three scalings from every per-layer embedding
-                // (`casettek/.../gemma/io.rs:1176-1179`).
-                embedding_scale: det_act_bits((shape.ple_width as f32).sqrt()),
-                projection_scalar: det_act_bits((shape.hidden as f32).powf(-0.5)),
-                input_scale: det_act_bits(2f32.powf(-0.5)),
-                norm_eps: shape.norm_eps,
-                norm_weights: page_of_i32s(&projection_norm.values),
-            },
-            embeddings: paged_i32s(&slice).map_err(|error| error.to_string())?,
-            projection: paged_i32s(&projection.rows(start, end)?)
-                .map_err(|error| error.to_string())?,
-        };
-
-        let name = format!("layer{layer_idx}");
-        let commitment =
-            write_external(&layer, layout, "raster-stages/prefill-prepare-aux", &name)?;
-        stages.push(format!(
-            concat!(
-                "[[chain.stage]]\n",
-                "name = \"prefill_prepare_aux_l{idx}\"\n",
-                "project = \"raster-stages/prefill-prepare-aux\"\n",
-                "inputs.embedded = {{ from = \"input_embedding\" }}\n",
-                "{line}"
-            ),
-            idx = layer_idx,
-            line = external_line(
-                "layer",
-                layout,
-                "raster-stages/prefill-prepare-aux",
-                &name,
-                &commitment
-            )
-        ));
-    }
-    Ok(())
-}
-
-// ---------------------------------------------------------------------------
-// Stage 4 — transformer layers
-// ---------------------------------------------------------------------------
-
-fn write_transformer_layers(
-    weights: &detwgt::Artifact,
-    shape: &Shape,
-    layout: &ArtifactLayout,
-    stages: &mut Vec<String>,
-) -> Result<(), Box<dyn Error>> {
-    // Report the two RoPE families once. These are the numbers that silently
-    // decide every attention score, so they are worth seeing rather than
-    // trusting — a wrong base or rotary width produces a plausible-looking run
-    // and the wrong token.
-    for (label, idx) in shape
-        .layer_types
-        .iter()
-        .enumerate()
-        .map(|(i, t)| (t.as_str(), i))
-        .fold(Vec::new(), |mut seen: Vec<(&str, usize)>, (t, i)| {
-            if !seen.iter().any(|(s, _)| *s == t) {
-                seen.push((t, i));
-            }
-            seen
-        })
-    {
-        let (base, rotary, freq) = shape.rope_at(idx);
-        println!(
-            "rope[{label}]: head_dim {} · rotary_dim {rotary} · freq_base_dim {freq} · base {} (Q32.32 bits {base})",
-            shape.head_dim_at(idx),
-            base >> 32,
-        );
-    }
-
-    // And the KV-sharing map, for the same reason: a wrong donor is not a crash,
-    // it is a layer attending over another layer's keys.
-    let donors: Vec<(usize, i32)> = (0..shape.layers)
-        .map(|idx| (idx, shape.kv_donor_layer(idx)))
-        .filter(|(_, donor)| *donor >= 0)
-        .collect();
-    let mut by_donor: BTreeMap<i32, Vec<usize>> = BTreeMap::new();
-    for (idx, donor) in &donors {
-        by_donor.entry(*donor).or_default().push(*idx);
-    }
-    println!(
-        "kv sharing: {} of {} layers borrow (config declares {})",
-        donors.len(),
-        shape.layers,
-        shape.num_kv_shared_layers
-    );
-    for (donor, borrowers) in &by_donor {
-        println!("  donor layer {donor} -> {borrowers:?}");
-    }
-    if by_donor.len() > 2 {
-        return Err(format!(
-            "this chain supports at most two KV donor candidates, model declares {}",
-            by_donor.len()
-        )
-        .into());
-    }
-    let mut donor_candidates = by_donor.keys().copied();
-    let donor_a_layer = donor_candidates.next().unwrap_or(-2);
-    let donor_b_layer = donor_candidates.next().unwrap_or(-3);
-
-    for layer_idx in 0..shape.layers {
-        let at = |suffix: &str| format!("model.language_model.layers.{layer_idx}.{suffix}");
-        let gate = weights.get(&at("mlp.gate_proj.weight"))?;
-        let ffn = gate.dims[0] as usize;
-
-        // Alternating sliding/full attention, as `layer_types` declares.
-        let sliding = match shape.layer_types.get(layer_idx).map(String::as_str) {
-            Some("sliding_attention") => shape.sliding_window,
-            _ => 0,
-        };
-        // Head dim is per-layer here, not global (see `Shape::global_head_dim`).
-        let head_dim = shape.head_dim_at(layer_idx);
-        let (rope_base, rotary_dim, rope_freq_base_dim) = shape.rope_at(layer_idx);
-        let kv_donor_layer = shape.kv_donor_layer(layer_idx);
-        // `attention_k_eq_v` layers store no separate V projection: V *is* K.
-        // tiny-gemma-dev emits v_proj only for its sliding layers.
-        let w_v = match weights.get(&at("self_attn.v_proj.weight")) {
-            Ok(tensor) => &tensor.values,
-            Err(_) => &weights.get(&at("self_attn.k_proj.weight"))?.values,
-        };
-        let layer_scalar = weights
-            .get(&at("layer_scalar"))
-            .ok()
-            .and_then(|tensor| tensor.values.first().copied())
-            .unwrap_or(0);
-
-        let layer = TransformerLayer {
-            params: LayerParams {
-                layer_idx: layer_idx as u32,
-                hidden_size: shape.hidden as u32,
-                ffn_size: ffn as u32,
-                num_heads: shape.heads as u32,
-                num_kv_heads: shape.kv_heads as u32,
-                head_dim: head_dim as u32,
-                sliding_window: sliding,
-                attn_scale: inv_sqrt_q16(head_dim),
-                layer_scalar,
-                norm_eps: shape.norm_eps,
-                rope_base,
-                rotary_dim,
-                rope_freq_base_dim,
-                kv_donor_layer,
-                donor_a_layer,
-                donor_b_layer,
-                norm_input: page_of_i32s(&weights.get(&at("input_layernorm.weight"))?.values),
-                norm_post_attn: page_of_i32s(
-                    &weights.get(&at("post_attention_layernorm.weight"))?.values,
-                ),
-                norm_pre_ffw: page_of_i32s(
-                    &weights.get(&at("pre_feedforward_layernorm.weight"))?.values,
-                ),
-                norm_post_ffw: page_of_i32s(
-                    &weights
-                        .get(&at("post_feedforward_layernorm.weight"))?
-                        .values,
-                ),
-                q_norm: page_of_i32s(&weights.get(&at("self_attn.q_norm.weight"))?.values),
-                k_norm: page_of_i32s(&weights.get(&at("self_attn.k_norm.weight"))?.values),
-                ple_width: shape.ple_width as u32,
-                // Hidden-width, despite the name: it normalises *after*
-                // `per_layer_projection` maps back up from `ple_width`.
-                ple_post_norm: page_of_i32s(
-                    &weights.get(&at("post_per_layer_input_norm.weight"))?.values,
-                ),
-            },
-            w_q: paged_i32s(&weights.get(&at("self_attn.q_proj.weight"))?.values)
-                .map_err(|error| error.to_string())?,
-            w_k: paged_i32s(&weights.get(&at("self_attn.k_proj.weight"))?.values)
-                .map_err(|error| error.to_string())?,
-            w_v: paged_i32s(w_v).map_err(|error| error.to_string())?,
-            w_o: paged_i32s(&weights.get(&at("self_attn.o_proj.weight"))?.values)
-                .map_err(|error| error.to_string())?,
-            w_gate: paged_i32s(&gate.values).map_err(|error| error.to_string())?,
-            w_up: paged_i32s(&weights.get(&at("mlp.up_proj.weight"))?.values)
-                .map_err(|error| error.to_string())?,
-            ple_input_gate: paged_i32s(&weights.get(&at("per_layer_input_gate.weight"))?.values)
-                .map_err(|error| error.to_string())?,
-            ple_layer_projection: paged_i32s(
-                &weights.get(&at("per_layer_projection.weight"))?.values,
-            )
-            .map_err(|error| error.to_string())?,
-            w_down: paged_i32s(&weights.get(&at("mlp.down_proj.weight"))?.values)
-                .map_err(|error| error.to_string())?,
-        };
-
-        let name = format!("layer{layer_idx}");
-        let commitment = write_external(&layer, layout, "raster-stages/prefill-range", &name)?;
-        let upstream = if layer_idx == 0 {
-            "input_embedding".to_string()
-        } else {
-            format!("prefill_range_l{}", layer_idx - 1)
-        };
-        // Before the sharing boundary both candidates must be the empty input:
-        // binding the eventual donor stages here would be a forward reference.
-        // Sharing layers receive both candidates and committed
-        // `kv_donor_layer` selects the exact one inside the tile.
-        let first_shared = shape.layers.saturating_sub(shape.num_kv_shared_layers);
-        let (donor_a, donor_b) = if layer_idx < first_shared {
-            (
-                String::from("input_embedding"),
-                String::from("input_embedding"),
-            )
-        } else {
-            (
-                format!("prefill_range_l{donor_a_layer}"),
-                format!("prefill_range_l{donor_b_layer}"),
-            )
-        };
-        stages.push(format!(
-            concat!(
-                "[[chain.stage]]\n",
-                "name = \"prefill_range_l{idx}\"\n",
-                "project = \"raster-stages/prefill-range\"\n",
-                "inputs.activations = {{ from = \"{upstream}\" }}\n",
-                // Prefill inherits an empty cache. Bound to `input_embedding`
-                // for every layer, the same stage the non-sharing layers use
-                // for `donor_kv` — a decode stage is where this points at the
-                // previous step instead.
-                "inputs.prior_kv = {{ from = \"input_embedding\" }}\n",
-                "inputs.donor_a_kv = {{ from = \"{donor_a}\" }}\n",
-                "inputs.donor_b_kv = {{ from = \"{donor_b}\" }}\n",
-                "inputs.ple = {{ from = \"prefill_prepare_aux_l{idx}\" }}\n",
-                "{line}"
-            ),
-            idx = layer_idx,
-            upstream = upstream,
-            donor_a = donor_a,
-            donor_b = donor_b,
-            line = external_line(
-                "layer",
-                layout,
-                "raster-stages/prefill-range",
-                &name,
-                &commitment,
-            )
-        ));
-    }
-    Ok(())
-}
-
-/// `1/sqrt(n)` in Q16.16, computed in integers so the fixture and the guest
-/// agree on the constant.
-fn inv_sqrt_q16(n: usize) -> i32 {
-    if n == 0 {
-        return 0;
-    }
-    let root = (0..).find(|r| r * r >= n).unwrap_or(1).max(1);
-    let exact = (n as f64).sqrt();
-    let _ = root;
-    f32_to_q16(1.0 / exact)
-}
-
-// ---------------------------------------------------------------------------
-// Stage 5 — output head
-// ---------------------------------------------------------------------------
-
-fn write_head(
-    weights: &detwgt::Artifact,
-    shape: &Shape,
-    text: &serde_json::Value,
-    layout: &ArtifactLayout,
-    stages: &mut Vec<String>,
-) -> Result<(), Box<dyn Error>> {
-    let tied = text
-        .get("tie_word_embeddings")
-        .and_then(serde_json::Value::as_bool)
-        .unwrap_or(false);
-    let projection = if tied {
-        weights.get("model.language_model.embed_tokens.weight")?
-    } else {
-        weights.get("model.language_model.lm_head.weight")?
-    };
-    let softcap = text
-        .get("final_logit_softcapping")
-        .and_then(serde_json::Value::as_f64)
-        .map(f32_to_q16)
-        .unwrap_or(0);
-
-    let mut rows = Vec::with_capacity(shape.vocab * shape.hidden);
-    for token_id in 0..shape.vocab {
-        rows.extend_from_slice(projection.row(token_id)?);
-    }
-
-    let commitment = write_external(
-        &FinalHead {
-            params: FinalHeadParams {
-                hidden_size: shape.hidden as u32,
-                norm_eps: shape.norm_eps,
-                softcap,
-                norm_weights: page_of_i32s(
-                    &weights.get("model.language_model.norm.weight")?.values,
-                ),
-            },
-            projection: paged_i32s(&rows).map_err(|error| error.to_string())?,
-        },
-        layout,
-        "raster-stages/prefill-finalize",
-        "head",
-    )?;
-
-    stages.push(format!(
-        concat!(
-            "[[chain.stage]]\n",
-            "name = \"prefill_finalize\"\n",
-            "project = \"raster-stages/prefill-finalize\"\n",
-            "inputs.activations = {{ from = \"prefill_range_l{last}\" }}\n",
-            "{line}"
-        ),
-        last = shape.layers - 1,
-        line = external_line(
-            "head",
-            layout,
-            "raster-stages/prefill-finalize",
-            "head",
-            &commitment
-        )
-    ));
-    Ok(())
+    Ok((decoder_commitment, witness_commitment))
 }
 
 // ---------------------------------------------------------------------------
@@ -1354,47 +1211,6 @@ fn write_external<T: serde::Serialize>(
         layout.external_path(stage_dir, name, "rastered").display()
     );
     Ok(commitment)
-}
-
-/// Writes a stage's `input.json` / `input_manifest.json` so it can also be run
-/// on its own with `cargo raster run`.
-fn write_stage_fixtures(
-    stage_dir: &str,
-    layout: &ArtifactLayout,
-    params: &[(&str, &str, &String)],
-) -> Result<(), Box<dyn Error>> {
-    if layout.no_stage_fixtures {
-        return Ok(());
-    }
-    let entries = |render: &dyn Fn(&str, &str, &str) -> String| -> String {
-        params
-            .iter()
-            .map(|(param, name, commitment)| render(param, name, commitment))
-            .collect::<Vec<_>>()
-            .join(",\n")
-    };
-    let input_json = entries(&|param, name, _| {
-        let data_path = layout.external_path(stage_dir, name, "rastered");
-        let index_path = layout.external_path(stage_dir, name, "rindex");
-        let stage_relative_data = path_from_dir(Path::new(stage_dir), &data_path);
-        let stage_relative_index = path_from_dir(Path::new(stage_dir), &index_path);
-        format!(
-            "  \"{param}\": {{ \"path\": {:?}, \"index_path\": {:?}, \"load_preference\": \"read\" }}",
-            path_string(&stage_relative_data),
-            path_string(&stage_relative_index)
-        )
-    });
-    let manifest_json = entries(&|param, _, commitment| {
-        format!("  \"{param}\": {{ \"type\": \"sha256\", \"encoding\": \"raster\", \"commitment\": \"{commitment}\" }}")
-    });
-    let dir = Path::new(stage_dir);
-    fs::write(dir.join("input.json"), format!("{{\n{input_json}\n}}\n"))?;
-    fs::write(
-        dir.join("input_manifest.json"),
-        format!("{{\n{manifest_json}\n}}\n"),
-    )?;
-    println!("wrote {stage_dir}/input.json + input_manifest.json");
-    Ok(())
 }
 
 fn external_line(
@@ -1424,19 +1240,6 @@ fn external_line(
 
 fn path_string(path: &Path) -> String {
     path.to_string_lossy().replace('\\', "/")
-}
-
-fn path_from_dir(base_dir: &Path, path: &Path) -> PathBuf {
-    if path.is_absolute() {
-        return path.to_path_buf();
-    }
-    let mut relative = PathBuf::new();
-    for component in base_dir.components() {
-        if matches!(component, Component::Normal(_)) {
-            relative.push("..");
-        }
-    }
-    relative.join(path)
 }
 
 #[cfg(test)]
@@ -1471,14 +1274,14 @@ mod tests {
             )
             .unwrap();
             fs::write(args.model_dir.join("tokenizer.json"), "{}").unwrap();
-            let manifest = format!("[chain]\nname = \"{name}\"\n[[chain.stage]]\nname = \"prompt_prepare\"\nproject = \"raster-stages/prompt-prepare\"\ninputs.tokenizer = {{ external = {{ path = \"data/{name}.rastered\", index_path = \"data/{name}.rindex\", commitment = \"abc\" }} }}\n");
+            let manifest = format!("[chain]\nname = \"{name}\"\n[[chain.stage]]\nname = \"prompt_bind\"\nproject = \"raster-stages/prompt-bind\"\ninputs.tokenizer = {{ external = {{ path = \"data/{name}.rastered\", index_path = \"data/{name}.rindex\", commitment = \"abc\" }} }}\n");
             let (path, template) = save_model_template(&args, &manifest).unwrap();
             assert!(path.is_file()); // No --manifest is necessary.
             assert!(template.contains(&format!(
                 "project = {:?}",
                 std::env::current_dir()
                     .unwrap()
-                    .join("raster-stages/prompt-prepare")
+                    .join("raster-stages/prompt-bind")
                     .to_string_lossy()
             )));
             assert!(template.contains(&format!(
@@ -1491,12 +1294,41 @@ mod tests {
             let model_path = direct_manifest::write_model_manifest(
                 &args,
                 &Default::default(),
-                &shape,
-                &text,
+                ModelFamily::GemmaDense,
+                shape.manifest_shape(&text),
                 Some((&path, &template)),
+                &[
+                    "tokenizer",
+                    "decoder",
+                    "embedding",
+                    "head",
+                    "aux_layer_0",
+                    "transformer_layer_0",
+                ]
+                .into_iter()
+                .enumerate()
+                .map(|(i, role)| inference_artifacts::ModelCommitment {
+                    role: role.into(),
+                    commitment: format!("{:02x}", i).repeat(32),
+                })
+                .collect::<Vec<_>>(),
             )
             .unwrap();
             let model = inference_artifacts::ModelManifest::load_verified(&model_path).unwrap();
+            let descriptor_bytes = fs::read(
+                model_path
+                    .parent()
+                    .unwrap()
+                    .join(inference_artifacts::model_identity::MODEL_DESCRIPTOR_BIN),
+            )
+            .unwrap();
+            assert_eq!(
+                descriptor_bytes,
+                model.descriptor().unwrap().encode().unwrap()
+            );
+            // Version and two counts, then four global and two layer roots.
+            assert_eq!(descriptor_bytes.len(), 12 + 6 * 32);
+
             assert_eq!(
                 model.verified_raster_template(&model_path).unwrap().1,
                 template
@@ -1551,8 +1383,31 @@ mod tests {
                 only_ple: false,
                 only_direct: false,
                 no_stage_fixtures: false,
+                range_size: DEFAULT_RANGE_SIZE,
             }
         );
+    }
+
+    #[test]
+    fn a_bundle_is_imported_only_as_a_family_this_build_has() {
+        let family = |config: serde_json::Value| bundle_family(&config);
+        // Gemma's own configs, and the bundles made for this chain that say nothing.
+        for config in [
+            serde_json::json!({"model_type": "gemma4", "text_config": {"model_type": "gemma4_text"}}),
+            serde_json::json!({"model_type": "gemma3n", "text_config": {}}),
+            serde_json::json!({"text_config": {"hidden_size": 2}}),
+        ] {
+            assert_eq!(family(config).unwrap(), ModelFamily::GemmaDense);
+        }
+        // The text model's type decides when the two differ.
+        for config in [
+            serde_json::json!({"model_type": "qwen3"}),
+            serde_json::json!({"model_type": "gemma4", "text_config": {"model_type": "qwen3"}}),
+        ] {
+            let error = family(config).unwrap_err().to_string();
+            assert!(error.contains("`qwen3`"), "{error}");
+            assert!(error.contains("gemma-dense"), "{error}");
+        }
     }
 
     #[test]
@@ -1569,42 +1424,12 @@ mod tests {
     }
 
     #[test]
-    fn no_stage_fixtures_preserves_existing_files() {
-        let mut config = parse_args_from(
+    fn the_stage_fixtures_flag_is_still_accepted() {
+        let config = parse_args_from(
             ["--model", "model-bundles/model", "--no-stage-fixtures"].map(String::from),
         )
         .unwrap();
         assert!(config.no_stage_fixtures);
-        let dir = std::env::temp_dir().join(format!("import-no-fixtures-{}", std::process::id()));
-        fs::create_dir_all(&dir).unwrap();
-        fs::write(dir.join("input.json"), "existing input").unwrap();
-        fs::write(dir.join("input_manifest.json"), "existing manifest").unwrap();
-        write_stage_fixtures(
-            dir.to_str().unwrap(),
-            &ArtifactLayout::from_config(&config),
-            &[],
-        )
-        .unwrap();
-        assert_eq!(
-            fs::read_to_string(dir.join("input.json")).unwrap(),
-            "existing input"
-        );
-        assert_eq!(
-            fs::read_to_string(dir.join("input_manifest.json")).unwrap(),
-            "existing manifest"
-        );
-        config.no_stage_fixtures = false;
-        write_stage_fixtures(
-            dir.to_str().unwrap(),
-            &ArtifactLayout::from_config(&config),
-            &[],
-        )
-        .unwrap();
-        assert_ne!(
-            fs::read_to_string(dir.join("input.json")).unwrap(),
-            "existing input"
-        );
-        fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
@@ -1643,6 +1468,7 @@ mod tests {
             only_ple: false,
             only_direct: false,
             no_stage_fixtures: false,
+            range_size: DEFAULT_RANGE_SIZE,
         };
         let layout = ArtifactLayout::from_config(&config);
 
@@ -1675,6 +1501,7 @@ mod tests {
             only_ple: false,
             only_direct: false,
             no_stage_fixtures: false,
+            range_size: DEFAULT_RANGE_SIZE,
         };
         let layout = ArtifactLayout::from_config(&config);
 
@@ -1686,38 +1513,10 @@ mod tests {
             "abc",
         );
 
-        assert!(line.contains(
-            r#"path = "target/iris/run-prompt-placeholder/initial_pieces.rastered""#
-        ));
+        assert!(
+            line.contains(r#"path = "target/iris/run-prompt-placeholder/initial_pieces.rastered""#)
+        );
         assert!(!line.contains("runtime/model-artifacts"));
-    }
-
-    #[test]
-    fn stage_fixture_paths_are_relative_to_stage_dir() {
-        let config = ImportConfig {
-            model_dir: PathBuf::from("model-bundles/model"),
-            manifest: None,
-            artifact_root: PathBuf::from("runtime/model-artifacts"),
-            model_id: Some(String::from("gemma")),
-            only_tokenizer: false,
-            only_layers: false,
-            only_embedding: false,
-            only_ple: false,
-            only_direct: false,
-            no_stage_fixtures: false,
-        };
-        let layout = ArtifactLayout::from_config(&config);
-        let path = path_from_dir(
-            Path::new("raster-stages/input-embedding"),
-            &layout.external_path("raster-stages/input-embedding", "embedding", "rastered"),
-        );
-
-        assert_eq!(
-            path,
-            PathBuf::from(
-                "../../runtime/model-artifacts/gemma/raster/input-embedding/embedding.rastered"
-            )
-        );
     }
 
     #[test]

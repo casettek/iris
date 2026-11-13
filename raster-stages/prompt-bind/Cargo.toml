@@ -1,0 +1,21 @@
+[package]
+name = "prompt-bind"
+version = "0.1.0"
+edition = "2021"
+default-run = "prompt-bind"
+
+[features]
+default = ["std"]
+std = ["raster/std"]
+profiling = ["raster/profiling"]
+
+[dependencies]
+model-identity = { path = "../../crates/model/identity", default-features = false }
+raster = { path = "../../../raster/crates/raster", default-features = false }
+serde = { version = "1.0", default-features = false, features = ["derive", "alloc"] }
+sha2 = { version = "0.10", default-features = false, features = ["compress"] }
+
+[[bin]]
+name = "prompt-bind"
+path = "src/main.rs"
+required-features = ["std"]

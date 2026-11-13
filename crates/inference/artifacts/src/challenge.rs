@@ -36,6 +36,8 @@ pub struct Divergence {
 #[serde(rename_all = "snake_case")]
 pub enum DivergenceReason {
     StageName,
+    /// The claim names another program for the stage than the one locked here.
+    ProgramCommitment,
     InputCommitment,
     OutputCommitment,
     OutputSha256,

@@ -11,7 +11,17 @@ use raster::{Bytes, BytesPage, List};
 use serde::{Deserialize, Serialize};
 
 /// Replay-unit page size shared by every `Bytes<P>` region this importer writes.
-pub const PAGE_SIZE: u64 = 196_608;
+pub const PAGE_SIZE: u64 = 184_320;
+
+/// Page size of every `Q8_0` region: a whole number of rows for each row
+/// width `in / 32 · 34` this chain is imported with. MUST match the stages'
+/// `Q8_PAGE_SIZE` / embedding and head `PAGE_SIZE`.
+pub const Q8_PAGE_SIZE: u64 = 195_840;
+
+/// Page size of the head projection: whole rows for every hidden width this
+/// chain is imported with (360 rows at 128, 30 at 1536, 18 at 2560).
+/// MUST match `sequence-check`.
+pub const Q8_HEAD_PAGE_SIZE: u64 = 48_960;
 
 /// Packs Q16.16 values as little-endian i32s.
 pub fn pack_i32_bytes(values: &[i32]) -> Vec<u8> {
@@ -27,62 +37,18 @@ pub fn page_of_i32s(values: &[i32]) -> BytesPage {
     BytesPage::__from_parts(0, 0, pack_i32_bytes(values))
 }
 
-pub fn paged_i32s(values: &[i32]) -> raster::runtime::Result<Bytes<196_608>> {
+pub fn paged_i32s(values: &[i32]) -> raster::runtime::Result<Bytes<184_320>> {
     Bytes::<PAGE_SIZE>::paged(pack_i32_bytes(values))
 }
 
-// --- prompt-prepare ---------------------------------------------------------
+// --- prompt-bind, prompt-check ------------------------------------------------
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
-pub struct TokenEntry {
-    pub token: String,
-    pub id: u32,
-}
+// The prompt stages share one crate, so these are the stages' own types.
+pub use prompt_check::input::{PromptTokenization, TokenEntry};
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
-pub struct BpeMerge {
-    pub rank: u32,
-    pub left: String,
-    pub right: String,
-    pub merged: String,
-}
+// --- sequence-check: the decoder table -------------------------------------
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
-pub struct VocabBucket {
-    pub entries: List<TokenEntry>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
-pub struct MergeBucket {
-    pub rules: List<BpeMerge>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
-pub struct PromptTokenizer {
-    pub vocab_bucket_count: u32,
-    pub merge_bucket_count: u32,
-    pub vocab_buckets: List<VocabBucket>,
-    pub merge_buckets: List<MergeBucket>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
-pub struct BpePieces {
-    pub pieces: List<prompt_prepare::input::BpePiece>,
-}
-
-// --- output-finalize -------------------------------------------------------
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
-pub struct DecoderToken {
-    pub token: String,
-    pub special: bool,
-    pub terminal: bool,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
-pub struct DecoderTable {
-    pub tokens: List<DecoderToken>,
-}
+pub use sequence_check::input::{DecoderTable, DecoderToken};
 
 // --- input-embedding --------------------------------------------------------
 
@@ -90,8 +56,14 @@ pub struct DecoderTable {
 pub struct EmbeddingTable {
     pub hidden_size: u32,
     pub embedding_scale: i32,
-    #[page_size = 196_608]
-    pub values: Bytes<196_608>,
+    #[page_size = 195_840]
+    pub values: Bytes<195_840>,
+}
+
+/// A prompt range's `claimed` input: no ids after the prompt.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
+pub struct ClaimedOutput {
+    pub token_ids: List<u32>,
 }
 
 // --- prefill-prepare-aux ----------------------------------------------------
@@ -111,10 +83,10 @@ pub struct PleLayerParams {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
 pub struct PleLayer {
     pub params: PleLayerParams,
-    #[page_size = 196_608]
-    pub embeddings: Bytes<196_608>,
-    #[page_size = 196_608]
-    pub projection: Bytes<196_608>,
+    #[page_size = 195_840]
+    pub embeddings: Bytes<195_840>,
+    #[page_size = 184_320]
+    pub projection: Bytes<184_320>,
 }
 
 // --- prefill-range ----------------------------------------------------------
@@ -150,27 +122,27 @@ pub struct LayerParams {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
 pub struct TransformerLayer {
     pub params: LayerParams,
-    #[page_size = 196_608]
-    pub w_q: Bytes<196_608>,
-    #[page_size = 196_608]
-    pub w_k: Bytes<196_608>,
-    #[page_size = 196_608]
-    pub w_v: Bytes<196_608>,
-    #[page_size = 196_608]
-    pub w_o: Bytes<196_608>,
-    #[page_size = 196_608]
-    pub w_gate: Bytes<196_608>,
-    #[page_size = 196_608]
-    pub w_up: Bytes<196_608>,
-    #[page_size = 196_608]
-    pub w_down: Bytes<196_608>,
-    #[page_size = 196_608]
-    pub ple_input_gate: Bytes<196_608>,
-    #[page_size = 196_608]
-    pub ple_layer_projection: Bytes<196_608>,
+    #[page_size = 195_840]
+    pub w_q: Bytes<195_840>,
+    #[page_size = 195_840]
+    pub w_k: Bytes<195_840>,
+    #[page_size = 195_840]
+    pub w_v: Bytes<195_840>,
+    #[page_size = 195_840]
+    pub w_o: Bytes<195_840>,
+    #[page_size = 195_840]
+    pub w_gate: Bytes<195_840>,
+    #[page_size = 195_840]
+    pub w_up: Bytes<195_840>,
+    #[page_size = 195_840]
+    pub w_down: Bytes<195_840>,
+    #[page_size = 184_320]
+    pub ple_input_gate: Bytes<184_320>,
+    #[page_size = 184_320]
+    pub ple_layer_projection: Bytes<184_320>,
 }
 
-// --- prefill-finalize -------------------------------------------------------
+// --- sequence-check ---------------------------------------------------------
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
 pub struct FinalHeadParams {
@@ -183,6 +155,6 @@ pub struct FinalHeadParams {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
 pub struct FinalHead {
     pub params: FinalHeadParams,
-    #[page_size = 196_608]
-    pub projection: Bytes<196_608>,
+    #[page_size = 48_960]
+    pub projection: Bytes<48_960>,
 }

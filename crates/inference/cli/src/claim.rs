@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
+use direct_infer::{DirectInferenceConfig, DirectInferenceExecutor};
 use staged_infer::chain_runner::StagedExecutionBackend;
 use staged_infer::{
     CheckpointedInferenceConfig, CheckpointedInferenceExecutor, CheckpointedInferenceResult,
@@ -12,8 +13,10 @@ use staged_infer::{
 use inference_artifacts::{
     file_sha256 as sha256_file, read_checkpoint_hashes, read_checkpoint_trace, read_json,
     read_run_spec, write_checkpoint_hashes, write_claim_artifacts_with_prepared_run, write_json,
-    InferenceResult, ModelManifest, PreparedRun, CHECKPOINT_TRACE_JSON, PREPARED_RUN_JSON,
+    InferenceResult, InferenceRunSpec, ModelManifest, PreparedRun, CHECKPOINT_TRACE_JSON,
+    PREPARED_RUN_JSON,
 };
+use inference_artifacts::contract::{ClaimSubmission, CLAIM_SUBMISSION_JSON};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 
@@ -23,11 +26,24 @@ pub struct ClaimBuildOptions {
     pub run_spec_path: PathBuf,
     pub current_exe: PathBuf,
     pub staged_backend: StagedExecutionBackend,
+    /// Debug-only: post these output ids instead of discovering them with direct
+    /// inference. Used to build claims whose tokens are not the greedy
+    /// continuation.
+    pub claimed_token_ids: Option<Vec<u32>>,
+    /// The output a direct run of this same spec already produced. Taken in
+    /// place of running direct inference again, and held to every rule a
+    /// discovered output is: the chain re-derives each token, and a claim it
+    /// rejects is not written.
+    pub direct_output_ids: Option<Vec<u32>>,
 }
 
 pub(crate) struct PreparedClaimRun {
     pub(crate) prepared_run: PreparedRun,
     pub(crate) manifest_path: PathBuf,
+    /// The ids written into the run's `claimed_ids` externals. Kept for the
+    /// claimer's own tooling only: the claim posts no copy of them, because its
+    /// output is the chain's final record.
+    pub(crate) claimed_token_ids: Vec<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -36,6 +52,9 @@ pub struct ClaimBuildResult {
     pub checkpoint_trace_path: PathBuf,
     pub checkpoint_hashes_path: PathBuf,
     pub claim_bundle_path: PathBuf,
+    /// What a claimer would submit to a contract. Absent when the chain
+    /// published no final record to submit.
+    pub claim_submission_path: Option<PathBuf>,
     pub final_result: Option<InferenceResult>,
 }
 
@@ -89,11 +108,46 @@ pub fn build_claim(options: ClaimBuildOptions) -> Result<ClaimBuildResult> {
         staged_backend: options.staged_backend,
         parity_policy: ParityPolicy::Skip,
     })?;
-    write_claim_result(
+    // A claimer applies the rule a challenger will: the claim is judged by
+    // its own final record.
+    if let Some(reason) =
+        crate::challenge::claimed_output_rejection(checkpointed.final_result.as_ref())?
+    {
+        if options.claimed_token_ids.is_none() {
+            if options.direct_output_ids.is_some() {
+                anyhow::bail!(
+                    "{reason}; the ids given as this run's direct output are not what the chain \
+                     derives, so they are not that output or direct and teacher-forced \
+                     inference are not in parity"
+                );
+            }
+            // The ids came from direct decode, so the two paths are not
+            // bit-identical: an honest claimer would convict itself.
+            anyhow::bail!("{reason}; direct and teacher-forced inference are not in parity");
+        }
+        eprintln!("warning: {reason}; writing the claim anyway because --claimed-ids was given");
+    }
+    let result = write_claim_result(
         checkpointed,
         &prepared.manifest_path,
         &prepared.prepared_run,
-    )
+    )?;
+    // And the rules a contract will: the statement the chain bound is the one
+    // recomputed from the pinned model and this run's parameters, every
+    // checkpoint names an approved program, and the record is the last
+    // stage's.
+    if let Some(path) = result.claim_submission_path.as_ref() {
+        if let Some(reason) = crate::contract::claim_rejection(&prepared.prepared_run, path)? {
+            if options.claimed_token_ids.is_none() {
+                anyhow::bail!("a contract would not accept this claim: {reason}");
+            }
+            eprintln!(
+                "warning: a contract would not accept this claim: {reason}; it was written \
+                 anyway because --claimed-ids was given"
+            );
+        }
+    }
+    Ok(result)
 }
 
 pub fn corrupt_checkpoint_hashes(
@@ -168,11 +222,23 @@ fn write_claim_result(
             manifest_path,
             prepared_run_path.as_deref(),
         )?;
+    // The submission is stated over the checkpoint list written just above.
+    let claim_submission_path = checkpointed
+        .final_result
+        .as_ref()
+        .map(|result| -> Result<PathBuf> {
+            let submission = ClaimSubmission::from_run(result, &checkpointed.chain_dir)?;
+            let path = checkpointed.chain_dir.join(CLAIM_SUBMISSION_JSON);
+            inference_artifacts::write_json(&path, &submission)?;
+            Ok(path)
+        })
+        .transpose()?;
     Ok(ClaimBuildResult {
         chain_dir: checkpointed.chain_dir,
         checkpoint_trace_path,
         checkpoint_hashes_path,
         claim_bundle_path,
+        claim_submission_path,
         final_result: checkpointed.final_result,
     })
 }
@@ -189,6 +255,8 @@ impl ClaimBuildOptions {
             base_dir,
             current_exe,
             staged_backend,
+            claimed_token_ids: None,
+            direct_output_ids: None,
         })
     }
 }
@@ -196,11 +264,37 @@ impl ClaimBuildOptions {
 pub(crate) fn prepare_claim_run(options: &ClaimBuildOptions) -> Result<PreparedClaimRun> {
     let run_spec_path = absolute(&options.base_dir, &options.run_spec_path);
     let run_spec = read_run_spec(&run_spec_path)?;
+    prepare_run(options, run_spec_path, &run_spec, true)
+}
+
+/// Prepares a run from a spec a claim already fixed, as a challenger does.
+///
+/// The ids are not held to the run's token budget here. A claim that breaks the
+/// budget still has a chain to recompute, and is rejected on its final record.
+pub(crate) fn prepare_challenge_run(
+    options: &ClaimBuildOptions,
+    run_spec: &InferenceRunSpec,
+) -> Result<PreparedClaimRun> {
+    let run_spec_path = absolute(&options.base_dir, &options.run_spec_path);
+    prepare_run(options, run_spec_path, run_spec, false)
+}
+
+fn prepare_run(
+    options: &ClaimBuildOptions,
+    run_spec_path: PathBuf,
+    run_spec: &InferenceRunSpec,
+    check_claimed_length: bool,
+) -> Result<PreparedClaimRun> {
     let run_spec_dir = run_spec_path
         .parent()
         .ok_or_else(|| anyhow::anyhow!("run spec has no parent directory"))?;
     let model_manifest_path = absolute(run_spec_dir, &run_spec.model_manifest);
     let model_manifest = ModelManifest::load_verified(&model_manifest_path)?;
+    // The stage list prepared below and the native routines that run it are
+    // one family's. Another brings its own layer stages.
+    match model_manifest.family()? {
+        inference_artifacts::ModelFamily::GemmaDense => {}
+    }
     let (template_path, template) =
         model_manifest.verified_raster_template(&model_manifest_path)?;
     let model_manifest_dir = model_manifest_path
@@ -208,7 +302,7 @@ pub(crate) fn prepare_claim_run(options: &ClaimBuildOptions) -> Result<PreparedC
         .ok_or_else(|| anyhow::anyhow!("model manifest has no parent directory"))?;
     let tokenizer_path = absolute(model_manifest_dir, &model_manifest.bundle.tokenizer_path);
     let tokenizer: serde_json::Value = read_json(&tokenizer_path)?;
-    let prompt = run_prep::prepare_prompt(&tokenizer, run_spec_dir, &run_spec, &model_manifest)?;
+    let prompt = run_prep::prepare_prompt(&tokenizer, run_spec_dir, run_spec, &model_manifest)?;
 
     let run_dir = options
         .base_dir
@@ -221,20 +315,61 @@ pub(crate) fn prepare_claim_run(options: &ClaimBuildOptions) -> Result<PreparedC
             run_spec.tokens,
         ));
     let prompt_dir = run_dir.join("prompt");
-    let (pieces_path, pieces_index_path, pieces_commitment) =
-        run_prep::write_initial_pieces(&prompt, &prompt_dir)?;
-
+    let ids = match options
+        .claimed_token_ids
+        .as_ref()
+        .or(options.direct_output_ids.as_ref())
+    {
+        Some(ids) => ids.clone(),
+        // Discovery is the only autoregression left: the claim posts what
+        // direct decode produced and the chain checks it.
+        None => {
+            DirectInferenceExecutor
+                .run(DirectInferenceConfig {
+                    base_dir: options.base_dir.clone(),
+                    run_spec_path: run_spec_path.clone(),
+                })
+                .context("direct inference to discover the claimed output failed")?
+                .generated_token_ids
+        }
+    };
+    if check_claimed_length {
+        run_prep::validate_claimed_length(&ids, run_spec.tokens, &prompt.eos_token_ids)?;
+    }
+    let range_size = model_manifest.range_size;
+    let bound = run_prep::bound_ranges(
+        &prompt.resolved_prompt,
+        run_spec.raw_prompt,
+        range_size as usize,
+        &run_prep::prompt_tokenizer(&tokenizer)?,
+    )?;
     let template_dir = template_path
         .parent()
         .ok_or_else(|| anyhow::anyhow!("manifest template has no parent directory"))?;
-    let run_manifest = render_run_manifest(
+    let marks: Vec<Vec<u32>> = bound
+        .ranges
+        .iter()
+        .map(|range| range.marks.clone())
+        .collect();
+    let mark_files = run_prep::write_marks(&marks, &prompt_dir)?;
+    let claimed_files = run_prep::write_claimed_ranges(&ids, range_size as usize, &prompt_dir)?;
+    let run_manifest = render_ranged_manifest(
         &template,
         template_dir,
-        &pieces_path,
-        &pieces_index_path,
-        &pieces_commitment,
-        run_spec.tokens,
-        run_prep::tokenizer_repeat_count(prompt.initial_pieces.len())?,
+        &run_prep::write_bound_text(&bound.ranges, &prompt_dir)?,
+        &run_prep::write_run_config(
+            &run_prep::RunConfig {
+                model_id: model_manifest.model_id.clone(),
+                raw_prompt: run_spec.raw_prompt,
+                max_new_tokens: run_spec.tokens,
+                range_size,
+            },
+            &prompt_dir,
+        )?,
+        &run_prep::write_run_schedule(mark_files.len(), claimed_files.len(), &prompt_dir)?,
+        &run_prep::write_text_claim(&bound.claim, &prompt_dir)?,
+        &mark_files,
+        &claimed_files,
     )?;
     let manifest_path = run_dir.join("Raster.toml");
     fs::create_dir_all(&run_dir)
@@ -247,7 +382,9 @@ pub(crate) fn prepare_claim_run(options: &ClaimBuildOptions) -> Result<PreparedC
         run_spec_path,
         model_manifest_path: model_manifest_path.clone(),
         model_manifest_sha256: sha256_file(&model_manifest_path)?,
+        model_id: model_manifest.model_id.clone(),
         prompt,
+        raw_prompt: run_spec.raw_prompt,
         tokens: run_spec.tokens,
         run_manifest_path: Some(manifest_path.clone()),
         run_manifest_sha256: Some(run_manifest_sha256),
@@ -257,36 +394,65 @@ pub(crate) fn prepare_claim_run(options: &ClaimBuildOptions) -> Result<PreparedC
     Ok(PreparedClaimRun {
         prepared_run,
         manifest_path,
+        claimed_token_ids: ids,
     })
 }
 
-fn render_run_manifest(
+/// Where model templates point run-specific externals until a run fills them.
+const RUN_PLACEHOLDER_DIR: &str = "target/iris/run-prompt-placeholder/";
+
+/// Marks where the template names the last prompt range.
+const LAST_PROMPT_RANGE: &str = "@LAST_PROMPT_RANGE@";
+
+/// Fills the template for one run: the configuration, the stage schedule and
+/// the text claim, the range counts, the last prompt range's index, and each
+/// range's committed text, marks or claimed ids.
+pub(crate) fn render_ranged_manifest(
     template: &str,
     template_dir: &Path,
-    pieces_path: &Path,
-    pieces_index_path: &Path,
-    pieces_commitment: &str,
-    tokens: u32,
-    tokenizer_repeats: u32,
+    text: &[run_prep::RunFile],
+    config: &run_prep::RunFile,
+    schedule: &run_prep::RunFile,
+    claim: &run_prep::RunFile,
+    prompt: &[run_prep::RunFile],
+    claimed: &[run_prep::RunFile],
 ) -> Result<String> {
-    let pieces_line = format!(
-        "inputs.initial_pieces = {{ external = {{ path = {:?}, index_path = {:?}, commitment = {:?} }} }}",
-        pieces_path, pieces_index_path, pieces_commitment,
+    anyhow::ensure!(
+        !prompt.is_empty() && !claimed.is_empty(),
+        "a run needs at least one prompt range and one claimed range"
+    );
+    anyhow::ensure!(
+        text.len() == prompt.len(),
+        "a run needs one slice of text for each prompt range"
     );
     let template = inference_artifacts::resolve_raster_manifest_paths(template, template_dir)?;
-    let mut table = "";
+    let last_prompt = (prompt.len() - 1).to_string();
+    let mut table = String::new();
     let mut name = String::new();
-    let mut replaced = [0_usize; 3];
+    let mut fan_index = String::new();
+    // Where the table being read starts its index. Range 0 of the prompt and
+    // of the checks is written out as plain stages, so those repeats and the
+    // prompt ranges' layer fans start at 1 and run one time fewer.
+    let mut start = 0_usize;
+    // Prompt repeats, claimed repeats, prompt externals, claimed externals,
+    // per-layer prompt fans, per-layer claimed fans, text externals,
+    // configuration bindings, schedule bindings, text claim bindings.
+    let mut replaced = [0_usize; 10];
     let mut out = Vec::new();
     for line in template.lines() {
         let trimmed = line.trim();
         if trimmed.starts_with('[') {
-            table = match trimmed {
-                "[[chain.repeat]]" => "repeat",
-                "[[chain.stage]]" => "stage",
-                _ => "",
-            };
+            table = trimmed.to_string();
             name.clear();
+            fan_index.clear();
+            start = 0;
+        }
+        if trimmed.starts_with("start =") {
+            let value: toml::Value = toml::from_str(trimmed)?;
+            start = value["start"]
+                .as_integer()
+                .and_then(|start| usize::try_from(start).ok())
+                .context("invalid repeat start")?;
         }
         if trimmed.starts_with("name =") {
             let value: toml::Value = toml::from_str(trimmed)?;
@@ -295,32 +461,149 @@ fn render_run_manifest(
                 .context("invalid stage/repeat name")?
                 .to_string();
         }
-        if table == "stage"
-            && name == "prompt_merge_seed"
-            && trimmed.starts_with("inputs.initial_pieces =")
-        {
-            replaced[0] += 1;
-            out.push(pieces_line.clone());
-        } else if table == "repeat"
-            && trimmed.starts_with("count =")
-            && (name == "decode" || name == "tokenize")
-        {
-            let (slot, count) = if name == "decode" {
-                (1, tokens)
-            } else {
-                (2, tokenizer_repeats)
-            };
-            replaced[slot] += 1;
-            out.push(format!("count = {count}"));
-        } else {
-            out.push(line.to_string());
+        if trimmed.starts_with("index =") {
+            let value: toml::Value = toml::from_str(trimmed)?;
+            fan_index = value["index"]
+                .as_str()
+                .context("invalid repeat index")?
+                .to_string();
         }
+        // Every bind stage is given the run's three statements: range 0's,
+        // and the template of the ranges after it.
+        if matches!(
+            (table.as_str(), name.as_str()),
+            ("[[chain.stage]]", "prompt_bind_p0") | ("[[chain.repeat.stage]]", "prompt_bind_p{j}")
+        ) {
+            let binding = if trimmed.starts_with("inputs.config =") {
+                Some(("config", config, 7))
+            } else if trimmed.starts_with("inputs.schedule =") {
+                Some(("schedule", schedule, 8))
+            } else if trimmed.starts_with("inputs.claim =") {
+                Some(("claim", claim, 9))
+            } else {
+                None
+            };
+            if let Some((param, file, slot)) = binding {
+                replaced[slot] += 1;
+                out.push(
+                    RunExternal::new(&file.path, &file.index_path, &file.commitment).binding(param),
+                );
+                continue;
+            }
+        }
+        let files = match table.as_str() {
+            "[chain.input.prompt_text]" => Some((text, 6)),
+            "[chain.input.prompt_marks]" => Some((prompt, 2)),
+            "[chain.input.claimed_ids]" => Some((claimed, 3)),
+            _ => None,
+        };
+        if let Some((files, slot)) = files {
+            if let Some(key) = ["index_path", "path"]
+                .into_iter()
+                .find(|key| trimmed.starts_with(&format!("{key} =")))
+            {
+                // Keep the indexed file name (`marks_{j}.rastered`), move it
+                // from the placeholder directory to this run's.
+                let value: toml::Value = toml::from_str(trimmed)?;
+                let placeholder = value[key].as_str().context("invalid input path")?;
+                anyhow::ensure!(
+                    placeholder.contains(RUN_PLACEHOLDER_DIR),
+                    "input path {placeholder} is not a run placeholder"
+                );
+                let file_name = Path::new(placeholder)
+                    .file_name()
+                    .context("input path has no file name")?;
+                let dir = files[0]
+                    .path
+                    .parent()
+                    .context("run file has no directory")?;
+                out.push(format!("{key} = {:?}", dir.join(file_name)));
+                continue;
+            }
+            if trimmed.starts_with("commitments =") {
+                replaced[slot] += 1;
+                out.push(String::from("commitments = ["));
+                out.extend(
+                    files
+                        .iter()
+                        .enumerate()
+                        .map(|(index, file)| format!("  {:?}, # {index}", file.commitment)),
+                );
+                out.push(String::from("]"));
+                continue;
+            }
+        }
+        if table == "[[chain.repeat]]" && trimmed.starts_with("count =") {
+            let range_count = match name.as_str() {
+                "prompt" => Some((0, prompt.len())),
+                "claimed_embed" | "claimed" => Some((1, claimed.len())),
+                // Layer blocks keep their model-fixed counts.
+                "layers" | "shared_layers" => None,
+                other => anyhow::bail!("unexpected repeat `{other}` in chain template"),
+            };
+            if let Some((slot, count)) = range_count {
+                replaced[slot] += 1;
+                out.push(format!("count = {}", iterations(count, start)?));
+                continue;
+            }
+        }
+        // A layer block's inner fans run once per prompt or claimed range.
+        if table == "[[chain.repeat.stage]]" && trimmed.starts_with("count =") {
+            let range_count = match fan_index.as_str() {
+                "j" => Some((4, prompt.len())),
+                "k" => Some((5, claimed.len())),
+                _ => None,
+            };
+            if let Some((slot, count)) = range_count {
+                replaced[slot] += 1;
+                out.push(format!("count = {}", iterations(count, start)?));
+                continue;
+            }
+        }
+        out.push(line.replace(LAST_PROMPT_RANGE, &last_prompt));
     }
-    if replaced != [1, 1, 1] {
-        anyhow::bail!("incompatible manifest template: expected one seed prompt binding and named decode/tokenize counts; found {replaced:?}");
+    if replaced[..4] != [1, 2, 1, 1]
+        || replaced[4] == 0
+        || replaced[4] != replaced[5]
+        || replaced[6..] != [1, 2, 2, 2]
+    {
+        anyhow::bail!("incompatible chain template: expected [prompt repeats, claimed repeats, prompt commitments, claimed commitments] = [1, 2, 1, 1], matching per-layer range fans, one set of text commitments, and a configuration, a schedule and a text claim binding for range 0's bind and for the later ranges'; found {replaced:?}");
     }
     out.push(String::new());
     Ok(out.join("\n"))
+}
+
+/// How many times a repeat over `ranges` ranges runs when its index starts
+/// at `start`.
+fn iterations(ranges: usize, start: usize) -> Result<usize> {
+    ranges
+        .checked_sub(start)
+        .with_context(|| format!("a repeat starts at range {start} of {ranges}"))
+}
+
+/// One run-specific external: the files and commitment a template
+/// placeholder is replaced with.
+pub(crate) struct RunExternal<'a> {
+    path: &'a Path,
+    index_path: &'a Path,
+    commitment: &'a str,
+}
+
+impl<'a> RunExternal<'a> {
+    pub(crate) fn new(path: &'a Path, index_path: &'a Path, commitment: &'a str) -> Self {
+        Self {
+            path,
+            index_path,
+            commitment,
+        }
+    }
+
+    pub(crate) fn binding(&self, param: &str) -> String {
+        format!(
+            "inputs.{param} = {{ external = {{ path = {:?}, index_path = {:?}, commitment = {:?} }} }}",
+            self.path, self.index_path, self.commitment,
+        )
+    }
 }
 
 fn absolute(base: &Path, path: &Path) -> PathBuf {
@@ -466,12 +749,28 @@ mod tests {
             run_spec_path: run_spec(&base, "model-b"),
             current_exe: PathBuf::from("unused"),
             staged_backend: StagedExecutionBackend::InProcess,
+            claimed_token_ids: Some(vec![0, 0, 0]),
+            direct_output_ids: None,
         };
         let prepared = prepare_claim_run(&options).unwrap();
         let rendered = fs::read_to_string(&prepared.manifest_path).unwrap();
         assert!(rendered.contains("name = \"model-b\""));
-        assert!(rendered.contains("count = 3"));
         assert!(!rendered.contains("model-a"));
+        assert_eq!(prepared.claimed_token_ids, [0, 0, 0]);
+        // A prior direct run's output is taken without running direct again
+        // (this fixture has no weights to run), and is held to the run's length.
+        let given = |ids: &[u32]| ClaimBuildOptions {
+            claimed_token_ids: None,
+            direct_output_ids: Some(ids.to_vec()),
+            ..options.clone()
+        };
+        assert_eq!(
+            prepare_claim_run(&given(&[0, 0, 0]))
+                .unwrap()
+                .claimed_token_ids,
+            [0, 0, 0]
+        );
+        assert!(prepare_claim_run(&given(&[0])).is_err());
         assert_eq!(
             fs::canonicalize(&prepared.prepared_run.model_manifest_path).unwrap(),
             fs::canonicalize(&model_path).unwrap()
@@ -515,7 +814,7 @@ mod tests {
     fn claim_result_writes_existing_artifact_names() {
         let base = temp_dir("claim-result");
         fs::create_dir_all(&base).unwrap();
-        write_stage(&base, "output_finalize", "abc", b"output");
+        write_stage(&base, "check_c0", "abc", b"output");
         let manifest_path = base.join("Raster.toml");
         fs::write(&manifest_path, "[chain]\nname = \"test\"\n").unwrap();
 
@@ -531,6 +830,8 @@ mod tests {
                 run_spec_path: base.join("inference.toml"),
                 model_manifest_path: base.join("model-artifacts/manifest.json"),
                 model_manifest_sha256: String::from("model-sha"),
+                model_id: String::from("model-id"),
+                raw_prompt: false,
                 prompt: inference_artifacts::PreparedPrompt {
                     resolved_prompt: String::from("hello"),
                     rendered_prompt: String::from("hello"),
@@ -607,12 +908,16 @@ mod tests {
             checkpoints: vec![
                 inference_artifacts::Checkpoint {
                     stage: String::from("stage_a"),
+                    program_commitment: String::from("program-a"),
+                    input_sources: Default::default(),
                     input_commitment: String::from("input-a"),
                     output_commitment: String::from("output-a"),
                     output_sha256: String::from("sha-a"),
                 },
                 inference_artifacts::Checkpoint {
                     stage: String::from("stage_b"),
+                    program_commitment: String::from("program-b"),
+                    input_sources: Default::default(),
                     input_commitment: String::from("input-b"),
                     output_commitment: String::from("output-b"),
                     output_sha256: String::from("sha-b"),
@@ -639,65 +944,215 @@ mod tests {
     }
 
     #[test]
-    fn run_manifest_replaces_prompt_artifact_and_decode_count() {
+    fn ranged_manifest_fills_counts_inputs_and_last_prompt_range() {
         let template = r#"[chain]
-name = "test"
+name = "iris"
 
-[chain.input.weights]
-index = "l"
-path = "runtime/weights/layer{l}.rastered"
-index_path = "runtime/weights/layer{l}.rindex"
-commitments = ["abc"]
+[chain.input.prompt_marks]
+index = "j"
+path = "/repo/target/iris/run-prompt-placeholder/marks_{j}.rastered"
+index_path = "/repo/target/iris/run-prompt-placeholder/marks_{j}.rindex"
+commitments = []
+
+[chain.input.prompt_text]
+index = "j"
+path = "/repo/target/iris/run-prompt-placeholder/text_{j}.rastered"
+index_path = "/repo/target/iris/run-prompt-placeholder/text_{j}.rindex"
+commitments = []
+
+[chain.input.claimed_ids]
+index = "k"
+path = "/repo/target/iris/run-prompt-placeholder/claimed_{k}.rastered"
+index_path = "/repo/target/iris/run-prompt-placeholder/claimed_{k}.rindex"
+commitments = []
 
 [[chain.stage]]
-name = "prompt_merge_seed"
-project = "raster-stages/prompt-prepare"
-inputs.tokenizer = { external = { path = "tokenizer.rastered", index_path = "tokenizer.rindex", commitment = "tok" } }
-inputs.initial_pieces = { external = { path = "old.rastered", index_path = "old.rindex", commitment = "old" } }
+name = "prompt_bind_p0"
+inputs.text = { input = "prompt_text_0" }
+inputs.config = { external = { path = "/repo/target/iris/run-prompt-placeholder/config.rastered", index_path = "/repo/target/iris/run-prompt-placeholder/config.rindex", commitment = "0" } }
+inputs.schedule = { external = { path = "/repo/target/iris/run-prompt-placeholder/schedule.rastered", index_path = "/repo/target/iris/run-prompt-placeholder/schedule.rindex", commitment = "0" } }
+inputs.claim = { external = { path = "/repo/target/iris/run-prompt-placeholder/claim.rastered", index_path = "/repo/target/iris/run-prompt-placeholder/claim.rindex", commitment = "0" } }
+inputs.previous = { external = { path = "/repo/model/empty_prompt.rastered", index_path = "/repo/model/empty_prompt.rindex", commitment = "e0" } }
+
+[[chain.stage]]
+name = "prompt_check_p0"
+inputs.bound = { from = "prompt_bind_p0" }
+inputs.previous = { external = { path = "/repo/model/empty_prompt.rastered", index_path = "/repo/model/empty_prompt.rindex", commitment = "e0" } }
+inputs.marks = { input = "prompt_marks_0" }
 
 [[chain.repeat]]
-name = "tokenize"
-index = "b"
-count = 99
-[[chain.repeat.stage]]
-name = "prompt_merge_b{b}"
-project = "raster-stages/prompt-merge"
-inputs.initial_pieces = { from = "prompt_merge_b{b-1}", first = "prompt_merge_seed" }
-
-[[chain.repeat]]
-name = "decode"
-index = "t"
-count = 1
+name = "prompt"
+index = "j"
+start = 1
+count = 0
 
   [[chain.repeat.stage]]
-name = "decode_select_t{t}"
-project = "raster-stages/decode-select-token"
-"#;
+name = "prompt_bind_p{j}"
+inputs.text = { input = "prompt_text_{j}" }
+inputs.config = { external = { path = "/repo/target/iris/run-prompt-placeholder/config.rastered", index_path = "/repo/target/iris/run-prompt-placeholder/config.rindex", commitment = "0" } }
+inputs.schedule = { external = { path = "/repo/target/iris/run-prompt-placeholder/schedule.rastered", index_path = "/repo/target/iris/run-prompt-placeholder/schedule.rindex", commitment = "0" } }
+inputs.claim = { external = { path = "/repo/target/iris/run-prompt-placeholder/claim.rastered", index_path = "/repo/target/iris/run-prompt-placeholder/claim.rindex", commitment = "0" } }
+inputs.previous = { from = "prompt_bind_p{j-1}", first = "prompt_bind_p0" }
 
-        let manifest = render_run_manifest(
+  [[chain.repeat.stage]]
+name = "prompt_check_p{j}"
+inputs.bound = { from = "prompt_bind_p{j}" }
+inputs.previous = { from = "prompt_check_p{j-1}", first = "prompt_check_p0" }
+inputs.marks = { input = "prompt_marks_{j}" }
+
+[[chain.repeat]]
+name = "claimed_embed"
+index = "k"
+count = 0
+
+  [[chain.repeat.stage]]
+name = "embed_c{k}"
+inputs.previous = { from = "embed_c{k-1}", first = "embed_p@LAST_PROMPT_RANGE@" }
+
+[[chain.repeat]]
+name = "layers"
+index = "l"
+start = 0
+count = 4
+
+  [[chain.repeat.stage]]
+name = "aux_p{j}_l{l}"
+index = "j"
+count = 0
+
+  [[chain.repeat.stage]]
+name = "aux_c{k}_l{l}"
+index = "k"
+count = 0
+
+  [[chain.repeat.stage]]
+name = "range_p0_l{l}"
+
+  [[chain.repeat.stage]]
+name = "range_p{j}_l{l}"
+index = "j"
+start = 1
+count = 0
+
+  [[chain.repeat.stage]]
+name = "range_c{k}_l{l}"
+index = "k"
+count = 0
+
+[[chain.stage]]
+name = "check_c0"
+
+[[chain.repeat]]
+name = "claimed"
+index = "k"
+start = 1
+count = 0
+"#;
+        let file = |name: &str, commitment: &str| run_prep::RunFile {
+            path: PathBuf::from(format!("/tmp/run/prompt/{name}.rastered")),
+            index_path: PathBuf::from(format!("/tmp/run/prompt/{name}.rindex")),
+            commitment: commitment.into(),
+        };
+        let text = [
+            file("text_0", "t0"),
+            file("text_1", "t1"),
+            file("text_2", "t2"),
+        ];
+        let config = file("config", "g0");
+        let schedule = file("schedule", "s0");
+        let claim = file("claim", "m0");
+        let prompt = [
+            file("marks_0", "a0"),
+            file("marks_1", "a1"),
+            file("marks_2", "a2"),
+        ];
+        let claimed = [file("claimed_0", "c0")];
+        let render = |template: &str, claimed: &[run_prep::RunFile]| {
+            render_ranged_manifest(
+                template,
+                Path::new("/repo"),
+                &text,
+                &config,
+                &schedule,
+                &claim,
+                &prompt,
+                claimed,
+            )
+        };
+        let manifest = render(template, &claimed).unwrap();
+        let parsed: toml::Value = toml::from_str(&manifest).unwrap();
+        let inputs = &parsed["chain"]["input"];
+        assert_eq!(
+            inputs["prompt_marks"]["path"].as_str(),
+            Some("/tmp/run/prompt/marks_{j}.rastered")
+        );
+        assert_eq!(
+            inputs["claimed_ids"]["index_path"].as_str(),
+            Some("/tmp/run/prompt/claimed_{k}.rindex")
+        );
+        assert_eq!(
+            inputs["prompt_marks"]["commitments"],
+            toml::Value::try_from(["a0", "a1", "a2"]).unwrap()
+        );
+        assert_eq!(
+            inputs["claimed_ids"]["commitments"],
+            toml::Value::try_from(["c0"]).unwrap()
+        );
+        let repeats = parsed["chain"]["repeat"].as_array().unwrap();
+        let count = |value: &toml::Value| value.get("count").and_then(toml::Value::as_integer);
+        // Range 0 of the prompt is plain stages, so the repeat runs twice.
+        assert_eq!(count(&repeats[0]), Some(2));
+        assert_eq!(count(&repeats[1]), Some(1));
+        // The layer block keeps its count; its fans run once per range,
+        // and the prompt ranges' layer fan once per range after the first.
+        assert_eq!(count(&repeats[2]), Some(4));
+        let fans = repeats[2]["stage"].as_array().unwrap();
+        assert_eq!(count(&fans[0]), Some(3));
+        assert_eq!(count(&fans[1]), Some(1));
+        assert_eq!(count(&fans[2]), None);
+        assert_eq!(count(&fans[3]), Some(2));
+        assert_eq!(count(&fans[4]), Some(1));
+        // One claimed range: its check is the plain stage and the repeat
+        // of the checks after it does not run.
+        assert_eq!(count(&repeats[3]), Some(0));
+        // Both bind entries are given the run's statements.
+        for commitment in ["g0", "s0", "m0"] {
+            assert_eq!(
+                manifest
+                    .matches(&format!(r#"commitment = "{commitment}""#))
+                    .count(),
+                2
+            );
+        }
+        assert!(manifest.contains(r#"first = "embed_p2""#));
+        assert_eq!(
+            inputs["prompt_text"]["path"].as_str(),
+            Some("/tmp/run/prompt/text_{j}.rastered")
+        );
+        assert_eq!(
+            inputs["prompt_text"]["commitments"],
+            toml::Value::try_from(["t0", "t1", "t2"]).unwrap()
+        );
+        assert!(manifest.contains(r#"commitment = "g0""#));
+        assert!(manifest.contains(r#"commitment = "s0""#));
+        assert!(manifest.contains(r#"commitment = "m0""#));
+        // Each range needs its own slice of the text.
+        assert!(render_ranged_manifest(
             template,
             Path::new("/repo"),
-            Path::new("/tmp/run/prompt/initial_pieces.rastered"),
-            Path::new("/tmp/run/prompt/initial_pieces.rindex"),
-            "abc",
-            7,
-            0,
+            &text[..2],
+            &config,
+            &schedule,
+            &claim,
+            &prompt,
+            &claimed,
         )
-        .unwrap();
-
-        assert!(manifest.contains("path = \"/tmp/run/prompt/initial_pieces.rastered\""));
-        assert!(manifest.contains("commitment = \"abc\""));
-        assert!(manifest.contains("count = 7"));
-        assert!(manifest.contains("count = 0"));
-        assert!(!manifest.contains("count = 99"));
-        assert!(manifest.contains("project = \"/repo/raster-stages/prompt-prepare\""));
-        assert!(manifest.contains("project = \"/repo/raster-stages/decode-select-token\""));
-        assert!(manifest.contains("path = \"/repo/tokenizer.rastered\""));
-        assert!(manifest.contains("index_path = \"/repo/tokenizer.rindex\""));
-        assert!(manifest.contains("path = \"/repo/runtime/weights/layer{l}.rastered\""));
-        assert!(manifest.contains("index_path = \"/repo/runtime/weights/layer{l}.rindex\""));
-        assert!(!manifest.contains("old.rastered"));
-        assert_eq!(manifest.matches("inputs.initial_pieces =").count(), 2);
+        .is_err());
+        assert!(!manifest.contains("run-prompt-placeholder"));
+        assert!(render(template, &[]).is_err());
+        // A template for the removed cut-and-merge stages is not this chain's.
+        let cuts = template.replace("prompt_marks", "prompt_cuts");
+        assert!(render(&cuts, &claimed).is_err());
     }
 
     fn write_stage(base: &PathBuf, stage: &str, commitment: &str, output: &[u8]) {
@@ -720,9 +1175,6 @@ project = "raster-stages/decode-select-token"
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        std::env::temp_dir().join(format!(
-            "iris-cli-{label}-{}-{nanos}",
-            std::process::id()
-        ))
+        std::env::temp_dir().join(format!("iris-cli-{label}-{}-{nanos}", std::process::id()))
     }
 }

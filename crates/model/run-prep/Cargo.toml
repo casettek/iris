@@ -6,7 +6,13 @@ edition = "2021"
 [dependencies]
 anyhow = "1.0"
 inference-artifacts = { path = "../../inference/artifacts" }
-output-finalize = { path = "../../../raster-stages/output-finalize" }
-prompt-prepare = { path = "../../../raster-stages/prompt-prepare" }
+inference-kernels = { path = "../../inference/kernels" }
+prompt-check = { path = "../../../raster-stages/prompt-check" }
+sequence-check = { path = "../../../raster-stages/sequence-check" }
 raster = { path = "../../../../raster/crates/raster" }
+input-embedding = { path = "../../../raster-stages/input-embedding" }
+serde = "1.0"
 serde_json = "1.0"
+
+[dev-dependencies]
+sha2 = "0.10"

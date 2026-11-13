@@ -5,18 +5,16 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use anyhow::{bail, Context, Result};
+use inference_kernels::weight_budget::{RetainedWeightBytes, WeightBudget};
 pub use inference_kernels::MaterializationCacheKey;
 use raster::List;
 use serde::Deserialize;
 
-use decode_embed::input as decode_embed_input;
-use decode_select_token::input as decode_input;
 use input_embedding::input as embedding_input;
-use output_finalize::input as output_input;
-use prefill_finalize::input as finalize_input;
 use prefill_prepare_aux::input as aux_input;
 use prefill_range::input as range_input;
-use prompt_prepare::input as prompt_input;
+use prompt_check::input as prompt_input;
+use sequence_check::input as check_input;
 
 #[derive(Clone, Debug)]
 pub enum CachedStageValue {
@@ -25,10 +23,7 @@ pub enum CachedStageValue {
     EmbeddedActivations(embedding_input::ActivationSequence),
     PleLayerInputs(aux_input::PleLayerInputs),
     RangeActivations(range_input::ActivationSequence),
-    PrefillLogits(finalize_input::PrefillLogits),
-    DecodeEdge(decode_input::DecodeEdge),
-    DecodeActivations(decode_embed_input::ActivationSequence),
-    GeneratedOutput(output_input::GeneratedOutput),
+    DecodeEdge(check_input::DecodeEdge),
 }
 
 #[derive(Clone, Debug)]
@@ -54,11 +49,14 @@ struct InputDocumentEntry {
 #[derive(Debug, Deserialize)]
 struct InputManifestEntry {
     commitment: String,
+    #[serde(default)]
+    encoding: Option<String>,
 }
 
 pub struct MaterializationCache {
     state: Mutex<MaterializationCacheState>,
     capacity: usize,
+    budget: Option<Arc<WeightBudget>>,
 }
 
 #[derive(Default)]
@@ -77,28 +75,51 @@ impl Default for MaterializationCache {
         Self {
             state: Mutex::new(MaterializationCacheState::default()),
             capacity,
+            budget: None,
         }
     }
 }
 
 impl MaterializationCache {
+    pub fn with_budget(budget: Arc<WeightBudget>) -> Self {
+        Self {
+            state: Mutex::new(MaterializationCacheState::default()),
+            capacity: usize::MAX,
+            budget: Some(budget),
+        }
+    }
     pub fn get_or_insert_with<T>(
         &self,
         key: Option<MaterializationCacheKey>,
         load: impl FnOnce() -> T,
     ) -> Result<Arc<T>>
     where
-        T: Send + Sync + 'static,
+        T: RetainedWeightBytes + Send + Sync + 'static,
+    {
+        self.get_or_try_insert_with(key, || Ok(load()))
+    }
+
+    /// Only successfully loaded and verified weights may enter the run cache.
+    pub fn get_or_try_insert_with<T>(
+        &self,
+        key: Option<MaterializationCacheKey>,
+        load: impl FnOnce() -> Result<T>,
+    ) -> Result<Arc<T>>
+    where
+        T: RetainedWeightBytes + Send + Sync + 'static,
     {
         let Some(key) = key else {
-            return Ok(Arc::new(load()));
+            return Ok(Arc::new(load()?));
         };
 
         if self.capacity == 0 {
-            return Ok(Arc::new(load()));
+            return Ok(Arc::new(load()?));
         }
 
         if let Some(existing) = self.state.lock().unwrap().entries.get(&key).cloned() {
+            if let Some(budget) = &self.budget {
+                budget.hit();
+            }
             return existing.downcast::<T>().map_err(|_| {
                 anyhow::anyhow!(
                     "cached materialization `{}` for `{}` had the wrong type",
@@ -108,7 +129,10 @@ impl MaterializationCache {
             });
         }
 
-        let value: Arc<T> = Arc::new(load());
+        if let Some(budget) = &self.budget {
+            budget.miss();
+        }
+        let value: Arc<T> = Arc::new(load()?);
         let mut state = self.state.lock().unwrap();
         if let Some(existing) = state.entries.get(&key).cloned() {
             return existing.downcast::<T>().map_err(|_| {
@@ -119,12 +143,23 @@ impl MaterializationCache {
                 )
             });
         }
+        if let Some(budget) = &self.budget {
+            let bytes = value
+                .retained_weight_bytes()
+                .saturating_add(key.retained_bytes())
+                .saturating_add(4096);
+            if !budget.reserve(bytes) {
+                return Ok(value);
+            }
+        }
         if state.entries.len() >= self.capacity {
             if let Some(evicted) = state.order.pop_front() {
                 state.entries.remove(&evicted);
             }
         }
-        state.order.push_back(key.clone());
+        if self.budget.is_none() {
+            state.order.push_back(key.clone());
+        }
         state.entries.insert(key, value.clone());
         Ok(value)
     }
@@ -136,7 +171,7 @@ pub fn materialize_with_cache<T>(
     load: impl FnOnce() -> T,
 ) -> Result<Arc<T>>
 where
-    T: Send + Sync + 'static,
+    T: RetainedWeightBytes + Send + Sync + 'static,
 {
     match cache {
         Some(cache) => cache.get_or_insert_with(key, load),
@@ -160,16 +195,33 @@ where
     let Some(manifest) = manifest_entries.get(param) else {
         return Ok(None);
     };
+    // A different wire encoding must not hit a cached Raster materialization.
+    // Postcard inputs continue through the ordinary loader and its validation.
+    if manifest.encoding.as_deref() != Some("raster") {
+        return Ok(None);
+    }
+    let index_path = input
+        .index_path
+        .as_ref()
+        .with_context(|| format!("Raster weight input `{param}` is missing index_path"))?;
     Ok(Some(MaterializationCacheKey {
         param: param.to_string(),
-        path: input.path.clone(),
-        index_path: input
-            .index_path
-            .clone()
-            .unwrap_or_else(|| input.path.with_extension("rindex")),
+        path: canonical_input_path(input_path, &input.path)?,
+        index_path: canonical_input_path(input_path, index_path)?,
         commitment: manifest.commitment.clone(),
         type_name: std::any::type_name::<T>(),
     }))
+}
+
+fn canonical_input_path(document: &Path, path: &Path) -> Result<PathBuf> {
+    let resolved = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        document.parent().unwrap_or(Path::new(".")).join(path)
+    };
+    resolved
+        .canonicalize()
+        .with_context(|| format!("failed to resolve weight artifact {}", resolved.display()))
 }
 
 fn read_input_entries(path: &Path) -> Result<BTreeMap<String, InputDocumentEntry>> {
@@ -223,11 +275,36 @@ impl CachedStageValue {
         }
     }
 
+    /// Any prompt stage's output: every prompt stage publishes the same type.
+    pub fn as_prompt_state(&self) -> Result<prompt_input::PromptState> {
+        match self {
+            Self::BpePieces(value) | Self::PromptTokenization(value) => Ok(value.clone()),
+            _ => bail!("cached value is not a prompt stage's output"),
+        }
+    }
+
     pub fn as_embedding_prompt(&self) -> Result<embedding_input::PromptTokenization> {
         match self {
+            // Embedding consumes both token IDs and the authenticated model context.
             Self::PromptTokenization(value) => Ok(embedding_input::PromptTokenization {
+                context: input_embedding::prompt::PromptContext {
+                    model: value.context.model.clone(),
+                    model_id: value.context.model_id.clone(),
+                    ..Default::default()
+                },
                 token_ids: value.token_ids.clone(),
+                ..Default::default()
             }),
+            _ => bail!("cached value is not a prompt tokenization"),
+        }
+    }
+
+    /// The stage reads only the context, and has its own copy of the type.
+    pub fn as_check_prompt_context(&self) -> Result<sequence_check::prompt::PromptContext> {
+        match self {
+            Self::PromptTokenization(value) => Ok(
+                inference_kernels::kernels::sequence_check::prompt_context(&value.context),
+            ),
             _ => bail!("cached value is not a prompt tokenization"),
         }
     }
@@ -235,7 +312,6 @@ impl CachedStageValue {
     pub fn as_aux_activation_sequence(&self) -> Result<aux_input::ActivationSequence> {
         match self {
             Self::EmbeddedActivations(value) => Ok(aux_activation_from_embedding(value)),
-            Self::DecodeActivations(value) => Ok(aux_activation_from_decode_embed(value)),
             Self::RangeActivations(value) => Ok(aux_activation_from_range(value)),
             _ => bail!("cached value is not an activation sequence"),
         }
@@ -244,7 +320,6 @@ impl CachedStageValue {
     pub fn as_range_activation_sequence(&self) -> Result<range_input::ActivationSequence> {
         match self {
             Self::EmbeddedActivations(value) => Ok(range_activation_from_embedding(value)),
-            Self::DecodeActivations(value) => Ok(range_activation_from_decode_embed(value)),
             Self::RangeActivations(value) => Ok(value.clone()),
             _ => bail!("cached value is not an activation sequence"),
         }
@@ -257,41 +332,44 @@ impl CachedStageValue {
         }
     }
 
-    pub fn as_finalize_activation_sequence(&self) -> Result<finalize_input::ActivationSequence> {
-        match self {
-            Self::EmbeddedActivations(value) => Ok(finalize_activation_from_embedding(value)),
-            Self::DecodeActivations(value) => Ok(finalize_activation_from_decode_embed(value)),
-            Self::RangeActivations(value) => Ok(finalize_activation_from_range(value)),
-            _ => bail!("cached value is not an activation sequence"),
-        }
-    }
-
-    pub fn as_decode_logits(&self) -> Result<decode_input::PrefillLogits> {
-        match self {
-            Self::PrefillLogits(value) => Ok(decode_logits_from_finalize(value)),
-            _ => bail!("cached value is not prefill logits"),
-        }
-    }
-
-    pub fn as_decode_edge(&self) -> Result<decode_input::DecodeEdge> {
+    pub fn as_check_prior(&self) -> Result<check_input::DecodeEdge> {
         match self {
             Self::DecodeEdge(value) => Ok(value.clone()),
             _ => bail!("cached value is not a decode edge"),
         }
     }
 
-    pub fn as_decode_embed_edge(&self) -> Result<decode_embed_input::DecodeEdge> {
+    pub fn as_embedding_previous(&self) -> Result<embedding_input::ActivationSequence> {
         match self {
-            Self::DecodeEdge(value) => Ok(decode_embed_edge_from_decode(value)),
-            _ => bail!("cached value is not a decode edge"),
+            Self::EmbeddedActivations(value) => Ok(value.clone()),
+            _ => bail!("cached value is not an embedded range"),
         }
     }
 
-    pub fn as_output_edge(&self) -> Result<output_input::DecodeEdge> {
+    pub fn as_check_activation_sequence(&self) -> Result<check_input::ActivationSequence> {
         match self {
-            Self::DecodeEdge(value) => Ok(output_edge_from_decode(value)),
-            _ => bail!("cached value is not a decode edge"),
+            Self::RangeActivations(value) => Ok(check_activation_from_range(value)),
+            _ => bail!("cached value is not a transformer layer's activation sequence"),
         }
+    }
+}
+
+fn check_activation_from_range(
+    source: &range_input::ActivationSequence,
+) -> check_input::ActivationSequence {
+    check_input::ActivationSequence {
+        model: source.model.clone(),
+        rows: map_list(&source.rows, |row| check_input::ActivationRow {
+            token_id: row.token_id,
+            values: row.values.clone(),
+        }),
+        errors: source.errors.clone(),
+        kv: map_list(&source.kv, |row| check_input::KeyRow {
+            position: row.position,
+            k: row.k.clone(),
+            v: row.v.clone(),
+        }),
+        start_position: source.start_position,
     }
 }
 
@@ -308,6 +386,7 @@ fn aux_activation_from_embedding(
     source: &embedding_input::ActivationSequence,
 ) -> aux_input::ActivationSequence {
     aux_input::ActivationSequence {
+        model: source.model.clone(),
         rows: map_list(&source.rows, |row| aux_input::ActivationRow {
             token_id: row.token_id,
             values: row.values.clone(),
@@ -326,24 +405,7 @@ fn aux_activation_from_range(
     source: &range_input::ActivationSequence,
 ) -> aux_input::ActivationSequence {
     aux_input::ActivationSequence {
-        rows: map_list(&source.rows, |row| aux_input::ActivationRow {
-            token_id: row.token_id,
-            values: row.values.clone(),
-        }),
-        errors: source.errors.clone(),
-        kv: map_list(&source.kv, |row| aux_input::KeyRow {
-            position: row.position,
-            k: row.k.clone(),
-            v: row.v.clone(),
-        }),
-        start_position: source.start_position,
-    }
-}
-
-fn aux_activation_from_decode_embed(
-    source: &decode_embed_input::ActivationSequence,
-) -> aux_input::ActivationSequence {
-    aux_input::ActivationSequence {
+        model: source.model.clone(),
         rows: map_list(&source.rows, |row| aux_input::ActivationRow {
             token_id: row.token_id,
             values: row.values.clone(),
@@ -362,84 +424,13 @@ fn range_activation_from_embedding(
     source: &embedding_input::ActivationSequence,
 ) -> range_input::ActivationSequence {
     range_input::ActivationSequence {
+        model: source.model.clone(),
         rows: map_list(&source.rows, |row| range_input::ActivationRow {
             token_id: row.token_id,
             values: row.values.clone(),
         }),
         errors: source.errors.clone(),
         kv: map_list(&source.kv, |row| range_input::KeyRow {
-            position: row.position,
-            k: row.k.clone(),
-            v: row.v.clone(),
-        }),
-        start_position: source.start_position,
-    }
-}
-
-fn range_activation_from_decode_embed(
-    source: &decode_embed_input::ActivationSequence,
-) -> range_input::ActivationSequence {
-    range_input::ActivationSequence {
-        rows: map_list(&source.rows, |row| range_input::ActivationRow {
-            token_id: row.token_id,
-            values: row.values.clone(),
-        }),
-        errors: source.errors.clone(),
-        kv: map_list(&source.kv, |row| range_input::KeyRow {
-            position: row.position,
-            k: row.k.clone(),
-            v: row.v.clone(),
-        }),
-        start_position: source.start_position,
-    }
-}
-
-fn finalize_activation_from_embedding(
-    source: &embedding_input::ActivationSequence,
-) -> finalize_input::ActivationSequence {
-    finalize_input::ActivationSequence {
-        rows: map_list(&source.rows, |row| finalize_input::ActivationRow {
-            token_id: row.token_id,
-            values: row.values.clone(),
-        }),
-        errors: source.errors.clone(),
-        kv: map_list(&source.kv, |row| finalize_input::KeyRow {
-            position: row.position,
-            k: row.k.clone(),
-            v: row.v.clone(),
-        }),
-        start_position: source.start_position,
-    }
-}
-
-fn finalize_activation_from_decode_embed(
-    source: &decode_embed_input::ActivationSequence,
-) -> finalize_input::ActivationSequence {
-    finalize_input::ActivationSequence {
-        rows: map_list(&source.rows, |row| finalize_input::ActivationRow {
-            token_id: row.token_id,
-            values: row.values.clone(),
-        }),
-        errors: source.errors.clone(),
-        kv: map_list(&source.kv, |row| finalize_input::KeyRow {
-            position: row.position,
-            k: row.k.clone(),
-            v: row.v.clone(),
-        }),
-        start_position: source.start_position,
-    }
-}
-
-fn finalize_activation_from_range(
-    source: &range_input::ActivationSequence,
-) -> finalize_input::ActivationSequence {
-    finalize_input::ActivationSequence {
-        rows: map_list(&source.rows, |row| finalize_input::ActivationRow {
-            token_id: row.token_id,
-            values: row.values.clone(),
-        }),
-        errors: source.errors.clone(),
-        kv: map_list(&source.kv, |row| finalize_input::KeyRow {
             position: row.position,
             k: row.k.clone(),
             v: row.v.clone(),
@@ -450,46 +441,12 @@ fn finalize_activation_from_range(
 
 fn range_ple_from_aux(source: &aux_input::PleLayerInputs) -> range_input::PleLayerInputs {
     range_input::PleLayerInputs {
+        model: source.model.clone(),
         layer_idx: source.layer_idx,
         rows: map_list(&source.rows, |row| range_input::PleRow {
             values: row.values.clone(),
         }),
         errors: source.errors.clone(),
-    }
-}
-
-fn decode_logits_from_finalize(
-    source: &finalize_input::PrefillLogits,
-) -> decode_input::PrefillLogits {
-    decode_input::PrefillLogits {
-        decode_position: source.decode_position,
-        logits: map_list(&source.logits, |entry| decode_input::LogitEntry {
-            token_id: entry.token_id,
-            value: entry.value,
-        }),
-        errors: source.errors.clone(),
-    }
-}
-
-fn decode_embed_edge_from_decode(
-    source: &decode_input::DecodeEdge,
-) -> decode_embed_input::DecodeEdge {
-    decode_embed_input::DecodeEdge {
-        has_selected: source.has_selected,
-        decode_position: source.decode_position,
-        token_id: source.token_id,
-        value: source.value,
-        generated_token_ids: source.generated_token_ids.clone(),
-    }
-}
-
-fn output_edge_from_decode(source: &decode_input::DecodeEdge) -> output_input::DecodeEdge {
-    output_input::DecodeEdge {
-        has_selected: source.has_selected,
-        decode_position: source.decode_position,
-        token_id: source.token_id,
-        value: source.value,
-        generated_token_ids: source.generated_token_ids.clone(),
     }
 }
 
@@ -546,14 +503,61 @@ mod tests {
     }
 
     #[test]
+    fn bounded_cache_reuses_admitted_values_without_scan_eviction() {
+        let value = String::from("weights");
+        let key = MaterializationCacheKey {
+            param: "layer".into(),
+            path: "a".into(),
+            index_path: "a.rindex".into(),
+            commitment: "first".into(),
+            type_name: std::any::type_name::<String>(),
+        };
+        let budget = Arc::new(WeightBudget::new(
+            value.retained_weight_bytes() + key.retained_bytes() + 4096,
+        ));
+        let cache = MaterializationCache::with_budget(Arc::clone(&budget));
+        let first = cache
+            .get_or_insert_with(Some(key.clone()), || value)
+            .unwrap();
+        for i in 0..40 {
+            let other = MaterializationCacheKey {
+                commitment: format!("other-{i}"),
+                ..key.clone()
+            };
+            cache
+                .get_or_insert_with(Some(other), || "other weights".to_owned())
+                .unwrap();
+        }
+        let reused = cache
+            .get_or_insert_with(Some(key.clone()), || panic!("cache miss"))
+            .unwrap();
+        assert!(Arc::ptr_eq(&first, &reused));
+        assert_eq!(budget.stats().bypasses, 40);
+        assert_eq!(budget.stats().hits, 1);
+        assert!(budget.stats().retained_bytes <= budget.stats().budget_bytes);
+
+        for bytes in [0, 1] {
+            let budget = Arc::new(WeightBudget::new(bytes));
+            let cache = MaterializationCache::with_budget(Arc::clone(&budget));
+            cache
+                .get_or_insert_with(Some(key.clone()), || "oversized".to_owned())
+                .unwrap();
+            assert_eq!(budget.stats().retained_bytes, 0);
+            assert_eq!(budget.stats().bypasses, 1);
+        }
+    }
+
+    #[test]
     fn materialization_key_uses_stage_files_and_type_name() {
         let base = temp_dir("materialization-key");
         fs::create_dir_all(&base).unwrap();
         let input = base.join("input.json");
         let manifest = base.join("input_manifest.json");
+        fs::write(base.join("embedding.rastered"), b"fixture").unwrap();
+        fs::write(base.join("embedding.rindex"), b"fixture").unwrap();
         fs::write(
             &input,
-            r#"{"embedding":{"path":"/tmp/embedding.rastered","index_path":"/tmp/embedding.rindex","load_preference":"mmap"}}"#,
+            r#"{"embedding":{"path":"embedding.rastered","index_path":"embedding.rindex","load_preference":"mmap"}}"#,
         )
         .unwrap();
         fs::write(
@@ -567,10 +571,33 @@ mod tests {
             .unwrap();
 
         assert_eq!(key.param, "embedding");
-        assert_eq!(key.path, PathBuf::from("/tmp/embedding.rastered"));
-        assert_eq!(key.index_path, PathBuf::from("/tmp/embedding.rindex"));
+        assert_eq!(
+            key.path,
+            base.join("embedding.rastered").canonicalize().unwrap()
+        );
+        assert_eq!(
+            key.index_path,
+            base.join("embedding.rindex").canonicalize().unwrap()
+        );
         assert_eq!(key.commitment, "abc");
         assert_eq!(key.type_name, std::any::type_name::<String>());
+
+        // A hit must not hide a missing Raster index declaration.
+        fs::write(&input, r#"{"embedding":{"path":"embedding.rastered"}}"#).unwrap();
+        assert!(
+            materialization_key_from_stage_files::<String>(&input, &manifest, "embedding").is_err()
+        );
+        // A changed wire encoding bypasses this cache and uses the ordinary loader.
+        fs::write(
+            &manifest,
+            r#"{"embedding":{"type":"sha256","encoding":"postcard","commitment":"abc"}}"#,
+        )
+        .unwrap();
+        assert!(
+            materialization_key_from_stage_files::<String>(&input, &manifest, "embedding")
+                .unwrap()
+                .is_none()
+        );
 
         fs::remove_dir_all(base).unwrap();
     }
@@ -583,6 +610,7 @@ mod tests {
             vec![0xde, 0xad],
             CachedStageValue::PromptTokenization(prompt_input::PromptTokenization {
                 token_ids: List::from(vec![1, 2, 3]),
+                ..Default::default()
             }),
         );
 
@@ -599,6 +627,7 @@ mod tests {
             vec![0xde, 0xad],
             CachedStageValue::PromptTokenization(prompt_input::PromptTokenization {
                 token_ids: List::from(vec![1, 2, 3]),
+                ..Default::default()
             }),
         );
 
@@ -610,13 +639,28 @@ mod tests {
 
     #[test]
     fn cached_prompt_converts_to_embedding_input() {
+        let model = model_identity::ModelContext {
+            model_id: "ab".repeat(32),
+            fault: 7,
+            layers: 2,
+            producer: model_identity::context::PROMPT,
+            ..Default::default()
+        };
         let cached = CachedStageValue::PromptTokenization(prompt_input::PromptTokenization {
+            context: prompt_input::PromptContext {
+                model: model.clone(),
+                model_id: model.model_id.clone(),
+                ..Default::default()
+            },
             token_ids: List::from(vec![7, 8]),
+            ..Default::default()
         });
 
         let prompt = cached.as_embedding_prompt().unwrap();
 
         assert_eq!(prompt.token_ids.as_slice(), &[7, 8]);
+        assert_eq!(prompt.context.model, model);
+        assert_eq!(prompt.context.model_id, model.model_id);
     }
 
     fn temp_dir(label: &str) -> PathBuf {

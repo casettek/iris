@@ -1,19 +1,28 @@
 use std::collections::BTreeMap;
 use std::fs::File;
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::{bail, Context, Result};
 use memmap2::Mmap;
 
 const MAGIC: &[u8; 8] = b"DNWGTV0\0";
-const DETWGT_VERSION: u32 = 2;
+const DETWGT_VERSION: u32 = 3;
 const DET_NUM_SPEC_VERSION: u32 = 1;
 const PAYLOAD_ALIGNMENT: usize = 64;
+
+/// The `element_width` of a tensor stored as `Q8_0` blocks (detwgt v3): rows
+/// of 34-byte blocks, each a half-precision scale and 32 signed bytes, as
+/// GGUF lays them out. Such a tensor holds no Q16.16 values; its products and
+/// lookups go through `det_num::q8`, never through a dequantized copy.
+pub const Q8_0_WIDTH: u32 = 8;
 
 #[derive(Debug)]
 pub struct MmapDetwgt {
     mmap: Mmap,
     tensors: BTreeMap<String, TensorEntry>,
+    /// Unique to this mapping, and never zero.
+    mapping: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -47,13 +56,83 @@ impl MmapDetwgt {
         let mmap = unsafe { Mmap::map(&file) }
             .with_context(|| format!("failed to mmap {}", path.display()))?;
         let tensors = parse_directory(&mmap, path)?;
-        Ok(Self { mmap, tensors })
+        static NEXT_MAPPING: AtomicU64 = AtomicU64::new(1);
+        Ok(Self {
+            mmap,
+            tensors,
+            mapping: NEXT_MAPPING.fetch_add(1, Ordering::Relaxed),
+        })
+    }
+
+    /// Every tensor name in the bundle, in name order.
+    pub fn names(&self) -> impl Iterator<Item = &str> {
+        self.tensors.keys().map(String::as_str)
     }
 
     pub fn tensor(&self, name: &str) -> Result<&TensorEntry> {
         self.tensors
             .get(name)
             .ok_or_else(|| anyhow::anyhow!("model artifact has no tensor '{name}'"))
+    }
+
+    /// Whether the tensor is stored as `Q8_0` blocks.
+    pub fn is_q8(&self, name: &str) -> Result<bool> {
+        Ok(self.tensor(name)?.element_width == Q8_0_WIDTH)
+    }
+
+    /// A `Q8_0` tensor as a matrix of block rows.
+    pub fn q8_matrix(&self, name: &str) -> Result<Q8MatrixView<'_>> {
+        let tensor = self.q8_tensor(name)?;
+        let cols = *tensor.dims.last().unwrap_or(&0) as usize;
+        let rows = tensor.element_count as usize / cols;
+        let bytes = self
+            .mmap
+            .get(tensor.payload_offset..tensor.payload_offset + tensor.payload_len)
+            .ok_or_else(|| anyhow::anyhow!("tensor payload range is outside mmap"))?;
+        let mut view = Q8MatrixView::new(bytes, rows, cols)
+            .with_context(|| format!("invalid Q8_0 matrix for tensor '{name}'"))?;
+        view.place = Some((self.mapping, tensor.payload_offset as u64));
+        Ok(view)
+    }
+
+    /// Rows `start..end` of a `Q8_0` tensor's blocks, contiguous.
+    pub fn q8_rows(&self, name: &str, start: usize, end: usize) -> Result<&[u8]> {
+        let matrix = self.q8_matrix(name)?;
+        if start > end || end > matrix.rows() {
+            bail!("rows {start}..{end} out of range for tensor '{name}'");
+        }
+        Ok(&matrix.bytes[start * matrix.row_bytes..end * matrix.row_bytes])
+    }
+
+    /// Columns `start..end` of every row of a `Q8_0` tensor, which must fall
+    /// on block boundaries: how one layer's slice of the packed per-layer
+    /// embedding table is taken without requantizing it.
+    pub fn q8_column_blocks(&self, name: &str, start: usize, end: usize) -> Result<Vec<u8>> {
+        let matrix = self.q8_matrix(name)?;
+        let block = det_num::q8::BLOCK;
+        if start > end || end > matrix.cols() || start % block != 0 || end % block != 0 {
+            bail!(
+                "columns {start}..{end} of tensor '{name}' (width {}) do not fall on {block}-value blocks",
+                matrix.cols()
+            );
+        }
+        let (from, to) = (
+            start / block * det_num::q8::BLOCK_BYTES,
+            end / block * det_num::q8::BLOCK_BYTES,
+        );
+        let mut out = Vec::with_capacity(matrix.rows() * (to - from));
+        for row in 0..matrix.rows() {
+            out.extend_from_slice(&matrix.row(row)?[from..to]);
+        }
+        Ok(out)
+    }
+
+    fn q8_tensor(&self, name: &str) -> Result<&TensorEntry> {
+        let tensor = self.tensor(name)?;
+        if tensor.element_width != Q8_0_WIDTH {
+            bail!("tensor '{name}' holds Q16.16 values, not Q8_0 blocks");
+        }
+        Ok(tensor)
     }
 
     pub fn slice(&self, name: &str) -> Result<DetwgtSlice<'_>> {
@@ -166,6 +245,9 @@ impl MmapDetwgt {
         start: usize,
         count: usize,
     ) -> Result<DetwgtSlice<'_>> {
+        if tensor.element_width == Q8_0_WIDTH {
+            bail!("tensor is stored as Q8_0 blocks; read it with the q8_* methods");
+        }
         let end = start
             .checked_add(count)
             .ok_or_else(|| anyhow::anyhow!("tensor value range overflows usize"))?;
@@ -312,15 +394,80 @@ impl<'a> DetwgtMatrixView<'a> {
     }
 }
 
+/// A `Q8_0` matrix: `rows` rows of `cols / 32` blocks each.
+#[derive(Debug, Clone, Copy)]
+pub struct Q8MatrixView<'a> {
+    bytes: &'a [u8],
+    rows: usize,
+    cols: usize,
+    row_bytes: usize,
+    place: Option<(u64, u64)>,
+}
+
+impl<'a> Q8MatrixView<'a> {
+    pub fn new(bytes: &'a [u8], rows: usize, cols: usize) -> Result<Self> {
+        let row_bytes = det_num::q8::row_bytes(cols).ok_or_else(|| {
+            anyhow::anyhow!("Q8_0 rows need a positive multiple of 32 columns, got {cols}")
+        })?;
+        if Some(bytes.len()) != rows.checked_mul(row_bytes) {
+            bail!(
+                "Q8_0 matrix has {} bytes, expected {rows} rows of {row_bytes}",
+                bytes.len()
+            );
+        }
+        Ok(Self {
+            bytes,
+            rows,
+            cols,
+            row_bytes,
+            place: None,
+        })
+    }
+
+    pub fn rows(&self) -> usize {
+        self.rows
+    }
+
+    pub fn cols(&self) -> usize {
+        self.cols
+    }
+
+    /// Every row's blocks, contiguous.
+    pub fn bytes(&self) -> &'a [u8] {
+        self.bytes
+    }
+
+    /// For a whole tensor of a mapped file: a number unique to the mapping
+    /// (never zero) and the tensor's offset in it. Together they name these
+    /// bytes for as long as the mapping lives.
+    pub fn place(&self) -> Option<(u64, u64)> {
+        self.place
+    }
+
+    pub fn row(&self, row_idx: usize) -> Result<&'a [u8]> {
+        if row_idx >= self.rows {
+            bail!("matrix row {row_idx} out of range for {} rows", self.rows);
+        }
+        Ok(&self.bytes[row_idx * self.row_bytes..(row_idx + 1) * self.row_bytes])
+    }
+
+    /// One row's Q16.16 values, for lookups. Products use `det_num::q8::dot_row`.
+    pub fn row_dequantized(&self, row_idx: usize) -> Result<Vec<i32>> {
+        let mut out = vec![0; self.cols];
+        det_num::q8::dequantize_row(self.row(row_idx)?, &mut out).map_err(anyhow::Error::msg)?;
+        Ok(out)
+    }
+}
+
 fn parse_directory(bytes: &[u8], path: &Path) -> Result<BTreeMap<String, TensorEntry>> {
     let mut cursor = Cursor::new(bytes);
     if cursor.take(8)? != MAGIC {
         bail!("{} is not a detwgt artifact", path.display());
     }
     let version = cursor.u32()?;
-    if version != DETWGT_VERSION {
+    if !(2..=DETWGT_VERSION).contains(&version) {
         bail!(
-            "{} is detwgt v{version}; this reader expects v{DETWGT_VERSION}",
+            "{} is detwgt v{version}; this reader expects v2 or v{DETWGT_VERSION}",
             path.display()
         );
     }
@@ -343,12 +490,20 @@ fn parse_directory(bytes: &[u8], path: &Path) -> Result<BTreeMap<String, TensorE
             bail!("tensor '{name}' element count does not match its shape");
         }
         let element_width = cursor.u32()?;
-        if !matches!(element_width, 16 | 32) {
-            bail!("tensor '{name}' has element width {element_width}");
-        }
+        let expected_len = match element_width {
+            16 | 32 => element_count as usize * (element_width / 8) as usize,
+            Q8_0_WIDTH if version >= 3 => {
+                let cols = *dims.last().unwrap_or(&0) as usize;
+                det_num::q8::row_bytes(cols)
+                    .map(|row| element_count as usize / cols * row)
+                    .ok_or_else(|| {
+                        anyhow::anyhow!("Q8_0 tensor '{name}' rows are not whole blocks")
+                    })?
+            }
+            _ => bail!("tensor '{name}' has element width {element_width}"),
+        };
         let payload_len = cursor.u64()? as usize;
-        let bytes_per_value = (element_width / 8) as usize;
-        if payload_len != element_count as usize * bytes_per_value {
+        if payload_len != expected_len {
             bail!("tensor '{name}' payload length does not match its width");
         }
         let _max_row_mass = cursor.u64()?;

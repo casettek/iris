@@ -1,6 +1,8 @@
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{bail, Context, Result};
 use staged_infer::chain_runner::StagedExecutionBackend;
@@ -13,8 +15,11 @@ use inference_artifacts::{
     build_checkpoint_trace, checkpoint_hashes, read_challenge_bundle, read_checkpoint_hashes,
     read_checkpoint_trace, read_claim_bundle, verify_file_sha256, write_challenge_artifacts,
     write_checkpoint_trace_artifact, ChallengeBundle, ChallengeSourcePath, Checkpoint,
-    CheckpointTrace, Divergence, DivergenceReason, PreparedRun, ReplayPackage,
+    CheckpointTrace, Divergence, DivergenceReason, InferenceRunSpec, PreparedRun, ReplayPackage,
 };
+use raster_runtime::{read_raster_artifact_from_bytes, ReadLimits};
+
+use crate::parity::compare::value_json;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ChallengeInput {
@@ -47,6 +52,13 @@ pub enum ChallengeBuildOutcome {
         recomputed_trace_path: PathBuf,
         recomputed_chain_dir: PathBuf,
     },
+    /// Every checkpoint matched, but the claim's own final record refutes it.
+    ClaimedOutputRejected {
+        reason: String,
+        claimed_reference_path: PathBuf,
+        recomputed_trace_path: PathBuf,
+        recomputed_chain_dir: PathBuf,
+    },
     DivergenceBuilt {
         divergence: Divergence,
         divergence_path: PathBuf,
@@ -59,10 +71,14 @@ pub enum ChallengeBuildOutcome {
 }
 
 pub fn build_challenge(options: ChallengeBuildOptions) -> Result<ChallengeBuildResult> {
+    let checkpoint_trace_started = Instant::now();
+    challenge_progress("checkpoint-trace", None, None)?;
     let claimed_input = load_claimed_input(&options.input)?;
-    let manifest_path = challenge_manifest_path(&options, &claimed_input)?;
+    let (manifest_path, prepared_run) = challenge_run(&options, &claimed_input)?;
     let executor = CheckpointedInferenceExecutor;
-    let (recomputed_chain_dir, recomputed_trace, divergence) = match &claimed_input.checkpoints {
+    let (recomputed_chain_dir, recomputed_trace, divergence, final_result) = match &claimed_input
+        .checkpoints
+    {
         ClaimedCheckpoints::Hashes { path, hashes } => {
             let recomputed = executor.run_until_hash_divergence(CheckpointHashChallengeConfig {
                 base_dir: options.base_dir.clone(),
@@ -76,6 +92,7 @@ pub fn build_challenge(options: ChallengeBuildOptions) -> Result<ChallengeBuildR
                 recomputed.chain_dir,
                 recomputed.recomputed_trace,
                 recomputed.divergence,
+                recomputed.final_result,
             )
         }
         ClaimedCheckpoints::Trace { .. } => {
@@ -92,13 +109,34 @@ pub fn build_challenge(options: ChallengeBuildOptions) -> Result<ChallengeBuildR
                 .join(inference_artifacts::CHECKPOINT_TRACE_JSON);
             let divergence =
                 claimed_input.locate_divergence(&recomputed_trace_path, &recomputed_trace)?;
-            (recomputed.chain_dir, recomputed_trace, divergence)
+            (
+                recomputed.chain_dir,
+                recomputed_trace,
+                divergence,
+                recomputed.final_result,
+            )
         }
     };
     let recomputed_trace_path =
         write_checkpoint_trace_artifact(&recomputed_chain_dir, &recomputed_trace)?;
+    let checkpoint_trace_duration = checkpoint_trace_started.elapsed();
 
     let Some(divergence) = divergence else {
+        // Every checkpoint agrees, so there is no stage to dispute. A claim can
+        // still be refuted by its own final record: honest execution over
+        // non-greedy ids commits a non-zero verdict. A bare trace claims nothing.
+        if prepared_run.is_some() {
+            if let Some(reason) = claimed_output_rejection(final_result.as_ref())? {
+                return Ok(ChallengeBuildResult {
+                    outcome: ChallengeBuildOutcome::ClaimedOutputRejected {
+                        reason,
+                        claimed_reference_path: claimed_input.reference_path().to_path_buf(),
+                        recomputed_trace_path,
+                        recomputed_chain_dir,
+                    },
+                });
+            }
+        }
         return Ok(ChallengeBuildResult {
             outcome: ChallengeBuildOutcome::NoDivergence {
                 claimed_reference_path: claimed_input.reference_path().to_path_buf(),
@@ -126,17 +164,26 @@ pub fn build_challenge(options: ChallengeBuildOptions) -> Result<ChallengeBuildR
         .join("challenge")
         .join(sanitize_stage_name(&divergence.stage));
     let replay_run_dir = challenge_dir.join("raster-replay");
+    challenge_progress("replay-preparing", Some(checkpoint_trace_duration), None)?;
     seed_replay_directory(
         &recomputed_chain_dir,
         &recomputed_trace,
         divergence.checkpoint_index,
         &replay_run_dir,
     )?;
+    let raster_replay_started = Instant::now();
+    challenge_progress("raster-replay", Some(checkpoint_trace_duration), None)?;
     let replay_package = run_raster_replay(
         &options.base_dir,
         &manifest_path,
         &replay_run_dir,
         &divergence.stage,
+    )?;
+    let raster_replay_duration = raster_replay_started.elapsed();
+    challenge_progress(
+        "validating",
+        Some(checkpoint_trace_duration),
+        Some(raster_replay_duration),
     )?;
     let (divergence_path, replay_package_path, challenge_trace_path, challenge_bundle_path) =
         write_challenge_artifacts(
@@ -146,7 +193,19 @@ pub fn build_challenge(options: ChallengeBuildOptions) -> Result<ChallengeBuildR
             &divergence,
             &replay_package,
         )?;
+    inference_artifacts::write_json(
+        &challenge_dir.join("challenge_timings.json"),
+        &serde_json::json!({
+            "version": 1,
+            "stage": divergence.stage,
+            "checkpoint_index": divergence.checkpoint_index,
+            "checkpoint_trace_duration_ms": checkpoint_trace_duration.as_secs_f64() * 1000.0,
+            "raster_replay_duration_ms": raster_replay_duration.as_secs_f64() * 1000.0,
+        }),
+    )?;
     let challenge_bundle = read_challenge_bundle(&challenge_bundle_path)?;
+    // The bundle retains the commitment and replay inputs/outputs. Fault proving
+    // records its own execution; this successful challenge's raw trace is unused.
 
     Ok(ChallengeBuildResult {
         outcome: ChallengeBuildOutcome::DivergenceBuilt {
@@ -161,32 +220,34 @@ pub fn build_challenge(options: ChallengeBuildOptions) -> Result<ChallengeBuildR
     })
 }
 
-fn challenge_manifest_path(
+fn challenge_progress(
+    phase: &str,
+    checkpoint_trace_duration: Option<Duration>,
+    raster_replay_duration: Option<Duration>,
+) -> Result<()> {
+    let progress = serde_json::json!({
+        "version": 1,
+        "phase": phase,
+        "started_at_ms": SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis(),
+        "checkpoint_trace_duration_ms": checkpoint_trace_duration.map(|d| d.as_secs_f64() * 1000.0),
+        "raster_replay_duration_ms": raster_replay_duration.map(|d| d.as_secs_f64() * 1000.0),
+    });
+    let mut stdout = std::io::stdout().lock();
+    writeln!(stdout, "IRIS_CHALLENGE_PROGRESS {progress}")?;
+    stdout.flush()?;
+    Ok(())
+}
+
+/// The manifest a challenger recomputes, and the run a clean recomputation
+/// judges the claim by.
+fn challenge_run(
     options: &ChallengeBuildOptions,
     claimed: &ClaimedInput,
-) -> Result<PathBuf> {
+) -> Result<(PathBuf, Option<PreparedRun>)> {
     let run_spec_path = resolve_bundle_path(&options.base_dir, &options.run_spec_path);
     if let Some(prepared) = &claimed.prepared_run {
-        let run_spec = inference_artifacts::read_run_spec(&run_spec_path)?;
-        let run_spec_dir = run_spec_path
-            .parent()
-            .context("run spec has no parent directory")?;
-        let selected_model_path = resolve_bundle_path(run_spec_dir, &run_spec.model_manifest);
-        // The run spec chooses the model; the claim retains its frozen prompt
-        // and token count. Compare identities before touching the large bundle.
-        inference_artifacts::verify_file_sha256(
-            &selected_model_path,
-            &prepared.model_manifest_sha256,
-            "model selected by --run does not match the claim: model manifest",
-        )?;
-        let model =
-            inference_artifacts::ModelManifest::load_verified(&prepared.model_manifest_path)?;
-        model.verified_raster_template(&prepared.model_manifest_path)?;
-        // load_claimed_input already checked the frozen run manifest's hash.
-        return prepared
-            .run_manifest_path
-            .clone()
-            .context("prepared run has no run_manifest_path");
+        let rebuilt = rebuild_teacher_forced_run(options, prepared)?;
+        return Ok((rebuilt.manifest_path, Some(rebuilt.prepared_run)));
     }
 
     // A bare trace has no frozen metadata. Prepare it from the selected run
@@ -196,8 +257,101 @@ fn challenge_manifest_path(
         run_spec_path,
         current_exe: options.current_exe.clone(),
         staged_backend: options.staged_backend,
+        claimed_token_ids: None,
+        direct_output_ids: None,
     })?;
-    Ok(prepared.manifest_path)
+    Ok((prepared.manifest_path, None))
+}
+
+/// Prepares the claim's prompt, token budget and claimed ids from the model the
+/// challenger's `--run` selects, using the challenger's own template.
+///
+/// Recomputing the claimer's manifest would rerun the claimer's model and agree
+/// with it. Preparing this run instead means a claim that used other weights, a
+/// different cut or a different configuration differs at a stage's committed
+/// inputs, which is a divergence to replay. Nothing from the claim beyond those
+/// three things reaches the run, and none of them can stop the challenge.
+fn rebuild_teacher_forced_run(
+    options: &ChallengeBuildOptions,
+    frozen: &PreparedRun,
+) -> Result<crate::claim::PreparedClaimRun> {
+    let run_spec_path = resolve_bundle_path(&options.base_dir, &options.run_spec_path);
+    let selected = inference_artifacts::read_run_spec(&run_spec_path)?;
+    let frozen_manifest = frozen
+        .run_manifest_path
+        .as_ref()
+        .context("prepared run has no run_manifest_path")?;
+    let run_spec = InferenceRunSpec {
+        model_manifest: selected.model_manifest,
+        prompt: Some(frozen.prompt.resolved_prompt.clone()),
+        prompt_file: None,
+        raw_prompt: frozen.raw_prompt,
+        tokens: frozen.tokens,
+    };
+    let rebuilt = crate::claim::prepare_challenge_run(
+        &crate::claim::ClaimBuildOptions {
+            base_dir: options.base_dir.clone(),
+            run_spec_path,
+            current_exe: options.current_exe.clone(),
+            staged_backend: options.staged_backend,
+            claimed_token_ids: Some(frozen_claimed_ids(frozen_manifest)?),
+            direct_output_ids: None,
+        },
+        &run_spec,
+    )?;
+    if rebuilt.prepared_run.model_id != frozen.model_id {
+        eprintln!(
+            "warning: the claim names model {}, but --run selects model {}; a divergence here means the claim did not run the selected model",
+            frozen.model_id, rebuilt.prepared_run.model_id
+        );
+    }
+    Ok(rebuilt)
+}
+
+/// The claimed ids a frozen run manifest binds, checked against its commitments.
+fn frozen_claimed_ids(manifest_path: &Path) -> Result<Vec<u32>> {
+    let manifest: toml::Value = toml::from_str(
+        &fs::read_to_string(manifest_path)
+            .with_context(|| format!("failed to read {}", manifest_path.display()))?,
+    )
+    .with_context(|| format!("failed to parse {}", manifest_path.display()))?;
+    let input = &manifest["chain"]["input"]["claimed_ids"];
+    let path_of = |key: &str, index: usize| -> Result<PathBuf> {
+        let pattern = input
+            .get(key)
+            .and_then(toml::Value::as_str)
+            .with_context(|| format!("frozen run manifest has no claimed_ids {key}"))?;
+        Ok(PathBuf::from(pattern.replace("{k}", &index.to_string())))
+    };
+    let mut ids = Vec::new();
+    for (index, commitment) in bound_commitments(manifest_path, "claimed_ids")?
+        .iter()
+        .enumerate()
+    {
+        let path = path_of("path", index)?;
+        let bytes =
+            fs::read(&path).with_context(|| format!("failed to read {}", path.display()))?;
+        let index_path = path_of("index_path", index)?;
+        let raster_index = fs::read(&index_path)
+            .with_context(|| format!("failed to read {}", index_path.display()))?;
+        let artifact =
+            read_raster_artifact_from_bytes(&bytes, &raster_index, &ReadLimits::unbounded())?;
+        if !artifact.roots_agree() || &artifact.structural_root != commitment {
+            bail!(
+                "{} is not the claimed range the frozen run manifest commits to",
+                path.display()
+            );
+        }
+        let range = value_json(&artifact.value)?;
+        let range_ids = range["token_ids"]
+            .as_array()
+            .context("claimed range has no token ids")?;
+        for id in range_ids {
+            let id = id.as_u64().context("claimed id is not an integer")?;
+            ids.push(u32::try_from(id).context("claimed id exceeds u32")?);
+        }
+    }
+    Ok(ids)
 }
 
 pub fn locate_divergence(
@@ -279,6 +433,11 @@ fn divergence_reason(
         (Some(_), None) => Some(DivergenceReason::MissingRecomputedCheckpoint),
         (Some(claimed), Some(recomputed)) if claimed.stage != recomputed.stage => {
             Some(DivergenceReason::StageName)
+        }
+        (Some(claimed), Some(recomputed))
+            if claimed.program_commitment != recomputed.program_commitment =>
+        {
+            Some(DivergenceReason::ProgramCommitment)
         }
         (Some(claimed), Some(recomputed))
             if claimed.input_commitment != recomputed.input_commitment =>
@@ -445,6 +604,8 @@ fn read_prepared_run(path: &Path) -> Result<PreparedRun> {
     serde_json::from_value(value).context("incompatible frozen ranked-BPE pieces")
 }
 
+/// A claim is recomputed from the challenger's own model, so the claimer's model
+/// files are neither needed nor trusted here.
 fn verify_prepared_run(prepared: &PreparedRun) -> Result<()> {
     if prepared.version != inference_artifacts::PREPARED_RUN_VERSION {
         bail!(
@@ -452,11 +613,6 @@ fn verify_prepared_run(prepared: &PreparedRun) -> Result<()> {
             prepared.version
         );
     }
-    verify_file_sha256(
-        &prepared.model_manifest_path,
-        &prepared.model_manifest_sha256,
-        "frozen model manifest",
-    )?;
     let manifest_path = prepared
         .run_manifest_path
         .as_ref()
@@ -466,6 +622,93 @@ fn verify_prepared_run(prepared: &PreparedRun) -> Result<()> {
         .as_ref()
         .ok_or_else(|| anyhow::anyhow!("prepared run has no run_manifest_sha256"))?;
     verify_file_sha256(manifest_path, manifest_sha256, "frozen run manifest")
+}
+
+/// The commitments an indexed `[chain.input.<name>]` table binds, in order.
+fn bound_commitments(manifest_path: &Path, name: &str) -> Result<Vec<String>> {
+    let manifest: toml::Value = toml::from_str(
+        &fs::read_to_string(manifest_path)
+            .with_context(|| format!("failed to read {}", manifest_path.display()))?,
+    )
+    .with_context(|| format!("failed to parse {}", manifest_path.display()))?;
+    manifest["chain"]["input"][name]["commitments"]
+        .as_array()
+        .with_context(|| format!("frozen run manifest has no {name} commitments"))?
+        .iter()
+        .map(|value| value.as_str().map(str::to_string))
+        .collect::<Option<Vec<_>>>()
+        .with_context(|| format!("{name} commitments are not strings"))
+}
+
+/// Why a claim whose every checkpoint matched is still rejected, if it is.
+///
+/// With no divergent stage to dispute, a claim stands or falls on its own
+/// final record, in the order the chain established it: the prompt's
+/// preparation, then the checks, the verdict, and the output's budget and EOS
+/// rules. Every rule here reads only that record: a contract reading the same
+/// committed output reaches the same answer.
+///
+/// Honest execution over non-greedy claimed ids publishes a non-zero verdict; a
+/// claimer who wanted a clean one instead had to doctor a stage, which diverges
+/// and is replayed rather than reaching this point.
+pub(crate) fn claimed_output_rejection(
+    final_result: Option<&inference_artifacts::InferenceResult>,
+) -> Result<Option<String>> {
+    let result = final_result
+        .context("recomputation produced no final output to check the claim against")?;
+    Ok(final_record_rejection(result))
+}
+
+fn final_record_rejection(result: &inference_artifacts::InferenceResult) -> Option<String> {
+    if result.model_fault != 0 {
+        return Some(format!(
+            "consumed model data failed authentication (fault {})",
+            result.model_fault
+        ));
+    }
+    if result.prompt_fault != 0 {
+        return Some(format!(
+            "the prompt was not prepared correctly: {} (fault {}, at position {})",
+            run_prep::fault_description(result.prompt_fault),
+            result.prompt_fault,
+            result.prompt_fault_position
+        ));
+    }
+    if !result.prompt_complete {
+        return Some(String::from(
+            "the prompt was not prepared correctly: its ranges do not cover the whole prompt",
+        ));
+    }
+    if result.check_fault != 0 {
+        return Some(format!(
+            "the claimed output was not checked: {} (fault {}, at sequence position {})",
+            run_prep::check_fault_description(result.check_fault),
+            result.check_fault,
+            result.check_fault_position
+        ));
+    }
+    if result.claim_mismatches > 0 {
+        return Some(format!(
+            "claimed output is not the greedy continuation: the committed verdict counts {} claimed token(s) that differ from the greedy selection, the first at sequence position {}",
+            result.claim_mismatches, result.first_claim_mismatch_position
+        ));
+    }
+    if result.output_fault != 0 {
+        return Some(format!(
+            "the claimed output breaks the run's rules: {} (fault {})",
+            run_prep::output_fault_description(result.output_fault),
+            result.output_fault
+        ));
+    }
+    // The chain states one verdict over the same fields. It is what a contract
+    // reads, so a record whose verdict disagrees with its fields is rejected
+    // here too.
+    if !result.valid {
+        return Some(String::from(
+            "the chain's own verdict on its run is not valid, though no fault field says why",
+        ));
+    }
+    None
 }
 
 fn resolve_bundle_path(base: &Path, path: &Path) -> PathBuf {
@@ -486,9 +729,9 @@ fn run_raster_replay(
         .with_context(|| format!("failed to create {}", replay_run_dir.display()))?;
     let status = Command::new("cargo")
         .current_dir(base_dir)
-        .args(["raster", "chain", "run"])
+        .args(["raster", "chain", "run", "--fraud-proof-window-size", "128"])
         .arg(manifest_path)
-        .args(["--quiet-timings", "--run"])
+        .arg("--run")
         .arg(replay_run_dir)
         .arg("--stage")
         .arg(stage)
@@ -534,7 +777,7 @@ fn replay_package(stage: &str, replay_run_dir: &Path) -> Result<ReplayPackage> {
     Ok(package)
 }
 
-fn seed_replay_directory(
+pub(crate) fn seed_replay_directory(
     source_chain_dir: &Path,
     trace: &CheckpointTrace,
     checkpoint_index: usize,
@@ -620,82 +863,25 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
-    fn challenge_checks_selected_and_frozen_model_before_execution() {
-        use crate::test_support::{model_fixture, run_spec};
-        use inference_artifacts::{file_sha256, read_json};
-        let base = temp_dir("model-selection");
-        let model_path = model_fixture(&base, "model-a");
-        model_fixture(&base, "model-b");
-        let run_spec_path = run_spec(&base, "model-a");
-        let prepared = crate::claim::prepare_claim_run(&crate::claim::ClaimBuildOptions {
-            base_dir: base.clone(),
-            run_spec_path: run_spec_path.clone(),
-            current_exe: PathBuf::from("unused"),
-            staged_backend: StagedExecutionBackend::InProcess,
-        })
-        .unwrap();
-        let context_path = prepared
-            .manifest_path
-            .parent()
-            .unwrap()
-            .join(inference_artifacts::PREPARED_RUN_JSON);
-        let frozen: PreparedRun = read_json(&context_path).unwrap();
-        let claimed = ClaimedInput {
-            checkpoints: ClaimedCheckpoints::Trace {
-                path: base.join("trace.json"),
-                trace: trace(Vec::new()),
-            },
-            prepared_run: Some(frozen.clone()),
-        };
-        let options = ChallengeBuildOptions {
-            base_dir: base.clone(),
-            run_spec_path: run_spec_path.clone(),
-            current_exe: PathBuf::from("unused"),
-            staged_backend: StagedExecutionBackend::InProcess,
-            input: ChallengeInput::Trace(base.join("trace.json")),
-        };
-        verify_prepared_run(&frozen).unwrap();
-        assert_eq!(
-            challenge_manifest_path(&options, &claimed).unwrap(),
-            prepared.manifest_path
-        );
-
-        // Current prompt/token edits must not change the claim's frozen run.
-        let spec = fs::read_to_string(&run_spec_path)
-            .unwrap()
-            .replace("tokens = 3", "tokens = 8")
-            .replace("prompt = \"h\"", "prompt = \"changed\"");
-        fs::write(&run_spec_path, spec).unwrap();
-        assert_eq!(
-            challenge_manifest_path(&options, &claimed).unwrap(),
-            prepared.manifest_path
-        );
-        assert_eq!(
-            file_sha256(&prepared.manifest_path).unwrap(),
-            frozen.run_manifest_sha256.unwrap()
-        );
-
-        run_spec(&base, "model-b");
-        assert!(challenge_manifest_path(&options, &claimed)
-            .unwrap_err()
-            .to_string()
-            .contains("does not match the claim"));
-        run_spec(&base, "model-a");
-        for (file, label) in [
-            ("model.detwgt", "model weights"),
-            ("config.json", "model config"),
-            ("tokenizer.json", "model tokenizer"),
-            ("Raster.toml", "Raster template"),
+    fn commitment_only_challenge_has_complete_replay_artifacts() {
+        let base = temp_dir("challenge-trace-cleanup");
+        let stage = base.join("stage_a");
+        fs::create_dir_all(&stage).unwrap();
+        for name in [
+            "input.json",
+            "input_manifest.json",
+            "output.bin",
+            "output.rindex",
+            "output_manifest.json",
+            "commit.bin",
         ] {
-            let path = model_path.parent().unwrap().join(file);
-            let original = fs::read(&path).unwrap();
-            fs::write(&path, "replaced").unwrap();
-            assert!(challenge_manifest_path(&options, &claimed)
-                .unwrap_err()
-                .to_string()
-                .contains(&format!("{label} hash mismatch")));
-            fs::write(path, original).unwrap();
+            fs::write(stage.join(name), name.as_bytes()).unwrap();
         }
+        let package = replay_package("stage_a", &base).unwrap();
+        assert!(!stage.join("trace.bin").exists());
+        // The same inputs/outputs and commitment remain sufficient for a replay package.
+        replay_package("stage_a", &base).unwrap();
+        assert_eq!(fs::read(&package.commit_path).unwrap(), b"commit.bin");
         fs::remove_dir_all(base).unwrap();
     }
 
@@ -718,10 +904,13 @@ mod tests {
             },
             prepared_run: None,
         };
-        let manifest = challenge_manifest_path(&options, &claimed).unwrap();
-        assert!(fs::read_to_string(manifest)
-            .unwrap()
-            .contains("name = \"selected\""));
+        // A bare trace has no claimed ids, so it discovers them from the run
+        // spec's model; this fixture has no weights to discover them with.
+        let error = challenge_run(&options, &claimed).err().unwrap();
+        assert!(
+            format!("{error:#}").contains("direct inference"),
+            "{error:#}"
+        );
         fs::remove_dir_all(base).unwrap();
     }
 
@@ -762,6 +951,29 @@ mod tests {
         assert_eq!(divergence.checkpoint_index, 1);
         assert_eq!(divergence.stage, "stage_b");
         assert_eq!(divergence.reason, DivergenceReason::OutputCommitment);
+    }
+
+    #[test]
+    fn a_stage_that_names_another_program_is_a_divergence() {
+        let recomputed = trace(vec![
+            checkpoint("stage_a", "aaa", "111"),
+            checkpoint("stage_b", "bbb", "222"),
+        ]);
+        // Same inputs and outputs: only the program the claim says ran differs.
+        let mut claimed = recomputed.clone();
+        claimed.checkpoints[1].program_commitment = String::from("another-program");
+
+        let divergence = locate_divergence(
+            Path::new("claimed.json"),
+            &claimed,
+            Path::new("recomputed.json"),
+            &recomputed,
+        )
+        .unwrap();
+
+        assert_eq!(divergence.checkpoint_index, 1);
+        assert_eq!(divergence.stage, "stage_b");
+        assert_eq!(divergence.reason, DivergenceReason::ProgramCommitment);
     }
 
     #[test]
@@ -904,6 +1116,8 @@ mod tests {
             run_spec_path: base.join("inference.toml"),
             model_manifest_path: model_manifest.clone(),
             model_manifest_sha256: format!("{:x}", sha2::Sha256::digest(b"model")),
+            model_id: String::from("model-id"),
+            raw_prompt: false,
             prompt: inference_artifacts::PreparedPrompt {
                 resolved_prompt: String::from("hello"),
                 rendered_prompt: String::from("hello"),
@@ -924,6 +1138,258 @@ mod tests {
         fs::remove_dir_all(base).unwrap();
     }
 
+    #[test]
+    fn a_claim_is_judged_by_its_final_record() {
+        let clean = inference_artifacts::InferenceResult {
+            prompt_complete: true,
+            valid: true,
+            ..Default::default()
+        };
+        let rejection = |result: inference_artifacts::InferenceResult| {
+            claimed_output_rejection(Some(&result)).unwrap()
+        };
+
+        assert_eq!(rejection(clean.clone()), None);
+
+        for (result, expected) in [
+            (
+                inference_artifacts::InferenceResult {
+                    model_fault: 1,
+                    ..clean.clone()
+                },
+                "model data failed authentication",
+            ),
+            (
+                inference_artifacts::InferenceResult {
+                    prompt_fault: run_prep::FAULT_NOT_THE_MERGE,
+                    prompt_fault_position: 7,
+                    ..clean.clone()
+                },
+                "not what the merge produces",
+            ),
+            (
+                inference_artifacts::InferenceResult {
+                    prompt_complete: false,
+                    ..clean.clone()
+                },
+                "do not cover",
+            ),
+            (
+                inference_artifacts::InferenceResult {
+                    check_fault: 1,
+                    check_fault_position: 9,
+                    ..clean.clone()
+                },
+                "could not be scored",
+            ),
+            (
+                inference_artifacts::InferenceResult {
+                    claim_mismatches: 2,
+                    first_claim_mismatch_position: 9,
+                    ..clean.clone()
+                },
+                "counts 2 claimed token(s)",
+            ),
+            (
+                inference_artifacts::InferenceResult {
+                    output_fault: 3,
+                    ..clean.clone()
+                },
+                "without reaching EOS",
+            ),
+            (
+                inference_artifacts::InferenceResult {
+                    valid: false,
+                    ..clean.clone()
+                },
+                "own verdict",
+            ),
+        ] {
+            let reason = rejection(result).expect("the record is not clean");
+            assert!(reason.contains(expected), "{reason}");
+        }
+
+        // A claim must have a final record to be judged by.
+        assert!(claimed_output_rejection(None).is_err());
+    }
+
+    fn teacher_forced_claim(base: &Path, model: &str, ids: Vec<u32>) -> PreparedRun {
+        let prepared = crate::claim::prepare_claim_run(&crate::claim::ClaimBuildOptions {
+            base_dir: base.to_path_buf(),
+            run_spec_path: crate::test_support::run_spec(base, model),
+            current_exe: PathBuf::from("unused"),
+            staged_backend: StagedExecutionBackend::InProcess,
+            claimed_token_ids: Some(ids),
+            direct_output_ids: None,
+        })
+        .unwrap();
+        prepared.prepared_run
+    }
+
+    /// An external a stage is bound to, among the chain's own stages and
+    /// its repeated ones.
+    fn bound_external(manifest: &Path, stage: &str, parameter: &str) -> String {
+        let manifest: toml::Value = toml::from_str(&fs::read_to_string(manifest).unwrap()).unwrap();
+        let repeated = manifest["chain"]["repeat"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .flat_map(|repeat| repeat["stage"].as_array().unwrap().iter());
+        manifest["chain"]["stage"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .chain(repeated)
+            .find(|entry| entry["name"].as_str() == Some(stage))
+            .and_then(|entry| {
+                entry["inputs"][parameter]["external"]["commitment"]
+                    .as_str()
+                    .map(str::to_string)
+            })
+            .unwrap()
+    }
+
+    /// The commitments of a run's text, range by range.
+    fn text_commitments(manifest: &Path) -> toml::Value {
+        let manifest: toml::Value = toml::from_str(&fs::read_to_string(manifest).unwrap()).unwrap();
+        manifest["chain"]["input"]["prompt_text"]["commitments"].clone()
+    }
+
+    #[test]
+    fn a_challenger_rebuilds_a_claim_from_its_own_model_and_finds_the_input_that_differs() {
+        use crate::test_support::{model_fixture, run_spec};
+        let base = temp_dir("rebuild-other-model");
+        model_fixture(&base, "claimers-model");
+        let selected = model_fixture(&base, "challengers-model");
+        let frozen = teacher_forced_claim(&base, "claimers-model", vec![0, 0, 0]);
+        let frozen_manifest = frozen.run_manifest_path.clone().unwrap();
+        verify_prepared_run(&frozen).unwrap();
+
+        let run_spec_path = run_spec(&base, "challengers-model");
+        let claimed = ClaimedInput {
+            checkpoints: ClaimedCheckpoints::Trace {
+                path: base.join("trace.json"),
+                trace: trace(Vec::new()),
+            },
+            prepared_run: Some(frozen.clone()),
+        };
+        let options = ChallengeBuildOptions {
+            base_dir: base.clone(),
+            run_spec_path,
+            current_exe: PathBuf::from("unused"),
+            staged_backend: StagedExecutionBackend::InProcess,
+            input: ChallengeInput::Trace(base.join("trace.json")),
+        };
+        // The claimer's model files are not needed to challenge the claim.
+        fs::remove_dir_all(base.join("models/claimers-model")).unwrap();
+        verify_prepared_run(&frozen).unwrap();
+
+        let (manifest, rebuilt) = challenge_run(&options, &claimed).unwrap();
+        let rebuilt = rebuilt.unwrap();
+        assert_ne!(manifest, frozen_manifest);
+        assert!(fs::read_to_string(&manifest)
+            .unwrap()
+            .contains("name = \"challengers-model\""));
+        assert_eq!(
+            fs::canonicalize(&rebuilt.model_manifest_path).unwrap(),
+            fs::canonicalize(&selected).unwrap()
+        );
+        assert_ne!(rebuilt.model_id, frozen.model_id);
+
+        // Same text, so every range's text and the text claim agree; the
+        // configuration names a different model, so the bind's committed
+        // inputs differ.
+        assert_eq!(
+            text_commitments(&manifest),
+            text_commitments(&frozen_manifest)
+        );
+        assert_eq!(
+            bound_external(&manifest, "prompt_bind_p{j}", "claim"),
+            bound_external(&frozen_manifest, "prompt_bind_p{j}", "claim")
+        );
+        assert_ne!(
+            bound_external(&manifest, "prompt_bind_p{j}", "config"),
+            bound_external(&frozen_manifest, "prompt_bind_p{j}", "config")
+        );
+        // The claim's ids and its prompt carried over.
+        assert_eq!(
+            rebuilt.prompt.resolved_prompt,
+            frozen.prompt.resolved_prompt
+        );
+        assert_eq!(rebuilt.tokens, frozen.tokens);
+        assert_eq!(
+            bound_commitments(&manifest, "claimed_ids").unwrap(),
+            bound_commitments(&frozen_manifest, "claimed_ids").unwrap()
+        );
+        fs::remove_dir_all(base).unwrap();
+    }
+
+    #[test]
+    fn a_challenger_on_the_same_model_rebuilds_the_same_committed_inputs() {
+        let base = temp_dir("rebuild-same-model");
+        crate::test_support::model_fixture(&base, "model");
+        let frozen = teacher_forced_claim(&base, "model", vec![0, 0, 0]);
+        let frozen_manifest = frozen.run_manifest_path.clone().unwrap();
+        let options = ChallengeBuildOptions {
+            base_dir: base.clone(),
+            run_spec_path: crate::test_support::run_spec(&base, "model"),
+            current_exe: PathBuf::from("unused"),
+            staged_backend: StagedExecutionBackend::InProcess,
+            input: ChallengeInput::Trace(base.join("trace.json")),
+        };
+        let claimed = ClaimedInput {
+            checkpoints: ClaimedCheckpoints::Trace {
+                path: base.join("trace.json"),
+                trace: trace(Vec::new()),
+            },
+            prepared_run: Some(frozen),
+        };
+        // The run spec's own prompt plays no part.
+        let spec = fs::read_to_string(&options.run_spec_path)
+            .unwrap()
+            .replace("prompt = \"h\"", "prompt = \"hh\"");
+        fs::write(&options.run_spec_path, spec).unwrap();
+        let (manifest, _) = challenge_run(&options, &claimed).unwrap();
+        assert_eq!(
+            text_commitments(&manifest),
+            text_commitments(&frozen_manifest)
+        );
+        for parameter in ["claim", "config"] {
+            assert_eq!(
+                bound_external(&manifest, "prompt_bind_p{j}", parameter),
+                bound_external(&frozen_manifest, "prompt_bind_p{j}", parameter),
+            );
+        }
+        for input in ["prompt_marks", "claimed_ids"] {
+            assert_eq!(
+                bound_commitments(&manifest, input).unwrap(),
+                bound_commitments(&frozen_manifest, input).unwrap(),
+            );
+        }
+        fs::remove_dir_all(base).unwrap();
+    }
+
+    #[test]
+    fn a_tampered_claimed_range_is_not_read_as_the_claim() {
+        let base = temp_dir("tampered-claimed");
+        crate::test_support::model_fixture(&base, "model");
+        let frozen = teacher_forced_claim(&base, "model", vec![0, 0, 0]);
+        let manifest = frozen.run_manifest_path.unwrap();
+        assert_eq!(frozen_claimed_ids(&manifest).unwrap(), [0, 0, 0]);
+        let claimed = manifest.parent().unwrap().join("prompt/claimed_0.rastered");
+        let other = manifest.parent().unwrap().join("other");
+        let file = run_prep::write_claimed_ranges(&[0, 0, 1], 4, &other)
+            .unwrap()
+            .remove(0);
+        fs::copy(&file.path, &claimed).unwrap();
+        fs::copy(&file.index_path, claimed.with_extension("rindex")).unwrap();
+        assert!(frozen_claimed_ids(&manifest)
+            .unwrap_err()
+            .to_string()
+            .contains("is not the claimed range"));
+        fs::remove_dir_all(base).unwrap();
+    }
+
     fn trace(checkpoints: Vec<Checkpoint>) -> CheckpointTrace {
         CheckpointTrace { checkpoints }
     }
@@ -931,6 +1397,8 @@ mod tests {
     fn checkpoint(stage: &str, commitment: &str, sha: &str) -> Checkpoint {
         Checkpoint {
             stage: stage.to_string(),
+            program_commitment: String::from("program"),
+            input_sources: Default::default(),
             input_commitment: String::from("input"),
             output_commitment: commitment.to_string(),
             output_sha256: sha.to_string(),

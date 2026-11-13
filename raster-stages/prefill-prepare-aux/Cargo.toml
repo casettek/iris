@@ -10,6 +10,7 @@ std = ["raster/std"]
 profiling = ["raster/profiling"]
 
 [dependencies]
+model-identity = { path = "../../crates/model/identity", default-features = false }
 raster = { path = "../../../raster/crates/raster", default-features = false }
 serde = { version = "1.0", default-features = false, features = ["derive", "alloc"] }
 # Canonical fixed-point kernels, vendored verbatim from the reference.
@@ -17,3 +18,9 @@ det-num = { path = "../../crates/det-num" }
 
 [dev-dependencies]
 raster-runtime = { path = "../../../raster/crates/raster-runtime" }
+
+# Sequences run on the host; only the library is built for proof guests.
+[[bin]]
+name = "prefill-prepare-aux"
+path = "src/main.rs"
+required-features = ["std"]

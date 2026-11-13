@@ -4,4 +4,6 @@ mod main_impl;
 
 pub mod externals;
 
-pub use main_impl::{import_model, run_from_args, run_from_env, ImportConfig, ImportResult};
+pub use main_impl::{
+    import_model, run_from_args, run_from_env, ImportConfig, ImportResult, DEFAULT_RANGE_SIZE,
+};

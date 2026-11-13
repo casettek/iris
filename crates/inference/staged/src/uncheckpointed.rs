@@ -9,8 +9,8 @@ use anyhow::{bail, Context, Result};
 use inference_artifacts::{
     InferAuxWaveTiming, InferStageTiming, InferenceResult, InferenceRunReport, InferenceTimings,
 };
-use output_finalize::input::GeneratedOutput;
 use rayon::prelude::*;
+use sequence_check::input::GeneratedOutput;
 
 use crate::cache::{CachedInputs, CachedStageValue, MaterializationCache, StageOutputCache};
 use crate::chain_runner::{self, InputBinding, StageSpec};
@@ -124,16 +124,19 @@ impl UncheckpointedInferenceExecutor {
         }
 
         let result = match state.last_output.as_deref() {
-            Some(CachedStageValue::GeneratedOutput(output)) => {
-                inference_result_from_generated(output.clone())
+            // The last stage of a chain is the last claimed range's check,
+            // and its record is the output.
+            Some(CachedStageValue::DecodeEdge(edge)) => {
+                inference_result_from_generated(sequence_check::input::generated_output(edge))
             }
             Some(other) => bail!(
-                "infer expected final stage to produce generated output, got {:?}",
+                "infer expected final stage to be a check with its output record, got {:?}",
                 other
             ),
             None => bail!("infer cannot run an empty chain"),
         };
         Ok(InferenceRunReport {
+            input_token_count: None,
             result,
             timings: InferenceTimings {
                 total_duration: infer_started.elapsed(),
@@ -156,11 +159,29 @@ impl UncheckpointedInferenceConfig {
 
 pub(crate) fn inference_result_from_generated(output: GeneratedOutput) -> InferenceResult {
     InferenceResult {
+        model_fault: output.model_fault,
         generated_token_count: output.generated_token_count,
         generated_token_ids: output.generated_token_ids.iter().copied().collect(),
         generated_token_ids_sha256: output.generated_token_ids_sha256,
         generated_text: output.generated_text,
         stop_reason: output.stop_reason,
+        claim_mismatches: output.claim_mismatches,
+        first_claim_mismatch_position: output.first_claim_mismatch_position,
+        check_fault: output.check_fault,
+        check_fault_position: output.check_fault_position,
+        output_text_sha256: output.output_text_sha256,
+        output_fault: output.output_fault,
+        input_text_sha256: output.input_text_sha256,
+        model_id: output.model_id,
+        raw_prompt: output.raw_prompt,
+        max_new_tokens: output.max_new_tokens,
+        range_size: output.range_size,
+        prompt_tokens: output.prompt_tokens,
+        prompt_complete: output.prompt_complete,
+        prompt_fault: output.prompt_fault,
+        prompt_fault_position: output.prompt_fault_position,
+        statement_sha256: hex::encode(output.claim.statement.as_slice()),
+        valid: output.claim.valid,
     }
 }
 
@@ -510,10 +531,7 @@ impl InferenceTempDir {
             .duration_since(UNIX_EPOCH)
             .context("system clock is before UNIX_EPOCH")?
             .as_nanos();
-        let path = std::env::temp_dir().join(format!(
-            "iris-infer-{}-{nanos}",
-            std::process::id()
-        ));
+        let path = std::env::temp_dir().join(format!("iris-infer-{}-{nanos}", std::process::id()));
         fs::create_dir_all(&path)
             .with_context(|| format!("failed to create {}", path.display()))?;
         Ok(Self { path })
@@ -565,10 +583,10 @@ mod tests {
     #[test]
     fn aux_wave_range_groups_adjacent_prefill_prepare_aux_stages() {
         let stages = vec![
-            stage("input_embedding", "input-embedding"),
-            stage("prefill_prepare_aux_l0", "prefill-prepare-aux"),
-            stage("prefill_prepare_aux_l1", "prefill-prepare-aux"),
-            stage("prefill_range_l0", "prefill-range"),
+            stage("embed_p0", "input-embedding"),
+            stage("aux_p0_l0", "prefill-prepare-aux"),
+            stage("aux_p1_l0", "prefill-prepare-aux"),
+            stage("range_p0_l0", "prefill-range"),
         ];
 
         assert_eq!(aux_wave_range(&stages, 0), None);

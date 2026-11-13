@@ -4,13 +4,17 @@
 //! Q16.16 fixed point throughout (`1.0 == 1 << 16`), integer-only so every
 //! tile replays bit-identically in the zkVM (SKILL.md §3).
 
+pub use model_identity::ModelContext;
 extern crate alloc;
 
 use alloc::string::String;
 use alloc::vec::Vec;
-use raster::{Bytes, BytesPage, List};
-use det_num::ops::{div_act, gelu_pytorch_tanh_act, mac_bits, mul_sat, requantize, rms_norm_in_place, value_rms_norm_in_place};
+use det_num::ops::{
+    gelu_pytorch_tanh_act, mac_bits, mul_sat, requantize, rms_norm_in_place,
+    value_rms_norm_in_place,
+};
 use det_num::{Acc, Act, Wgt};
+use raster::{Bytes, BytesPage, List};
 use serde::{Deserialize, Serialize};
 
 /// Fractional bits in the Q16.16 representation.
@@ -19,8 +23,15 @@ pub const FRAC_BITS: u32 = 16;
 /// One unit (`1.0`) in Q16.16.
 pub const ONE: i32 = 1 << FRAC_BITS;
 
-/// Replay-unit page size for every weight matrix in this program.
-pub const PAGE_SIZE: u64 = 196_608;
+/// Replay-unit page size for the Q16.16 matrices: whole rows of `width · 4`
+/// bytes for every width this chain is imported with (128, 256, 1536, 2560).
+/// MUST match the importer's `PAGE_SIZE`.
+pub const PAGE_SIZE: u64 = 184_320;
+
+/// Replay-unit page size for the `Q8_0` matrices: whole rows of
+/// `in / 32 · 34` bytes for every width this chain is imported with. MUST
+/// match the importer's `Q8_PAGE_SIZE`.
+pub const Q8_PAGE_SIZE: u64 = 195_840;
 
 // ---------------------------------------------------------------------------
 // The pipeline's activation type — field-for-field identical in every stage
@@ -37,6 +48,7 @@ pub struct ActivationRow {
 /// A prompt's activations, in prompt order.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
 pub struct ActivationSequence {
+    pub model: ModelContext,
     pub rows: List<ActivationRow>,
     pub errors: List<String>,
     /// This layer's K/V cache after this stage: everything it was handed as
@@ -78,6 +90,7 @@ pub struct PleRow {
 /// position.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
 pub struct PleLayerInputs {
+    pub model: ModelContext,
     pub layer_idx: u32,
     pub rows: List<PleRow>,
     pub errors: List<String>,
@@ -144,26 +157,27 @@ pub struct LayerParams {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
 pub struct TransformerLayer {
     pub params: LayerParams,
-    #[page_size = 196_608]
-    pub w_q: Bytes<196_608>,
-    #[page_size = 196_608]
-    pub w_k: Bytes<196_608>,
-    #[page_size = 196_608]
-    pub w_v: Bytes<196_608>,
-    #[page_size = 196_608]
-    pub w_o: Bytes<196_608>,
-    #[page_size = 196_608]
-    pub w_gate: Bytes<196_608>,
-    #[page_size = 196_608]
-    pub w_up: Bytes<196_608>,
-    #[page_size = 196_608]
-    pub w_down: Bytes<196_608>,
+    // Projection and MLP matrices: `Q8_0` rows, `in / 32 · 34` bytes each.
+    #[page_size = 195_840]
+    pub w_q: Bytes<195_840>,
+    #[page_size = 195_840]
+    pub w_k: Bytes<195_840>,
+    #[page_size = 195_840]
+    pub w_v: Bytes<195_840>,
+    #[page_size = 195_840]
+    pub w_o: Bytes<195_840>,
+    #[page_size = 195_840]
+    pub w_gate: Bytes<195_840>,
+    #[page_size = 195_840]
+    pub w_up: Bytes<195_840>,
+    #[page_size = 195_840]
+    pub w_down: Bytes<195_840>,
     /// PLE gate: hidden -> ple_width.
-    #[page_size = 196_608]
-    pub ple_input_gate: Bytes<196_608>,
+    #[page_size = 184_320]
+    pub ple_input_gate: Bytes<184_320>,
     /// PLE projection back up: ple_width -> hidden.
-    #[page_size = 196_608]
-    pub ple_layer_projection: Bytes<196_608>,
+    #[page_size = 184_320]
+    pub ple_layer_projection: Bytes<184_320>,
 }
 
 /// Key/value side of one token, for the attention scan.
@@ -291,23 +305,15 @@ pub fn pack_i64s(values: &[i64]) -> BytesPage {
 pub fn unpack_i64s(page: &BytesPage) -> core::result::Result<Vec<i64>, String> {
     let bytes = page.as_slice();
     if bytes.len() % 8 != 0 {
-        return Err(alloc::format!("page length {} is not i64-aligned", bytes.len()));
+        return Err(alloc::format!(
+            "page length {} is not i64-aligned",
+            bytes.len()
+        ));
     }
     Ok(bytes
         .chunks_exact(8)
         .map(|c| i64::from_le_bytes(c.try_into().expect("chunks_exact(8)")))
         .collect())
-}
-
-/// Streaming softmax state — one running max, sum and weighted accumulator
-/// per head.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
-pub struct AttnState {
-    pub started: bool,
-    pub max: BytesPage,
-    pub sum: BytesPage,
-    pub acc: BytesPage,
-    pub error: String,
 }
 
 /// A packed vector that may carry a failure from an earlier step.
@@ -374,16 +380,6 @@ pub fn unpack_i32s(page: &BytesPage) -> core::result::Result<Vec<i32>, String> {
 // Q16.16 kernels
 // ---------------------------------------------------------------------------
 
-fn clamp_i64(value: i64) -> i32 {
-    if value > i32::MAX as i64 {
-        i32::MAX
-    } else if value < i32::MIN as i64 {
-        i32::MIN
-    } else {
-        value as i32
-    }
-}
-
 pub fn mul(a: i32, b: i32) -> i32 {
     // Canonical multiply: widen, then requantize ties-to-even and saturate.
     // The previous version truncated with `>> FRAC_BITS`, which rounds toward
@@ -391,48 +387,8 @@ pub fn mul(a: i32, b: i32) -> i32 {
     mul_sat(Act::from_bits(a), Act::from_bits(b)).to_bits()
 }
 
-pub fn div(a: i32, b: i32) -> i32 {
-    if b == 0 {
-        return 0;
-    }
-    // Canonical divide: ties-to-even, not the truncating shift-and-divide this
-    // replaces.
-    div_act(Act::from_bits(a), Act::from_bits(b)).to_bits()
-}
-
 pub fn add_sat(a: i32, b: i32) -> i32 {
     a.saturating_add(b)
-}
-
-
-pub fn exp(x: i32) -> i32 {
-    const LOG2E: i32 = 94548;
-    const A1: i32 = 45426;
-    const A2: i32 = 15743;
-    const A3: i32 = 3634;
-
-    if x <= -(20 * ONE) {
-        return 0;
-    }
-    if x >= 20 * ONE {
-        return i32::MAX;
-    }
-
-    let y = mul(x, LOG2E);
-    let int_part = y >> FRAC_BITS;
-    let frac = y - (int_part << FRAC_BITS);
-    let poly = ONE + mul(frac, A1 + mul(frac, A2 + mul(frac, A3)));
-
-    if int_part >= 0 {
-        clamp_i64((poly as i64) << int_part)
-    } else {
-        let shift = (-int_part) as u32;
-        if shift >= 31 {
-            0
-        } else {
-            poly >> shift
-        }
-    }
 }
 
 pub fn gelu(x: i32) -> i32 {
@@ -511,4 +467,12 @@ pub fn rms_norm(row: &mut [i32], weights: &[i32], eps: i64) -> core::result::Res
         *slot = value.to_bits();
     }
     Ok(())
+}
+
+/// Bounded verifier for the ordered cache positions emitted by one range.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
+pub struct CacheCoverage {
+    pub next: u32,
+    pub end: u32,
+    pub fault: u32,
 }

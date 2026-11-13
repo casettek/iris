@@ -137,6 +137,10 @@ pub fn run_hidden_stage_direct(stage_dir: &Path) -> Result<()> {
     validate_stage_input_artifacts(stage_dir)?;
 
     let direct = routines::run_and_publish(&kind)?;
+    fs::write(
+        stage_dir.join("staged-timings.json"),
+        serde_json::to_vec(&direct.timings)?,
+    )?;
     println!(
         "staged-infer {stage_name}: output {} structural={} stage={}",
         direct.artifact.data_path.display(),
@@ -561,14 +565,14 @@ mod tests {
 
     #[test]
     fn accepts_complete_no_auth_stage_without_chain_commitment() {
-        let stage = TestStage::no_auth("prefill_range_l3");
+        let stage = TestStage::no_auth("range_p0_l3");
 
         validate_stage_artifacts(&stage.stage_dir).unwrap();
     }
 
     #[test]
     fn rejects_authenticated_artifacts_in_no_auth_stage() {
-        let stage = TestStage::no_auth("prefill_range_l3");
+        let stage = TestStage::no_auth("range_p0_l3");
         fs::write(stage.run_dir.join("chain-commitment"), []).unwrap();
         fs::write(stage.stage_dir.join("trace.bin"), []).unwrap();
         fs::write(stage.stage_dir.join("commit.bin"), []).unwrap();

@@ -1,8 +1,13 @@
 //! Phase 2 — `input-embedding`: tiles.
 //!
 //! Gathers one embedding row per prompt token id. The table is a paged byte
-//! region, addressed by `token_id * hidden_size * 4`; an out-of-range id
-//! aborts (a list has no non-membership proof).
+//! region of `Q8_0` rows, addressed by `token_id · hidden_size / 32 · 34` and
+//! dequantized on the way out.
+//!
+//! Indexing a page past the end of the region would abort with no output, and a
+//! claim chooses its own ids. So an id outside the table reads the first row and
+//! keeps its own id: the stage finishes, and `sequence-check` rejects the claim,
+//! because no id outside the head's vocabulary can be the greedy selection.
 //!
 //! `#![no_std]` so the same tiles compile into RISC0 replay guests.
 
@@ -16,6 +21,7 @@ use det_num::Act;
 use raster::prelude::*;
 
 pub mod input;
+pub mod prompt;
 
 use input::*;
 
@@ -25,10 +31,22 @@ pub fn begin_row_lookup(token_id: u32) -> u32 {
     token_id
 }
 
-/// `token_id * hidden_size * 4` — the byte offset of that row in the table.
+/// The byte offset of the `Q8_0` row this id reads.
 #[tile(kind = iter, description = "Byte offset of an embedding row")]
-pub fn embedding_byte_offset(token_id: u32, hidden_size: u32) -> u64 {
-    token_id as u64 * hidden_size as u64 * 4
+pub fn embedding_byte_offset(token_id: u32, hidden_size: u32, table_bytes: u64) -> u64 {
+    row_byte_offset(token_id, hidden_size, table_bytes)
+}
+
+/// `token_id · hidden_size / 32 · 34`, or the first row for an id whose row is
+/// not in the table. Called from [`embedding_byte_offset`] and the native paths.
+pub fn row_byte_offset(token_id: u32, hidden_size: u32, table_bytes: u64) -> u64 {
+    let stride = hidden_size as u64 / 32 * 34;
+    let offset = token_id as u64 * stride;
+    if offset + stride <= table_bytes {
+        offset
+    } else {
+        0
+    }
 }
 
 /// Page index containing a byte offset.
@@ -41,17 +59,49 @@ pub fn page_of(byte_offset: u64, page_size: u64) -> u64 {
     }
 }
 
-/// Stamps the prompt's starting position onto the activation sequence.
+/// Opens the row-count fold over the previous range's embedding.
+#[tile(kind = iter, description = "Open the previous range's row count")]
+pub fn begin_row_count() -> RowCount {
+    RowCount { count: 0 }
+}
+
+/// Counts one chunk of the previous range's rows.
+#[tile(kind = recur, description = "Count a chunk of the previous range's rows")]
+pub fn count_row_chunk(
+    input: RecurInput<Block<ActivationRow>>,
+    state: RecurState<RowCount>,
+) -> RecurState<RowCount> {
+    let mut state = state;
+    state.count += input.into_value().len() as u32;
+    state
+}
+
+/// Where this range starts: right after the previous range's last row.
 ///
-/// Always zero: this stage embeds the prompt, which by definition starts the
-/// sequence. It is written rather than assumed because every consumer of an
-/// `ActivationSequence` reads `start_position` to place its tokens, and a
-/// decode step's embed stage sets a different value from the same field.
-/// Set-once, so it happens here rather than inside the per-token append.
-#[tile(kind = iter, description = "Open the prompt's activation sequence at position zero")]
-pub fn begin_prompt_activations() -> Draft<ActivationSequence> {
+/// The previous range is the empty sequence (start 0, no rows) for the first
+/// range, so positions are never chosen by run preparation: they follow from
+/// how many ids the in-chain tokenizer produced for every earlier range.
+#[tile(kind = iter, description = "Start position after the previous range")]
+pub fn range_start(previous_start: u32, previous_rows: RowCount) -> Result<u32> {
+    previous_start
+        .checked_add(previous_rows.count)
+        .ok_or_else(|| String::from("range start position overflows u32"))
+}
+
+/// Stamps this range's starting position onto its activation sequence.
+///
+/// Every consumer of an `ActivationSequence` reads `start_position` to place
+/// its tokens: RoPE and sliding-window visibility are defined over absolute
+/// positions. Set-once, so it happens here rather than inside the per-token
+/// append.
+#[tile(kind = iter, description = "Open this range's activation sequence at its start position")]
+pub fn begin_prompt_activations(
+    start_position: u32,
+    model: ModelContext,
+) -> Draft<ActivationSequence> {
     let mut output = Draft::<ActivationSequence>::new();
-    output.start_position().set(0);
+    output.model().set(model);
+    output.start_position().set(start_position);
     output
 }
 
@@ -67,7 +117,7 @@ pub fn append_activation_row(
     embedding_scale: i32,
 ) -> Draft<ActivationSequence> {
     let mut output = output;
-    match unpack_i32s_at(&page, byte_off, hidden_size) {
+    match q8_row_at(&page, byte_off, hidden_size) {
         // Gemma scales the embedding by sqrt(hidden) before layer 0. Applied
         // here, with the canonical multiply, because the row is only ever read
         // once — and because an unscaled activation is not detectably wrong
@@ -127,4 +177,27 @@ pub fn assert_all_tokens_embedded(error_count: u32, first_error: String) -> Resu
             "{error_count} prompt token(s) could not be embedded; first: {first_error}"
         ))
     }
+}
+
+pub mod identity;
+pub use identity::*;
+
+#[tile(kind=recur)]
+pub fn bind_embedding_token(
+    input: RecurInput<u32>,
+    state: RecurState<ModelContext>,
+) -> RecurState<ModelContext> {
+    let mut state = state;
+    state.append_consumed_token(input.into_value());
+    state
+}
+#[tile(kind=iter)]
+pub fn finish_embedding_binding(
+    mut model: ModelContext,
+    start: u32,
+    prompt: u64,
+    claimed: u64,
+) -> ModelContext {
+    model.finish_embedding_execution(start, prompt, claimed);
+    model
 }

@@ -4,7 +4,6 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use inference_artifacts::replay_profile::{ReplayProfileStatus, StageReplayProfile};
 use inference_artifacts::{read_json, EXECUTION_TIMES_JSON};
 use staged_infer::chain_runner::StagedExecutionBackend;
 use staged_infer::{CheckpointedInferenceConfig, CheckpointedInferenceExecutor, ParityPolicy};
@@ -36,15 +35,64 @@ fn native_prefix_stops_before_later_sequential_and_parallel_stages() {
 
     let root = unique_dir(&std::env::temp_dir().join("replay-profile-prefix"));
     let manifest = root.join("Raster.toml");
+    // The first stage is a prompt check over a tokenizer with one empty bucket
+    // of each kind and a range with no marks. It records the range as empty
+    // and finishes, which is all the scheduler needs of it here.
+    use sequence_check::prompt::{PromptState, PromptTokenizer};
+    #[derive(serde::Serialize)]
+    struct Marks {
+        starts: raster::List<u32>,
+    }
+    let external = |name: &str, (data, index, commitment): (Vec<u8>, Vec<u8>, String)| {
+        fs::write(root.join(format!("{name}.rastered")), data).unwrap();
+        fs::write(root.join(format!("{name}.rindex")), index).unwrap();
+        format!(
+            "inputs.{name} = {{ external = {{ path = \"{name}.rastered\", index_path = \"{name}.rindex\", commitment = \"{commitment}\" }} }}\n"
+        )
+    };
+    raster::init();
+    let tokenizer = PromptTokenizer {
+        vocab_bucket_count: 1,
+        merge_bucket_count: 1,
+        vocab_buckets: raster::List::from(vec![Default::default()]),
+        merge_buckets: raster::List::from(vec![Default::default()]),
+        ..Default::default()
+    };
+    let witness = sequence_check::prompt::tokenizer_witness(&tokenizer).unwrap();
+    let inputs = [
+        external(
+            "tokenizer",
+            raster::encode_raster_value(&tokenizer).unwrap(),
+        ),
+        external("witness", raster::encode_raster_value(&witness).unwrap()),
+        external(
+            "bound",
+            raster::encode_raster_value(&PromptState::default()).unwrap(),
+        ),
+        external(
+            "previous",
+            raster::encode_raster_value(&PromptState::default()).unwrap(),
+        ),
+        external(
+            "marks",
+            raster::encode_raster_value(&Marks {
+                starts: raster::List::new(),
+            })
+            .unwrap(),
+        ),
+    ]
+    .concat();
     // Later stages intentionally have no usable inputs: they must not execute.
     fs::write(
         &manifest,
-        r#"
+        format!(
+            r#"
 [chain]
 name = "prefix-test"
 [[chain.stage]]
-name = "decode_init"
-project = "raster-stages/decode-init"
+name = "prompt_check_p0"
+project = "raster-stages/prompt-check"
+{inputs}
 [[chain.stage]]
 name = "prefill_prepare_aux_l0"
 project = "raster-stages/prefill-prepare-aux"
@@ -55,9 +103,10 @@ project = "raster-stages/prefill-prepare-aux"
 name = "prefill_prepare_aux_l2"
 project = "raster-stages/prefill-prepare-aux"
 [[chain.stage]]
-name = "output_finalize"
-project = "raster-stages/output-finalize"
-"#,
+name = "check_c0"
+project = "raster-stages/sequence-check"
+"#
+        ),
     )
     .unwrap();
     let config = CheckpointedInferenceConfig {
@@ -68,7 +117,7 @@ project = "raster-stages/output-finalize"
         parity_policy: ParityPolicy::Skip,
     };
     let sequential = CheckpointedInferenceExecutor
-        .run_through_stage(config.clone(), "decode_init")
+        .run_through_stage(config.clone(), "prompt_check_p0")
         .unwrap();
     assert!(sequential.output_path.is_file());
     assert!(sequential.output_index_path.is_file());
@@ -76,7 +125,7 @@ project = "raster-stages/output-finalize"
     assert!(!sequential.chain_dir.join("prefill_prepare_aux_l0").exists());
     assert_eq!(
         sequential.project_dir,
-        root.join("raster-stages/decode-init")
+        root.join("raster-stages/prompt-check")
     );
 
     // A stand-in aux worker publishes a valid artifact. This test exercises the
@@ -89,11 +138,17 @@ project = "raster-stages/output-finalize"
     fs::write(
         &worker,
         format!(
-            r#"#!/bin/sh
-test "$1" = "--run-stage" || exit 10
-for name in output.bin output.rindex output_manifest.json; do
-  cp '{source}'/"$name" "$2/$name" || exit 11
-done
+            r#"#!/usr/bin/env python3
+import sys,json,shutil,pathlib
+for line in sys.stdin:
+    request=json.loads(line)
+    if "Shutdown" in request: break
+    job=request["Run"]["job"]
+    for name in ["output.bin","output.rindex","output_manifest.json"]:
+        shutil.copyfile('{source}/'+name, pathlib.Path(job["output_dir"])/name)
+    timings={{k:{{"secs":0,"nanos":1}} for k in ["input_load_duration","kernel_duration","encode_write_duration","direct_stage_duration"]}}
+    cache={{k:0 for k in ["budget_bytes","retained_bytes","hits","misses","bypasses","preparation_duration_ns"]}}
+    print(json.dumps({{"version":1,"id":job["id"],"name":job["name"],"timings":timings,"cache":cache,"error":None}}),flush=True)
 "#
         ),
     )
@@ -110,7 +165,7 @@ done
         .exists());
     assert!(parallel.output_path.is_file());
     assert!(!parallel.chain_dir.join("prefill_prepare_aux_l2").exists());
-    assert!(!parallel.chain_dir.join("output_finalize").exists());
+    assert!(!parallel.chain_dir.join("check_c0").exists());
     let times: serde_json::Value =
         read_json(&parallel.chain_dir.join(EXECUTION_TIMES_JSON)).unwrap();
     assert_eq!(times["stages"].as_array().unwrap().len(), 3);
@@ -165,15 +220,14 @@ fn replay_profile_tokenizer_smoke() {
         .args(["--model-id", "parity-gemma", "--no-stage-fixtures"]);
     logged(import, &dir.join("import.log"));
     let run = dir.join("inference.toml");
-    // The pinned near-window prompt exceeds the seed stage's eight-merge
-    // batch, so the expanded chain includes a repeated merge stage.
+    // The first prompt range's token check.
     fs::write(&run, "model_manifest = \"model-artifacts/parity-gemma/manifest.json\"\nprompt = \"abcdefghijklmn?!\"\nraw_prompt = true\ntokens = 1\n").unwrap();
     let mut profile = Command::new(exe);
     profile
         .current_dir(&root)
         .args(["replay-profile", "--run"])
         .arg(&run)
-        .args(["--stage", "prompt_merge_b0", "--top-n", "1"]);
+        .args(["--stage", "prompt_check_p0", "--top-n", "1"]);
     let log_path = dir.join("replay-profile.log");
     logged(profile, &log_path);
     let log = fs::read_to_string(&log_path).unwrap();
@@ -181,46 +235,21 @@ fn replay_profile_tokenizer_smoke() {
         .lines()
         .find_map(|line| line.strip_prefix("Replay profile report: "))
         .expect("missing summary path");
-    let report: StageReplayProfile = read_json(Path::new(report_path)).unwrap();
-    assert!(matches!(report.status, ReplayProfileStatus::Complete));
-    assert_eq!(report.stage, "prompt_merge_b0");
-    assert_eq!(report.selected_tile_ids.len(), 1);
-    assert_eq!(report.native.output_matches_baseline, Some(true));
-    assert_eq!(report.replay.output_matches_baseline, Some(true));
-    assert!(report.replay_tiles[0].max_guest_cycles.unwrap() > 0);
-    assert!(report.replay_tiles[0].total_guest_cycles > 0);
-    assert!(
-        report.replay_tiles[0]
-            .transition_overhead
-            .as_ref()
-            .unwrap()
-            .guest_cycles
-            > 0
-    );
-    assert_eq!(report.version, 2);
-    assert!(report.native_tiles.is_empty());
-    assert!(report.native_ranking_path.as_ref().unwrap().is_file());
-    let json: serde_json::Value = read_json(Path::new(report_path)).unwrap();
-    assert!(json.get("native_tiles").is_none());
-    assert!(!json.to_string().contains("_ns"));
-    assert!(log.contains("heaviest replay"));
-    assert!(log.contains("guest cycles across"));
-    assert!(log.contains("Sample transition overhead (one invocation):"));
-    assert!(
-        !log.contains("_ns"),
-        "native fields leaked into terminal: {log}"
-    );
-    assert!(
-        !log.contains(" ns"),
-        "native timings leaked into terminal: {log}"
-    );
-    assert!(report.native.profile_path.unwrap().is_file());
-    assert!(report.replay.profile_path.unwrap().is_file());
-    assert!(!report
-        .stage_dir
+    let report: serde_json::Value = read_json(Path::new(report_path)).unwrap();
+    assert_eq!(report["version"], 3);
+    assert_eq!(report["complete"], true);
+    assert_eq!(report["stage"], "prompt_check_p0");
+    assert_eq!(report["top_calls"].as_array().unwrap().len(), 1);
+    assert!(report["top_calls"][0]["user_cycles"].as_u64().unwrap() > 0);
+    assert!(Path::new(report_path)
         .parent()
         .unwrap()
-        .join("prompt_prepare")
-        .exists());
+        .join("native-profile.json")
+        .is_file());
+    assert!(Path::new(report_path)
+        .parent()
+        .unwrap()
+        .join("raster-replay-profile.json")
+        .is_file());
     println!("Verified tokenizer replay profile: {report_path}");
 }

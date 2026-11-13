@@ -2,15 +2,14 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
 use inference_artifacts::{DirectInferShape, InferenceRunSpec, ModelManifest, PreparedPrompt};
-use prompt_prepare::input::BpePieces;
+use prompt_check::input::BpePieces;
 use raster::{Bytes, List};
 
-use detwgt::{DetwgtMatrixView, DetwgtSlice, MmapDetwgt};
-use inference_kernels::tensor::MatrixSource;
+use detwgt::{DetwgtMatrixView, DetwgtSlice, MmapDetwgt, Q8MatrixView};
+use inference_kernels::tensor::{MatrixSource, Q8Key, Q8Source};
 
 const ONE: i32 = 1 << 16;
-pub const MISSING_DIRECT_MANIFEST: &str =
-    "run iris model import ... to generate a model manifest";
+pub const MISSING_DIRECT_MANIFEST: &str = "run iris model import ... to generate a model manifest";
 
 pub struct DirectInferenceModel {
     pub manifest: ModelManifest,
@@ -20,7 +19,7 @@ pub struct DirectInferenceModel {
     detwgt: MmapDetwgt,
     ple_params: Vec<prefill_prepare_aux::input::PleLayerParams>,
     layer_params: Vec<prefill_range::input::LayerParams>,
-    final_head_params: prefill_finalize::input::FinalHeadParams,
+    final_head_params: sequence_check::input::FinalHeadParams,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -65,29 +64,89 @@ impl MatrixSource for DirectMatrixView<'_> {
     }
 }
 
+/// A memory-mapped `Q8_0` matrix. Products use `det_num::q8::dot_row`, the
+/// arithmetic every Raster stage uses; there is no Q16.16 row view.
+#[derive(Debug, Clone, Copy)]
+pub struct DirectQ8View<'a> {
+    inner: Q8MatrixView<'a>,
+}
+
+impl<'a> DirectQ8View<'a> {
+    pub fn new(inner: Q8MatrixView<'a>) -> Self {
+        Self { inner }
+    }
+
+    pub fn rows(&self) -> usize {
+        self.inner.rows()
+    }
+
+    /// Columns `start..start + width` of one row, dequantized for a lookup.
+    /// Both ends must fall on 32-value blocks.
+    pub fn row_columns(&self, row_idx: usize, start: usize, width: usize) -> Result<Vec<i32>> {
+        let block = det_num::q8::BLOCK;
+        if start % block != 0 || width % block != 0 || start + width > self.inner.cols() {
+            bail!(
+                "columns {start}..{} do not fall on Q8_0 blocks",
+                start + width
+            );
+        }
+        let bytes = &self.inner.row(row_idx)?[start / block * det_num::q8::BLOCK_BYTES
+            ..(start + width) / block * det_num::q8::BLOCK_BYTES];
+        let mut out = vec![0; width];
+        det_num::q8::dequantize_row(bytes, &mut out).map_err(anyhow::Error::msg)?;
+        Ok(out)
+    }
+}
+
+impl MatrixSource for DirectQ8View<'_> {
+    fn rows(&self) -> usize {
+        self.inner.rows()
+    }
+
+    fn cols(&self) -> usize {
+        self.inner.cols()
+    }
+
+    fn row_values_into(&self, _row_idx: usize, _out: &mut Vec<i32>) -> Result<()> {
+        bail!("Q8_0 rows have no Q16.16 values; products use row_dot")
+    }
+
+    fn q8_source(&self) -> Option<Q8Source<'_>> {
+        let (mapping, offset) = self.inner.place()?;
+        Some(Q8Source {
+            bytes: self.inner.bytes(),
+            key: Q8Key::mapped(mapping, offset)?,
+        })
+    }
+
+    fn row_dot(&self, row_idx: usize, input: &[i32]) -> Result<i32> {
+        det_num::q8::dot_row(input, self.inner.row(row_idx)?).map_err(anyhow::Error::msg)
+    }
+}
+
 pub struct DirectPleLayer<'a> {
     pub params: prefill_prepare_aux::input::PleLayerParams,
-    pub embeddings: DirectMatrixView<'a>,
+    pub embeddings: DirectQ8View<'a>,
     pub embedding_start: usize,
     pub projection: DirectMatrixView<'a>,
 }
 
 pub struct DirectTransformerLayer<'a> {
     pub params: prefill_range::input::LayerParams,
-    pub w_q: DirectMatrixView<'a>,
-    pub w_k: DirectMatrixView<'a>,
-    pub w_v: DirectMatrixView<'a>,
-    pub w_o: DirectMatrixView<'a>,
-    pub w_gate: DirectMatrixView<'a>,
-    pub w_up: DirectMatrixView<'a>,
-    pub w_down: DirectMatrixView<'a>,
+    pub w_q: DirectQ8View<'a>,
+    pub w_k: DirectQ8View<'a>,
+    pub w_v: DirectQ8View<'a>,
+    pub w_o: DirectQ8View<'a>,
+    pub w_gate: DirectQ8View<'a>,
+    pub w_up: DirectQ8View<'a>,
+    pub w_down: DirectQ8View<'a>,
     pub ple_input_gate: DirectMatrixView<'a>,
     pub ple_layer_projection: DirectMatrixView<'a>,
 }
 
 pub struct DirectFinalHead<'a> {
-    pub params: prefill_finalize::input::FinalHeadParams,
-    pub projection: DirectMatrixView<'a>,
+    pub params: sequence_check::input::FinalHeadParams,
+    pub projection: DirectQ8View<'a>,
 }
 
 impl DirectInferenceModel {
@@ -99,6 +158,11 @@ impl DirectInferenceModel {
             );
         }
         let manifest = ModelManifest::load_verified(manifest_path)?;
+        // What follows (the config's keys, the tensor names, the per-layer
+        // inputs and the head) is one family's. Another loads its own way.
+        match manifest.family()? {
+            inference_artifacts::ModelFamily::GemmaDense => {}
+        }
 
         let manifest_dir = manifest_path
             .parent()
@@ -138,26 +202,62 @@ impl DirectInferenceModel {
         run_prep::prepare_prompt(&self.tokenizer, spec_dir, spec, &self.manifest)
     }
 
+    /// The prompt's part of the run's stage schedule: its range count, as run
+    /// preparation counts it. `None` when the prompt cannot be cut into ranges,
+    /// which only a chain needs.
+    pub fn prompt_ranges(&self, prompt: &PreparedPrompt) -> Option<u32> {
+        let ranges = run_prep::marked_ranges(
+            &prompt.initial_pieces,
+            self.manifest.range_size as usize,
+            &run_prep::prompt_tokenizer(&self.tokenizer).ok()?,
+        )
+        .ok()?;
+        u32::try_from(ranges.len()).ok()
+    }
+
     fn matrix_view(&self, name: &str, rows: usize, cols: usize) -> Result<DirectMatrixView<'_>> {
         Ok(DirectMatrixView::new(self.detwgt.matrix(name, rows, cols)?))
+    }
+
+    fn q8_view(&self, name: &str, rows: usize, cols: usize) -> Result<DirectQ8View<'_>> {
+        let inner = self.detwgt.q8_matrix(name)?;
+        if (inner.rows(), inner.cols()) != (rows, cols) {
+            bail!(
+                "tensor '{name}' is {} x {}, expected {rows} x {cols}",
+                inner.rows(),
+                inner.cols()
+            );
+        }
+        Ok(DirectQ8View { inner })
+    }
+
+    /// A `Q8_0` tensor's rows `start..end` as one committed region.
+    fn q8_region<const P: u64>(&self, name: &str, start: usize, end: usize) -> Result<Bytes<P>> {
+        Bytes::<P>::paged(self.detwgt.q8_rows(name, start, end)?.to_vec())
+            .map_err(|error| anyhow::anyhow!("{error}"))
+    }
+
+    fn q8_tensor_region(&self, name: &str) -> Result<Bytes<195_840>> {
+        self.q8_region(name, 0, self.detwgt.q8_matrix(name)?.rows())
     }
 
     pub fn prompt_inputs(
         &self,
         prompt: &PreparedPrompt,
-    ) -> Result<prompt_prepare::input::PromptTokenization> {
+    ) -> Result<prompt_check::input::PromptTokenization> {
         let tokenizer = run_prep::prompt_tokenizer(&self.tokenizer)?;
         let pieces = BpePieces {
             pieces: List::from(
                 prompt
                     .initial_pieces
                     .iter()
-                    .map(|p| prompt_prepare::input::BpePiece {
+                    .map(|p| prompt_check::input::BpePiece {
                         text: p.text.clone(),
                         segment: p.segment,
                     })
                     .collect::<Vec<_>>(),
             ),
+            ..Default::default()
         };
         inference_kernels::kernels::prompt_prepare::run_prompt_prepare_direct(
             inference_kernels::kernels::prompt_prepare::PromptPrepareDirectInputs {
@@ -167,8 +267,8 @@ impl DirectInferenceModel {
         )
     }
 
-    pub fn embedding_view(&self) -> Result<DirectMatrixView<'_>> {
-        self.matrix_view(
+    pub fn embedding_view(&self) -> Result<DirectQ8View<'_>> {
+        self.q8_view(
             "model.language_model.embed_tokens.weight",
             self.shape().vocab_size as usize,
             self.shape().hidden_size as usize,
@@ -176,7 +276,10 @@ impl DirectInferenceModel {
     }
 
     pub fn scaled_embedding_row(&self, token_id: u32) -> Result<Vec<i32>> {
-        let row = self.embedding_view()?.row_values(token_id as usize)?;
+        let width = self.shape().hidden_size as usize;
+        let row = self
+            .embedding_view()?
+            .row_columns(token_id as usize, 0, width)?;
         let scale = det_num::Act::from_bits(self.shape().embedding_scale);
         Ok(row
             .into_iter()
@@ -185,19 +288,14 @@ impl DirectInferenceModel {
     }
 
     pub fn embedding_table(&self) -> Result<input_embedding::input::EmbeddingTable> {
-        let mut values = Vec::with_capacity(
-            self.shape().vocab_size as usize * self.shape().hidden_size as usize,
-        );
-        for token_id in 0..self.shape().vocab_size as usize {
-            values.extend(
-                self.detwgt
-                    .row("model.language_model.embed_tokens.weight", token_id)?,
-            );
-        }
         Ok(input_embedding::input::EmbeddingTable {
             hidden_size: self.shape().hidden_size,
             embedding_scale: self.shape().embedding_scale,
-            values: paged_i32s(&values)?,
+            values: self.q8_region(
+                "model.language_model.embed_tokens.weight",
+                0,
+                self.shape().vocab_size as usize,
+            )?,
         })
     }
 
@@ -205,7 +303,7 @@ impl DirectInferenceModel {
         let shape = self.shape();
         let start = layer_idx * shape.hidden_size_per_layer_input as usize;
         let end = start + shape.hidden_size_per_layer_input as usize;
-        let embeddings = self.detwgt.column_slice(
+        let embeddings = self.detwgt.q8_column_blocks(
             "model.language_model.embed_tokens_per_layer.weight",
             start,
             end,
@@ -230,7 +328,8 @@ impl DirectInferenceModel {
                         .values("model.language_model.per_layer_projection_norm.weight")?,
                 ),
             },
-            embeddings: paged_i32s(&embeddings)?,
+            embeddings: Bytes::<195_840>::paged(embeddings)
+                .map_err(|error| anyhow::anyhow!("{error}"))?,
             projection: paged_i32s(&projection)?,
         })
     }
@@ -248,7 +347,7 @@ impl DirectInferenceModel {
         )?);
         Ok(DirectPleLayer {
             params: self.ple_params[layer_idx].clone(),
-            embeddings: self.matrix_view(
+            embeddings: self.q8_view(
                 "model.language_model.embed_tokens_per_layer.weight",
                 shape.vocab_size as usize,
                 embedding_cols,
@@ -278,9 +377,8 @@ impl DirectInferenceModel {
         let kv_donor_layer = self.kv_donor_layer(layer_idx);
         let (donor_a_layer, donor_b_layer) = self.donor_candidates();
         let w_v = self
-            .detwgt
-            .values(&at("self_attn.v_proj.weight"))
-            .or_else(|_| self.detwgt.values(&at("self_attn.k_proj.weight")))?;
+            .q8_tensor_region(&at("self_attn.v_proj.weight"))
+            .or_else(|_| self.q8_tensor_region(&at("self_attn.k_proj.weight")))?;
 
         Ok(prefill_range::input::TransformerLayer {
             params: prefill_range::input::LayerParams {
@@ -332,13 +430,13 @@ impl DirectInferenceModel {
                         .values(&at("post_per_layer_input_norm.weight"))?,
                 ),
             },
-            w_q: paged_i32s(&self.detwgt.values(&at("self_attn.q_proj.weight"))?)?,
-            w_k: paged_i32s(&self.detwgt.values(&at("self_attn.k_proj.weight"))?)?,
-            w_v: paged_i32s(&w_v)?,
-            w_o: paged_i32s(&self.detwgt.values(&at("self_attn.o_proj.weight"))?)?,
-            w_gate: paged_i32s(&self.detwgt.values(&at("mlp.gate_proj.weight"))?)?,
-            w_up: paged_i32s(&self.detwgt.values(&at("mlp.up_proj.weight"))?)?,
-            w_down: paged_i32s(&self.detwgt.values(&at("mlp.down_proj.weight"))?)?,
+            w_q: self.q8_tensor_region(&at("self_attn.q_proj.weight"))?,
+            w_k: self.q8_tensor_region(&at("self_attn.k_proj.weight"))?,
+            w_v,
+            w_o: self.q8_tensor_region(&at("self_attn.o_proj.weight"))?,
+            w_gate: self.q8_tensor_region(&at("mlp.gate_proj.weight"))?,
+            w_up: self.q8_tensor_region(&at("mlp.up_proj.weight"))?,
+            w_down: self.q8_tensor_region(&at("mlp.down_proj.weight"))?,
             ple_input_gate: paged_i32s(&self.detwgt.values(&at("per_layer_input_gate.weight"))?)?,
             ple_layer_projection: paged_i32s(
                 &self.detwgt.values(&at("per_layer_projection.weight"))?,
@@ -366,13 +464,13 @@ impl DirectInferenceModel {
 
         Ok(DirectTransformerLayer {
             params,
-            w_q: self.matrix_view(&at("self_attn.q_proj.weight"), q_len, hidden)?,
-            w_k: self.matrix_view(&k_name, kv_len, hidden)?,
-            w_v: self.matrix_view(&v_tensor, kv_len, hidden)?,
-            w_o: self.matrix_view(&at("self_attn.o_proj.weight"), hidden, q_len)?,
-            w_gate: self.matrix_view(&at("mlp.gate_proj.weight"), ffn as usize, hidden)?,
-            w_up: self.matrix_view(&at("mlp.up_proj.weight"), ffn as usize, hidden)?,
-            w_down: self.matrix_view(&at("mlp.down_proj.weight"), hidden, ffn as usize)?,
+            w_q: self.q8_view(&at("self_attn.q_proj.weight"), q_len, hidden)?,
+            w_k: self.q8_view(&k_name, kv_len, hidden)?,
+            w_v: self.q8_view(&v_tensor, kv_len, hidden)?,
+            w_o: self.q8_view(&at("self_attn.o_proj.weight"), hidden, q_len)?,
+            w_gate: self.q8_view(&at("mlp.gate_proj.weight"), ffn as usize, hidden)?,
+            w_up: self.q8_view(&at("mlp.up_proj.weight"), ffn as usize, hidden)?,
+            w_down: self.q8_view(&at("mlp.down_proj.weight"), hidden, ffn as usize)?,
             ple_input_gate: self.matrix_view(
                 &at("per_layer_input_gate.weight"),
                 ple_width,
@@ -386,7 +484,7 @@ impl DirectInferenceModel {
         })
     }
 
-    pub fn final_head(&self) -> Result<prefill_finalize::input::FinalHead> {
+    pub fn final_head(&self) -> Result<sequence_check::input::FinalHead> {
         let shape = self.shape();
         let tied = self
             .config_text
@@ -398,12 +496,8 @@ impl DirectInferenceModel {
         } else {
             "model.language_model.lm_head.weight"
         };
-        let mut rows = Vec::with_capacity(shape.vocab_size as usize * shape.hidden_size as usize);
-        for token_id in 0..shape.vocab_size as usize {
-            rows.extend(self.detwgt.row(tensor, token_id)?);
-        }
-        Ok(prefill_finalize::input::FinalHead {
-            params: prefill_finalize::input::FinalHeadParams {
+        Ok(sequence_check::input::FinalHead {
+            params: sequence_check::input::FinalHeadParams {
                 hidden_size: shape.hidden_size,
                 norm_eps: shape.norm_eps,
                 softcap: shape.final_logit_softcap,
@@ -411,7 +505,7 @@ impl DirectInferenceModel {
                     &self.detwgt.values("model.language_model.norm.weight")?,
                 ),
             },
-            projection: paged_i32s(&rows)?,
+            projection: self.q8_region(tensor, 0, shape.vocab_size as usize)?,
         })
     }
 
@@ -429,7 +523,7 @@ impl DirectInferenceModel {
         };
         Ok(DirectFinalHead {
             params: self.final_head_params.clone(),
-            projection: self.matrix_view(
+            projection: self.q8_view(
                 tensor,
                 shape.vocab_size as usize,
                 shape.hidden_size as usize,
@@ -437,8 +531,12 @@ impl DirectInferenceModel {
         })
     }
 
-    pub fn decoder_table(&self) -> Result<output_finalize::input::DecoderTable> {
+    pub fn decoder_table(&self) -> Result<sequence_check::input::DecoderTable> {
         run_prep::decoder_table(&self.tokenizer, &self.manifest.eos_token_ids)
+    }
+
+    pub fn manifest(&self) -> &ModelManifest {
+        &self.manifest
     }
 
     pub fn shape(&self) -> &DirectInferShape {
@@ -588,8 +686,8 @@ fn build_layer_params(
 fn build_final_head_params(
     shape: &DirectInferShape,
     detwgt: &MmapDetwgt,
-) -> Result<prefill_finalize::input::FinalHeadParams> {
-    Ok(prefill_finalize::input::FinalHeadParams {
+) -> Result<sequence_check::input::FinalHeadParams> {
+    Ok(sequence_check::input::FinalHeadParams {
         hidden_size: shape.hidden_size,
         norm_eps: shape.norm_eps,
         softcap: shape.final_logit_softcap,
@@ -686,6 +784,6 @@ fn pack_i32_page(values: &[i32]) -> raster::BytesPage {
     raster::BytesPage::__from_parts(0, 0, pack_i32_bytes(values))
 }
 
-fn paged_i32s(values: &[i32]) -> Result<Bytes<196_608>> {
-    Bytes::<196_608>::paged(pack_i32_bytes(values)).map_err(|error| anyhow::anyhow!("{error}"))
+fn paged_i32s(values: &[i32]) -> Result<Bytes<184_320>> {
+    Bytes::<184_320>::paged(pack_i32_bytes(values)).map_err(|error| anyhow::anyhow!("{error}"))
 }

@@ -2,34 +2,41 @@
 resolver = "2"
 members = [
     "crates/det-num",
+    "crates/prompt-core",
+    "crates/model/identity",
     "crates/model/detwgt",
     "crates/model/import",
     "crates/model/run-prep",
     "crates/inference/artifacts",
     "crates/inference/kernels",
+    "crates/inference/pipeline-core",
     "crates/inference/direct",
     "crates/inference/staged",
     "crates/inference/cli",
-    "raster-stages/decode-embed",
-    "raster-stages/decode-init",
-    "raster-stages/decode-select-token",
     "raster-stages/input-embedding",
-    "raster-stages/output-finalize",
-    "raster-stages/prefill-finalize",
     "raster-stages/prefill-prepare-aux",
     "raster-stages/prefill-range",
-    "raster-stages/prompt-prepare",
-    "raster-stages/prompt-merge",
+    "raster-stages/prompt-bind",
+    "raster-stages/prompt-check",
+    "raster-stages/sequence-check",
 ]
 
 default-members = [
     "crates/det-num",
+    "crates/prompt-core",
+    "crates/model/identity",
     "crates/model/detwgt",
     "crates/model/import",
     "crates/model/run-prep",
     "crates/inference/artifacts",
     "crates/inference/kernels",
+    "crates/inference/pipeline-core",
     "crates/inference/direct",
     "crates/inference/staged",
     "crates/inference/cli",
 ]
+
+[patch.crates-io]
+risc0-zkvm-platform = { path = "../raster/vendor/risc0-zkvm-platform" }
+risc0-circuit-keccak = { path = "../raster/vendor/risc0-circuit-keccak" }
+risc0-zkvm = { path = "../raster/vendor/risc0-zkvm" }

@@ -3,32 +3,27 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use direct_infer::detwgt::MmapDetwgt;
-use direct_infer::model::{DirectFinalHead, DirectMatrixView, DirectTransformerLayer};
+use direct_infer::model::{
+    DirectFinalHead, DirectMatrixView, DirectQ8View, DirectTransformerLayer,
+};
 use direct_infer::view_kernels::{run_prefill_range_view, score_prefill_logits_view};
 use direct_infer::{DirectInferenceConfig, DirectInferenceExecutor};
 use inference_artifacts::{
     write_json, DirectInferBundle, DirectInferShape, InferenceRunSpec, ModelManifest,
     INFERENCE_RUN_SPEC_TOML, MODEL_ARTIFACTS_DIR, MODEL_MANIFEST_JSON,
 };
-use inference_kernels::kernels::decode_select_token::{
-    run_decode_select_token_direct, DecodeSelectTokenDirectInputs,
-};
 use inference_kernels::tensor::{dot_bits, matvec_from_source, Matrix, MatrixSource};
-use input_embedding::input::EmbeddingTable;
-use output_finalize::input::{DecoderTable, DecoderToken};
-use prefill_finalize::input::{FinalHead, FinalHeadParams};
 use prefill_range::input::{
     pack_i32s, unpack_i32s, ActivationRow, ActivationSequence, LayerParams, PleLayerInputs, PleRow,
     TransformerLayer,
 };
-use prompt_prepare::input::{
-    vocab_bucket_of, BpePieces, MergeBucket, PromptTokenizer, TokenEntry, VocabBucket,
-};
 use raster::{Bytes, List};
+use sequence_check::input::FinalHeadParams;
 use sha2::{Digest, Sha256};
-use staged_infer::{UncheckpointedInferenceConfig, UncheckpointedInferenceExecutor};
 
 const ONE: i32 = 1 << 16;
+/// Hidden width of the fixtures: one `Q8_0` block, the narrowest int8 row.
+const W: usize = 32;
 
 #[test]
 fn direct_executor_reports_missing_direct_manifest_message() {
@@ -147,45 +142,38 @@ fn final_head_logits_feed_shared_decode_select_tie_break() {
     let dir = temp_dir("stream-final-head");
     fs::create_dir_all(&dir).unwrap();
     let detwgt = dir.join("model.detwgt");
-    let projection = vec![ONE, 0, ONE, 0, 0, 0];
     write_detwgt(
         &detwgt,
         &[TensorFixture {
             name: "projection",
-            dims: vec![3, 2],
-            element_width: 32,
-            values: projection.clone(),
+            dims: vec![3, W as u64],
+            element_width: 8,
+            values: one_hot_rows(&[Some(0), None, Some(0)]),
         }],
     );
     let model = MmapDetwgt::open(&detwgt).unwrap();
     let head = DirectFinalHead {
         params: FinalHeadParams {
-            hidden_size: 2,
+            hidden_size: W as u32,
             norm_eps: 0,
             softcap: 0,
-            norm_weights: pack_i32_page(&[ONE, ONE]),
+            norm_weights: pack_i32_page(&[ONE; W]),
         },
-        projection: DirectMatrixView::new(model.matrix("projection", 3, 2).unwrap()),
+        projection: DirectQ8View::new(model.q8_matrix("projection").unwrap()),
     };
     let activations = prefill_range::input::ActivationSequence {
+        model: Default::default(),
         rows: List::from(vec![prefill_range::input::ActivationRow {
             token_id: 1,
-            values: pack_i32_page(&[ONE, 0]),
+            values: pack_i32_page(&one_hot_rows(&[Some(0)])),
         }]),
         errors: List::new(),
         kv: List::new(),
         start_position: 0,
     };
     let logits = score_prefill_logits_view(&activations, &head).unwrap();
-    let prior = inference_kernels::kernels::decode_init::run_decode_init_direct(
-        inference_kernels::kernels::decode_init::DecodeInitDirectInputs,
-    )
-    .unwrap();
-    let edge = run_decode_select_token_direct(DecodeSelectTokenDirectInputs {
-        logits: &logits,
-        prior: &prior,
-    })
-    .unwrap();
+    let prior = inference_kernels::kernels::origin::empty_decode_edge();
+    let edge = direct_infer::generation::select_next_token(&logits, &prior).unwrap();
 
     assert_eq!(logits.decode_position, 1);
     assert_eq!(logits.logits.len(), 3);
@@ -203,26 +191,36 @@ fn native_decode_rotary_outputs_match_prefill_across_chunks() {
     let dir = temp_dir("decode-rope");
     fs::create_dir_all(&dir).unwrap();
     let detwgt = dir.join("model.detwgt");
-    let identity = [ONE, 0, 0, ONE];
+    let identity = one_hot_rows(&(0..W).map(Some).collect::<Vec<_>>());
     write_detwgt(
         &detwgt,
-        &[TensorFixture {
-            name: "identity",
-            dims: vec![2, 2],
-            element_width: 32,
-            values: identity.to_vec(),
-        }],
+        &[
+            TensorFixture {
+                name: "identity",
+                dims: vec![W as u64, W as u64],
+                element_width: 32,
+                values: identity.clone(),
+            },
+            TensorFixture {
+                name: "q8_identity",
+                dims: vec![W as u64, W as u64],
+                element_width: 8,
+                values: identity.clone(),
+            },
+        ],
     );
     let model = MmapDetwgt::open(&detwgt).unwrap();
-    let matrix = DirectMatrixView::new(model.matrix("identity", 2, 2).unwrap());
-    let norm = pack_i32s(&[ONE, ONE]);
+    let matrix = DirectMatrixView::new(model.matrix("identity", W, W).unwrap());
+    let q8_matrix = DirectQ8View::new(model.q8_matrix("q8_identity").unwrap());
+    let norm = pack_i32s(&[ONE; W]);
+    let unit = pack_i32s(&one_hot_rows(&[Some(0)]));
     let params = LayerParams {
         layer_idx: 0,
-        hidden_size: 2,
-        ffn_size: 2,
+        hidden_size: W as u32,
+        ffn_size: W as u32,
         num_heads: 1,
         num_kv_heads: 1,
-        head_dim: 2,
+        head_dim: W as u32,
         sliding_window: 0,
         attn_scale: ONE,
         layer_scalar: 0,
@@ -237,36 +235,37 @@ fn native_decode_rotary_outputs_match_prefill_across_chunks() {
         norm_post_attn: norm.clone(),
         norm_pre_ffw: norm.clone(),
         norm_post_ffw: norm.clone(),
-        q_norm: pack_i32s(&[ONE, 0]),
-        k_norm: pack_i32s(&[ONE, 0]),
-        ple_width: 2,
+        q_norm: unit.clone(),
+        k_norm: unit,
+        ple_width: W as u32,
         ple_post_norm: norm,
     };
     let view = DirectTransformerLayer {
         params: params.clone(),
-        w_q: matrix,
-        w_k: matrix,
-        w_v: matrix,
-        w_o: matrix,
-        w_gate: matrix,
-        w_up: matrix,
-        w_down: matrix,
+        w_q: q8_matrix,
+        w_k: q8_matrix,
+        w_v: q8_matrix,
+        w_o: q8_matrix,
+        w_gate: q8_matrix,
+        w_up: q8_matrix,
+        w_down: q8_matrix,
         ple_input_gate: matrix,
         ple_layer_projection: matrix,
     };
     let layer = TransformerLayer {
         params,
-        w_q: paged(&identity),
-        w_k: paged(&identity),
-        w_v: paged(&identity),
-        w_o: paged(&identity),
-        w_gate: paged(&identity),
-        w_up: paged(&identity),
-        w_down: paged(&identity),
+        w_q: q8_paged(&identity),
+        w_k: q8_paged(&identity),
+        w_v: q8_paged(&identity),
+        w_o: q8_paged(&identity),
+        w_gate: q8_paged(&identity),
+        w_up: q8_paged(&identity),
+        w_down: q8_paged(&identity),
         ple_input_gate: paged(&identity),
         ple_layer_projection: paged(&identity),
     };
     let empty = ActivationSequence {
+        model: Default::default(),
         rows: List::new(),
         errors: List::new(),
         kv: List::new(),
@@ -278,17 +277,23 @@ fn native_decode_rotary_outputs_match_prefill_across_chunks() {
                 .map(|token_id| ActivationRow {
                     token_id,
                     // Distinct V rows make attention outputs sensitive to Q.
-                    values: pack_i32s(&[ONE, if token_id % 2 == 0 { ONE } else { -ONE }]),
+                    values: pack_i32s(&{
+                        // Every lane at magnitude ONE keeps the RMS at ONE.
+                        let mut row = [ONE; W];
+                        row[1] = if token_id % 2 == 0 { ONE } else { -ONE };
+                        row
+                    }),
                 })
                 .collect::<Vec<_>>(),
         ),
         ..empty.clone()
     };
     let ple = PleLayerInputs {
+        model: Default::default(),
         layer_idx: 0,
         rows: List::from(vec![
             PleRow {
-                values: pack_i32s(&[ONE, ONE])
+                values: pack_i32s(&[ONE; W])
             };
             5
         ]),
@@ -307,7 +312,10 @@ fn native_decode_rotary_outputs_match_prefill_across_chunks() {
         .unwrap()
     };
     let reference = run_staged(&activations, &empty);
-    assert_eq!(unpack_i32s(&reference.kv[1].k).unwrap(), [35408, 55146]);
+    assert_eq!(
+        unpack_i32s(&reference.kv[1].k).unwrap()[..2],
+        [35408, 55146]
+    );
 
     let mut prior = empty.clone();
     // Prefill one token, decode twice, then process a two-token chunk.
@@ -343,7 +351,7 @@ fn native_decode_rotary_outputs_match_prefill_across_chunks() {
 #[ignore = "requires local Gemma model artifacts and runs the full direct inference path"]
 fn current_say_ciao_direct_first_token_matches_claim_reference() {
     let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../..")
+        .join("../../..")
         .canonicalize()
         .expect("repo root should resolve");
     let result = DirectInferenceExecutor
@@ -354,7 +362,8 @@ fn current_say_ciao_direct_first_token_matches_claim_reference() {
         .unwrap();
 
     assert_eq!(result.generated_token_ids.first().copied(), Some(150917));
-    assert_eq!(result.generated_text, "Ciao");
+    // The run spec may ask for more than one token.
+    assert!(result.generated_text.starts_with("Ciao"));
 }
 
 #[test]
@@ -369,21 +378,21 @@ fn direct_executor_runs_from_direct_manifest_without_raster_toml() {
         &[
             TensorFixture {
                 name: "model.language_model.embed_tokens.weight",
-                dims: vec![3, 2],
-                element_width: 32,
-                values: vec![0, 0, ONE, 0, 0, ONE],
+                dims: vec![3, W as u64],
+                element_width: 8,
+                values: one_hot_rows(&[None, Some(0), Some(1)]),
             },
             TensorFixture {
                 name: "model.language_model.lm_head.weight",
-                dims: vec![3, 2],
-                element_width: 32,
-                values: vec![0, 0, 0, 0, ONE, 0],
+                dims: vec![3, W as u64],
+                element_width: 8,
+                values: one_hot_rows(&[None, None, Some(0)]),
             },
             TensorFixture {
                 name: "model.language_model.norm.weight",
-                dims: vec![2],
+                dims: vec![W as u64],
                 element_width: 32,
-                values: vec![ONE, ONE],
+                values: vec![ONE; W],
             },
         ],
     );
@@ -400,7 +409,13 @@ fn direct_executor_runs_from_direct_manifest_without_raster_toml() {
     write_json(
         &manifest_path,
         &ModelManifest {
-            version: 2,
+            version: inference_artifacts::MODEL_MANIFEST_VERSION,
+            family: inference_artifacts::ModelFamily::GemmaDense
+                .name()
+                .to_string(),
+            model_id: inference_artifacts::model_id_of(&[]),
+            model_commitments: Vec::new(),
+            range_size: 512,
             bundle: DirectInferBundle {
                 model_detwgt_path: PathBuf::from("../../model.detwgt"),
                 model_detwgt_sha256: sha256_file(&detwgt),
@@ -410,7 +425,7 @@ fn direct_executor_runs_from_direct_manifest_without_raster_toml() {
                 tokenizer_sha256: sha256_file(&tokenizer),
             },
             shape: DirectInferShape {
-                hidden_size: 2,
+                hidden_size: W as u32,
                 num_hidden_layers: 0,
                 num_attention_heads: 1,
                 num_key_value_heads: 1,
@@ -458,28 +473,82 @@ fn direct_executor_runs_from_direct_manifest_without_raster_toml() {
 }
 
 #[test]
-fn direct_executor_matches_uncheckpointed_staged_result() {
-    let dir = temp_dir("parity");
-    fs::create_dir_all(&dir).unwrap();
-    let run_spec_path = write_direct_fixture(&dir);
-    write_staged_fixture(&dir);
+fn direct_executor_stops_at_eos_and_reports_only_selected_tokens() {
+    for eos_id in [2, 0] {
+        let dir = temp_dir("eos");
+        fs::create_dir_all(&dir).unwrap();
+        write_direct_fixture(&dir);
+        let manifest_path = dir.join(MODEL_ARTIFACTS_DIR).join(MODEL_MANIFEST_JSON);
+        let mut manifest: ModelManifest = inference_artifacts::read_json(&manifest_path).unwrap();
+        manifest.eos_token_ids = vec![eos_id];
+        write_json(&manifest_path, &manifest).unwrap();
+        let run_spec_path = write_run_spec(&dir, &manifest_path, "h", 8);
+        let report = DirectInferenceExecutor
+            .run_with_diagnostics(DirectInferenceConfig {
+                base_dir: dir.clone(),
+                run_spec_path,
+            })
+            .unwrap();
+        // The tiny model selects 2 first, then 0 after embedding token 2.
+        let expected = if eos_id == 2 { vec![2] } else { vec![2, 0] };
+        assert_eq!(report.report.input_token_count, Some(1));
+        assert_eq!(report.report.result.generated_token_ids, expected);
+        assert_eq!(
+            report.report.result.generated_token_count as usize,
+            expected.len()
+        );
+        assert_eq!(report.report.result.stop_reason, "eos");
+        assert_eq!(
+            report.report.result.generated_token_ids_sha256,
+            format!(
+                "{:x}",
+                Sha256::digest(serde_json::to_vec(&expected).unwrap())
+            )
+        );
+        let last = expected.len() - 1;
+        assert!(report
+            .boundaries
+            .iter()
+            .any(|b| b.stage == format!("decode_select_t{last}")));
+        assert!(!report
+            .boundaries
+            .iter()
+            .any(|b| b.stage == format!("decode_embed_t{last}")));
+        assert!(!report
+            .boundaries
+            .iter()
+            .any(|b| b.stage == format!("decode_select_t{}", last + 1)));
+        // Stopping at EOS short of the budget is within the run's rules.
+        assert_eq!(report.report.result.output_fault, 0);
+        fs::remove_dir_all(dir).unwrap();
+    }
+}
 
-    let direct = DirectInferenceExecutor
-        .run(DirectInferenceConfig {
+#[test]
+fn direct_executor_keeps_a_maximum_budget_when_no_eos_is_selected() {
+    let dir = temp_dir("token-limit");
+    fs::create_dir_all(&dir).unwrap();
+    write_direct_fixture(&dir);
+    let manifest_path = dir.join(MODEL_ARTIFACTS_DIR).join(MODEL_MANIFEST_JSON);
+    let run_spec_path = write_run_spec(&dir, &manifest_path, "hhhh", 3);
+    let report = DirectInferenceExecutor
+        .run_with_report(DirectInferenceConfig {
             base_dir: dir.clone(),
             run_spec_path,
         })
         .unwrap();
-    let staged = UncheckpointedInferenceExecutor
-        .run(UncheckpointedInferenceConfig {
-            base_dir: dir.clone(),
-            manifest_path: dir.join("Raster.toml"),
-        })
-        .unwrap();
-
-    assert_eq!(direct, staged);
-    assert_eq!(direct.generated_token_ids, vec![2]);
-
+    assert_eq!(report.input_token_count, Some(4));
+    assert_eq!(report.result.generated_token_count, 3);
+    assert_eq!(report.result.stop_reason, "max_new_tokens");
+    // The record names the run, as the chain's final record does.
+    assert_eq!(
+        report.result.input_text_sha256,
+        format!("{:x}", Sha256::digest(b"hhhh"))
+    );
+    assert_eq!(report.result.max_new_tokens, 3);
+    assert_eq!(report.result.prompt_tokens, 4);
+    assert!(report.result.prompt_complete);
+    assert_eq!(report.result.output_fault, 0);
     fs::remove_dir_all(dir).unwrap();
 }
 
@@ -521,7 +590,7 @@ struct TensorFixture {
 fn write_detwgt(path: &Path, tensors: &[TensorFixture]) {
     let mut bytes = Vec::new();
     bytes.extend_from_slice(b"DNWGTV0\0");
-    bytes.extend_from_slice(&2_u32.to_le_bytes());
+    bytes.extend_from_slice(&3_u32.to_le_bytes());
     bytes.extend_from_slice(&1_u32.to_le_bytes());
     bytes.extend_from_slice(&(tensors.len() as u64).to_le_bytes());
     for tensor in tensors {
@@ -533,13 +602,17 @@ fn write_detwgt(path: &Path, tensors: &[TensorFixture]) {
         }
         bytes.extend_from_slice(&(tensor.values.len() as u64).to_le_bytes());
         bytes.extend_from_slice(&tensor.element_width.to_le_bytes());
-        let payload_len = tensor.values.len() * (tensor.element_width as usize / 8);
+        let payload_len = match tensor.element_width {
+            8 => q8_exact(&tensor.values).len(),
+            width => tensor.values.len() * (width as usize / 8),
+        };
         bytes.extend_from_slice(&(payload_len as u64).to_le_bytes());
         bytes.extend_from_slice(&0_u64.to_le_bytes());
         while bytes.len() % 64 != 0 {
             bytes.push(0);
         }
         match tensor.element_width {
+            8 => bytes.extend(q8_exact(&tensor.values)),
             16 => {
                 for value in &tensor.values {
                     bytes.extend_from_slice(&(*value as i16).to_le_bytes());
@@ -580,21 +653,21 @@ fn write_tiny_model_detwgt(path: &Path) {
         &[
             TensorFixture {
                 name: "model.language_model.embed_tokens.weight",
-                dims: vec![3, 2],
-                element_width: 32,
-                values: vec![0, 0, ONE, 0, 0, ONE],
+                dims: vec![3, W as u64],
+                element_width: 8,
+                values: one_hot_rows(&[None, Some(0), Some(1)]),
             },
             TensorFixture {
                 name: "model.language_model.lm_head.weight",
-                dims: vec![3, 2],
-                element_width: 32,
-                values: vec![0, 0, 0, 0, ONE, 0],
+                dims: vec![3, W as u64],
+                element_width: 8,
+                values: one_hot_rows(&[None, None, Some(0)]),
             },
             TensorFixture {
                 name: "model.language_model.norm.weight",
-                dims: vec![2],
+                dims: vec![W as u64],
                 element_width: 32,
-                values: vec![ONE, ONE],
+                values: vec![ONE; W],
             },
         ],
     );
@@ -602,7 +675,13 @@ fn write_tiny_model_detwgt(path: &Path) {
 
 fn tiny_direct_manifest(detwgt: &Path, config: &Path, tokenizer: &Path) -> ModelManifest {
     ModelManifest {
-        version: 2,
+        version: inference_artifacts::MODEL_MANIFEST_VERSION,
+        family: inference_artifacts::ModelFamily::GemmaDense
+            .name()
+            .to_string(),
+        model_id: inference_artifacts::model_id_of(&[]),
+        model_commitments: Vec::new(),
+        range_size: 512,
         bundle: DirectInferBundle {
             model_detwgt_path: PathBuf::from("../../model.detwgt"),
             model_detwgt_sha256: sha256_file(detwgt),
@@ -612,7 +691,7 @@ fn tiny_direct_manifest(detwgt: &Path, config: &Path, tokenizer: &Path) -> Model
             tokenizer_sha256: sha256_file(tokenizer),
         },
         shape: DirectInferShape {
-            hidden_size: 2,
+            hidden_size: W as u32,
             num_hidden_layers: 0,
             num_attention_heads: 1,
             num_key_value_heads: 1,
@@ -660,155 +739,43 @@ fn write_run_spec(dir: &Path, manifest_path: &Path, prompt: &str, tokens: u32) -
     path
 }
 
-fn write_staged_fixture(dir: &Path) {
-    let tokenizer = tiny_prompt_tokenizer();
-    let pieces = BpePieces {
-        pieces: List::from(vec![prompt_prepare::input::BpePiece {
-            text: "h".into(),
-            segment: 0,
-        }]),
-    };
-    let embedding = EmbeddingTable {
-        hidden_size: 2,
-        embedding_scale: ONE,
-        values: paged(&[0, 0, ONE, 0, 0, ONE]),
-    };
-    let head = FinalHead {
-        params: FinalHeadParams {
-            hidden_size: 2,
-            norm_eps: 0,
-            softcap: 0,
-            norm_weights: pack_i32_page(&[ONE, ONE]),
-        },
-        projection: paged(&[0, 0, 0, 0, ONE, 0]),
-    };
-    let decoder = DecoderTable {
-        tokens: List::from(vec![
-            DecoderToken {
-                token: String::from("<pad>"),
-                special: false,
-                terminal: false,
-            },
-            DecoderToken {
-                token: String::from("hello"),
-                special: false,
-                terminal: false,
-            },
-            DecoderToken {
-                token: String::from("Hi"),
-                special: false,
-                terminal: false,
-            },
-        ]),
-    };
-
-    let tokenizer_commitment =
-        write_staged_external(dir, "raster-stages/prompt-prepare", "tokenizer", &tokenizer);
-    let pieces_commitment = write_staged_external(
-        dir,
-        "raster-stages/prompt-prepare",
-        "initial_pieces",
-        &pieces,
-    );
-    let embedding_commitment = write_staged_external(
-        dir,
-        "raster-stages/input-embedding",
-        "embedding",
-        &embedding,
-    );
-    let head_commitment =
-        write_staged_external(dir, "raster-stages/prefill-finalize", "head", &head);
-    let decoder_commitment =
-        write_staged_external(dir, "raster-stages/output-finalize", "decoder", &decoder);
-
-    fs::write(
-        dir.join("Raster.toml"),
-        format!(
-            r#"[chain]
-name = "direct-parity"
-version = "0.1.0"
-
-[[chain.stage]]
-name = "prompt_prepare"
-project = "raster-stages/prompt-prepare"
-inputs.tokenizer = {{ external = {{ path = "raster-stages/prompt-prepare/tokenizer.rastered", index_path = "raster-stages/prompt-prepare/tokenizer.rindex", commitment = "{tokenizer_commitment}" }} }}
-inputs.merged_pieces = {{ external = {{ path = "raster-stages/prompt-prepare/initial_pieces.rastered", index_path = "raster-stages/prompt-prepare/initial_pieces.rindex", commitment = "{pieces_commitment}" }} }}
-
-[[chain.stage]]
-name = "input_embedding"
-project = "raster-stages/input-embedding"
-inputs.prompt = {{ from = "prompt_prepare" }}
-inputs.embedding = {{ external = {{ path = "raster-stages/input-embedding/embedding.rastered", index_path = "raster-stages/input-embedding/embedding.rindex", commitment = "{embedding_commitment}" }} }}
-
-[[chain.stage]]
-name = "prefill_finalize"
-project = "raster-stages/prefill-finalize"
-inputs.activations = {{ from = "input_embedding" }}
-inputs.head = {{ external = {{ path = "raster-stages/prefill-finalize/head.rastered", index_path = "raster-stages/prefill-finalize/head.rindex", commitment = "{head_commitment}" }} }}
-
-[[chain.stage]]
-name = "decode_init"
-project = "raster-stages/decode-init"
-
-[[chain.stage]]
-name = "decode_select_token"
-project = "raster-stages/decode-select-token"
-inputs.logits = {{ from = "prefill_finalize" }}
-inputs.prior = {{ from = "decode_init" }}
-
-[[chain.stage]]
-name = "output_finalize"
-project = "raster-stages/output-finalize"
-inputs.edge = {{ from = "decode_select_token" }}
-inputs.decoder = {{ external = {{ path = "raster-stages/output-finalize/decoder.rastered", index_path = "raster-stages/output-finalize/decoder.rindex", commitment = "{decoder_commitment}" }} }}
-"#
-        ),
-    )
-    .unwrap();
-}
-
-fn write_staged_external<T: serde::Serialize>(
-    base: &Path,
-    stage_dir: &str,
-    name: &str,
-    value: &T,
-) -> String {
-    let dir = base.join(stage_dir);
-    fs::create_dir_all(&dir).unwrap();
-    raster::write_raster_files(
-        value,
-        &dir.join(format!("{name}.rastered")),
-        &dir.join(format!("{name}.rindex")),
-    )
-    .unwrap()
-}
-
-fn tiny_prompt_tokenizer() -> PromptTokenizer {
-    PromptTokenizer {
-        vocab_bucket_count: 1,
-        merge_bucket_count: 1,
-        vocab_buckets: List::from(vec![VocabBucket {
-            entries: List::from(
-                [("<pad>", 0), ("h", 1), ("Hi", 2)]
-                    .into_iter()
-                    .map(|(token, id)| TokenEntry {
-                        token: token.to_string(),
-                        id,
-                    })
-                    .filter(|entry| vocab_bucket_of(&entry.token, 1) == 0)
-                    .collect::<Vec<_>>(),
-            ),
-        }]),
-        merge_buckets: List::from(vec![MergeBucket { rules: List::new() }]),
-    }
-}
-
 fn tiny_tokenizer_json() -> &'static str {
     r#"{"model":{"type":"BPE","vocab":{"<pad>":0,"h":1,"Hi":2},"merges":[]},"added_tokens":[]}"#
 }
 
-fn paged(values: &[i32]) -> Bytes<196_608> {
-    Bytes::<196_608>::paged(bytes_of_i32s(values)).unwrap()
+/// Rows `W` wide: `Some(col)` is `ONE` at `col`, `None` is all zero.
+fn one_hot_rows(hot: &[Option<usize>]) -> Vec<i32> {
+    hot.iter()
+        .flat_map(|col| (0..W).map(move |i| if Some(i) == *col { ONE } else { 0 }))
+        .collect()
+}
+
+/// Q16.16 `values` as exact `Q8_0` blocks: each block takes the largest
+/// power-of-two scale that represents all its values exactly.
+fn q8_exact(values: &[i32]) -> Vec<u8> {
+    let mut out = Vec::new();
+    for block in values.chunks(32) {
+        assert_eq!(block.len(), 32, "Q8_0 rows are whole blocks");
+        let k = (0..=14)
+            .find(|k| {
+                let step = ONE >> k;
+                block
+                    .iter()
+                    .all(|v| v % step == 0 && (v / step).abs() <= 127)
+            })
+            .expect("values are not exactly representable as Q8_0");
+        out.extend_from_slice(&(((15 - k) as u16) << 10).to_le_bytes());
+        out.extend(block.iter().map(|v| (v / (ONE >> k)) as i8 as u8));
+    }
+    out
+}
+
+fn q8_paged<const P: u64>(values: &[i32]) -> Bytes<P> {
+    Bytes::<P>::paged(q8_exact(values)).unwrap()
+}
+
+fn paged(values: &[i32]) -> Bytes<184_320> {
+    Bytes::<184_320>::paged(bytes_of_i32s(values)).unwrap()
 }
 
 fn pack_i32_page(values: &[i32]) -> raster::BytesPage {

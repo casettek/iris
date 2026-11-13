@@ -7,6 +7,10 @@ use clap::{Parser, Subcommand};
 #[derive(Debug, Parser)]
 #[command(name = "staged-infer")]
 struct Cli {
+    /// Persistent auxiliary worker; value is its retained-weight byte budget.
+    #[arg(long, hide = true)]
+    aux_worker: Option<usize>,
+
     #[command(subcommand)]
     command: Option<Commands>,
 
@@ -64,6 +68,10 @@ fn try_main() -> Result<ExitCode> {
 }
 
 fn execute(cli: Cli) -> Result<ExitCode> {
+    if let Some(bytes) = cli.aux_worker {
+        staged_infer::worker::run_worker(bytes)?;
+        return Ok(ExitCode::SUCCESS);
+    }
     if let Some(stage_dir) = cli.run_stage.as_ref() {
         require_input_args(&cli)?;
         staged_infer::parity::run_hidden_stage_direct(stage_dir)?;
@@ -185,6 +193,9 @@ fn comparison_command(
         .arg(input_manifest)
         .env(raster_runtime::auth::AUTH_ENV, "0")
         .env_remove(raster_runtime::TRACE_PATH_ENV)
+        .env_remove(raster_runtime::tracing::COMMIT_PATH_ENV)
+        .env_remove(raster_runtime::tracing::COMMIT_PROJECT_ENV)
+        .env_remove(raster_runtime::tracing::COMMIT_WINDOW_ENV)
         .env_remove(raster_runtime::TRACE_FORMAT_ENV)
         .env_remove(raster_runtime::OUTPUT_DIR_ENV)
         .env_remove(raster_runtime::PROFILE_PATH_ENV)
@@ -210,6 +221,7 @@ mod tests {
     #[test]
     fn bare_invocation_is_rejected() {
         let error = execute(Cli {
+            aux_worker: None,
             command: None,
             compare_stage: None,
             run_stage: None,
@@ -224,9 +236,10 @@ mod tests {
     #[test]
     fn hidden_direct_stage_requires_input_files() {
         let error = execute(Cli {
+            aux_worker: None,
             command: None,
             compare_stage: None,
-            run_stage: Some(PathBuf::from("prefill_range_l3")),
+            run_stage: Some(PathBuf::from("range_p0_l3")),
             input: None,
             input_manifest: None,
         })
@@ -239,7 +252,7 @@ mod tests {
     fn comparison_command_is_unauthenticated_and_isolated() {
         let command = comparison_command(
             Path::new("/tmp/staged-infer"),
-            Path::new("/tmp/staged-runs/run/prefill_range_l3"),
+            Path::new("/tmp/staged-runs/run/range_p0_l3"),
             Path::new("/tmp/input.json"),
             Path::new("/tmp/input_manifest.json"),
         );
@@ -268,7 +281,7 @@ mod tests {
     fn missing_execution_times_do_not_override_parity() {
         let report = staged_infer::parity::ParityReport {
             version: 3,
-            stage: String::from("prefill_range_l3"),
+            stage: String::from("range_p0_l3"),
             routine: String::from("prefill_range"),
             instance: Some(3),
             authority: staged_infer::parity::ParityAuthority::NonAuthoritative,

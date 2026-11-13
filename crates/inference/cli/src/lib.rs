@@ -7,11 +7,16 @@ use anyhow::{bail, Context, Result};
 use clap::{Args, Parser, Subcommand};
 
 mod challenge;
+mod challenge_profile;
 mod claim;
+mod contract;
+mod convert;
+mod fault;
 mod infer;
 mod parity;
 #[cfg(feature = "replay-profile")]
 mod replay_profile;
+mod stage_bindings;
 #[cfg(test)]
 mod test_support;
 
@@ -23,19 +28,24 @@ pub use claim::{
     build_claim, corrupt_checkpoint_hashes, ClaimBuildOptions, ClaimBuildResult,
     CorruptCheckpointHashesOptions, CorruptCheckpointHashesResult, CorruptCheckpointSelection,
 };
+pub use contract::{check_claim, CheckLine, ClaimCheckOptions, ClaimCheckReport};
 pub use infer::run_infer;
-#[cfg(feature = "replay-profile")]
-pub use replay_profile::{run_replay_profile, ReplayProfileOptions};
 pub use inference_artifacts::{
     build_checkpoint_trace, write_claim_artifacts, ChallengeBundle, ChallengeTrace, Checkpoint,
     CheckpointTrace, ClaimBundle, ClaimEndpoint, Divergence, DivergenceReason, ReplayPackage,
     CHALLENGE_BUNDLE_JSON, CHALLENGE_TRACE_JSON, CHECKPOINT_HASHES_TXT, CHECKPOINT_TRACE_JSON,
     CLAIM_BUNDLE_JSON, DIVERGENCE_JSON, REPLAY_PACKAGE_JSON,
 };
+#[cfg(feature = "replay-profile")]
+pub use replay_profile::{run_replay_profile, ReplayProfileOptions};
 
 #[derive(Debug, Parser)]
 #[command(name = "iris")]
 struct Cli {
+    /// Persistent auxiliary worker; value is its retained-weight byte budget.
+    #[arg(long, hide = true)]
+    aux_worker: Option<usize>,
+
     #[command(subcommand)]
     command: Option<Commands>,
 
@@ -72,7 +82,21 @@ enum Commands {
     #[cfg(feature = "replay-profile")]
     ReplayProfile(ReplayProfileArgs),
     /// Run the pinned three-path end-to-end parity suite.
-    TestParity,
+    TestParity {
+        /// Leave out the challenge leg, whose authenticated replays take about an
+        /// hour. The report records that it was skipped.
+        #[arg(long)]
+        skip_challenges: bool,
+    },
+    /// Compare a chain run with direct generation of the same prompt and
+    /// output, position by position.
+    #[command(hide = true)]
+    CompareTeacherForced {
+        #[arg(long = "teacher-forced")]
+        teacher_forced: PathBuf,
+        #[arg(long)]
+        direct: PathBuf,
+    },
     #[command(hide = true)]
     ParityWorker {
         #[arg(long)]
@@ -98,6 +122,25 @@ enum Commands {
 enum ModelCommand {
     /// Import a model bundle into committed Raster inference externals.
     Import(ModelImportArgs),
+    /// Convert a GGUF model (Q8_0 weights) into a model bundle.
+    Convert(ModelConvertArgs),
+}
+
+#[derive(Debug, Args)]
+struct ModelConvertArgs {
+    /// The GGUF file.
+    #[arg(long)]
+    gguf: PathBuf,
+    /// Directory holding the model's config.json and tokenizer.json, copied
+    /// into the bundle.
+    #[arg(long)]
+    metadata: PathBuf,
+    /// Bundle directory to write.
+    #[arg(long)]
+    out: PathBuf,
+    /// Write block tensors as dequantized Q16.16 values instead of Q8_0.
+    #[arg(long, hide = true)]
+    dequantize: bool,
 }
 
 #[derive(Debug, Args)]
@@ -121,9 +164,12 @@ struct ModelImportArgs {
     only_ple: bool,
     #[arg(long = "only-direct")]
     only_direct: bool,
-    /// Do not overwrite the stage-local manual input fixtures.
+    /// Accepted and ignored: import no longer writes fixtures into stage directories.
     #[arg(long)]
     no_stage_fixtures: bool,
+    /// Largest range, in prompt tokens or claimed ids.
+    #[arg(long = "range-size", default_value_t = model_import::DEFAULT_RANGE_SIZE)]
+    range_size: u32,
 }
 
 #[derive(Debug, Args)]
@@ -138,7 +184,7 @@ struct InferArgs {
 struct ReplayProfileArgs {
     #[arg(long, default_value = inference_artifacts::INFERENCE_RUN_SPEC_TOML)]
     run: PathBuf,
-    /// Exact expanded stage name, e.g. prefill_range_l13 or prompt_merge_b1.
+    /// Exact expanded stage name, e.g. range_p0_l13 or prompt_check_p0.
     #[arg(long)]
     stage: String,
     /// Number of distinct tiles selected by their slowest native invocation.
@@ -152,6 +198,25 @@ enum ClaimCommand {
     Build(ClaimBuildArgs),
     /// Copy and corrupt one claimed checkpoint hash for manual challenge tests.
     Corrupt(ClaimCorruptHashesArgs),
+    /// Make the checks a contract would make on a claim's submission.
+    Check(ClaimCheckArgs),
+}
+
+#[derive(Debug, Args)]
+struct ClaimCheckArgs {
+    /// Run spec naming the model and the parameters the contract requires.
+    #[arg(long, default_value = inference_artifacts::INFERENCE_RUN_SPEC_TOML)]
+    run: PathBuf,
+
+    /// The `claim_submission.json` that `claim build` wrote.
+    #[arg(long)]
+    submission: PathBuf,
+
+    /// A Raster chain run directory of the same claim. With it, every
+    /// checkpoint of the claim is held to the boundary that run committed:
+    /// the same program, input manifest and output at every stage.
+    #[arg(long = "raster-run")]
+    raster_run: Option<PathBuf>,
 }
 
 #[derive(Debug, Args)]
@@ -159,6 +224,21 @@ struct ClaimBuildArgs {
     /// Run spec to execute.
     #[arg(long, default_value = inference_artifacts::INFERENCE_RUN_SPEC_TOML)]
     run: PathBuf,
+
+    /// Debug: claim these comma-separated output ids
+    /// instead of discovering them, to build claims that should be refuted.
+    #[arg(long = "claimed-ids", value_delimiter = ',', hide = true)]
+    claimed_ids: Option<Vec<u32>>,
+
+    /// The comma-separated output ids `iris infer` printed for this same run
+    /// spec. The claim is built from them without running direct inference
+    /// again; the chain still re-derives every token and rejects any other ids.
+    #[arg(
+        long = "direct-output-ids",
+        value_delimiter = ',',
+        conflicts_with = "claimed_ids"
+    )]
+    direct_output_ids: Option<Vec<u32>>,
 
     /// Use the previous per-stage child-process staged-infer runner.
     #[arg(long = "staged-subprocess", alias = "direct-subprocess", hide = true)]
@@ -202,12 +282,22 @@ enum ChallengeCommand {
     Locate,
     /// Build a challenge bundle for a divergent claim.
     Build(ChallengeBuildArgs),
+    /// Flip an interior fingerprint bit in a challenge copy.
+    Corrupt(fault::CorruptArgs),
+    /// Measure guest cycles and select a heavy fault window from a completed challenge.
+    Profile(challenge_profile::ProfileArgs),
 }
 
 #[derive(Debug, Subcommand)]
 enum FaultCommand {
+    /// Check that this binary embeds real proving guests.
+    Check {
+        /// Verify program identities used by automatic backend challenges.
+        #[arg(long)]
+        raster_manifest: Option<PathBuf>,
+    },
     /// Prove a bad Raster challenge.
-    Prove,
+    Prove(fault::ProveArgs),
 }
 
 pub fn run_from_env() -> Result<ExitCode> {
@@ -232,6 +322,10 @@ where
 }
 
 fn execute(cli: Cli) -> Result<ExitCode> {
+    if let Some(bytes) = cli.aux_worker {
+        staged_infer::worker::run_worker(bytes)?;
+        return Ok(ExitCode::SUCCESS);
+    }
     if let Some(stage_dir) = cli.run_stage.as_ref() {
         require_input_args(&cli)?;
         staged_infer::parity::run_hidden_stage_direct(stage_dir)?;
@@ -264,12 +358,30 @@ fn execute(cli: Cli) -> Result<ExitCode> {
             })?;
             Ok(ExitCode::SUCCESS)
         }
-        Some(Commands::TestParity) => {
-            parity::run()?;
+        Some(Commands::TestParity { skip_challenges }) => {
+            parity::run(skip_challenges)?;
             Ok(ExitCode::SUCCESS)
         }
-        Some(Commands::ParityWorker { run, output, direct }) => {
+        Some(Commands::CompareTeacherForced {
+            teacher_forced,
+            direct,
+        }) => {
+            let comparison = parity::compare_teacher_forced(&teacher_forced, &direct)?;
+            println!("{}", serde_json::to_string_pretty(&comparison)?);
+            Ok(ExitCode::SUCCESS)
+        }
+        Some(Commands::ParityWorker {
+            run,
+            output,
+            direct,
+        }) => {
             parity::worker(&run, &output, direct)?;
+            Ok(ExitCode::SUCCESS)
+        }
+        Some(Commands::Model {
+            command: ModelCommand::Convert(args),
+        }) => {
+            convert::convert_bundle(&args.gguf, &args.metadata, &args.out, args.dequantize)?;
             Ok(ExitCode::SUCCESS)
         }
         Some(Commands::Model {
@@ -288,17 +400,51 @@ fn execute(cli: Cli) -> Result<ExitCode> {
             if let Some(final_result) = result.final_result.as_ref() {
                 print_infer_result(final_result, Some(&run_spec_path));
             }
-            println!("checkpoint trace: {}", result.checkpoint_trace_path.display());
+            println!(
+                "checkpoint trace: {}",
+                result.checkpoint_trace_path.display()
+            );
             println!("checkpoints: {}", result.checkpoint_hashes_path.display());
             println!("claim bundle: {}", result.claim_bundle_path.display());
+            if let Some(path) = result.claim_submission_path.as_ref() {
+                println!("claim submission: {}", path.display());
+            }
             Ok(ExitCode::SUCCESS)
+        }
+        Some(Commands::Claim {
+            command: ClaimCommand::Check(args),
+        }) => {
+            let report = check_claim(ClaimCheckOptions {
+                base_dir: std::env::current_dir()
+                    .context("failed to resolve current directory")?,
+                run_spec_path: args.run,
+                submission_path: args.submission,
+                raster_run: args.raster_run,
+            })?;
+            for line in &report.lines {
+                match &line.rejection {
+                    None => println!("ok        {}", line.check),
+                    Some(reason) => println!("REJECTED  {}: {reason}", line.check),
+                }
+            }
+            Ok(if report.accepted() {
+                ExitCode::SUCCESS
+            } else {
+                ExitCode::FAILURE
+            })
         }
         Some(Commands::Claim {
             command: ClaimCommand::Corrupt(args),
         }) => {
             let result = corrupt_checkpoint_hashes(args.into_options()?)?;
-            println!("corrupted checkpoints: {}", result.corrupted_hashes_path.display());
-            println!("corruption manifest: {}", result.corruption_manifest_path.display());
+            println!(
+                "corrupted checkpoints: {}",
+                result.corrupted_hashes_path.display()
+            );
+            println!(
+                "corruption manifest: {}",
+                result.corruption_manifest_path.display()
+            );
             println!("corrupted checkpoint index: {}", result.checkpoint_index);
             println!("corrupted checkpoint number: {}", result.checkpoint_number);
             if let Some(stage) = result.stage.as_ref() {
@@ -312,11 +458,22 @@ fn execute(cli: Cli) -> Result<ExitCode> {
             warn_if_debug_build("infer");
             let run_spec_path = args.run.clone();
             let report = run_infer(args.run)?;
+            if let Some(count) = report.input_token_count {
+                println!("input token count: {count}");
+            }
             print_infer_result(&report.result, Some(&run_spec_path));
             print_infer_timing_summary(&report.timings);
             Ok(ExitCode::SUCCESS)
         }
         Some(Commands::Challenge { command }) => match command {
+            ChallengeCommand::Profile(args) => {
+                challenge_profile::run(args)?;
+                Ok(ExitCode::SUCCESS)
+            }
+            ChallengeCommand::Corrupt(args) => {
+                fault::corrupt(args)?;
+                Ok(ExitCode::SUCCESS)
+            }
             ChallengeCommand::Locate => {
                 bail!("iris challenge locate is not implemented yet")
             }
@@ -328,11 +485,30 @@ fn execute(cli: Cli) -> Result<ExitCode> {
             }
         },
         Some(Commands::Fault { command }) => match command {
-            FaultCommand::Prove => bail!("iris fault prove is not implemented yet"),
+            FaultCommand::Check { raster_manifest } => {
+                fault::check_runtime()?;
+                if let Some(manifest) = raster_manifest {
+                    fault::check_challenge_programs(&manifest)?;
+                }
+                println!("Fault proving runtime available");
+                println!(
+                    "Proving build: {}",
+                    if cfg!(feature = "cuda") {
+                        "CUDA"
+                    } else {
+                        "CPU"
+                    }
+                );
+                Ok(ExitCode::SUCCESS)
+            }
+            FaultCommand::Prove(args) => {
+                fault::prove(args)?;
+                Ok(ExitCode::SUCCESS)
+            }
         },
-        None => bail!(
-            "iris requires a workflow command; try `model import`, `claim build`, or `infer`"
-        ),
+        None => {
+            bail!("iris requires a workflow command; try `model import`, `claim build`, or `infer`")
+        }
     }
 }
 
@@ -394,6 +570,18 @@ fn print_challenge_result(result: &ChallengeBuildResult) {
             println!("recomputed trace: {}", recomputed_trace_path.display());
             println!("recomputed chain: {}", recomputed_chain_dir.display());
         }
+        ChallengeBuildOutcome::ClaimedOutputRejected {
+            reason,
+            claimed_reference_path,
+            recomputed_trace_path,
+            recomputed_chain_dir,
+        } => {
+            println!("no divergence found; claimed output rejected");
+            println!("reason: {reason}");
+            println!("claimed reference: {}", claimed_reference_path.display());
+            println!("recomputed trace: {}", recomputed_trace_path.display());
+            println!("recomputed chain: {}", recomputed_chain_dir.display());
+        }
         ChallengeBuildOutcome::DivergenceBuilt {
             divergence,
             replay_package,
@@ -441,6 +629,20 @@ fn print_infer_result(result: &staged_infer::InferenceResult, run_spec_path: Opt
         }
     }
     println!("stop reason: {}", result.stop_reason);
+    println!("output text sha256: {}", result.output_text_sha256);
+    println!("input text sha256: {}", result.input_text_sha256);
+    println!("model id: {}", result.model_id);
+    println!(
+        "faults: prompt {}, check {}, output {}, model {}; claim mismatches: {}",
+        result.prompt_fault,
+        result.check_fault,
+        result.output_fault,
+        result.model_fault,
+        result.claim_mismatches
+    );
+    // The claim record a contract reads, beside the fields it is stated from.
+    println!("statement sha256: {}", result.statement_sha256);
+    println!("valid: {}", result.valid);
     println!("generated text:");
     println!("{}", result.generated_text);
 }
@@ -833,6 +1035,9 @@ fn comparison_command(
         .arg(input_manifest)
         .env(raster_runtime::auth::AUTH_ENV, "0")
         .env_remove(raster_runtime::TRACE_PATH_ENV)
+        .env_remove(raster_runtime::tracing::COMMIT_PATH_ENV)
+        .env_remove(raster_runtime::tracing::COMMIT_PROJECT_ENV)
+        .env_remove(raster_runtime::tracing::COMMIT_WINDOW_ENV)
         .env_remove(raster_runtime::TRACE_FORMAT_ENV)
         .env_remove(raster_runtime::OUTPUT_DIR_ENV)
         .env_remove(raster_runtime::PROFILE_PATH_ENV)
@@ -861,6 +1066,7 @@ impl ModelImportArgs {
             only_ple: self.only_ple,
             only_direct: self.only_direct,
             no_stage_fixtures: self.no_stage_fixtures,
+            range_size: self.range_size,
         }
     }
 }
@@ -873,7 +1079,11 @@ impl ClaimBuildArgs {
         } else {
             staged_infer::chain_runner::StagedExecutionBackend::InProcess
         };
-        ClaimBuildOptions::from_current_dir(current_exe, staged_backend, self.run)
+        let mut options =
+            ClaimBuildOptions::from_current_dir(current_exe, staged_backend, self.run)?;
+        options.claimed_token_ids = self.claimed_ids;
+        options.direct_output_ids = self.direct_output_ids;
+        Ok(options)
     }
 }
 
@@ -946,22 +1156,8 @@ mod tests {
 
     #[test]
     fn parses_phase_one_workflows() {
-        parse_for_test([
-            "iris",
-            "model",
-            "import",
-            "--model",
-            "model-bundles/model",
-        ])
-        .unwrap();
-        parse_for_test([
-            "iris",
-            "claim",
-            "build",
-            "--run",
-            "inference.toml",
-        ])
-        .unwrap();
+        parse_for_test(["iris", "model", "import", "--model", "model-bundles/model"]).unwrap();
+        parse_for_test(["iris", "claim", "build", "--run", "inference.toml"]).unwrap();
         parse_for_test([
             "iris",
             "claim",
@@ -1005,13 +1201,7 @@ mod tests {
     #[test]
     fn challenge_run_spec_defaults_and_overrides_reach_options() {
         for run in [None, Some("specs/model-b.toml")] {
-            let mut argv = vec![
-                "iris",
-                "challenge",
-                "build",
-                "--claim",
-                "claim_bundle.json",
-            ];
+            let mut argv = vec!["iris", "challenge", "build", "--claim", "claim_bundle.json"];
             if let Some(path) = run {
                 argv.extend(["--run", path]);
             }
@@ -1085,6 +1275,7 @@ mod tests {
             generated_token_ids_sha256: String::from("sha"),
             generated_text: String::from("Ciao"),
             stop_reason: String::from("eos"),
+            ..Default::default()
         };
 
         let trace = render_token_trace(&result, &decoder);
@@ -1110,6 +1301,7 @@ mod tests {
             only_ple: false,
             only_direct: false,
             no_stage_fixtures: false,
+            range_size: model_import::DEFAULT_RANGE_SIZE,
         }
         .into_import_config();
 
@@ -1126,6 +1318,7 @@ mod tests {
                 only_ple: false,
                 only_direct: false,
                 no_stage_fixtures: false,
+                range_size: model_import::DEFAULT_RANGE_SIZE,
             }
         );
     }

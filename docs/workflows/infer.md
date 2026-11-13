@@ -15,13 +15,17 @@ Flow:
 3. The executor prepares prompt pieces from the run spec, then runs embedding, prefill layers, decode, and output finalization in host memory.
 4. The command prints an `InferenceResult` and timing summary.
 
+Direct decoding stops immediately after selecting any EOS token listed in the model manifest. The run spec's `tokens` value is a maximum, used only if EOS has not appeared. The reported count and token IDs include the terminal token and contain no post-EOS generation. `claim build` discovers its claimed output this way, so a claim's run spec uses the same `tokens`.
+
 Output:
 
+- Input token count after chat templating and tokenization (measured, never supplied as a limit).
 - Generated token count.
 - Generated token ids.
 - SHA-256 of the generated token id list.
 - Stop reason.
 - Generated text.
+- The same record a claim's final stage publishes: the input text's SHA-256, the model id, the run's configuration and the output text's SHA-256.
 - Direct-infer timing summary.
 
 This path is deterministic inference only. It is intentionally free of the per-stage checkpoint tree used by claims and challenges.

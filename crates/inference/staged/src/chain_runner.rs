@@ -19,6 +19,8 @@ use sha2::{Digest, Sha256};
 use crate::cache::{CachedInputs, CachedStageValue, StageOutputCache};
 use crate::parity::{parity_dir, EXECUTION_TIMES_JSON};
 use crate::routines::{self, StageKind};
+use crate::weights::{RunWeights, WeightAllocation};
+use crate::worker::{WorkerJob, WorkerPool};
 
 #[derive(Debug)]
 pub struct HybridRun {
@@ -103,14 +105,25 @@ struct ChainTable {
     #[serde(default, rename = "input")]
     inputs: BTreeMap<String, InputDecl>,
     #[serde(default, rename = "stage")]
-    stages: Vec<toml::Spanned<StageSpec>>,
+    stages: Vec<toml::Spanned<PlainStageSpec>>,
     #[serde(default, rename = "repeat")]
     repeats: Vec<toml::Spanned<RepeatSpec>>,
 }
 
+/// A `[[chain.stage]]` as the manifest writes it. Its bindings are a repeat
+/// stage's, read with no index in scope: a stage, an external, or a chain
+/// input by name.
+#[derive(Debug, Deserialize)]
+struct PlainStageSpec {
+    name: String,
+    project: String,
+    #[serde(default)]
+    inputs: BTreeMap<String, RepeatBinding>,
+}
+
 #[derive(Debug)]
 enum ChainItem {
-    Stage(StageSpec),
+    Stage(PlainStageSpec),
     Repeat(RepeatSpec),
 }
 
@@ -210,11 +223,26 @@ struct StageOutput {
 }
 
 struct DirectStageRun {
+    timings: Option<routines::DirectTimings>,
     duration: Duration,
     output: Option<CachedStageValue>,
 }
 
+#[derive(Debug, Serialize)]
+struct StagePerformance {
+    name: String,
+    worker: Option<usize>,
+    timings: routines::DirectTimings,
+    cache: inference_kernels::weight_budget::WeightCacheStats,
+}
+
 struct ChainRunState {
+    auxiliary_process_starts: usize,
+    memory: crate::weights::MemorySampler,
+    weights: RunWeights,
+    allocation: WeightAllocation,
+    workers: Option<WorkerPool>,
+    performance: Vec<StagePerformance>,
     output_commitments: Vec<Option<Vec<u8>>>,
     execution_times: Vec<Option<Duration>>,
     aux_waves: Vec<AuxWaveExecutionTime>,
@@ -234,6 +262,7 @@ struct AuxStageJob {
 }
 
 struct AuxStageResult {
+    performance: Option<StagePerformance>,
     idx: usize,
     name: String,
     stage_dir: PathBuf,
@@ -474,6 +503,7 @@ fn run_inner(
     checkpoint_verifier: Option<CheckpointHashVerifier>,
     through_stage: Option<&str>,
 ) -> Result<ChainRunOutput> {
+    let ple_loading = crate::ple::Loading::from_env()?;
     let base_dir = std::env::current_dir().context("failed to read current directory")?;
     let mut manifest = read_manifest(manifest_path)?;
     validate_supported_stages(&manifest.chain.stage)?;
@@ -504,7 +534,30 @@ fn run_inner(
 
     let chain_started = Instant::now();
     let stage_index = build_stage_index(&manifest.chain.stage)?;
+    let largest_wave = (0..manifest.chain.stage.len())
+        .filter_map(|i| aux_wave_range(&manifest.chain.stage, i).map(|r| r.len()))
+        .max()
+        .unwrap_or(0);
+    let allocation = if staged_backend == StagedExecutionBackend::InProcess {
+        WeightAllocation::resolve(persistent_aux_parallelism(largest_wave))?
+    } else {
+        WeightAllocation::split(0, 0, "diagnostic subprocess backend")
+    };
+    eprintln!(
+        "retained weight budget: {} bytes ({}); main={}, workers={} x {} bytes",
+        allocation.total_bytes,
+        allocation.source,
+        allocation.main_bytes,
+        allocation.worker_count,
+        allocation.worker_bytes
+    );
     let mut state = ChainRunState {
+        auxiliary_process_starts: 0,
+        memory: crate::weights::MemorySampler::start(),
+        weights: RunWeights::new(allocation.main_bytes),
+        allocation,
+        workers: None,
+        performance: Vec::new(),
         output_commitments: vec![None; manifest.chain.stage.len()],
         execution_times: vec![None; manifest.chain.stage.len()],
         aux_waves: Vec::new(),
@@ -555,6 +608,24 @@ fn run_inner(
         idx += 1;
     }
 
+    if let Some(pool) = state.workers.as_mut() {
+        pool.shutdown()?;
+    }
+    fs::write(
+        chain_dir.join("staged-performance.json"),
+        serde_json::to_vec_pretty(&serde_json::json!({
+            "version": 1,
+            "ple_loading": ple_loading.as_str(),
+            "embedding_loading": "selective",
+            "head_loading": "paged",
+            "allocation": state.allocation,
+            "auxiliary_process_starts": state.auxiliary_process_starts,
+            "wall_duration_ns": chain_started.elapsed().as_nanos(),
+            "main_cache": state.weights.stats(),
+            "sampled_peak_rss_bytes": state.memory.peak(),
+            "stages": state.performance,
+        }))?,
+    )?;
     let chain_wall_duration = chain_started.elapsed();
     if let Some(verifier) = state.checkpoint_verifier.as_mut() {
         verifier.finish(&recomputed_trace_path);
@@ -626,7 +697,21 @@ fn expand_chain_table(table: ChainTable) -> Result<ChainSpec> {
 
     for item in merge_chain_items(table.stages, table.repeats) {
         match item {
-            ChainItem::Stage(stage) => stages.push(stage),
+            ChainItem::Stage(stage) => {
+                let mut bound = BTreeMap::new();
+                for (param, binding) in &stage.inputs {
+                    bound.insert(
+                        param.clone(),
+                        expand_repeat_binding(binding, &inputs, &[])
+                            .with_context(|| format!("stage `{}`", stage.name))?,
+                    );
+                }
+                stages.push(StageSpec {
+                    name: stage.name,
+                    project: stage.project,
+                    inputs: bound,
+                });
+            }
             ChainItem::Repeat(repeat) => {
                 expand_repeat(&repeat, &inputs, &mut stages, &mut exports)?
             }
@@ -638,7 +723,7 @@ fn expand_chain_table(table: ChainTable) -> Result<ChainSpec> {
 }
 
 fn merge_chain_items(
-    stages: Vec<toml::Spanned<StageSpec>>,
+    stages: Vec<toml::Spanned<PlainStageSpec>>,
     repeats: Vec<toml::Spanned<RepeatSpec>>,
 ) -> Vec<ChainItem> {
     let mut items: Vec<(usize, ChainItem)> = stages
@@ -949,6 +1034,7 @@ fn run_one_stage(
     finish_stage(
         idx,
         stage,
+        stage_index,
         stage_run,
         stage_dir,
         recomputed_trace_path,
@@ -988,6 +1074,7 @@ fn run_prepared_stage(
                 input_manifest_path,
                 stage_dir,
                 &cached_inputs,
+                &state.weights,
             )
         }
         StageDispatch::RasterReference => {
@@ -1004,6 +1091,7 @@ fn run_prepared_stage(
             run_compare_stage(current_exe, stage_dir)?;
             state.selected_stage_dir = Some(stage_dir.to_path_buf());
             Ok(DirectStageRun {
+                timings: None,
                 duration,
                 output: None,
             })
@@ -1014,12 +1102,22 @@ fn run_prepared_stage(
 fn finish_stage(
     idx: usize,
     stage: &StageSpec,
+    stage_index: &BTreeMap<String, usize>,
     stage_run: DirectStageRun,
     stage_dir: PathBuf,
     recomputed_trace_path: &Path,
     state: &mut ChainRunState,
 ) -> Result<()> {
+    if let Some(timings) = stage_run.timings {
+        state.performance.push(StagePerformance {
+            name: stage.name.clone(),
+            worker: None,
+            timings,
+            cache: state.weights.stats(),
+        });
+    }
     state.execution_times[idx] = Some(stage_run.duration);
+    record_stage_program(stage, &stage_dir, stage_index)?;
     let output = collect_output(&stage_dir)?;
     if let Some(value) = stage_run.output {
         state.last_output = Some(value.clone());
@@ -1036,6 +1134,36 @@ fn finish_stage(
     state.output_commitments[idx] = Some(output.structural_commitment);
     observe_checkpoint(idx, &stage.name, &stage_dir, recomputed_trace_path, state)?;
     Ok(())
+}
+
+/// Names in the stage directory the program this stage stands for, and where
+/// each of its chained inputs came from. The checkpoint commits to both.
+///
+/// The program is the one the stage's project has locked, which is what a
+/// Raster replay of the stage runs; a project with no lock leaves the
+/// checkpoint naming no program. A chained input's producer is named by its
+/// position in the run, which is its position in the claim's checkpoint list.
+fn record_stage_program(
+    stage: &StageSpec,
+    stage_dir: &Path,
+    stage_index: &BTreeMap<String, usize>,
+) -> Result<()> {
+    let program =
+        inference_artifacts::contract::locked_program_commitment(Path::new(&stage.project))
+            .unwrap_or_default();
+    let mut input_sources = BTreeMap::new();
+    for (param, binding) in &stage.inputs {
+        if let InputBinding::From(producer) = binding {
+            let index = stage_index.get(producer).with_context(|| {
+                format!(
+                    "stage `{}` takes `{param}` from `{producer}`, which the chain does not run",
+                    stage.name
+                )
+            })?;
+            input_sources.insert(param.clone(), u32::try_from(*index)?);
+        }
+    }
+    inference_artifacts::write_stage_program(stage_dir, &program, &input_sources)
 }
 
 fn observe_checkpoint(
@@ -1139,7 +1267,23 @@ fn run_aux_wave(
         }
     }
 
-    let batch = run_aux_stage_jobs(current_exe, jobs)?;
+    let batch = if staged_backend == StagedExecutionBackend::InProcess {
+        if state.workers.is_none() && !jobs.is_empty() {
+            state.workers = Some(WorkerPool::new(
+                current_exe,
+                state.allocation.worker_count,
+                state.allocation.worker_bytes,
+            )?);
+            state
+                .memory
+                .add_workers(state.workers.as_ref().unwrap().process_ids());
+            state.auxiliary_process_starts += state.workers.as_ref().unwrap().len();
+        }
+        run_persistent_aux_jobs(state.workers.as_mut(), jobs)?
+    } else {
+        state.auxiliary_process_starts += jobs.len();
+        run_aux_stage_jobs(current_exe, jobs)?
+    };
     let stage_duration_sum = batch
         .results
         .iter()
@@ -1157,9 +1301,13 @@ fn run_aux_wave(
         });
     }
     for result in batch.results {
+        if let Some(performance) = result.performance {
+            state.performance.push(performance);
+        }
         state.execution_times[result.idx] = Some(result.duration);
         print_stage_output(&result.output);
         state.output_commitments[result.idx] = Some(result.output.structural_commitment);
+        record_stage_program(&stages[result.idx], &result.stage_dir, stage_index)?;
         observe_checkpoint(
             result.idx,
             &result.name,
@@ -1220,6 +1368,70 @@ fn prepare_aux_stage_job(
     })
 }
 
+fn run_persistent_aux_jobs(
+    pool: Option<&mut WorkerPool>,
+    jobs: Vec<AuxStageJob>,
+) -> Result<AuxStageBatch> {
+    let started = Instant::now();
+    let Some(pool) = pool else {
+        return Ok(AuxStageBatch {
+            results: Vec::new(),
+            parallelism: 0,
+            wall_duration: started.elapsed(),
+        });
+    };
+    let worker_count = pool.len();
+    let mut metadata = BTreeMap::new();
+    let requests = jobs
+        .into_iter()
+        .map(|job| {
+            let layer = match job.kind {
+                StageKind::PrefillPrepareAux { layer } => layer,
+                _ => unreachable!(),
+            };
+            metadata.insert(job.idx, (job.stage_dir.clone(), layer % worker_count));
+            WorkerJob {
+                id: job.idx,
+                name: job.name,
+                kind: job.kind,
+                input: job.input_json_path,
+                input_manifest: job.input_manifest_path,
+                output_dir: job.stage_dir,
+            }
+        })
+        .collect();
+    let responses = pool.run(requests)?;
+    let mut results = Vec::new();
+    for response in responses {
+        let (stage_dir, worker) = metadata
+            .remove(&response.id)
+            .context("unexpected worker job ID")?;
+        let timings = response.timings.context("worker omitted timings")?;
+        let output = collect_output(&stage_dir)?;
+        results.push(AuxStageResult {
+            idx: response.id,
+            name: response.name.clone(),
+            stage_dir,
+            duration: timings.direct_stage_duration,
+            output,
+            performance: Some(StagePerformance {
+                name: response.name,
+                worker: Some(worker),
+                timings,
+                cache: response.cache,
+            }),
+        });
+    }
+    if !metadata.is_empty() {
+        bail!("auxiliary worker omitted job results");
+    }
+    Ok(AuxStageBatch {
+        results,
+        parallelism: worker_count,
+        wall_duration: started.elapsed(),
+    })
+}
+
 fn run_aux_stage_jobs(current_exe: &Path, jobs: Vec<AuxStageJob>) -> Result<AuxStageBatch> {
     if jobs.is_empty() {
         return Ok(AuxStageBatch {
@@ -1260,6 +1472,12 @@ fn run_aux_stage_job(current_exe: &Path, job: AuxStageJob) -> Result<AuxStageRes
     let output = collect_output(&job.stage_dir)
         .with_context(|| format!("failed to collect parallel aux stage `{}`", job.name))?;
     Ok(AuxStageResult {
+        performance: stage_run.timings.map(|timings| StagePerformance {
+            name: job.name.clone(),
+            worker: None,
+            timings,
+            cache: Default::default(),
+        }),
         idx: job.idx,
         name: job.name,
         stage_dir: job.stage_dir,
@@ -1302,6 +1520,13 @@ fn aux_parallelism(job_count: usize) -> usize {
         .map(usize::from)
         .unwrap_or(4);
     aux_parallelism_from(job_count, requested, available)
+}
+
+fn persistent_aux_parallelism(job_count: usize) -> usize {
+    let available = std::thread::available_parallelism()
+        .map(usize::from)
+        .unwrap_or(4);
+    aux_parallelism(job_count).min(available)
 }
 
 fn aux_parallelism_from(
@@ -1476,6 +1701,7 @@ fn run_staged_infer_stage(
     input_manifest_path: &Path,
     stage_dir: &Path,
     cached_inputs: &CachedInputs,
+    weights: &RunWeights,
 ) -> Result<DirectStageRun> {
     match backend {
         StagedExecutionBackend::InProcess => run_staged_infer_stage_in_process(
@@ -1485,6 +1711,7 @@ fn run_staged_infer_stage(
             input_manifest_path,
             stage_dir,
             cached_inputs,
+            weights,
         ),
         StagedExecutionBackend::Subprocess => run_staged_infer_stage_subprocess(
             current_exe,
@@ -1515,8 +1742,16 @@ fn run_staged_infer_stage_subprocess(
         .stderr(Stdio::inherit());
     apply_stage_env(&mut command, stage_dir);
 
+    let duration = run_timed_command(command, &format!("staged-infer {} stage", kind.routine()))?;
+    let timing_path = stage_dir.join("staged-timings.json");
+    let timings = if timing_path.is_file() {
+        Some(serde_json::from_slice(&fs::read(timing_path)?)?)
+    } else {
+        None
+    };
     Ok(DirectStageRun {
-        duration: run_timed_command(command, &format!("staged-infer {} stage", kind.routine()))?,
+        timings,
+        duration,
         output: None,
     })
 }
@@ -1528,14 +1763,17 @@ fn run_staged_infer_stage_in_process(
     input_manifest_path: &Path,
     stage_dir: &Path,
     cached_inputs: &CachedInputs,
+    weights: &RunWeights,
 ) -> Result<DirectStageRun> {
     let _env = StageEnvGuard::apply(stage_dir);
     let started = Instant::now();
-    let direct = routines::run_and_publish_from_paths(
+    let caches = weights.caches();
+    let direct = routines::run_and_publish_from_paths_with_caches(
         kind,
         input_json_path,
         input_manifest_path,
         cached_inputs,
+        caches,
     )?;
     let duration = started.elapsed();
     println!(
@@ -1545,6 +1783,7 @@ fn run_staged_infer_stage_in_process(
         format_duration(duration),
     );
     Ok(DirectStageRun {
+        timings: Some(direct.timings),
         duration,
         output: Some(direct.output),
     })
@@ -1569,6 +1808,9 @@ fn run_compare_stage(current_exe: &Path, stage_dir: &Path) -> Result<()> {
         .arg(stage_dir.join("input_manifest.json"))
         .env(raster_runtime::auth::AUTH_ENV, "0")
         .env_remove(raster_runtime::TRACE_PATH_ENV)
+        .env_remove(raster_runtime::tracing::COMMIT_PATH_ENV)
+        .env_remove(raster_runtime::tracing::COMMIT_PROJECT_ENV)
+        .env_remove(raster_runtime::tracing::COMMIT_WINDOW_ENV)
         .env_remove(raster_runtime::TRACE_FORMAT_ENV)
         .env_remove(raster_runtime::OUTPUT_DIR_ENV)
         .env_remove(raster_runtime::PROFILE_PATH_ENV)
@@ -1761,22 +2003,28 @@ fn apply_stage_env(command: &mut Command, stage_dir: &Path) {
         .env(raster_runtime::auth::AUTH_ENV, "0")
         .env(raster_runtime::OUTPUT_DIR_ENV, stage_dir)
         .env_remove(raster_runtime::TRACE_PATH_ENV)
+        .env_remove(raster_runtime::tracing::COMMIT_PATH_ENV)
+        .env_remove(raster_runtime::tracing::COMMIT_PROJECT_ENV)
+        .env_remove(raster_runtime::tracing::COMMIT_WINDOW_ENV)
         .env_remove(raster_runtime::TRACE_FORMAT_ENV)
         .env_remove(raster_runtime::PROFILE_PATH_ENV)
         .env_remove(raster_runtime::PROFILE_STREAM_PATH_ENV)
         .env_remove(raster_runtime::PROFILE_RUN_ID_ENV);
 }
 
-struct StageEnvGuard {
+pub(crate) struct StageEnvGuard {
     saved: Vec<(&'static str, Option<OsString>)>,
 }
 
 impl StageEnvGuard {
-    fn apply(stage_dir: &Path) -> Self {
+    pub(crate) fn apply(stage_dir: &Path) -> Self {
         let guard = Self::capture(&[
             raster_runtime::auth::AUTH_ENV,
             raster_runtime::OUTPUT_DIR_ENV,
             raster_runtime::TRACE_PATH_ENV,
+            raster_runtime::tracing::COMMIT_PATH_ENV,
+            raster_runtime::tracing::COMMIT_PROJECT_ENV,
+            raster_runtime::tracing::COMMIT_WINDOW_ENV,
             raster_runtime::TRACE_FORMAT_ENV,
             raster_runtime::PROFILE_PATH_ENV,
             raster_runtime::PROFILE_STREAM_PATH_ENV,
@@ -1786,6 +2034,9 @@ impl StageEnvGuard {
         std::env::set_var(raster_runtime::OUTPUT_DIR_ENV, stage_dir);
         for name in [
             raster_runtime::TRACE_PATH_ENV,
+            raster_runtime::tracing::COMMIT_PATH_ENV,
+            raster_runtime::tracing::COMMIT_PROJECT_ENV,
+            raster_runtime::tracing::COMMIT_WINDOW_ENV,
             raster_runtime::TRACE_FORMAT_ENV,
             raster_runtime::PROFILE_PATH_ENV,
             raster_runtime::PROFILE_STREAM_PATH_ENV,
@@ -1871,54 +2122,38 @@ mod tests {
             .to_path_buf()
     }
 
-    fn real_manifest_with_repeats(decode: u32, tokenize: u32) -> Manifest {
-        let text = fs::read_to_string(repo_root().join("Raster.toml")).unwrap();
-        let mut doc: RasterTomlDoc = toml::from_str(&text).unwrap();
-        for repeat in &mut doc.chain.repeats {
-            let repeat = repeat.get_mut();
-            repeat.count = match repeat.name.as_str() {
-                "decode" => decode,
-                "tokenize" => tokenize,
-                _ => panic!("unexpected top-level repeat"),
-            };
-        }
-        Manifest {
-            chain: expand_chain_table(doc.chain).unwrap(),
-        }
+    fn fixture_manifest() -> Manifest {
+        read_manifest(&repo_root().join("crates/inference/staged/testdata/chain.toml")).unwrap()
     }
 
     #[test]
-    fn real_manifest_dispatches_one_reference_and_remaining_stages_native() {
-        let manifest = real_manifest_with_repeats(2, 2);
+    fn fixture_dispatches_one_reference_and_remaining_stages_native() {
+        let manifest = fixture_manifest();
         let mut direct = 0usize;
         let mut reference = 0usize;
 
         for stage in &manifest.chain.stage {
-            match dispatch_for_stage(stage, Some("prefill_range_l13")).unwrap() {
+            match dispatch_for_stage(stage, Some("range_p1_l2")).unwrap() {
                 StageDispatch::StagedNative => direct += 1,
                 StageDispatch::RasterReference => reference += 1,
             }
         }
 
-        assert_eq!(manifest.chain.stage.len(), 224);
-        assert_eq!(direct, 223);
+        assert_eq!(manifest.chain.stage.len(), 42);
+        assert_eq!(direct, 41);
         assert_eq!(reference, 1);
     }
 
     #[test]
     fn stage_prefix_resolves_exact_expanded_instance_and_bounds_aux_waves() {
-        let manifest = real_manifest_with_repeats(2, 2);
-        for name in [
-            "prompt_merge_b1",
-            "prefill_range_l13",
-            "prefill_prepare_aux_l5",
-        ] {
+        let manifest = fixture_manifest();
+        for name in ["prompt_check_p1", "range_p1_l2", "aux_c0_l0"] {
             let mut stages = manifest.chain.stage.clone();
             let selected = stages.iter().position(|s| s.name == name).unwrap();
             truncate_through_stage(&mut stages, name).unwrap();
             assert_eq!(stages.len(), selected + 1);
             assert_eq!(stages.last().unwrap().name, name);
-            if name == "prefill_prepare_aux_l5" {
+            if name == "aux_c0_l0" {
                 let first = stages
                     .iter()
                     .position(is_prefill_prepare_aux_stage)
@@ -1928,15 +2163,15 @@ mod tests {
         }
         let mut stages = manifest.chain.stage;
         assert!(truncate_through_stage(&mut stages, "prefill-range").is_err());
-        assert!(truncate_through_stage(&mut stages, "prompt_merge_b99").is_err());
+        assert!(truncate_through_stage(&mut stages, "prompt_check_p9").is_err());
         stages.push(stages[0].clone());
-        assert!(truncate_through_stage(&mut stages, "prompt_merge_seed").is_err());
+        assert!(truncate_through_stage(&mut stages, "prompt_bind_p0").is_err());
     }
 
     #[test]
     fn prefix_timing_report_contains_only_executed_stages() {
-        let mut manifest = real_manifest_with_repeats(2, 2);
-        truncate_through_stage(&mut manifest.chain.stage, "prompt_merge_b1").unwrap();
+        let mut manifest = fixture_manifest();
+        truncate_through_stage(&mut manifest.chain.stage, "embed_p0").unwrap();
         let base = test_base_dir();
         fs::create_dir_all(&base).unwrap();
         let times = vec![Some(Duration::from_nanos(7)); manifest.chain.stage.len()];
@@ -1956,76 +2191,162 @@ mod tests {
             .iter()
             .map(|s| s["name"].as_str().unwrap())
             .collect();
-        assert_eq!(
-            names,
-            ["prompt_merge_seed", "prompt_merge_b0", "prompt_merge_b1"]
-        );
+        assert_eq!(names, ["prompt_bind_p0", "prompt_check_p0", "embed_p0"]);
         assert_eq!(doc["total_exec_duration_ns"], 21);
         fs::remove_dir_all(base).unwrap();
     }
 
     #[test]
-    fn real_manifest_dispatches_every_stage_native_without_reference() {
-        let manifest = real_manifest_with_repeats(2, 2);
-        let mut direct = 0usize;
-        let mut reference = 0usize;
-
+    fn fixture_dispatches_every_stage_native_without_reference() {
+        let manifest = fixture_manifest();
         for stage in &manifest.chain.stage {
-            match dispatch_for_stage(stage, None).unwrap() {
-                StageDispatch::StagedNative => direct += 1,
-                StageDispatch::RasterReference => reference += 1,
+            assert!(matches!(
+                dispatch_for_stage(stage, None).unwrap(),
+                StageDispatch::StagedNative
+            ));
+        }
+    }
+
+    #[test]
+    fn fixture_expands_ranges_and_the_claimed_export() {
+        let manifest = fixture_manifest();
+        let index = build_stage_index(&manifest.chain.stage).unwrap();
+
+        assert!(index.contains_key("prompt_check_p1"));
+        assert!(!index.contains_key("prompt_check_p2"));
+        // The chain starts at the first range's bind: no stage comes before
+        // it. That range's bind and check are given the empty prompt state,
+        // a committed constant, where each later one is given the range
+        // before; a check is always given its own bind.
+        assert_eq!(manifest.chain.stage[0].name, "prompt_bind_p0");
+        let previous = |stage: &str| manifest.chain.stage[index[stage]].inputs["previous"].clone();
+        let empty_prompt = previous("prompt_bind_p0");
+        assert!(matches!(&empty_prompt, InputBinding::External(file)
+            if file.path.ends_with("empty_prompt.rastered")));
+        assert_eq!(previous("prompt_check_p0"), empty_prompt);
+        assert_eq!(
+            previous("prompt_bind_p1"),
+            InputBinding::From("prompt_bind_p0".into())
+        );
+        assert_eq!(
+            previous("prompt_check_p1"),
+            InputBinding::From("prompt_check_p0".into())
+        );
+        for range in 0..2 {
+            let checked = &manifest.chain.stage[index[&format!("prompt_check_p{range}")]];
+            assert_eq!(
+                checked.inputs["bound"],
+                InputBinding::From(format!("prompt_bind_p{range}"))
+            );
+        }
+        // The same for the sequence a range's embedding and layers continue,
+        // and for the verdict a check continues.
+        let empty_sequence = previous("embed_p0");
+        assert!(matches!(&empty_sequence, InputBinding::External(file)
+            if file.path.ends_with("empty_sequence.rastered")));
+        assert_eq!(previous("embed_p1"), InputBinding::From("embed_p0".into()));
+        for layer in 0..4 {
+            let first = &manifest.chain.stage[index[&format!("range_p0_l{layer}")]];
+            assert_eq!(first.inputs["prior_kv"], empty_sequence);
+            let second = &manifest.chain.stage[index[&format!("range_p1_l{layer}")]];
+            assert_eq!(
+                second.inputs["prior_kv"],
+                InputBinding::From(format!("range_p0_l{layer}"))
+            );
+        }
+        let check = |range: usize| &manifest.chain.stage[index[&format!("check_c{range}")]];
+        assert!(
+            matches!(&check(0).inputs["prior"], InputBinding::External(file)
+            if file.path.ends_with("empty_edge.rastered"))
+        );
+        assert_eq!(
+            check(0).inputs["previous"],
+            InputBinding::From("range_p1_l3".into())
+        );
+        assert_eq!(
+            check(1).inputs["prior"],
+            InputBinding::From("check_c0".into())
+        );
+        assert_eq!(
+            check(1).inputs["previous"],
+            InputBinding::From("range_c0_l3".into())
+        );
+
+        assert!(index.contains_key("embed_c1"));
+        assert!(index.contains_key("aux_c1_l3"));
+        assert!(index.contains_key("range_c1_l3"));
+        let range = &manifest.chain.stage[index["range_c1_l0"]];
+        assert_eq!(
+            range.inputs["prior_kv"],
+            InputBinding::From("range_c0_l0".into())
+        );
+        let first = &manifest.chain.stage[index["range_c0_l0"]];
+        assert_eq!(
+            first.inputs["prior_kv"],
+            InputBinding::From("range_p1_l0".into())
+        );
+
+        // The chain ends at the last claimed range's check. Every check is
+        // given the decoder inputs its output record is stated from.
+        assert_eq!(manifest.chain.stage.last().unwrap().name, "check_c1");
+        for range in 0..2 {
+            for input in ["decoder", "descriptor", "witness"] {
+                assert!(
+                    matches!(check(range).inputs[input], InputBinding::External(_)),
+                    "check_c{range} {input}"
+                );
             }
         }
-
-        assert_eq!(manifest.chain.stage.len(), 224);
-        assert_eq!(direct, 224);
-        assert_eq!(reference, 0);
     }
 
     #[test]
-    fn real_manifest_expands_decode_repeat_and_export() {
-        let manifest = real_manifest_with_repeats(2, 3);
+    fn a_repeat_with_no_iterations_exports_its_entry() {
+        let base = test_base_dir();
+        fs::create_dir_all(&base).unwrap();
+        let path = base.join("Raster.toml");
+        fs::write(
+            &path,
+            r#"[chain]
+name = "empty-repeat"
+
+[[chain.stage]]
+name = "check_c0"
+project = "sequence-check"
+
+[[chain.repeat]]
+name = "claimed"
+index = "k"
+start = 1
+count = 0
+
+  [chain.repeat.exports.edge]
+stage = "check_c{k}"
+entry = "check_c0"
+
+  [[chain.repeat.stage]]
+name = "check_c{k}"
+project = "sequence-check"
+
+[[chain.stage]]
+name = "embed_c9"
+project = "input-embedding"
+inputs.edge = { from = "claimed.edge" }
+"#,
+        )
+        .unwrap();
+        let manifest = read_manifest(&path).unwrap();
         let index = build_stage_index(&manifest.chain.stage).unwrap();
 
-        assert!(index.contains_key("prompt_merge_b2"));
-        assert!(!index.contains_key("prompt_merge_b3"));
-        let prepare = &manifest.chain.stage[index["prompt_prepare"]];
-        assert_eq!(
-            prepare.inputs["merged_pieces"],
-            InputBinding::From("prompt_merge_b2".into())
-        );
-
-        assert!(index.contains_key("decode_select_t0"));
-        assert!(index.contains_key("decode_embed_t1"));
-        assert!(index.contains_key("decode_range_t1_l34"));
-
+        // A repeat that does not run exports its entry: a stage bound to the
+        // export reads the stage before the repeat. The iris chain has no
+        // such binding now; the mechanism is the manifest format's.
+        assert!(!index.contains_key("check_c1"));
         let output = manifest.chain.stage.last().unwrap();
-        assert_eq!(output.name, "output_finalize");
         assert_eq!(
             output.inputs.get("edge"),
-            Some(&InputBinding::From(String::from("decode_select_t1")))
+            Some(&InputBinding::From(String::from("check_c0")))
         );
-    }
-
-    #[test]
-    fn prefill_only_manifest_resolves_zero_count_decode_export() {
-        let manifest_path = repo_root().join("runtime/manifests/Raster.prefill-only.toml");
-        let manifest = read_manifest(&manifest_path).unwrap();
-        let index = build_stage_index(&manifest.chain.stage).unwrap();
-
-        assert!(!index.contains_key("decode_select_t0"));
-        assert!(!index.contains_key("prompt_merge_b0"));
-        let prepare = &manifest.chain.stage[index["prompt_prepare"]];
-        assert_eq!(
-            prepare.inputs["merged_pieces"],
-            InputBinding::From("prompt_merge_seed".into())
-        );
-        let output = manifest.chain.stage.last().unwrap();
-        assert_eq!(output.name, "output_finalize");
-        assert_eq!(
-            output.inputs.get("edge"),
-            Some(&InputBinding::From(String::from("decode_init")))
-        );
+        fs::remove_dir_all(base).unwrap();
     }
 
     #[test]
@@ -2110,8 +2431,9 @@ mod tests {
         output_cache.insert(
             "producer",
             vec![0xaa, 0xbb],
-            CachedStageValue::PromptTokenization(prompt_prepare::input::PromptTokenization {
+            CachedStageValue::PromptTokenization(prompt_check::input::PromptTokenization {
                 token_ids: raster::List::from(vec![1, 2]),
+                ..Default::default()
             }),
         );
 
@@ -2122,41 +2444,52 @@ mod tests {
     }
 
     #[test]
-    fn real_manifest_identifies_prefill_prepare_aux_wave() {
-        let manifest_path = repo_root().join("Raster.toml");
-        let manifest = read_manifest(&manifest_path).unwrap();
+    fn fixture_identifies_prefill_prepare_aux_wave() {
+        let manifest = fixture_manifest();
+        let first = manifest
+            .chain
+            .stage
+            .iter()
+            .position(is_prefill_prepare_aux_stage)
+            .unwrap();
 
-        let range = aux_wave_range(&manifest.chain.stage, 3).unwrap();
+        let range = aux_wave_range(&manifest.chain.stage, first).unwrap();
 
-        assert_eq!(range, 3..38);
+        // Each layer's PLE runs over every range, then its transformer does.
+        assert_eq!(range, first..first + 4);
         assert!(aux_wave_range(&manifest.chain.stage, 0).is_none());
-        assert!(aux_wave_range(&manifest.chain.stage, 38).is_none());
+        assert!(aux_wave_range(&manifest.chain.stage, first + 4).is_none());
         for stage in &manifest.chain.stage[range] {
             assert!(is_prefill_prepare_aux_stage(stage));
-            assert_eq!(
-                stage.inputs.get("embedded"),
-                Some(&InputBinding::From(String::from("input_embedding")))
-            );
         }
+        assert_eq!(
+            manifest.chain.stage[first].inputs.get("embedded"),
+            Some(&InputBinding::From(String::from("embed_p0")))
+        );
     }
 
     #[test]
     fn raster_reference_inside_aux_wave_dispatches_once() {
-        let manifest_path = repo_root().join("Raster.toml");
-        let manifest = read_manifest(&manifest_path).unwrap();
-        let range = aux_wave_range(&manifest.chain.stage, 3).unwrap();
+        let manifest = fixture_manifest();
+        let first = manifest
+            .chain
+            .stage
+            .iter()
+            .position(is_prefill_prepare_aux_stage)
+            .unwrap();
+        let range = aux_wave_range(&manifest.chain.stage, first).unwrap();
         let mut direct = 0usize;
         let mut reference = Vec::new();
 
         for stage in &manifest.chain.stage[range] {
-            match dispatch_for_stage(stage, Some("prefill_prepare_aux_l5")).unwrap() {
+            match dispatch_for_stage(stage, Some("aux_p1_l0")).unwrap() {
                 StageDispatch::StagedNative => direct += 1,
                 StageDispatch::RasterReference => reference.push(stage.name.as_str()),
             }
         }
 
-        assert_eq!(direct, 34);
-        assert_eq!(reference, ["prefill_prepare_aux_l5"]);
+        assert_eq!(direct, 3);
+        assert_eq!(reference, ["aux_p1_l0"]);
     }
 
     #[test]
@@ -2309,6 +2642,8 @@ mod tests {
         assert_eq!(aux_parallelism_from(2, None, 16), 2);
         assert_eq!(aux_parallelism_from(35, Some(6), 16), 6);
         assert_eq!(aux_parallelism_from(35, Some(0), 16), 4);
+        // The diagnostic subprocess backend retains its explicit override behavior.
+        assert_eq!(aux_parallelism_from(35, Some(16), 2), 16);
     }
 
     fn write_checkpoint_stage(
@@ -2336,4 +2671,16 @@ mod tests {
         bytes[0] = if bytes[0] == b'0' { b'1' } else { b'0' };
         String::from_utf8(bytes).unwrap()
     }
+}
+
+/// Resolve an expanded stage without executing inference.
+pub fn stage_project(manifest_path: &Path, stage: &str) -> Result<PathBuf> {
+    let manifest = read_manifest(manifest_path)?;
+    let selected = manifest
+        .chain
+        .stage
+        .iter()
+        .find(|s| s.name == stage)
+        .context("stage is absent from frozen manifest")?;
+    Ok(absolute(&std::env::current_dir()?, &selected.project))
 }

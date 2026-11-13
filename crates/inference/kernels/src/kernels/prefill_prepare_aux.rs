@@ -1,7 +1,7 @@
 use anyhow::{bail, Result};
 use prefill_prepare_aux::input::{
-    add_sat, pack_i32s, rms_norm, scale_row, unpack_i32s, unpack_i32s_at, ActivationSequence,
-    PleLayer, PleLayerInputs, PleLayerParams, PleRow,
+    add_sat, pack_i32s, q8_row_at, rms_norm, scale_row, unpack_i32s, ActivationSequence, PleLayer,
+    PleLayerInputs, PleLayerParams, PleRow,
 };
 use raster::List;
 use rayon::prelude::*;
@@ -40,6 +40,7 @@ pub fn run_prefill_prepare_aux_direct(
     };
 
     Ok(PleLayerInputs {
+        model: inputs.embedded.model.auxiliary(params.layer_idx),
         layer_idx: params.layer_idx,
         rows: List::from(rows),
         errors: List::new(),
@@ -102,7 +103,11 @@ fn prepare_row(
 
 fn ple_embedding(token_id: u32, layer: &PleLayer, params: &PleLayerParams) -> Result<Vec<i32>> {
     let page_size = layer.embeddings.page_size();
-    let byte_off = token_id as u64 * params.ple_width as u64 * 4;
+    let byte_off = prefill_prepare_aux::ple_row_offset(
+        token_id,
+        params.ple_width,
+        layer.embeddings.byte_len(),
+    );
     let page_idx = if page_size == 0 {
         0
     } else {
@@ -115,7 +120,7 @@ fn ple_embedding(token_id: u32, layer: &PleLayer, params: &PleLayerParams) -> Re
         .ok_or_else(|| {
             anyhow::anyhow!("PLE row width mismatch for token {token_id}: missing embedding page")
         })?;
-    unpack_i32s_at(page, byte_off, params.ple_width)
+    q8_row_at(page, byte_off, params.ple_width)
         .map_err(anyhow::Error::msg)
         .map_err(|_| anyhow::anyhow!("PLE row width mismatch for token {token_id}: missing row"))
 }

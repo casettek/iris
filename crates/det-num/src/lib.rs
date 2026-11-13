@@ -16,6 +16,7 @@ extern crate alloc;
 
 pub mod convert;
 pub mod ops;
+pub mod q8;
 pub mod types;
 
 pub use convert::{f32_to_acc, f32_to_act, f32_to_wgt};

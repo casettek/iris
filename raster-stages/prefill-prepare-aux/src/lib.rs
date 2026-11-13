@@ -20,8 +20,9 @@ use input::*;
 
 /// Seeds the output draft with the layer it belongs to.
 #[tile(kind = iter, description = "Open this layer's prefill-input draft")]
-pub fn begin_ple_layer(layer_idx: u32) -> Draft<PleLayerInputs> {
+pub fn begin_ple_layer(layer_idx: u32, model: ModelContext) -> Draft<PleLayerInputs> {
     let mut output = Draft::<PleLayerInputs>::new();
+    output.model().set(model.auxiliary(layer_idx));
     output.layer_idx().set(layer_idx);
     output
 }
@@ -42,10 +43,25 @@ pub fn begin_ple_task(token: ActivationRow) -> PleTask {
     }
 }
 
-/// `token_id * ple_width * 4`.
+/// The byte offset of the `Q8_0` row this id reads.
 #[tile(kind = iter, description = "Byte offset of a PLE embedding row")]
-pub fn ple_byte_offset(token_id: u32, ple_width: u32) -> u64 {
-    token_id as u64 * ple_width as u64 * 4
+pub fn ple_byte_offset(token_id: u32, ple_width: u32, table_bytes: u64) -> u64 {
+    ple_row_offset(token_id, ple_width, table_bytes)
+}
+
+/// `token_id · ple_width / 32 · 34`, or the first row for an id whose row is not
+/// in the table: indexing past the region would abort with no output, and a
+/// claim chooses its own ids. `input-embedding` does the same, and
+/// `sequence-check` rejects the claim. Called from [`ple_byte_offset`] and the
+/// native paths.
+pub fn ple_row_offset(token_id: u32, ple_width: u32, table_bytes: u64) -> u64 {
+    let stride = ple_width as u64 / 32 * 34;
+    let offset = token_id as u64 * stride;
+    if offset + stride <= table_bytes {
+        offset
+    } else {
+        0
+    }
 }
 
 /// Page index containing a byte offset.
@@ -122,7 +138,9 @@ fn mac_page(
     }
     let weights = unpack_i32s(page)?;
     if weights.len() % row.len() != 0 {
-        return Err(String::from("weight page does not contain whole output rows"));
+        return Err(String::from(
+            "weight page does not contain whole output rows",
+        ));
     }
     let stride = in_width as u64 * 4;
     if page.offset() % stride != 0 {
@@ -215,7 +233,7 @@ fn combine_row(
     if !projected.error.is_empty() {
         return Err(projected.error.clone());
     }
-    let mut embedded = unpack_i32s_at(emb_page, byte_off, params.ple_width)?;
+    let mut embedded = q8_row_at(emb_page, byte_off, params.ple_width)?;
     let projected = unpack_i32s(&projected.values)?;
     if embedded.len() != projected.len() {
         return Err(alloc::format!(
@@ -294,3 +312,6 @@ pub fn validate_layer_params(params: PleLayerParams) -> Result<PleLayerParams> {
     }
     Ok(params)
 }
+
+pub mod identity;
+pub use identity::*;

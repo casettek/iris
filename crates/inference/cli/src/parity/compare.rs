@@ -13,20 +13,48 @@ pub(super) struct Boundary {
     pub value: Value,
 }
 
-pub(super) fn staged_names(layers: u32, tokens: u32, tokenizer_repeats: u32) -> Vec<String> {
-    let mut names = vec!["prompt_merge_seed".into()];
-    names.extend((0..tokenizer_repeats).map(|b| format!("prompt_merge_b{b}")));
-    names.extend(["prompt_prepare".into(), "input_embedding".into()]);
-    names.extend((0..layers).map(|l| format!("prefill_prepare_aux_l{l}")));
-    names.extend((0..layers).map(|l| format!("prefill_range_l{l}")));
-    names.extend(["prefill_finalize".into(), "decode_init".into()]);
-    for t in 0..tokens {
-        names.extend([format!("decode_select_t{t}"), format!("decode_embed_t{t}")]);
-        names.extend((0..layers).map(|l| format!("decode_aux_t{t}_l{l}")));
-        names.extend((0..layers).map(|l| format!("decode_range_t{t}_l{l}")));
-        names.push(format!("decode_finalize_t{t}"));
+/// The shape of a ranged teacher-forced chain.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct RangedShape {
+    pub layers: u32,
+    pub prompt_ranges: u32,
+    pub claimed_ranges: u32,
+}
+
+impl RangedShape {
+    /// Reads the shape back from an executed chain's stage inventory.
+    pub(super) fn from_names(names: &[String]) -> Self {
+        let count =
+            |prefix: &str| names.iter().filter(|name| name.starts_with(prefix)).count() as u32;
+        Self {
+            layers: count("range_p0_l"),
+            prompt_ranges: count("embed_p"),
+            claimed_ranges: count("embed_c"),
+        }
     }
-    names.push("output_finalize".into());
+}
+
+/// The ranged teacher-forced chain: every prompt range bound, tokenized and
+/// embedded, every claimed range embedded, each layer across all ranges, then
+/// each claimed range checked. The last check is the chain's last stage.
+pub(super) fn teacher_forced_names(shape: RangedShape) -> Vec<String> {
+    let mut names = Vec::new();
+    for j in 0..shape.prompt_ranges {
+        names.extend([
+            format!("prompt_bind_p{j}"),
+            format!("prompt_check_p{j}"),
+            format!("embed_p{j}"),
+        ]);
+    }
+    names.extend((0..shape.claimed_ranges).map(|k| format!("embed_c{k}")));
+    // Each layer runs across every range before the next layer.
+    for l in 0..shape.layers {
+        names.extend((0..shape.prompt_ranges).map(|j| format!("aux_p{j}_l{l}")));
+        names.extend((0..shape.claimed_ranges).map(|k| format!("aux_c{k}_l{l}")));
+        names.extend((0..shape.prompt_ranges).map(|j| format!("range_p{j}_l{l}")));
+        names.extend((0..shape.claimed_ranges).map(|k| format!("range_c{k}_l{l}")));
+    }
+    names.extend((0..shape.claimed_ranges).map(|k| format!("check_c{k}")));
     names
 }
 
@@ -135,7 +163,7 @@ fn decode_boundary(bytes: Vec<u8>, index: &[u8], recorded: &str) -> Result<Bound
     })
 }
 
-pub(super) fn value_json(value: &RasterValue) -> Result<Value> {
+pub(crate) fn value_json(value: &RasterValue) -> Result<Value> {
     Ok(match value {
         RasterValue::Unit => Value::Null,
         RasterValue::Bool(v) => json!(v),
@@ -194,10 +222,14 @@ pub(super) fn value_json(value: &RasterValue) -> Result<Value> {
 }
 
 pub(super) fn validate_errors(stage: &str, value: &Value) -> Result<()> {
+    // `decode_init` and `output_finalize` are direct inference's names for
+    // its empty edge and its final one; no chain stage has them.
     if stage != "prompt_prepare"
-        && !stage.starts_with("prompt_merge_")
+        && !stage.starts_with("prompt_bind_p")
         && stage != "decode_init"
         && stage != "output_finalize"
+        && !stage.starts_with("prompt_check_p")
+        && !stage.starts_with("check_c")
         && !stage.starts_with("decode_select_")
     {
         let errors = value["errors"]
@@ -209,6 +241,40 @@ pub(super) fn validate_errors(stage: &str, value: &Value) -> Result<()> {
         );
     }
     Ok(())
+}
+
+/// A final edge as host code reads a claim's output: the output record,
+/// with the edge's verdict and transcript beside it.
+pub(super) fn final_record(edge: &Value) -> Result<Value> {
+    let mut record = edge["record"]
+        .as_object()
+        .context("the final edge has no output record")?
+        .clone();
+    for field in [
+        "claim_mismatches",
+        "first_claim_mismatch_position",
+        "check_fault",
+        "check_fault_position",
+        "generated_token_ids",
+    ] {
+        record.insert(field.to_string(), edge[field].clone());
+    }
+    // The claim record's statement digest and verdict, as a result names them.
+    let claim = &edge["claim"];
+    ensure!(
+        claim["statement"]["bytes"].is_string() && claim["valid"].is_boolean(),
+        "the final edge has no claim record"
+    );
+    ensure!(
+        Some(&claim["output_text_sha256"]["bytes"]) == record.get("output_text_sha256"),
+        "the claim record and the output record commit to different text"
+    );
+    record.insert(
+        "statement_sha256".to_string(),
+        claim["statement"]["bytes"].clone(),
+    );
+    record.insert("valid".to_string(), claim["valid"].clone());
+    Ok(Value::Object(record))
 }
 
 pub(super) fn compare(stage: &str, left: &Boundary, right: &Boundary) -> Result<()> {
@@ -336,10 +402,10 @@ mod tests {
 
     #[test]
     fn missing_duplicate_and_unexpected_boundaries_fail() {
-        let names = staged_names(4, 8, 0);
-        assert_eq!(names.len(), 102);
+        let names = direct_infer::diagnostics::boundary_names(4, 8);
+        assert_eq!(names.len(), 91);
         check_inventory(&names, &names).unwrap();
-        assert!(check_inventory(&names, &names[..100]).is_err());
+        assert!(check_inventory(&names, &names[..90]).is_err());
         let mut duplicate = names.clone();
         duplicate.push(names[0].clone());
         assert!(check_inventory(&names, &duplicate)
@@ -349,13 +415,24 @@ mod tests {
         let mut extra = names.clone();
         extra.push("unexpected".into());
         assert!(check_inventory(&names, &extra).is_err());
-        let direct = direct_infer::diagnostics::boundary_names(4, 8);
-        assert_eq!(
-            names.iter().filter(|name| !direct.contains(name)).count(),
-            11
-        );
-        assert!(!direct.contains(&"decode_finalize_t7".into()));
-        assert!(check_inventory(&direct, &direct[..direct.len() - 1]).is_err());
+        assert!(!names.contains(&"decode_finalize_t7".into()));
+    }
+
+    #[test]
+    fn ranged_inventory_round_trips_its_shape() {
+        let shape = RangedShape {
+            layers: 4,
+            prompt_ranges: 3,
+            claimed_ranges: 2,
+        };
+        let names = teacher_forced_names(shape);
+        // 3 × (bind + check + embed + 8 layer stages),
+        // 2 × (embed + 8 layer stages + check).
+        assert_eq!(names.len(), 3 * 11 + 2 * 10);
+        assert_eq!(names.first().map(String::as_str), Some("prompt_bind_p0"));
+        assert_eq!(RangedShape::from_names(&names), shape);
+        assert_eq!(names.last().map(String::as_str), Some("check_c1"));
+        assert!(!names.iter().any(|name| name.starts_with("decode_")));
     }
 
     #[test]
