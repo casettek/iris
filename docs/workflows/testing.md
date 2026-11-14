@@ -38,8 +38,8 @@ without it a tier rebuilds that binary for the CPU. Variables such as
 | fast | Unit tests | The pieces behave: fixed-point arithmetic against independent vectors, the tokenizer against independent references, weight loading that refuses corrupted or forged data, worker and cache reuse. | 1 |
 | fast | Stage schema check (one of the unit tests) | No tile reads a value its program does not pin. See [Raster stage checks](../internals/development.md#raster-stage-checks). | 2 |
 | fast | Stage locks | Every `Raster.lock` matches its stage's sources, the Raster checkout and the guest compiler. | 2, 3 |
-| full | [Parity gate](test-parity.md) | On the small synthetic model: three independent implementations agree byte for byte, bad inputs publish a fault instead of stopping a stage, and a challenger finds falsified claims at the expected stage. | 1, 2 |
-| full | Stage ladder | Each of the six stage programs compiles with and without `std`, gives the native output when run as Raster, and its authenticated trace commits and audits. | 1, 2 |
+| full | [Parity gate](test-parity.md) | On each family's small synthetic model: three independent implementations agree byte for byte, bad inputs publish a fault instead of stopping a stage, and a challenger finds falsified claims at the expected stage. | 1, 2 |
+| full | Stage ladder | Each stage program a family runs compiles with and without `std`, gives the native output when run as Raster, and its authenticated trace commits and audits. Run after each family's gate, on that run's inputs. | 1, 2 |
 | release | Ignored tests | Native loaders match authenticated Raster stage binaries on multi-page weights; the real tokenizer's references hold; tiles run in the zkVM guest as they do natively; a fault proof of a small fixture is produced and verifies. | 1, 3 |
 | release | Real-model check | On an imported Gemma model: an honest claim builds with no fault, every checkpoint matches the reference in `tests/real-model/`, and one stage of each program gives the native output when run as Raster. | 1 |
 

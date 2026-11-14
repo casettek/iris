@@ -445,7 +445,8 @@ fn direct_executor_runs_from_direct_manifest_without_raster_toml() {
                 ple_projection_scalar: ONE,
                 ple_input_scale: ONE,
                 final_logit_softcap: 0,
-            },
+            }
+            .into(),
             eos_token_ids: Vec::new(),
             provenance: None,
         },
@@ -711,7 +712,8 @@ fn tiny_direct_manifest(detwgt: &Path, config: &Path, tokenizer: &Path) -> Model
             ple_projection_scalar: ONE,
             ple_input_scale: ONE,
             final_logit_softcap: 0,
-        },
+        }
+        .into(),
         eos_token_ids: Vec::new(),
         provenance: None,
     }

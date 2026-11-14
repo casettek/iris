@@ -5,7 +5,9 @@
 //! `use` header, which is rewritten for `alloc`. Keep them that way: the value
 //! of this crate is that it is *the same arithmetic*, not merely equivalent
 //! arithmetic. `convert.rs` carries the local float-to-fixed conversions that
-//! host import code needs before deterministic execution begins.
+//! host import code needs before deterministic execution begins. `q8.rs` and
+//! `mistral.rs` are local too: the weight format's arithmetic, and the
+//! functions only the `mistral-dense` family calls.
 //!
 //! `#![no_std]` so these compile into RISC0 replay guests alongside the tiles
 //! that call them.
@@ -15,6 +17,7 @@
 extern crate alloc;
 
 pub mod convert;
+pub mod mistral;
 pub mod ops;
 pub mod q8;
 pub mod types;

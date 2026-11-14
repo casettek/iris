@@ -2,6 +2,7 @@ pub mod cache_key;
 #[cfg(feature = "gpu-kernels")]
 pub mod gpu;
 pub mod kernels;
+pub mod mistral;
 pub mod prefill_range;
 pub mod tensor;
 pub mod weight_budget;

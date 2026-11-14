@@ -161,6 +161,36 @@ impl ModelContext {
         out.completed_layers = layer.saturating_add(1);
         out
     }
+    /// One layer of a model whose layers take no per-layer input and borrow no
+    /// cache: after the layer below, with this layer's cache from the range
+    /// before. A model that commits per-layer inputs cannot run its layers
+    /// this way.
+    pub fn plain_layer(&self, layer: u32, prior: &Self) -> Self {
+        let mut out = self.clone();
+        out.require(
+            self.valid()
+                && layer < self.layers
+                && self.completed_layers == layer
+                && self.producer == if layer == 0 { EMBEDDING } else { TRANSFORMER },
+        );
+        out.require(
+            ModelDescriptor::decode(self.descriptor.as_slice())
+                .is_ok_and(|descriptor| descriptor.auxiliary.is_empty()),
+        );
+        if !prior.is_origin() {
+            out.same_model(prior);
+            out.require(
+                (prior.producer == TRANSFORMER
+                    && prior.completed_layers == layer.saturating_add(1))
+                    || (prior.producer == EMBEDDING && prior.completed_layers == 0),
+            );
+        }
+        out.plain_layer_execution(prior);
+        out.plain_layer_step(layer, prior);
+        out.producer = TRANSFORMER;
+        out.completed_layers = layer.saturating_add(1);
+        out
+    }
     pub fn head(&self, previous: &Self, prompt: &Self, prior: &Self) -> Self {
         let mut out = self.clone();
         out.require(
@@ -252,6 +282,60 @@ mod tests {
         p.append_consumed_token(8);
         p.finish_prompt_range(true, 2, 0);
         p
+    }
+    /// A prompt context of a model with no per-layer inputs.
+    fn plain_prompt() -> ModelContext {
+        let d = ModelDescriptor {
+            version: 2,
+            tokenizer: [1; 32],
+            decoder: [2; 32],
+            embedding: [3; 32],
+            head: [4; 32],
+            auxiliary: vec![],
+            transformer: vec![[6; 32]; 2],
+        };
+        let id = d
+            .model_id()
+            .unwrap()
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect::<String>();
+        let mut p = ModelContext::bind(&d.encode().unwrap(), &id);
+        p.bind_statement(&"11".repeat(32), false, 4, 4);
+        p.bind_schedule(pipeline_core::StageSchedule {
+            prompt_ranges: 1,
+            claimed_ranges: 1,
+        });
+        p.begin_prompt_range();
+        p.append_consumed_token(7);
+        p.append_consumed_token(8);
+        p.finish_prompt_range(true, 2, 0);
+        p
+    }
+    #[test]
+    fn a_model_without_per_layer_inputs_runs_its_layers_alone() {
+        let none = ModelContext::default();
+        let p = plain_prompt();
+        let e = embedded(&p);
+        let a = e.plain_layer(0, &none);
+        let b = a.plain_layer(1, &none);
+        assert_eq!((a.fault, b.fault), (0, 0));
+        let mut c = ModelContext::embedding(&none, &e);
+        c.append_consumed_token(9);
+        c.finish_embedding_execution(2, 0, 1);
+        let ca = c.plain_layer(0, &a);
+        let cb = ca.plain_layer(1, &b);
+        let h = cb.head(&b, &p, &none);
+        assert_eq!(h.final_fault(&p, &p), 0);
+        // A skipped layer, a repeated one, and another layer's cache.
+        assert_ne!(e.plain_layer(1, &none).fault, 0);
+        assert_ne!(a.plain_layer(0, &none).fault, 0);
+        assert_ne!(c.plain_layer(0, &b).fault, 0);
+        // The claimed range has a range before it, so it has a cache to take.
+        assert_ne!(c.plain_layer(0, &none).fault, 0);
+        // A model with per-layer inputs cannot leave them out.
+        let with_inputs = embedded(&prompt(1));
+        assert_ne!(with_inputs.plain_layer(0, &none).fault, 0);
     }
     fn embedded(p: &ModelContext) -> ModelContext {
         let mut e = ModelContext::embedding(p, &ModelContext::default());

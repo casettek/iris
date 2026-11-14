@@ -20,27 +20,33 @@ pub struct DirectDiagnosticRunReport {
 }
 
 /// Semantic inventory, independent of the order in which PLE work is scheduled.
-pub fn boundary_names(layers: u32, tokens: u32) -> Vec<String> {
+/// The boundaries a run records, in order. `auxiliary` says whether the model's
+/// layers each have a per-layer input prepared before them.
+pub fn boundary_names(layers: u32, tokens: u32, auxiliary: bool) -> Vec<String> {
     let mut names = vec!["prompt_prepare".into(), "input_embedding".into()];
     for layer in 0..layers {
-        names.push(format!("prefill_prepare_aux_l{layer}"));
+        if auxiliary {
+            names.push(format!("prefill_prepare_aux_l{layer}"));
+        }
         names.push(format!("prefill_range_l{layer}"));
     }
     names.extend(["prefill_finalize".into(), "decode_init".into()]);
     for token in 0..tokens {
         names.push(format!("decode_select_t{token}"));
         if token + 1 < tokens {
-            names.extend(decode_pass_names(layers, token));
+            names.extend(decode_pass_names(layers, token, auxiliary));
         }
     }
     names.push("output_finalize".into());
     names
 }
 
-fn decode_pass_names(layers: u32, token: u32) -> Vec<String> {
+fn decode_pass_names(layers: u32, token: u32, auxiliary: bool) -> Vec<String> {
     let mut names = vec![format!("decode_embed_t{token}")];
     for layer in 0..layers {
-        names.push(format!("decode_aux_t{token}_l{layer}"));
+        if auxiliary {
+            names.push(format!("decode_aux_t{token}_l{layer}"));
+        }
         names.push(format!("decode_range_t{token}_l{layer}"));
     }
     names.push(format!("decode_finalize_t{token}"));
@@ -52,6 +58,7 @@ pub(crate) struct DirectTrace {
     collect: bool,
     required: BTreeSet<String>,
     seen: BTreeSet<String>,
+    auxiliary: bool,
     pub records: Vec<DirectBoundaryRecord>,
 }
 
@@ -68,6 +75,7 @@ impl DirectTrace {
             collect,
             required: BTreeSet::new(),
             seen: BTreeSet::new(),
+            auxiliary: true,
             records: Vec::new(),
         })
     }
@@ -76,15 +84,18 @@ impl DirectTrace {
         self.print || self.collect
     }
 
-    pub fn configure(&mut self, layers: u32, tokens: u32) {
+    pub fn configure(&mut self, layers: u32, tokens: u32, auxiliary: bool) {
+        self.auxiliary = auxiliary;
         if self.enabled() {
-            self.required = boundary_names(layers, tokens).into_iter().collect();
+            self.required = boundary_names(layers, tokens, auxiliary)
+                .into_iter()
+                .collect();
         }
     }
 
     pub fn stop_at_eos(&mut self, layers: u32, generated_tokens: u32) {
         if self.enabled() {
-            self.required = boundary_names(layers, generated_tokens)
+            self.required = boundary_names(layers, generated_tokens, self.auxiliary)
                 .into_iter()
                 .collect();
         }
@@ -141,8 +152,12 @@ mod tests {
 
     #[test]
     fn inventory_has_no_pass_after_the_last_selection() {
-        let names = boundary_names(4, 8);
+        let names = boundary_names(4, 8, true);
         assert_eq!(names.len(), 91);
+        // A model with no per-layer inputs records one boundary a layer.
+        let plain = boundary_names(4, 8, false);
+        assert_eq!(plain.len(), 91 - 4 - 7 * 4);
+        assert!(!plain.iter().any(|name| name.contains("aux")));
         assert!(names.contains(&String::from("decode_range_t6_l3")));
         assert!(!names.contains(&String::from("decode_embed_t7")));
     }
@@ -154,9 +169,10 @@ mod tests {
             collect: true,
             required: BTreeSet::new(),
             seen: BTreeSet::new(),
+            auxiliary: true,
             records: Vec::new(),
         };
-        trace.configure(4, 1);
+        trace.configure(4, 1, true);
         assert!(trace.finish().is_err());
         assert!(trace.record("unknown", &1u32).is_err());
         trace.record("prompt_prepare", &1u32).unwrap();

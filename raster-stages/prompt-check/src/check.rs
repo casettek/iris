@@ -57,9 +57,9 @@ use crate::input::{
 };
 
 /// Merge rounds per pass. A window of two tokens needs two merges fewer than
-/// it has pieces, so this covers tokens of up to 33 pieces each. MUST match
+/// it has pieces, so this covers tokens of up to 77 pieces each. MUST match
 /// the rounds `main` unrolls.
-pub const ROUNDS_PER_PASS: usize = 64;
+pub const ROUNDS_PER_PASS: usize = 152;
 
 /// The previous range's last token, present only as a left neighbour.
 pub const LEAD_TOKEN: u32 = 0;
@@ -310,9 +310,9 @@ pub fn number_piece(step: NumberStep, mark: u32) -> Numbered {
 // ---------------------------------------------------------------------------
 
 /// The most pieces of one claimed token whose text is joined. A merge's
-/// result is at most 33 characters, so a token of more pieces is not one;
+/// result is at most 77 characters, so a token of more pieces is not one;
 /// its text stops growing here and its lookup fails as it should.
-pub const MAX_TOKEN_PIECES: u32 = 64;
+pub const MAX_TOKEN_PIECES: u32 = 96;
 
 /// The range's tokens as the marks number them.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]

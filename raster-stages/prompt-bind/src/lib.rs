@@ -92,7 +92,8 @@ pub fn fold_text_chunk(
     state
 }
 
-/// Turns one chunk of text into atoms: special tokens and single characters.
+/// Turns one chunk of text into atoms: special tokens, and single characters
+/// or whole words as the tokenizer's profile says.
 #[tile(kind = recur, description = "Scan one chunk of the prompt into atoms")]
 pub fn scan_prompt_chunk(
     input: RecurInput<String>,
@@ -162,6 +163,7 @@ pub fn append_known_atom(
         found: walk.found,
         text: lookup.atom.text,
         special: lookup.atom.special,
+        part: lookup.atom.part,
     });
     output
 }

@@ -9,6 +9,7 @@ use crate::artifact_io::{encode_output, write_output, EncodedArtifact};
 use crate::cache::{CachedInputs, CachedStageValue, MaterializationCache};
 
 pub mod input_embedding;
+pub mod layer_mistral;
 pub mod prefill_prepare_aux;
 pub mod prefill_range;
 pub mod prompt_bind;
@@ -22,6 +23,9 @@ pub enum StageKind {
     InputEmbedding,
     PrefillPrepareAux { layer: usize },
     PrefillRange { layer: usize },
+    /// A `mistral-dense` layer over one range. Its stages are named as
+    /// `PrefillRange`'s are: the project tells the two apart.
+    LayerMistral { layer: usize },
     SequenceCheck,
 }
 
@@ -71,6 +75,9 @@ impl StageKind {
             "prefill-range" => Ok(Self::PrefillRange {
                 layer: parse_trailing_layer_index(name)?,
             }),
+            "layer-mistral" => Ok(Self::LayerMistral {
+                layer: parse_trailing_layer_index(name)?,
+            }),
             "sequence-check" if name == "sequence_check" || name.starts_with("check_") => {
                 Ok(Self::SequenceCheck)
             }
@@ -83,7 +90,20 @@ impl StageKind {
             .file_name()
             .and_then(|name| name.to_str())
             .ok_or_else(|| anyhow::anyhow!("selected stage has no valid UTF-8 directory name"))?;
-        Self::from_stage_name(name)
+        let kind = Self::from_stage_name(name)?;
+        // A layer stage's name does not say which family's program it runs.
+        // Its inputs do: only `prefill-range` takes a per-layer input.
+        if let Self::PrefillRange { layer } = kind {
+            let inputs = std::fs::read(stage_dir.join("input.json"))
+                .ok()
+                .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok());
+            // A directory whose inputs cannot be read is left to the name; the
+            // stage's own loading reports what is wrong with them.
+            if inputs.is_some_and(|inputs| inputs.is_object() && inputs.get("ple").is_none()) {
+                return Ok(Self::LayerMistral { layer });
+            }
+        }
+        Ok(kind)
     }
 
     pub fn from_stage_name(name: &str) -> Result<Self> {
@@ -112,6 +132,7 @@ impl StageKind {
             Self::InputEmbedding => "input-embedding",
             Self::PrefillPrepareAux { .. } => "prefill-prepare-aux",
             Self::PrefillRange { .. } => "prefill-range",
+            Self::LayerMistral { .. } => "layer-mistral",
             Self::SequenceCheck => "sequence-check",
         }
     }
@@ -123,13 +144,16 @@ impl StageKind {
             Self::InputEmbedding => "input_embedding",
             Self::PrefillPrepareAux { .. } => "prefill_prepare_aux",
             Self::PrefillRange { .. } => "prefill_range",
+            Self::LayerMistral { .. } => "layer_mistral",
             Self::SequenceCheck => "sequence_check",
         }
     }
 
     pub fn instance(&self) -> Option<usize> {
         match self {
-            Self::PrefillPrepareAux { layer } | Self::PrefillRange { layer } => Some(*layer),
+            Self::PrefillPrepareAux { layer }
+            | Self::PrefillRange { layer }
+            | Self::LayerMistral { layer } => Some(*layer),
             Self::PromptBind | Self::PromptCheck | Self::InputEmbedding | Self::SequenceCheck => {
                 None
             }
@@ -163,6 +187,11 @@ pub fn run_for_compare(kind: &StageKind) -> Result<DirectCompareOutput> {
             prefill_range::load_inputs_from_args,
             prefill_range::run_direct,
             "prefill_range",
+        ),
+        StageKind::LayerMistral { .. } => compare(
+            layer_mistral::load_inputs_from_args,
+            layer_mistral::run_direct,
+            "layer_mistral",
         ),
         StageKind::SequenceCheck => compare(
             sequence_check::load_inputs_from_args,
@@ -202,6 +231,12 @@ pub fn run_and_publish(kind: &StageKind) -> Result<DirectPublishOutput> {
             prefill_range::load_inputs_from_args,
             prefill_range::run_direct,
             "prefill_range",
+            CachedStageValue::RangeActivations,
+        ),
+        StageKind::LayerMistral { .. } => publish(
+            layer_mistral::load_inputs_from_args,
+            layer_mistral::run_direct,
+            "layer_mistral",
             CachedStageValue::RangeActivations,
         ),
         StageKind::SequenceCheck => publish(
@@ -303,6 +338,19 @@ pub fn run_and_publish_from_paths_with_caches(
             "prefill_range",
             CachedStageValue::RangeActivations,
         ),
+        StageKind::LayerMistral { .. } => publish(
+            || {
+                layer_mistral::load_inputs_from_paths_with_cache(
+                    input_path,
+                    input_manifest_path,
+                    cached_inputs,
+                    caches.materializations,
+                )
+            },
+            layer_mistral::run_direct,
+            "layer_mistral",
+            CachedStageValue::RangeActivations,
+        ),
         StageKind::SequenceCheck => publish(
             || {
                 sequence_check::load_inputs_from_paths_with_cache(
@@ -392,6 +440,19 @@ pub fn run_cached_from_paths_with_caches(
                 prefill_range::run_direct_with_weight_cache(inputs, caches.prefill_range_weights)
             },
             "prefill_range",
+            CachedStageValue::RangeActivations,
+        ),
+        StageKind::LayerMistral { .. } => cache(
+            || {
+                layer_mistral::load_inputs_from_paths_with_cache(
+                    input_path,
+                    input_manifest_path,
+                    cached_inputs,
+                    caches.materializations,
+                )
+            },
+            layer_mistral::run_direct,
+            "layer_mistral",
             CachedStageValue::RangeActivations,
         ),
         StageKind::SequenceCheck => cache(

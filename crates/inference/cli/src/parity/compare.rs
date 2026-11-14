@@ -19,6 +19,8 @@ pub(super) struct RangedShape {
     pub layers: u32,
     pub prompt_ranges: u32,
     pub claimed_ranges: u32,
+    /// Each layer's range has a stage before it that prepares a per-layer input.
+    pub auxiliary: bool,
 }
 
 impl RangedShape {
@@ -30,6 +32,7 @@ impl RangedShape {
             layers: count("range_p0_l"),
             prompt_ranges: count("embed_p"),
             claimed_ranges: count("embed_c"),
+            auxiliary: count("aux_") > 0,
         }
     }
 }
@@ -49,8 +52,10 @@ pub(super) fn teacher_forced_names(shape: RangedShape) -> Vec<String> {
     names.extend((0..shape.claimed_ranges).map(|k| format!("embed_c{k}")));
     // Each layer runs across every range before the next layer.
     for l in 0..shape.layers {
-        names.extend((0..shape.prompt_ranges).map(|j| format!("aux_p{j}_l{l}")));
-        names.extend((0..shape.claimed_ranges).map(|k| format!("aux_c{k}_l{l}")));
+        if shape.auxiliary {
+            names.extend((0..shape.prompt_ranges).map(|j| format!("aux_p{j}_l{l}")));
+            names.extend((0..shape.claimed_ranges).map(|k| format!("aux_c{k}_l{l}")));
+        }
         names.extend((0..shape.prompt_ranges).map(|j| format!("range_p{j}_l{l}")));
         names.extend((0..shape.claimed_ranges).map(|k| format!("range_c{k}_l{l}")));
     }
@@ -402,7 +407,7 @@ mod tests {
 
     #[test]
     fn missing_duplicate_and_unexpected_boundaries_fail() {
-        let names = direct_infer::diagnostics::boundary_names(4, 8);
+        let names = direct_infer::diagnostics::boundary_names(4, 8, true);
         assert_eq!(names.len(), 91);
         check_inventory(&names, &names).unwrap();
         assert!(check_inventory(&names, &names[..90]).is_err());
@@ -424,7 +429,18 @@ mod tests {
             layers: 4,
             prompt_ranges: 3,
             claimed_ranges: 2,
+            auxiliary: true,
         };
+        let plain = RangedShape {
+            auxiliary: false,
+            ..shape
+        };
+        // A model with no per-layer inputs has half the layer stages.
+        assert_eq!(teacher_forced_names(plain).len(), 3 * 7 + 2 * 6);
+        assert_eq!(
+            RangedShape::from_names(&teacher_forced_names(plain)),
+            plain
+        );
         let names = teacher_forced_names(shape);
         // 3 × (bind + check + embed + 8 layer stages),
         // 2 × (embed + 8 layer stages + check).

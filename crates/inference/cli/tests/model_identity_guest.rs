@@ -31,6 +31,7 @@ fn decoder_substitution_is_rejected_by_guest_execution() {
         token: "hello".into(),
         special: false,
         terminal: false,
+        bytes: false,
     };
     let table = DecoderTable {
         tokens: List::from(vec![honest.clone()]),
@@ -791,6 +792,7 @@ fn pipeline_history_and_transcript_substitutions_match_native_in_guest() {
                     token: "a".into(),
                     special: false,
                     terminal: false,
+                    bytes: false,
                 },
             );
         }

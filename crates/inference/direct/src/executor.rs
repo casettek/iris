@@ -72,7 +72,11 @@ impl DirectInferenceExecutor {
 
         let prompt_started = Instant::now();
         let prepared_prompt = model.prepare_prompt(run_spec_dir, &run_spec)?;
-        trace.configure(model.shape().num_hidden_layers, run_spec.tokens);
+        trace.configure(
+            model.num_layers(),
+            run_spec.tokens,
+            model.family().has_auxiliary_stages(),
+        );
         let prompt = model.prompt_inputs(&prepared_prompt)?;
         // Direct inference is the independent numerical oracle; construct its
         // diagnostic statement/history from the actual prompt and selected IDs.
@@ -153,7 +157,7 @@ impl DirectInferenceExecutor {
             trace.record(&format!("decode_select_t{token_idx}"), &edge)?;
             if prepared_prompt.eos_token_ids.contains(&edge.token_id) {
                 // Keep EOS in the result, but never run another decode pass.
-                trace.stop_at_eos(model.shape().num_hidden_layers, token_idx + 1);
+                trace.stop_at_eos(model.num_layers(), token_idx + 1);
                 break;
             }
             if token_idx + 1 == run_spec.tokens {
@@ -285,10 +289,13 @@ fn run_layers_and_logits(
     Vec<prefill_range::input::ActivationSequence>,
     crate::generation::PrefillLogits,
 )> {
+    if model.family() == inference_artifacts::ModelFamily::MistralDense {
+        return run_mistral_layers_and_logits(model, seed, prior_layers, timings, label, trace);
+    }
     let ple_source = seed.clone();
     let mut current = seed;
-    let mut layer_outputs = Vec::with_capacity(model.shape().num_hidden_layers as usize);
-    for layer_idx in 0..model.shape().num_hidden_layers as usize {
+    let mut layer_outputs = Vec::with_capacity(model.num_layers() as usize);
+    for layer_idx in 0..model.num_layers() as usize {
         let aux_started = Instant::now();
         let ple_layer = model.direct_ple_layer(layer_idx)?;
         let ple = run_ple_prepare_view(&ple_source, &ple_layer)?;
@@ -320,6 +327,47 @@ fn run_layers_and_logits(
         );
         current =
             run_prefill_range_view(&current, &layer, &prior_kv, &donor_a_kv, &donor_b_kv, &ple)?;
+        trace.record(&range_stage_name(label, layer_idx), &current)?;
+        layer_outputs.push(current.clone());
+        timings.push(phase_timing(
+            &format!("{label}_prefill_range_l{layer_idx}"),
+            range_started.elapsed(),
+        ));
+    }
+
+    let finalize_started = Instant::now();
+    let head = model.direct_final_head()?;
+    let logits = score_prefill_logits_view(&current, &head)?;
+    trace.record(&finalize_stage_name(label), &logits)?;
+    timings.push(phase_timing(
+        &format!("{label}_prefill_finalize"),
+        finalize_started.elapsed(),
+    ));
+    Ok((layer_outputs, logits))
+}
+
+/// A `mistral-dense` pass: every layer attends to the whole prefix and takes
+/// nothing but the layer before it and its own earlier keys.
+fn run_mistral_layers_and_logits(
+    model: &DirectInferenceModel,
+    seed: prefill_range::input::ActivationSequence,
+    prior_layers: Option<&[prefill_range::input::ActivationSequence]>,
+    timings: &mut Vec<InferStageTiming>,
+    label: &str,
+    trace: &mut DirectTrace,
+) -> Result<(
+    Vec<prefill_range::input::ActivationSequence>,
+    crate::generation::PrefillLogits,
+)> {
+    let mut current = seed;
+    let mut layer_outputs = Vec::with_capacity(model.num_layers() as usize);
+    for layer_idx in 0..model.num_layers() as usize {
+        let range_started = Instant::now();
+        let layer = model.direct_mistral_layer(layer_idx)?;
+        let prior_keys = prior_layers
+            .and_then(|layers| layers.get(layer_idx))
+            .map_or(&[][..], |sequence| sequence.kv.as_slice());
+        current = crate::view_kernels::run_mistral_range_view(&current, &layer, prior_keys)?;
         trace.record(&range_stage_name(label, layer_idx), &current)?;
         layer_outputs.push(current.clone());
         timings.push(phase_timing(

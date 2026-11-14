@@ -4,7 +4,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use inference_artifacts::{
-    model_id_of, write_json, DirectInferBundle, DirectInferProvenance, DirectInferShape,
+    model_id_of, write_json, DirectInferBundle, DirectInferProvenance, FamilyShape,
     ModelCommitment, ModelFamily, ModelManifest, MODEL_MANIFEST_JSON, MODEL_MANIFEST_VERSION,
 };
 use sha2::{Digest, Sha256};
@@ -15,7 +15,7 @@ pub fn write_model_manifest(
     args: &ImportConfig,
     eos_ids: &BTreeSet<u32>,
     family: ModelFamily,
-    shape: DirectInferShape,
+    shape: FamilyShape,
     raster_manifest: Option<(&Path, &str)>,
     model_commitments: &[ModelCommitment],
 ) -> Result<PathBuf, Box<dyn Error>> {

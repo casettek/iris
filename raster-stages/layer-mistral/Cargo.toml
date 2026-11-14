@@ -1,0 +1,27 @@
+[package]
+name = "layer-mistral"
+version = "0.1.0"
+edition = "2021"
+default-run = "layer-mistral"
+
+[features]
+default = ["std"]
+std = ["raster/std"]
+profiling = ["raster/profiling"]
+
+[dependencies]
+model-identity = { path = "../../crates/model/identity", default-features = false }
+raster = { path = "../../../raster/crates/raster", default-features = false }
+serde = { version = "1.0", default-features = false, features = ["derive", "alloc"] }
+# Canonical fixed-point kernels, and in its `mistral` module the functions
+# only this family uses.
+det-num = { path = "../../crates/det-num" }
+
+[dev-dependencies]
+raster-runtime = { path = "../../../raster/crates/raster-runtime" }
+
+# Sequences run on the host; only the library is built for proof guests.
+[[bin]]
+name = "layer-mistral"
+path = "src/main.rs"
+required-features = ["std"]

@@ -13,6 +13,7 @@ fn decoder_text_and_flags_are_bound_to_model() {
         token: "hello".into(),
         special: false,
         terminal: false,
+        bytes: false,
     };
     let table = DecoderTable {
         tokens: List::from(vec![token.clone()]),
@@ -54,6 +55,7 @@ fn decoder_proofs_bind_positions_and_handle_odd_tree_widths() {
             token: text.into(),
             special: false,
             terminal: false,
+            bytes: false,
         })
         .collect();
     let table = DecoderTable {
@@ -134,6 +136,7 @@ fn faults_survive_later_valid_tokens_and_verification_continues_after_eos() {
         token: "hello".into(),
         special: false,
         terminal: false,
+        bytes: false,
     };
     let table = DecoderTable {
         tokens: vec![token.clone()].into(),

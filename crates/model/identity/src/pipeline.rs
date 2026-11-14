@@ -249,22 +249,50 @@ impl ModelContext {
             self.require_execution(
                 e.phase == EMBEDDED && aux.execution_context().is_some_and(|x| e.same_range(&x)),
             );
-            if prior.is_origin() {
-                self.require_execution(e.before.position == 0);
-            } else {
-                self.require_execution(prior.execution_context().is_some_and(|p| {
-                    if prior.producer == crate::context::EMBEDDING {
-                        e.before.position == 0 && e.same_range(&p)
-                    } else {
-                        e.same_statement(&p) && p.end == e.before && p.phase == EMBEDDED
-                    }
-                }));
-            }
+            self.require_prior_cache(&e, prior);
             for (c, i) in [(a, ai), (b, bi)] {
                 if donor >= 0 && donor == i {
                     self.require_execution(c.execution_context().is_some_and(|d| e.same_range(&d)));
                 }
             }
+        } else {
+            self.require_execution(false);
+        }
+    }
+    /// Requires `prior` to be the cache a layer starts its range from: nothing
+    /// or the range's own empty embedding at the start of the text, and
+    /// otherwise this layer's output for the range that ends where this begins.
+    fn require_prior_cache(&mut self, e: &Execution, prior: &Self) {
+        if prior.is_origin() {
+            self.require_execution(e.before.position == 0);
+        } else {
+            self.require_execution(prior.execution_context().is_some_and(|p| {
+                if prior.producer == crate::context::EMBEDDING {
+                    e.before.position == 0 && e.same_range(&p)
+                } else {
+                    e.same_statement(&p) && p.end == e.before && p.phase == EMBEDDED
+                }
+            }));
+        }
+    }
+    /// The range checks of a layer that takes no per-layer input and borrows
+    /// no cache.
+    pub fn plain_layer_execution(&mut self, prior: &Self) {
+        if let Some(e) = self.execution_context() {
+            self.require_execution(e.phase == EMBEDDED);
+            self.require_prior_cache(&e, prior);
+        } else {
+            self.require_execution(false);
+        }
+    }
+    /// The step of such a layer: after the layer below, with the range
+    /// before's cache.
+    pub fn plain_layer_step(&mut self, layer: u32, prior: &Self) {
+        if let Some(mut e) = self.execution_context() {
+            let step = Step::layer(e.step.claimed, e.step.range, layer);
+            self.take_step(&mut e, step, Input::Activations);
+            self.require_source(&e, Input::PriorKv, prior);
+            self.set_execution(&e);
         } else {
             self.require_execution(false);
         }

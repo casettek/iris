@@ -121,6 +121,28 @@ impl RetainedWeightBytes for sequence_check::input::FinalHead {
     }
 }
 
+impl RetainedWeightBytes for layer_mistral::input::TransformerLayer {
+    fn retained_weight_bytes(&self) -> usize {
+        let p = &self.params;
+        std::mem::size_of::<Self>()
+            + [
+                &self.w_q,
+                &self.w_k,
+                &self.w_v,
+                &self.w_o,
+                &self.w_gate,
+                &self.w_up,
+                &self.w_down,
+            ]
+            .iter()
+            .map(|r| region(r))
+            .sum::<usize>()
+            + p.rope_inverse_frequencies.len()
+            + p.norm_attention.len()
+            + p.norm_feed_forward.len()
+    }
+}
+
 impl RetainedWeightBytes for prefill_range::input::TransformerLayer {
     fn retained_weight_bytes(&self) -> usize {
         let p = &self.params;

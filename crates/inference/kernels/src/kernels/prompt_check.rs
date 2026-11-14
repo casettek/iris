@@ -252,7 +252,7 @@ pub mod rounds {
 
     /// Merge rounds per pass. A window of two tokens needs two merges fewer
     /// than it has pieces, so this covers tokens of up to 33 pieces each.
-    pub const ROUNDS: usize = 64;
+    pub const ROUNDS: usize = 152;
 
     #[derive(Debug, Clone, PartialEq, Eq)]
     pub struct Outcome {
@@ -817,26 +817,26 @@ mod tests {
     #[test]
     fn a_window_still_merging_after_the_last_round_is_refused() {
         // Longer rules rank first, so a run of `a` grows from the left into
-        // one token of up to 40 letters. Two such tokens side by side need 78
+        // one token of up to 80 letters. Two such tokens side by side need 158
         // merges, more than the rounds allow.
-        let rules: Vec<(String, String)> = (1..40)
+        let rules: Vec<(String, String)> = (1..80)
             .rev()
             .map(|len| ("a".repeat(len), "a".to_string()))
             .collect();
         let tokenizer = tokenizer(&["a", "b"], &rules);
-        let pieces = pieces_of(&format!("{}b{}", "a".repeat(40), "a".repeat(40)), None);
-        let counts = [40, 1, 40];
+        let pieces = pieces_of(&format!("{}b{}", "a".repeat(80), "a".repeat(80)), None);
+        let counts = [80, 1, 80];
         assert!(check_groups(&tokenizer, &pieces, 0, None, &counts)
             .unwrap()
             .is_ok());
         let staged =
             rounds::check_range_in_rounds(&tokenizer, &pieces, 0, None, &rounds::marks_of(&counts))
                 .unwrap();
-        // 40 + 1 pieces need 39 merges and fit; the bound is on a window of
+        // 80 + 1 pieces need 79 merges and fit; the bound is on a window of
         // two long tokens, which this grouping does not contain.
         assert_eq!(staged.fault, None);
-        let pieces = pieces_of(&"a".repeat(80), None);
-        let long = [40, 40];
+        let pieces = pieces_of(&"a".repeat(160), None);
+        let long = [80, 80];
         let staged =
             rounds::check_range_in_rounds(&tokenizer, &pieces, 0, None, &rounds::marks_of(&long))
                 .unwrap();
@@ -860,17 +860,17 @@ mod tests {
             )
             .unwrap()
         };
-        let fits = twin(format!("{}b{}", "a".repeat(40), "a".repeat(40)), &counts);
+        let fits = twin(format!("{}b{}", "a".repeat(80), "a".repeat(80)), &counts);
         assert_eq!((fits.context.fault, fits.context.prompt_tokens), (0, 3));
         assert_eq!(fits.token_ids.len(), 3);
-        let too_long = twin("a".repeat(80), &long);
+        let too_long = twin("a".repeat(160), &long);
         assert_ne!(too_long.context.fault, 0);
         // Refused, and still one id for each token it claims.
         assert_eq!(too_long.token_ids.len(), 2);
     }
 
-    /// The importer admits merge results of up to 33 characters, and so
-    /// tokens of up to 33 pieces. Two of them side by side need 64 merges:
+    /// The importer admits merge results of up to 77 characters, and so
+    /// tokens of up to 77 pieces. Two of them side by side need 152 merges:
     /// every round of a pass and not one more. An honest claim of them must
     /// pass, or a claimer would be refused for a prompt the model tokenizes.
     #[test]

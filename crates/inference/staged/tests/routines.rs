@@ -147,11 +147,13 @@ fn finalization_decodes_generated_ids() {
                     token: "▁Hi".to_string(),
                     special: false,
                     terminal: false,
+                    bytes: false,
                 },
                 DecoderToken {
                     token: "!".to_string(),
                     special: false,
                     terminal: false,
+                    bytes: false,
                 },
             ]),
         },
@@ -180,6 +182,7 @@ fn finalize(ids: &[u32], max_new_tokens: u32) -> sequence_check::input::Generate
         token: token.to_string(),
         special,
         terminal,
+        bytes: false,
     };
     let inputs = FinalizeCase {
         descriptor: raster::BytesPage::__from_parts(0, 0, vec![]),
@@ -534,6 +537,7 @@ fn sequence_check_matches_a_greedy_oracle_at_every_position() {
                     token: format!("t{id}"),
                     special: false,
                     terminal: false,
+                    bytes: false,
                 })
                 .collect::<Vec<_>>(),
         ),
@@ -764,6 +768,7 @@ fn decoder_substitution_publishes_sticky_fault_and_preserves_statement_identity(
         token: "hello".into(),
         special: false,
         terminal: false,
+        bytes: false,
     };
     let mut inputs = authenticate_decoder_inputs(FinalizeCase {
         edge: sequence_check::input::DecodeEdge {
@@ -792,6 +797,7 @@ fn decoder_substitution_publishes_sticky_fault_and_preserves_statement_identity(
             token: "substituted".into(),
             special: false,
             terminal: true,
+            bytes: false,
         }]
         .into(),
     };

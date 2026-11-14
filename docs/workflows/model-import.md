@@ -25,6 +25,10 @@ Inputs:
 - `config.json`: model shape, attention/window settings, softcap, and normalization parameters.
 - `tokenizer.json`: vocabulary, merges, added tokens, and EOS metadata.
 
+A `mistral-dense` bundle (Ministral 3) imports with `--only-direct` and nothing else: the
+family has no stage programs yet, so a full import is refused. Convert its GGUF first, with
+`--metadata` naming a directory that holds Mistral's own `config.json` and `tokenizer.json`.
+
 The import works out the bundle's [model family](../internals/model-families.md) before it
 writes anything. It refuses a `config.json` whose `model_type` is not a family this build
 imports, and a bundle that holds language-model weights the family's import does not read.

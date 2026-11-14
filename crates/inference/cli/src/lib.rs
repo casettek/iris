@@ -87,6 +87,9 @@ enum Commands {
         /// hour. The report records that it was skipped.
         #[arg(long)]
         skip_challenges: bool,
+        /// The bundle under `model-bundles` to run: one family's small model.
+        #[arg(long, default_value = "parity-gemma")]
+        bundle: String,
     },
     /// Compare a chain run with direct generation of the same prompt and
     /// output, position by position.
@@ -358,8 +361,11 @@ fn execute(cli: Cli) -> Result<ExitCode> {
             })?;
             Ok(ExitCode::SUCCESS)
         }
-        Some(Commands::TestParity { skip_challenges }) => {
-            parity::run(skip_challenges)?;
+        Some(Commands::TestParity {
+            skip_challenges,
+            bundle,
+        }) => {
+            parity::run(skip_challenges, &bundle)?;
             Ok(ExitCode::SUCCESS)
         }
         Some(Commands::CompareTeacherForced {

@@ -1,15 +1,15 @@
 {
-  "version": 15,
+  "version": 16,
   "family": "gemma-dense",
-  "model_id": "b259a6655863ddb8155e4b8732855a04b28856e692280f3d1e7f6ef0cfb23cdb",
+  "model_id": "bafd81aeb1a45c5d6bc97a8d33b4a3040787728dbcf732100939eed584e5c215",
   "model_commitments": [
     {
       "role": "tokenizer",
-      "commitment": "97e1d7b334962ee24c2164ce0d4a915e99487ac0b6b66b42e8143db440263dd1"
+      "commitment": "fd8a40ee67edf1f97776b9dbef696d1bd3da56abadebbc046d7f75de9d9cd5bb"
     },
     {
       "role": "decoder",
-      "commitment": "773216bd0d4ee8b1493848972835a4a00693c1e0e206853c6f1e4c4f576e3360"
+      "commitment": "ff7262af390d1a802cd95097b455a1ed9671b819ddba6b5726fc221fd3f16c6b"
     },
     {
       "role": "embedding",
@@ -436,6 +436,6 @@
   ],
   "provenance": {
     "raster_manifest_path": "Raster.toml",
-    "raster_manifest_sha256": "5407b7aef9d82455ce0c2dcf655ebd37adf3ba525d6438c718e151b7fb2b94fa"
+    "raster_manifest_sha256": "5922810e7e49e65b1ada622b471795fa6c5abeee6cc726a8c77bc962ac231a9a"
   }
 }

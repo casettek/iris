@@ -190,23 +190,26 @@ impl Shape {
 // Stage 2 — input embedding
 // ---------------------------------------------------------------------------
 
+/// Every family's embedding table. `embedding_scale` is what a row is
+/// multiplied by before layer 0, in Q16.16: Gemma's is `sqrt(hidden)`,
+/// converted by local `f32_to_act` so the committed bits are the deterministic
+/// path's exactly, and a family that does not scale passes one.
 pub(super) fn write_embedding(
     weights: &detwgt::MmapDetwgt,
-    shape: &Shape,
+    hidden: usize,
+    vocab: usize,
+    embedding_scale: i32,
     layout: &ArtifactLayout,
     stages: &mut Vec<String>,
 ) -> Result<(), Box<dyn Error>> {
     let table = EmbeddingTable {
-        hidden_size: shape.hidden as u32,
-        // Gemma scales token embeddings by sqrt(hidden) before layer 0. Converted
-        // by local `f32_to_act` so the committed bits match the
-        // deterministic path exactly rather than approximately.
-        embedding_scale: det_num::f32_to_act((shape.hidden as f32).sqrt()).to_bits(),
+        hidden_size: hidden as u32,
+        embedding_scale,
         values: mapped_weights::q8_rows(
             weights,
             "model.language_model.embed_tokens.weight",
             0,
-            shape.vocab,
+            vocab,
         )?,
     };
     let commitment = write_external(&table, layout, "raster-stages/input-embedding", "embedding")?;
@@ -559,9 +562,12 @@ pub(super) fn inv_sqrt_q16(n: usize) -> i32 {
 // Stage 5 — output head
 // ---------------------------------------------------------------------------
 
+/// Every family's head: the final norm and the projection to the vocabulary.
 pub(super) fn write_head(
     weights: &detwgt::MmapDetwgt,
-    shape: &Shape,
+    hidden: usize,
+    vocab: usize,
+    norm_eps: i64,
     text: &serde_json::Value,
     layout: &ArtifactLayout,
     stages: &mut Vec<String>,
@@ -584,12 +590,12 @@ pub(super) fn write_head(
     let commitment = write_external(
         &FinalHead {
             params: FinalHeadParams {
-                hidden_size: shape.hidden as u32,
-                norm_eps: shape.norm_eps,
+                hidden_size: hidden as u32,
+                norm_eps,
                 softcap,
                 norm_weights: page_of_i32s(&weights.values("model.language_model.norm.weight")?),
             },
-            projection: mapped_weights::q8_rows(weights, projection, 0, shape.vocab)?,
+            projection: mapped_weights::q8_rows(weights, projection, 0, vocab)?,
         },
         layout,
         "raster-stages/sequence-check",
@@ -697,6 +703,25 @@ pub(super) fn require_known_tensors<'a>(
 }
 
 impl Shape {
+    /// What the chain template needs of this model's layers.
+    pub(super) fn chain_layers(&self) -> ChainLayers {
+        let mut donors = (0..self.layers)
+            .map(|layer| self.kv_donor_layer(layer))
+            .filter(|donor| *donor >= 0)
+            .collect::<Vec<_>>();
+        donors.sort_unstable();
+        donors.dedup();
+        ChainLayers {
+            layers: self.layers,
+            project: "raster-stages/prefill-range",
+            stage: "prefill_range",
+            auxiliary: true,
+            donor_inputs: true,
+            num_kv_shared_layers: self.num_kv_shared_layers,
+            donors,
+        }
+    }
+
     /// The shape as the model manifest records it, for the native runtime.
     pub(super) fn manifest_shape(
         &self,

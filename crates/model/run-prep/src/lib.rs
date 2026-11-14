@@ -29,6 +29,8 @@ use sequence_check::input::{DecoderTable, DecoderToken};
 pub const GEMMA_PROMPT_PREFIX: &str = "<bos><|turn>user\n";
 pub const GEMMA_PROMPT_SUFFIX: &str = "<turn|>\n<|turn>model\n";
 
+pub mod tekken;
+
 const BOS_TOKEN: &str = "<bos>";
 const TURN_OPEN: &str = "<|turn>";
 const TURN_CLOSE: &str = "<turn|>";
@@ -40,12 +42,17 @@ pub fn prepare_prompt(
     spec: &InferenceRunSpec,
     model: &ModelManifest,
 ) -> Result<PreparedPrompt> {
-    let model_json = tokenizer_model(tokenizer)?;
-    let vocab = vocab_map(model_json)?;
+    // The template is the tokenizer profile's, which is what the prompt stages
+    // render the text with, whatever the model's family.
+    let profile = tokenizer_profile(tokenizer)?;
     let prompt = resolve_prompt(spec_dir, spec)?;
-    let templated = !spec.raw_prompt && supports_gemma_turns(&vocab);
-    let rendered_prompt = if templated {
-        render_gemma_turns(&prompt)
+    let rendered_prompt = if !spec.raw_prompt && profile.templated() {
+        format!(
+            "{}{}{}",
+            profile.template_prefix,
+            prompt.trim(),
+            profile.template_suffix
+        )
     } else {
         prompt.clone()
     };
@@ -59,8 +66,49 @@ pub fn prepare_prompt(
     })
 }
 
+/// A `mistral-dense` prompt as the model reads it: the rendered text, its
+/// tokens with their segments, and their ids. A prompt that is not raw is
+/// trimmed and put in the template, as every family's is.
+pub fn tekken_prompt(
+    tokenizer: &tekken::Tekken,
+    prompt: &str,
+    raw_prompt: bool,
+) -> Result<(String, Vec<inference_artifacts::PreparedPiece>, Vec<u32>)> {
+    let rendered = if !raw_prompt && tokenizer.templated() {
+        format!(
+            "{}{}{}",
+            tekken::PROMPT_PREFIX,
+            prompt.trim(),
+            tekken::PROMPT_SUFFIX
+        )
+    } else {
+        prompt.to_string()
+    };
+    let (pieces, ids) = tokenizer.encode(&rendered)?;
+    Ok((rendered, pieces, ids))
+}
+
+/// Whether the bundle's tokenizer is a tekken one. Its sign is the rule that a
+/// whole word which is a token is that token, which the other kind refuses.
+pub fn is_tekken(tokenizer: &serde_json::Value) -> bool {
+    tokenizer
+        .get("model")
+        .and_then(|model| model.get("ignore_merges"))
+        .and_then(serde_json::Value::as_bool)
+        == Some(true)
+}
+
+/// Refuses a tokenizer the prompt stages would not read as its own code does.
+pub fn validate_tokenizer(tokenizer: &serde_json::Value) -> Result<()> {
+    if is_tekken(tokenizer) {
+        tekken::Tekken::from_json(tokenizer).map(|_| ())
+    } else {
+        validate_tokenizer_profile(tokenizer)
+    }
+}
+
 pub fn prompt_tokenizer(tokenizer: &serde_json::Value) -> Result<PromptTokenizer> {
-    validate_tokenizer_profile(tokenizer)?;
+    validate_tokenizer(tokenizer)?;
     let model = tokenizer_model(tokenizer)?;
     let mut vocab: Vec<TokenEntry> = vocab_map(model)?
         .into_iter()
@@ -107,6 +155,9 @@ pub fn prompt_tokenizer(tokenizer: &serde_json::Value) -> Result<PromptTokenizer
 
 /// The tokenizer's text handling, as the data the prompt stages commit to.
 pub fn tokenizer_profile(tokenizer: &serde_json::Value) -> Result<TokenizerProfile> {
+    if is_tekken(tokenizer) {
+        return Ok(tekken::Tekken::from_json(tokenizer)?.profile());
+    }
     let model = tokenizer_model(tokenizer)?;
     let vocab = vocab_map(model)?;
     let present = |key: &str| {
@@ -135,6 +186,8 @@ pub fn tokenizer_profile(tokenizer: &serde_json::Value) -> Result<TokenizerProfi
         unk_token: unk.unwrap_or_default().to_string(),
         specials: special_tokens(tokenizer).join("\0"),
         fallback_bytes: fallback_mask(|byte| vocab.contains_key(&byte_token(byte))),
+        scanner: prompt_check::input::SCANNER_CHARACTERS,
+        longest_token: 0,
     })
 }
 
@@ -156,12 +209,14 @@ pub fn decoder_table(tokenizer: &serde_json::Value, eos_ids: &[u32]) -> Result<D
         .map(|id| id as u32)
         .collect();
     let max_token_id = vocab_map.values().copied().max().unwrap_or(0);
+    let byte_level = is_tekken(tokenizer);
     let mut tokens = vec![DecoderToken::default(); max_token_id as usize + 1];
     for (token, id) in vocab_map {
         tokens[id as usize] = DecoderToken {
             token,
             special: special_ids.contains(&id),
             terminal: eos_ids.contains(&id),
+            bytes: byte_level && !special_ids.contains(&id),
         };
     }
     Ok(DecoderTable {
@@ -580,7 +635,7 @@ pub fn supports_gemma_turns(vocab: &BTreeMap<String, u32>) -> bool {
 /// Splits rendered text the way `prompt-bind` does, by the same code.
 /// Unsupported transformations fail explicitly instead of silently approximating.
 pub fn split_prompt(prompt: &str, tokenizer: &serde_json::Value) -> Result<Vec<PreparedPiece>> {
-    validate_tokenizer_profile(tokenizer)?;
+    validate_tokenizer(tokenizer)?;
     let vocab = vocab_map(tokenizer_model(tokenizer)?)?;
     let profile = tokenizer_profile(tokenizer)?;
     Ok(
@@ -1248,7 +1303,8 @@ mod tests {
                 ple_projection_scalar: ONE,
                 ple_input_scale: ONE,
                 final_logit_softcap: 0,
-            },
+            }
+            .into(),
             eos_token_ids: vec![1, 2],
             provenance: None,
         }

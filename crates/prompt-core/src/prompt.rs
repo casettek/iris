@@ -30,6 +30,10 @@ use raster::{BytesPage, List};
 use serde::{Deserialize, Serialize};
 use sha2::digest::generic_array::GenericArray;
 
+/// The word scanner, for a tokenizer whose profile asks for it.
+#[path = "tekken.rs"]
+pub mod tekken;
+
 /// Token id reserved for pieces that are not in the vocabulary.
 pub const UNK_TOKEN_ID: u32 = 0;
 
@@ -58,6 +62,9 @@ pub const FAULT_NOT_THE_MERGE: u32 = 9;
 pub const FAULT_TEXT_CLAIM: u32 = 10;
 /// A range was given text after the text had ended.
 pub const FAULT_TEXT_AFTER_END: u32 = 11;
+/// The text has a run the word scanner could not hold until it knew which
+/// word the run is in, so its words may not be the tokenizer's.
+pub const FAULT_WORD_SPLIT: u32 = 12;
 
 /// What a `PromptContext::fault` value means.
 pub fn fault_description(fault: u32) -> &'static str {
@@ -73,6 +80,7 @@ pub fn fault_description(fault: u32) -> &'static str {
         FAULT_NOT_THE_MERGE => "the claimed tokens are not what the merge produces",
         FAULT_TEXT_CLAIM => "the text is not what the run claimed of it",
         FAULT_TEXT_AFTER_END => "a range was given text after the text had ended",
+        FAULT_WORD_SPLIT => "the text has a run too long for the word scanner to place",
         _ => "an unknown fault",
     }
 }
@@ -140,7 +148,17 @@ pub struct TokenizerProfile {
     pub specials: String,
     /// 64 hex digits: bit `b` is set when `<0xBB>` is in the vocabulary.
     pub fallback_bytes: String,
+    /// How text becomes atoms: [`SCANNER_CHARACTERS`] or [`SCANNER_WORDS`].
+    pub scanner: u32,
+    /// The longest token in bytes, for the word scanner: a longer word is no
+    /// token, and is put out in parts.
+    pub longest_token: u32,
 }
+
+/// One atom a character, with the profile's space and fallback rules.
+pub const SCANNER_CHARACTERS: u32 = 0;
+/// One atom a word, each written as its bytes. See [`tekken`].
+pub const SCANNER_WORDS: u32 = 1;
 
 impl TokenizerProfile {
     /// Whether the model has a chat template at all.
@@ -584,12 +602,21 @@ pub struct ScanPlan {
     pub templated: bool,
 }
 
-/// One special token, or one normalized character.
+/// One special token, one normalized character, or one word.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
 pub struct PromptAtom {
     pub text: String,
     pub special: bool,
+    /// [`ATOM_WHOLE`], or which part of a word too long for one atom.
+    pub part: u32,
 }
+
+/// The atom is a whole unit: its lookup says whether it is one piece.
+pub const ATOM_WHOLE: u32 = 0;
+/// The atom starts a word too long to be a token. It is its bytes.
+pub const ATOM_FIRST_PART: u32 = 1;
+/// The atom continues that word, in the same segment.
+pub const ATOM_LATER_PART: u32 = 2;
 
 /// The scan's output.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
@@ -603,6 +630,18 @@ pub struct ScanState {
     pub pending: String,
     pub offset: u64,
     pub finished: bool,
+    /// The rest is the word scanner's, and stays zero for any other.
+    ///
+    /// Where it is in the pattern: one of [`tekken`]'s places.
+    pub mode: u32,
+    /// Bytes at the start of `pending` that are in the word so far.
+    pub word: u32,
+    /// Bytes after those that it cannot place in a word yet.
+    pub held: u32,
+    /// The word so far has already put out a part.
+    pub long: bool,
+    /// It has had to place held text without knowing where the text belongs.
+    pub overflowed: bool,
 }
 
 /// The scan the claim calls for. Every range scans with it.
@@ -654,8 +693,7 @@ pub fn begin_scan_state(plan: &ScanPlan, profile: &TokenizerProfile) -> ScanStat
         } else {
             String::new()
         },
-        offset: 0,
-        finished: false,
+        ..ScanState::default()
     }
 }
 
@@ -682,6 +720,7 @@ fn drain_atoms(
             emit(PromptAtom {
                 text: special.to_string(),
                 special: true,
+                part: ATOM_WHOLE,
             });
             start += special.len();
             continue;
@@ -696,6 +735,7 @@ fn drain_atoms(
         emit(PromptAtom {
             text,
             special: false,
+            part: ATOM_WHOLE,
         });
     }
     pending.drain(..start);
@@ -724,7 +764,11 @@ pub fn scan_chunk_into(
         }
         state.finished = true;
     }
-    drain_atoms(&mut state.pending, last, profile, emit);
+    if profile.scanner == SCANNER_WORDS {
+        tekken::drain_words(&mut state, last, profile, emit);
+    } else {
+        drain_atoms(&mut state.pending, last, profile, emit);
+    }
     state
 }
 
@@ -801,6 +845,9 @@ pub fn apply_atom(
         next.previous_unknown = false;
         return next;
     }
+    if profile.scanner == SCANNER_WORDS {
+        return tekken::apply_word(state, atom, in_vocabulary, emit);
+    }
     if in_vocabulary {
         emit(BpePiece {
             text: atom.text.clone(),
@@ -871,6 +918,9 @@ pub fn finish_bind_range(
 ) {
     if carry.text.fold.chunks == 0 {
         record_fault(context, FAULT_NO_TEXT, 0);
+    }
+    if carry.text.scan.overflowed {
+        record_fault(context, FAULT_WORD_SPLIT, carry.text.fold.total);
     }
     if before.done {
         if carry.text.fold.chunks != before.text.fold.chunks {
@@ -1012,6 +1062,7 @@ pub fn bucket_walk_proven(
 pub struct KnownAtom {
     pub text: String,
     pub special: bool,
+    pub part: u32,
     /// The atom is a vocabulary entry.
     pub found: bool,
     /// The bucket that answered is the committed one.
@@ -1049,6 +1100,7 @@ pub fn split_known_atom(
     let plain = PromptAtom {
         text: atom.text.clone(),
         special: atom.special,
+        part: atom.part,
     };
     apply_atom(split, &plain, atom.found, profile, emit)
 }
@@ -1111,6 +1163,7 @@ pub fn bind_range<S: AsRef<str>>(
             atoms.push(KnownAtom {
                 text: atom.text,
                 special: atom.special,
+                part: atom.part,
                 found,
                 proven,
             })

@@ -3,8 +3,9 @@
 //! This file is what every model family shares: the command line, the artifact
 //! layout, the tokenizer externals, commitments, the chain template and the
 //! manifest. What is particular to a family (its config, its tensors and how
-//! they become stage externals) is in that family's module; today that is
-//! [`gemma`] alone, and [`bundle_family`] refuses anything else.
+//! they become stage externals) is in that family's module: [`gemma`], and
+//! [`mistral`], which so far builds a direct manifest only. [`bundle_family`]
+//! refuses anything else.
 //!
 //! ```sh
 //! cargo run -p model-import -- \
@@ -24,6 +25,7 @@ mod direct_manifest;
 mod externals;
 mod gemma;
 mod mapped_weights;
+mod mistral;
 
 use externals::*;
 use gemma::*;
@@ -42,6 +44,26 @@ const INITIAL_PIECES_PLACEHOLDER_COMMITMENT: &str =
 /// Run preparation replaces every external under this directory with the
 /// run's own prompt pieces and, for teacher-forced runs, claimed output.
 const RUN_PLACEHOLDER_DIR: &str = "target/iris/run-prompt-placeholder";
+
+/// What the chain template needs to know of a model's layers: how many, which
+/// program runs one, and what a layer takes besides the layer below and its
+/// own cache.
+pub(crate) struct ChainLayers {
+    pub layers: usize,
+    /// The layer program's project. Its externals are kept under the same name.
+    pub project: &'static str,
+    /// What a layer's entry in the list of written externals is called, before
+    /// its index.
+    pub stage: &'static str,
+    /// Each layer has a stage before it that prepares its per-layer input.
+    pub auxiliary: bool,
+    /// The layer program takes two other layers' caches as well as its own.
+    pub donor_inputs: bool,
+    /// The last this many layers borrow an earlier layer's cache.
+    pub num_kv_shared_layers: usize,
+    /// The layers a cache is borrowed from, in order. At most two.
+    pub donors: Vec<i32>,
+}
 
 fn main() {
     if let Err(error) = run_from_env() {
@@ -268,6 +290,7 @@ fn bundle_family(config: &serde_json::Value) -> Result<ModelFamily, Box<dyn Erro
     match declared {
         None => Ok(ModelFamily::GemmaDense),
         Some(model_type) if model_type.starts_with("gemma") => Ok(ModelFamily::GemmaDense),
+        Some(model_type) if mistral::is_mistral_dense(model_type) => Ok(ModelFamily::MistralDense),
         Some(model_type) => Err(format!(
             "config.json declares model type `{model_type}`, which is not a family this build \
              imports (supported: {})",
@@ -291,17 +314,19 @@ pub fn import_model(args: ImportConfig) -> Result<ImportResult, Box<dyn Error>> 
             .get("text_config")
             .ok_or("config.json has no text_config")?;
         let family = bundle_family(&config)?;
-        let shape = Shape::from_config(text)?;
+        let (shape, eos_ids) = match family {
+            ModelFamily::GemmaDense => (
+                Shape::from_config(text)?.manifest_shape(text).into(),
+                eos_ids,
+            ),
+            ModelFamily::MistralDense => (
+                mistral::shape_from_config(text)?.into(),
+                mistral::eos_ids(&tokenizer)?,
+            ),
+        };
         // A direct-only refresh cannot attest that existing Raster externals
         // were generated from this bundle. Only a full import binds a template.
-        direct_manifest::write_model_manifest(
-            &args,
-            &eos_ids,
-            family,
-            shape.manifest_shape(text),
-            None,
-            &[],
-        )?;
+        direct_manifest::write_model_manifest(&args, &eos_ids, family, shape, None, &[])?;
         return Ok(ImportResult {
             manifest_path: None,
             manifest_text: None,
@@ -361,6 +386,56 @@ pub fn import_model(args: ImportConfig) -> Result<ImportResult, Box<dyn Error>> 
         ModelFamily::GemmaDense => {
             require_known_tensors(weights.names(), Shape::from_config(text)?.layers)?
         }
+        ModelFamily::MistralDense => {
+            if args.only_ple || args.only_embedding || args.only_layers {
+                return Err("a mistral-dense import writes every external or only the \
+                            direct manifest"
+                    .into());
+            }
+            let shape = mistral::shape_from_config(text)?;
+            mistral::require_known_tensors(weights.names(), shape.num_hidden_layers)?;
+            println!(
+                "model: hidden {} · {} layers · {} heads over {} kv heads · head_dim {} · ffn {} · vocab {}",
+                shape.hidden_size, shape.num_hidden_layers, shape.num_attention_heads,
+                shape.num_key_value_heads, shape.head_dim, shape.intermediate_size,
+                shape.vocab_size
+            );
+            let eos_ids = mistral::eos_ids(&tokenizer)?;
+            let mut stages = Vec::new();
+            let (decoder_commitment, witness_commitment) =
+                write_tokenizer(&tokenizer, &eos_ids, &layout, &mut stages)?;
+            // This family does not scale its embeddings.
+            write_embedding(
+                &weights,
+                shape.hidden_size as usize,
+                shape.vocab_size as usize,
+                ONE,
+                &layout,
+                &mut stages,
+            )?;
+            mistral::write_layers(&weights, &shape, &layout, &mut stages)?;
+            write_head(
+                &weights,
+                shape.hidden_size as usize,
+                shape.vocab_size as usize,
+                shape.norm_eps,
+                text,
+                &layout,
+                &mut stages,
+            )?;
+            let chain = mistral::chain_layers(&shape);
+            return finish_import(
+                &args,
+                &layout,
+                family,
+                shape.into(),
+                &chain,
+                &eos_ids,
+                &decoder_commitment,
+                &witness_commitment,
+                &stages,
+            );
+        }
     }
 
     if args.only_ple {
@@ -384,7 +459,14 @@ pub fn import_model(args: ImportConfig) -> Result<ImportResult, Box<dyn Error>> 
     if args.only_embedding {
         let shape = Shape::from_config(text)?;
         let mut stages = Vec::new();
-        write_embedding(&weights, &shape, &layout, &mut stages)?;
+        write_embedding(
+            &weights,
+            shape.hidden,
+            shape.vocab,
+            det_num::f32_to_act((shape.hidden as f32).sqrt()).to_bits(),
+            &layout,
+            &mut stages,
+        )?;
         println!();
         println!("# ---- embedding external ----");
         for stage in &stages {
@@ -429,21 +511,62 @@ pub fn import_model(args: ImportConfig) -> Result<ImportResult, Box<dyn Error>> 
     let mut stages = Vec::new();
     let (decoder_commitment, witness_commitment) =
         write_tokenizer(&tokenizer, &eos_ids, &layout, &mut stages)?;
-    write_embedding(&weights, &shape, &layout, &mut stages)?;
+    write_embedding(
+        &weights,
+        shape.hidden,
+        shape.vocab,
+        det_num::f32_to_act((shape.hidden as f32).sqrt()).to_bits(),
+        &layout,
+        &mut stages,
+    )?;
     write_ple_layers(&weights, &shape, &layout, &mut stages)?;
     write_transformer_layers(&weights, &shape, &layout, &mut stages)?;
-    write_head(&weights, &shape, text, &layout, &mut stages)?;
+    write_head(
+        &weights,
+        shape.hidden,
+        shape.vocab,
+        shape.norm_eps,
+        text,
+        &layout,
+        &mut stages,
+    )?;
+    finish_import(
+        &args,
+        &layout,
+        family,
+        shape.manifest_shape(text).into(),
+        &shape.chain_layers(),
+        &eos_ids,
+        &decoder_commitment,
+        &witness_commitment,
+        &stages,
+    )
+}
 
-    let commitments = model_commitments(&shape, &decoder_commitment, &stages)?;
+/// What every family's full import ends with: the model's descriptor, the
+/// chain template, the manifest and the contract pins.
+#[allow(clippy::too_many_arguments)]
+fn finish_import(
+    args: &ImportConfig,
+    layout: &ArtifactLayout,
+    family: ModelFamily,
+    manifest_shape: inference_artifacts::FamilyShape,
+    chain: &ChainLayers,
+    eos_ids: &std::collections::BTreeSet<u32>,
+    decoder_commitment: &str,
+    witness_commitment: &str,
+    stages: &[String],
+) -> Result<ImportResult, Box<dyn Error>> {
+    let commitments = model_commitments(chain, decoder_commitment, stages)?;
     let descriptor = inference_artifacts::model_identity::descriptor_from_commitments(
         &commitments,
-        shape.layers,
+        chain.layers,
     )?;
     let descriptor =
         raster::BytesPage::__from_parts(0, 0, descriptor.encode().map_err(|f| format!("{f:?}"))?);
     let descriptor_commitment = write_external(
         &descriptor,
-        &layout,
+        layout,
         "raster-stages/sequence-check",
         "descriptor",
     )?;
@@ -451,35 +574,35 @@ pub fn import_model(args: ImportConfig) -> Result<ImportResult, Box<dyn Error>> 
         "{}{}",
         external_line(
             "descriptor",
-            &layout,
+            layout,
             "raster-stages/sequence-check",
             "descriptor",
             &descriptor_commitment
         ),
         external_line(
             "witness",
-            &layout,
+            layout,
             "raster-stages/sequence-check",
             "witness",
-            &witness_commitment
+            witness_commitment
         ),
     );
     let stage_count = stages.len();
     let (template_path, template) = save_model_template(
-        &args,
+        args,
         &chain_template(
-            &shape,
-            &layout,
-            &decoder_commitment,
+            chain,
+            layout,
+            decoder_commitment,
             &identity_inputs,
-            &stages,
+            stages,
         )?,
     )?;
     let model_manifest_path = direct_manifest::write_model_manifest(
-        &args,
-        &eos_ids,
+        args,
+        eos_ids,
         family,
-        shape.manifest_shape(text),
+        manifest_shape,
         Some((&template_path, &template)),
         &commitments,
     )?;
@@ -503,7 +626,8 @@ fn write_contract_pins(model_manifest_path: &Path, template: &str) {
     let pins = inference_artifacts::ModelManifest::load_verified(model_manifest_path).and_then(
         |manifest| inference_artifacts::contract::ContractPins::from_import(&manifest, template),
     );
-    let path = model_manifest_path.with_file_name(inference_artifacts::contract::CONTRACT_PINS_JSON);
+    let path =
+        model_manifest_path.with_file_name(inference_artifacts::contract::CONTRACT_PINS_JSON);
     match pins.and_then(|pins| inference_artifacts::write_json(&path, &pins)) {
         Ok(()) => println!("wrote {}", path.display()),
         Err(error) => println!("no contract pins written: {error:#}"),
@@ -541,7 +665,7 @@ fn save_model_template(
 /// These are the commitments a stage's `input_manifest.json` binds, so a claim
 /// that ran other weights can be held to the model it names by comparing them.
 fn model_commitments(
-    shape: &Shape,
+    chain: &ChainLayers,
     decoder_commitment: &str,
     stages: &[String],
 ) -> Result<Vec<inference_artifacts::ModelCommitment>, Box<dyn Error>> {
@@ -564,16 +688,16 @@ fn model_commitments(
             stage_external_commitment(stages, "final_head", "head")?,
         ),
     ];
-    for layer in 0..shape.layers {
+    for layer in 0..if chain.auxiliary { chain.layers } else { 0 } {
         entries.push(entry(
             format!("aux_layer_{layer}"),
             stage_external_commitment(stages, &format!("prefill_prepare_aux_l{layer}"), "layer")?,
         ));
     }
-    for layer in 0..shape.layers {
+    for layer in 0..chain.layers {
         entries.push(entry(
             format!("transformer_layer_{layer}"),
-            stage_external_commitment(stages, &format!("prefill_range_l{layer}"), "layer")?,
+            stage_external_commitment(stages, &format!("{}_l{layer}", chain.stage), "layer")?,
         ));
     }
     Ok(entries)
@@ -605,7 +729,7 @@ fn model_commitments(
 /// stop a stage: the fault is recorded in the prompt context, which the last
 /// range's `prompt_check` publishes for the whole prompt.
 fn chain_template(
-    shape: &Shape,
+    chain: &ChainLayers,
     layout: &ArtifactLayout,
     decoder_commitment: &str,
     identity_inputs: &str,
@@ -661,14 +785,10 @@ fn chain_template(
             path("rindex"),
         )
     };
-    let last_layer = shape.layers - 1;
-    let first_shared = shape.layers.saturating_sub(shape.num_kv_shared_layers);
-    let mut donors = (0..shape.layers)
-        .map(|layer| shape.kv_donor_layer(layer))
-        .filter(|donor| *donor >= 0)
-        .collect::<Vec<_>>();
-    donors.sort_unstable();
-    donors.dedup();
+    let last_layer = chain.layers - 1;
+    let first_shared = chain.layers.saturating_sub(chain.num_kv_shared_layers);
+    let donors = &chain.donors;
+    let project = chain.project;
     if donors.len() > 2 {
         return Err(format!(
             "ranges support at most two donor candidates, model declares {}",
@@ -678,7 +798,7 @@ fn chain_template(
     }
 
     let mut out = String::from("[chain]\nname = \"iris\"\nversion = \"0.1.0\"\n");
-    out.push_str(&indexed_model_inputs(shape, layout, prefill_stages)?);
+    out.push_str(&indexed_model_inputs(chain, layout, prefill_stages)?);
     out.push_str(&range_input("prompt_text", "text", "j"));
     out.push_str(&range_input("prompt_marks", "marks", "j"));
     out.push_str(&range_input("claimed_ids", "claimed", "k"));
@@ -822,7 +942,12 @@ fn chain_template(
         let mut text = format!(
             "\n[[chain.repeat]]\nname = \"{name}\"\nindex = \"l\"\nstart = {start}\ncount = {count}\n"
         );
-        for (p, r) in [("p", "j"), ("c", "k")] {
+        let ranges: &[(&str, &str)] = if chain.auxiliary {
+            &[("p", "j"), ("c", "k")]
+        } else {
+            &[]
+        };
+        for (p, r) in ranges {
             text.push_str(&format!(
                 "\n  [[chain.repeat.stage]]\n\
                  name = \"aux_{p}{{{r}}}_l{{l}}\"\n\
@@ -855,20 +980,28 @@ fn chain_template(
                 prior_of_claimed_ranges,
             ),
         ] {
+            let donor_lines = if chain.donor_inputs {
+                donor("donor_a_kv", donors.first(), p, range)
+                    + &donor("donor_b_kv", donors.get(1), p, range)
+            } else {
+                String::new()
+            };
+            let ple_line = if chain.auxiliary {
+                format!("inputs.ple = {{ from = \"aux_{p}{range}_l{{l}}\" }}\n")
+            } else {
+                String::new()
+            };
             text.push_str(&format!(
                 "\n  [[chain.repeat.stage]]\n\
                  name = \"range_{p}{range}_l{{l}}\"\n\
                  {fan}\
-                 project = \"raster-stages/prefill-range\"\n\
+                 project = \"{project}\"\n\
                  inputs.activations = {{ from = \"range_{p}{range}_l{{l-1}}\", first = \"{}\" }}\n\
                  {prior_kv}\
-                 {}\
-                 {}\
-                 inputs.ple = {{ from = \"aux_{p}{range}_l{{l}}\" }}\n\
+                 {donor_lines}\
+                 {ple_line}\
                  inputs.layer = {{ input = \"transformer_layer_{{l}}\" }}\n",
                 first_rows(p, range),
-                donor("donor_a_kv", donors.first(), p, range),
-                donor("donor_b_kv", donors.get(1), p, range),
             ));
         }
         text
@@ -882,12 +1015,12 @@ fn chain_template(
             &|param, _, _, _| no_sequence(param),
         ));
     }
-    if shape.num_kv_shared_layers > 0 {
+    if chain.num_kv_shared_layers > 0 {
         let last_own = first_shared.saturating_sub(1);
         out.push_str(&layer_block(
             "shared_layers",
             first_shared,
-            shape.num_kv_shared_layers,
+            chain.num_kv_shared_layers,
             &|p, range| format!("range_{p}{range}_l{last_own}"),
             &|param, donor, p, range| match donor {
                 Some(layer) => {
@@ -997,22 +1130,26 @@ fn stage_external_commitment(
 /// Declares model weights once so every decode iteration can bind them by its
 /// static layer index without copying commitments into the repeat block.
 fn indexed_model_inputs(
-    shape: &Shape,
+    chain: &ChainLayers,
     layout: &ArtifactLayout,
     stages: &[String],
 ) -> Result<String, Box<dyn Error>> {
-    let aux = (0..shape.layers)
+    let aux_layers = 0..if chain.auxiliary { chain.layers } else { 0 };
+    let aux = aux_layers
+        .clone()
         .map(|layer| {
             stage_external_commitment(stages, &format!("prefill_prepare_aux_l{layer}"), "layer")
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let aux_witness = (0..shape.layers)
+    let aux_witness = aux_layers
         .map(|layer| {
             stage_external_commitment(stages, &format!("prefill_prepare_aux_l{layer}"), "witness")
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let transformer = (0..shape.layers)
-        .map(|layer| stage_external_commitment(stages, &format!("prefill_range_l{layer}"), "layer"))
+    let transformer = (0..chain.layers)
+        .map(|layer| {
+            stage_external_commitment(stages, &format!("{}_l{layer}", chain.stage), "layer")
+        })
         .collect::<Result<Vec<_>, _>>()?;
     let render = |name: &str, dir: &str, commitments: &[String]| {
         let entries = commitments
@@ -1031,21 +1168,18 @@ fn indexed_model_inputs(
              commitments = [\n{entries}\n]\n"
         )
     };
-    Ok(format!(
-        "{}{}{}",
+    let auxiliary = if chain.auxiliary {
         render(
             "aux_witness",
             "raster-stages/prefill-prepare-aux",
-            &aux_witness
+            &aux_witness,
         )
-        .replace("layer{l}", "witness{l}"),
-        render("aux_layer", "raster-stages/prefill-prepare-aux", &aux),
-        render(
-            "transformer_layer",
-            "raster-stages/prefill-range",
-            &transformer
-        )
-    ))
+        .replace("layer{l}", "witness{l}")
+            + &render("aux_layer", "raster-stages/prefill-prepare-aux", &aux)
+    } else {
+        String::new()
+    };
+    Ok(auxiliary + &render("transformer_layer", chain.project, &transformer))
 }
 
 /// Q16.16 bits of an `f32`, through the local deterministic conversion so the
@@ -1135,12 +1269,15 @@ fn write_tokenizer(
         .collect();
 
     let max_token_id = vocab.iter().map(|entry| entry.id).max().unwrap_or(0);
+    // As `run_prep::decoder_table` builds it, which direct inference decodes with.
+    let byte_level = run_prep::is_tekken(tokenizer);
     let mut decoder_tokens = vec![DecoderToken::default(); max_token_id.saturating_add(1) as usize];
     for entry in &vocab {
         decoder_tokens[entry.id as usize] = DecoderToken {
             token: entry.token.clone(),
             special: special_ids.contains(&entry.id),
             terminal: eos_ids.contains(&entry.id),
+            bytes: byte_level && !special_ids.contains(&entry.id),
         };
     }
     let decoder_table = DecoderTable {
@@ -1295,7 +1432,7 @@ mod tests {
                 &args,
                 &Default::default(),
                 ModelFamily::GemmaDense,
-                shape.manifest_shape(&text),
+                shape.manifest_shape(&text).into(),
                 Some((&path, &template)),
                 &[
                     "tokenizer",

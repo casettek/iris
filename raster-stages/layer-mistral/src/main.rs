@@ -1,0 +1,360 @@
+//! `layer-mistral`: sequences.
+//!
+//! ```text
+//!   rows    ──recur seq──▶ [ begin · mac Q · mac K · mac V · finish ] ──▶ KvSequence
+//!   queries ──recur seq──▶ [ attend keys · mac O · feed-forward matvecs ] ──▶ ActivationSequence
+//!                            (key sweeps run `chunk = 64`)
+//!   errors  ──recur─────▶ summarise ──▶ assert none
+//! ```
+
+use raster::prelude::*;
+
+use layer_mistral::input::*;
+use layer_mistral::*;
+
+/// One position: RMS-norm, project Q/K/V by paging each matrix, rotate to the
+/// loop-carried position, append key and query rows.
+#[sequence(kind = recur)]
+fn project_token(
+    input: RecurSequenceInput<ActivationRow>,
+    state: RecurSequenceState<TokenCursor>,
+    output: RecurSequenceOutput<KvSequence>,
+    params: LayerParams,
+    w_q: List<BytesPage>,
+    w_k: List<BytesPage>,
+    w_v: List<BytesPage>,
+) -> (
+    RecurSequenceState<TokenCursor>,
+    RecurSequenceOutput<KvSequence>,
+) {
+    let prep = call!(begin_qkv, input, params.clone());
+    let hidden = select!(u32, params.clone().hidden_size);
+    let q_len = call!(q_out_len, params.clone());
+    let kv_len = call!(kv_out_len, params.clone());
+    let normed = call!(qkv_normed, prep.clone());
+    let acc_q = call!(zero_accum, q_len);
+    let q = call_recur!(
+        tile = mac_q8_weight_page,
+        input = w_q,
+        state = acc_q,
+        args = (normed.clone(), hidden.clone())
+    );
+    let acc_k = call!(zero_accum, kv_len.clone());
+    let k = call_recur!(
+        tile = mac_q8_weight_page,
+        input = w_k,
+        state = acc_k,
+        args = (normed.clone(), hidden.clone())
+    );
+    let acc_v = call!(zero_accum, kv_len);
+    let v = call_recur!(
+        tile = mac_q8_weight_page,
+        input = w_v,
+        state = acc_v,
+        args = (normed, hidden)
+    );
+    let output = call!(finish_qkv, output, state.clone(), prep, q, k, v, params);
+    let state = call!(advance_cursor, state);
+    (state, output)
+}
+
+/// One query: attend over every key up to its own, project W_o, run the
+/// feed-forward matvecs, append the layer's output row.
+#[sequence(kind = recur)]
+fn attend_token(
+    input: RecurSequenceInput<QueryRow>,
+    output: RecurSequenceOutput<ActivationSequence>,
+    prior_keys: List<KeyRow>,
+    keys: List<KeyRow>,
+    params: LayerParams,
+    w_o: List<BytesPage>,
+    w_gate: List<BytesPage>,
+    w_up: List<BytesPage>,
+    w_down: List<BytesPage>,
+) -> RecurSequenceOutput<ActivationSequence> {
+    let query = call!(begin_attention, input);
+    // Two sweeps of the keys: score every visible one and softmax once, then
+    // accumulate the weighted values and requantize once. Each sweep takes the
+    // inherited cache and then this range's own keys. Both tiles address a key
+    // by its position, so the order the lists are swept in is not load-bearing.
+    let scores = call!(zero_scores, query.clone(), params.clone());
+    let scores = call_recur!(
+        tile = score_key,
+        input = prior_keys.clone(),
+        chunk = 64,
+        state = scores,
+        args = (query.clone(), params.clone())
+    );
+    let scores = call_recur!(
+        tile = score_key,
+        input = keys.clone(),
+        chunk = 64,
+        state = scores,
+        args = (query.clone(), params.clone())
+    );
+    let weights = call!(softmax_scores, scores, params.clone());
+
+    let context_acc = call!(zero_context, params.clone());
+    let context_acc = call_recur!(
+        tile = accumulate_context,
+        input = prior_keys,
+        chunk = 64,
+        state = context_acc,
+        args = (query.clone(), weights.clone(), params.clone())
+    );
+    let context_acc = call_recur!(
+        tile = accumulate_context,
+        input = keys.clone(),
+        chunk = 64,
+        state = context_acc,
+        args = (query.clone(), weights, params.clone())
+    );
+    let context = call!(finish_context, context_acc);
+    let context_values = call!(packed_values, context.clone());
+    let q_len = call!(q_out_len, params.clone());
+    let hidden = select!(u32, params.clone().hidden_size);
+    let acc_o = call!(zero_accum, hidden.clone());
+    let attn_proj = call_recur!(
+        tile = mac_q8_weight_page,
+        input = w_o,
+        state = acc_o,
+        args = (context_values, q_len)
+    );
+    let residual = call!(attn_residual, query.clone(), context, attn_proj);
+    let ff_in = call!(pre_ff_norm, residual.clone(), params.clone());
+    let ff_in_values = call!(packed_values, ff_in.clone());
+    let ffn = select!(u32, params.ffn_size);
+    let acc_gate = call!(zero_accum, ffn.clone());
+    let gate = call_recur!(
+        tile = mac_q8_gate_page,
+        input = w_gate,
+        state = acc_gate,
+        args = (ff_in_values.clone(), hidden.clone())
+    );
+    let acc_up = call!(zero_accum, ffn.clone());
+    let up = call_recur!(
+        tile = mac_q8_weight_page,
+        input = w_up,
+        state = acc_up,
+        args = (ff_in_values, hidden.clone())
+    );
+    let gated = call!(mul_gated, gate, up);
+    let gated_values = call!(packed_values, gated);
+    let acc_down = call!(zero_accum, hidden);
+    let ff = call_recur!(
+        tile = mac_q8_weight_page,
+        input = w_down,
+        state = acc_down,
+        args = (gated_values, ffn)
+    );
+
+    // This token's own cache entry, fetched by an authorized dynamic index.
+    // `keys` holds one row per token pass 1 processed, in order, so it is
+    // aligned with the stage-local index.
+    let local = select!(u32, query.clone().local);
+    let own_key = select!(KeyRow, keys[local]);
+    call!(finish_layer, output, query, residual, ff_in, ff, own_key)
+}
+
+/// Stage entrypoint, for one transformer layer over one range.
+#[sequence]
+fn main(
+    activations: ActivationSequence,
+    layer: TransformerLayer,
+    prior_kv: ActivationSequence,
+) -> Result<ActivationSequence> {
+    let declared_params = select!(LayerParams, layer.clone().params);
+    let params = call!(validate_layer_params, declared_params)?;
+    let input_model = select!(ModelContext, activations.clone().model);
+    let prior_model = select!(ModelContext, prior_kv.clone().model);
+    let model = call!(
+        layer_model_context,
+        input_model,
+        prior_model.clone(),
+        params.clone()
+    );
+
+    let cache_keys = select!(List<KeyRow>, prior_kv.clone().kv);
+    let zero = call!(identity_zero_count);
+    let count = call_recur!(
+        tile = identity_count_keys,
+        input = cache_keys,
+        chunk = 64,
+        state = zero,
+        args = ()
+    );
+    let model = call!(identity_prior_guard, model, prior_model.clone(), count);
+    let coverage = call!(begin_cache_coverage, prior_model);
+    let prior_positions = select!(List<KeyRow>, prior_kv.clone().kv);
+    let coverage = call_recur!(
+        tile = check_cache_positions,
+        input = prior_positions,
+        chunk = 64,
+        state = coverage,
+        args = ()
+    );
+    let model = call!(finish_cache_coverage, model, coverage);
+    let root = call_seq!(identity_root, layer.clone());
+    let layer_idx = select!(u32, params.clone().layer_idx);
+    let model = call!(identity_verify, model, root, layer_idx);
+    let hidden = select!(u32, params.clone().hidden_size);
+    let q_len = call!(q_out_len, params.clone());
+    let kv_len = call!(kv_out_len, params.clone());
+    let ffn = select!(u32, params.clone().ffn_size);
+
+    let w_q_len = select!(u64, layer.clone().w_q.byte_len);
+    call!(assert_matrix_bytes, w_q_len, q_len.clone(), hidden.clone())?;
+    let w_k_len = select!(u64, layer.clone().w_k.byte_len);
+    call!(assert_matrix_bytes, w_k_len, kv_len.clone(), hidden.clone())?;
+    let w_v_len = select!(u64, layer.clone().w_v.byte_len);
+    call!(assert_matrix_bytes, w_v_len, kv_len, hidden.clone())?;
+    let w_o_len = select!(u64, layer.clone().w_o.byte_len);
+    call!(assert_matrix_bytes, w_o_len, hidden.clone(), q_len)?;
+    let w_gate_len = select!(u64, layer.clone().w_gate.byte_len);
+    call!(assert_matrix_bytes, w_gate_len, ffn.clone(), hidden.clone())?;
+    let w_up_len = select!(u64, layer.clone().w_up.byte_len);
+    call!(assert_matrix_bytes, w_up_len, ffn.clone(), hidden.clone())?;
+    let w_down_len = select!(u64, layer.clone().w_down.byte_len);
+    call!(assert_matrix_bytes, w_down_len, hidden, ffn)?;
+
+    let w_q = select!(List<BytesPage>, layer.clone().w_q.pages);
+    let w_k = select!(List<BytesPage>, layer.clone().w_k.pages);
+    let w_v = select!(List<BytesPage>, layer.clone().w_v.pages);
+    let w_o = select!(List<BytesPage>, layer.clone().w_o.pages);
+    let w_gate = select!(List<BytesPage>, layer.clone().w_gate.pages);
+    let w_up = select!(List<BytesPage>, layer.clone().w_up.pages);
+    let w_down = select!(List<BytesPage>, layer.w_down.pages);
+
+    // Where this stage sits in the full sequence. The rotation and what a
+    // query may see are both defined over that absolute value.
+    let start_position = select!(u32, activations.clone().start_position);
+
+    let rows = select!(List<ActivationRow>, activations.rows);
+    let zero = call!(identity_zero_count);
+    let row_count = call_recur!(
+        tile = binding_count_rows,
+        input = rows.clone(),
+        chunk = 64,
+        state = zero,
+        args = ()
+    );
+    let model = call!(
+        binding_validate_rows,
+        model,
+        start_position.clone(),
+        row_count
+    );
+    let filtered = call!(begin_layer_output, start_position.clone(), model.clone());
+    // Sixteen rows a call: a row is the model's width.
+    let valid_rows = call_recur!(
+        tile = binding_copy_rows,
+        input = rows,
+        chunk = 16,
+        output = filtered,
+        args = (model.clone(),)
+    );
+    let rows = select!(List<ActivationRow>, valid_rows.rows);
+    let cursor0 = call!(begin_cursor, clone!(start_position));
+    let kv = call_recur_seq!(
+        sequence = project_token,
+        input = rows,
+        state = cursor0,
+        output,
+        args = (params.clone(), w_q, w_k, w_v)
+    );
+    let keys = select!(List<KeyRow>, kv.clone().keys);
+    let queries = select!(List<QueryRow>, kv.clone().queries);
+    // This layer's cache as it stood before this range: empty for the first.
+    let prior_keys = select!(List<KeyRow>, prior_kv.kv);
+
+    // The stage's output is built by two push-only sites deriving in turn from
+    // the opened object: this sweep carries the inherited cache forward, then
+    // `attend_token` appends one row and one key per token.
+    let base = call!(begin_layer_output, start_position, model);
+    let carried = call_recur!(
+        tile = carry_cached_key,
+        input = prior_keys.clone(),
+        chunk = 64,
+        output = base,
+        args = ()
+    );
+    let prepared = call_recur_seq!(
+        sequence = attend_token,
+        input = queries,
+        output = carried,
+        args = (prior_keys, keys, params, w_o, w_gate, w_up, w_down)
+    );
+    raster::println!("layer range pass → {:?}", prepared);
+
+    let projection_errors = select!(List<String>, kv.errors);
+    let projection_summary_seed = call!(begin_error_summary);
+    let projection_summary = call_recur!(
+        tile = summarise_errors,
+        input = projection_errors,
+        state = projection_summary_seed,
+        args = ()
+    );
+    let attention_errors = select!(List<String>, prepared.clone().errors);
+    let attention_summary_seed = call!(begin_error_summary);
+    let attention_summary = call_recur!(
+        tile = summarise_errors,
+        input = attention_errors,
+        state = attention_summary_seed,
+        args = ()
+    );
+
+    let projection_count = select!(u32, projection_summary.clone().count);
+    let first_projection_error = select!(String, projection_summary.first);
+    let attention_count = select!(u32, attention_summary.clone().count);
+    let first_attention_error = select!(String, attention_summary.first);
+    call!(
+        assert_layer_complete,
+        projection_count,
+        first_projection_error,
+        attention_count,
+        first_attention_error
+    )?;
+
+    Ok(prepared)
+}
+
+#[sequence]
+fn identity_bytes_195_840(value: Bytes<195_840>) -> BytesPage {
+    let len = select!(u64, value.clone().byte_len);
+    let size = select!(u64, value.clone().page_size);
+    let pages = select!(List<BytesPage>, value.pages);
+    let seed = call!(identity_empty);
+    let folded = call_recur!(tile = identity_page, input = pages, state = seed, args = ());
+    let root = call!(identity_finish, folded);
+    call!(identity_bytes, len, size, root)
+}
+#[sequence]
+fn identity_root(value: TransformerLayer) -> BytesPage {
+    let params = select!(LayerParams, value.clone().params);
+    let params = call!(identity_hash_layerparams, params);
+    let w_q = select!(Bytes<195_840>, value.clone().w_q);
+    let w_q = call_seq!(identity_bytes_195_840, w_q);
+    let w_k = select!(Bytes<195_840>, value.clone().w_k);
+    let w_k = call_seq!(identity_bytes_195_840, w_k);
+    let w_v = select!(Bytes<195_840>, value.clone().w_v);
+    let w_v = call_seq!(identity_bytes_195_840, w_v);
+    let w_o = select!(Bytes<195_840>, value.clone().w_o);
+    let w_o = call_seq!(identity_bytes_195_840, w_o);
+    let w_gate = select!(Bytes<195_840>, value.clone().w_gate);
+    let w_gate = call_seq!(identity_bytes_195_840, w_gate);
+    let w_up = select!(Bytes<195_840>, value.clone().w_up);
+    let w_up = call_seq!(identity_bytes_195_840, w_up);
+    let w_down = select!(Bytes<195_840>, value.w_down);
+    let w_down = call_seq!(identity_bytes_195_840, w_down);
+    call!(
+        identity_component,
+        params,
+        w_q,
+        w_k,
+        w_v,
+        w_o,
+        w_gate,
+        w_up,
+        w_down
+    )
+}

@@ -2479,6 +2479,7 @@ dependencies = [
  "anyhow",
  "det-num",
  "input-embedding",
+ "layer-mistral",
  "model-identity",
  "prefill-prepare-aux",
  "prefill-range",
@@ -2693,6 +2694,17 @@ name = "konst_macro_rules"
 version = "0.2.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a4933f3f57a8e9d9da04db23fb153356ecaf00cbd14aee46279c33dc80925c37"
+
+[[package]]
+name = "layer-mistral"
+version = "0.1.0"
+dependencies = [
+ "det-num",
+ "model-identity",
+ "raster",
+ "raster-runtime",
+ "serde",
+]
 
 [[package]]
 name = "lazy-regex"
@@ -3004,6 +3016,7 @@ dependencies = [
  "detwgt",
  "inference-artifacts",
  "inference-kernels",
+ "layer-mistral",
  "model-identity",
  "prompt-check",
  "raster",
@@ -5067,6 +5080,7 @@ dependencies = [
  "inference-artifacts",
  "inference-kernels",
  "input-embedding",
+ "layer-mistral",
  "model-identity",
  "prefill-prepare-aux",
  "prefill-range",

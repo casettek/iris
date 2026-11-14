@@ -33,7 +33,7 @@ step ignored-merge-exhaustive "token check: only the merge's own grouping passes
     cargo test --release -p inference-kernels -- --ignored exhaust
 
 step ignored-stage-binaries "stage programs build as host binaries" \
-    cargo build -p input-embedding -p prefill-prepare-aux -p prefill-range \
+    cargo build -p input-embedding -p prefill-prepare-aux -p prefill-range -p layer-mistral \
     -p prompt-bind -p prompt-check -p sequence-check -p staged-infer --bins
 
 # Benchmarks print timings and assert nothing; the helper is spawned by

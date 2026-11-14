@@ -443,6 +443,9 @@ pub struct DecoderToken {
     /// expanded to a fixed repeat count, so it cannot stop early; this is what
     /// lets the finalized output report where the answer actually ended.
     pub terminal: bool,
+    /// The token's text is bytes, one character a byte, as a byte-level
+    /// tokenizer writes them. A character of the output can span tokens.
+    pub bytes: bool,
 }
 
 /// Committed tokenizer data needed by output finalization.

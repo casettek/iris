@@ -74,7 +74,7 @@ pub struct AuxWaveExecutionTime {
 
 pub fn run_hidden_stage_compare(stage_dir: &Path) -> Result<ParityReport> {
     let stage_name = stage_name(stage_dir)?;
-    let kind = StageKind::from_stage_name(&stage_name)?;
+    let kind = StageKind::from_stage_dir(stage_dir)?;
     validate_stage_artifacts(stage_dir)?;
 
     let direct = routines::run_for_compare(&kind)?;
@@ -133,7 +133,7 @@ pub fn run_hidden_stage_compare(stage_dir: &Path) -> Result<ParityReport> {
 
 pub fn run_hidden_stage_direct(stage_dir: &Path) -> Result<()> {
     let stage_name = stage_name(stage_dir)?;
-    let kind = StageKind::from_stage_name(&stage_name)?;
+    let kind = StageKind::from_stage_dir(stage_dir)?;
     validate_stage_input_artifacts(stage_dir)?;
 
     let direct = routines::run_and_publish(&kind)?;

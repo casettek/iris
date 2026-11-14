@@ -75,11 +75,13 @@ and a token with no left neighbour merges alone to one piece. The argument and
 its tests are in [the proposal](../proposals/claimed-prompt-tokens.md).
 `prompt_check` runs those small merges without building them: tokens are paired
 (0,1), (2,3), … in one pass and (1,2), (3,4), … in another, a piece may merge
-only inside its pair and segment, and each pass is 64 rounds that merge at most
+only inside its pair and segment, and each pass is 152 rounds that merge at most
 one pair of pieces per pair of tokens. A merge that joins two tokens, a token
 left in more than one piece, or a pair still merging after the last round is a
-fault. 64 rounds cover tokens of up to 33 pieces; Gemma 4 E2B's longest
-vocabulary entry is 31 characters.
+fault. 152 rounds cover tokens of up to 77 pieces. Gemma 4 E2B's longest
+vocabulary entry is 31 characters and Ministral 3's is 76 bytes, each byte a
+piece. A pair that has finished takes no part in later rounds, so the rounds a
+short token does not need cost it almost nothing.
 
 A pair's pieces change only when one of its own merges is applied, so a pair whose
 scan finds nothing to merge is finished for good. The round that finds it so checks
@@ -326,7 +328,7 @@ model/execution fault makes the final claim invalid even if native and Raster
 honestly execute the same malicious wiring. `test-parity` exercises that case
 as well as divergence from the honest template; production RISC Zero tests in
 `model_identity_guest.rs` cover the corresponding guest checks. Model imports
-and prepared runs use version 15; older boundary encodings must be regenerated.
+and prepared runs use version 16; older boundary encodings must be regenerated.
 
 ### Stage schedule
 

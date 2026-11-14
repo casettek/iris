@@ -16,6 +16,7 @@ use sha2::{Digest, Sha256};
 
 use crate::finalize_model::finish_final_history;
 use crate::input::*;
+use crate::prompt::tekken::char_byte;
 use crate::prompt::PromptContext;
 
 /// The empty state, as a plain function — see [`advance_finalize_state`].
@@ -61,6 +62,31 @@ fn flush_pending(state: &mut FinalizeState) {
     state.pending_bytes = BytesPage::__from_parts(0, 0, Vec::new());
 }
 
+/// Appends the text `bytes` start with and returns how many of them that was.
+/// Bytes that no text has become U+FFFD, as a lossy decoding of the whole
+/// output would make them. A character cut off at the end is left.
+fn decode_start(text: &mut String, bytes: &[u8]) -> usize {
+    let mut at = 0;
+    loop {
+        let error = match core::str::from_utf8(&bytes[at..]) {
+            Ok(rest) => {
+                text.push_str(rest);
+                return bytes.len();
+            }
+            Err(error) => error,
+        };
+        let good = at + error.valid_up_to();
+        text.push_str(&String::from_utf8_lossy(&bytes[at..good]));
+        match error.error_len() {
+            Some(bad) => {
+                text.push('\u{FFFD}');
+                at = good + bad;
+            }
+            None => return good,
+        }
+    }
+}
+
 /// Adds one authenticated token to the JSON commitment stream and decoder state.
 pub fn advance_finalize_state(
     state: FinalizeState,
@@ -93,6 +119,13 @@ pub fn advance_finalize_state(
     }
     if token.special {
         flush_pending(&mut state);
+        return state;
+    }
+    if token.bytes {
+        let mut pending = state.pending_bytes.as_slice().to_vec();
+        pending.extend(token.token.chars().filter_map(char_byte));
+        let taken = decode_start(&mut state.text, &pending);
+        state.pending_bytes = BytesPage::__from_parts(0, 0, pending[taken..].to_vec());
         return state;
     }
     if let Some(byte) = byte_fallback(&token.token) {

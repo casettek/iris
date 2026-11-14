@@ -5,7 +5,7 @@
     "stage_programs": [
       {
         "stage": "prompt-bind",
-        "program_commitment": "30886615a9a496ca7844a86df7f3579457bcdf1bb257fec6b2a3f2328511844a",
+        "program_commitment": "bbc92d54ec906a87bb6aea3ab7cee2aa71daef8a78ffff1d2cb183ef6edc089c",
         "chained_inputs": [
           {
             "name": "previous",
@@ -13,14 +13,14 @@
               "prompt-bind"
             ],
             "empty_values": [
-              "9a7c0b6f0ae6b15bd55c565b8297cbeaab33236388eaef55e685a47468c4c17b"
+              "bc31ff40669f4add4510146f578279f9bd5f2c8824b641f2e803ddb34f6b6f6a"
             ]
           }
         ]
       },
       {
         "stage": "prompt-check",
-        "program_commitment": "d99f8ad12556b75198c5677a7c1b84b8bb4614178139dc1f0b63e206df525f94",
+        "program_commitment": "64f520da4e8856ca0fa73ed47f28f32369e6631868babd0a445a41dea113404a",
         "chained_inputs": [
           {
             "name": "bound",
@@ -35,14 +35,14 @@
               "prompt-check"
             ],
             "empty_values": [
-              "9a7c0b6f0ae6b15bd55c565b8297cbeaab33236388eaef55e685a47468c4c17b"
+              "bc31ff40669f4add4510146f578279f9bd5f2c8824b641f2e803ddb34f6b6f6a"
             ]
           }
         ]
       },
       {
         "stage": "input-embedding",
-        "program_commitment": "983e8befca5caa0ef8eb5f6fc8dfcbf10262be07bb20c38f9e477fa376fe0fd4",
+        "program_commitment": "e934d9fdcedda89a94832665bee19d2f947ad56069452391838601d29eb18f68",
         "chained_inputs": [
           {
             "name": "previous",
@@ -59,14 +59,14 @@
               "prompt-check"
             ],
             "empty_values": [
-              "9a7c0b6f0ae6b15bd55c565b8297cbeaab33236388eaef55e685a47468c4c17b"
+              "bc31ff40669f4add4510146f578279f9bd5f2c8824b641f2e803ddb34f6b6f6a"
             ]
           }
         ]
       },
       {
         "stage": "sequence-check",
-        "program_commitment": "e79fb55b401fb90f126f689c1feb5f29f7834489078eedca5cd9e3a18d1f95e8",
+        "program_commitment": "8f1b4b6e22ed33bd5390272b565419fe10e6413251c003100c46815267911fca",
         "chained_inputs": [
           {
             "name": "activations",
@@ -115,7 +115,7 @@
       },
       {
         "stage": "prefill-range",
-        "program_commitment": "1d5ae78c6545e73fb4a5411ee3e183b20209dd1c30d01e722edaae089272d2ff",
+        "program_commitment": "7098ab2fb69a5b54d835582dc58cddcb068e0e24bfa8229868711c53a2e5dd19",
         "chained_inputs": [
           {
             "name": "activations",
@@ -164,15 +164,15 @@
     ]
   },
   "model": {
-    "model_id": "b259a6655863ddb8155e4b8732855a04b28856e692280f3d1e7f6ef0cfb23cdb",
+    "model_id": "bafd81aeb1a45c5d6bc97a8d33b4a3040787728dbcf732100939eed584e5c215",
     "model_commitments": [
       {
         "role": "tokenizer",
-        "commitment": "97e1d7b334962ee24c2164ce0d4a915e99487ac0b6b66b42e8143db440263dd1"
+        "commitment": "fd8a40ee67edf1f97776b9dbef696d1bd3da56abadebbc046d7f75de9d9cd5bb"
       },
       {
         "role": "decoder",
-        "commitment": "773216bd0d4ee8b1493848972835a4a00693c1e0e206853c6f1e4c4f576e3360"
+        "commitment": "ff7262af390d1a802cd95097b455a1ed9671b819ddba6b5726fc221fd3f16c6b"
       },
       {
         "role": "embedding",

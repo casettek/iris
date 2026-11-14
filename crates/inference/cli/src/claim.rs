@@ -10,13 +10,13 @@ use staged_infer::{
     ParityPolicy,
 };
 
+use inference_artifacts::contract::{ClaimSubmission, CLAIM_SUBMISSION_JSON};
 use inference_artifacts::{
     file_sha256 as sha256_file, read_checkpoint_hashes, read_checkpoint_trace, read_json,
     read_run_spec, write_checkpoint_hashes, write_claim_artifacts_with_prepared_run, write_json,
     InferenceResult, InferenceRunSpec, ModelManifest, PreparedRun, CHECKPOINT_TRACE_JSON,
     PREPARED_RUN_JSON,
 };
-use inference_artifacts::contract::{ClaimSubmission, CLAIM_SUBMISSION_JSON};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 
@@ -290,11 +290,6 @@ fn prepare_run(
         .ok_or_else(|| anyhow::anyhow!("run spec has no parent directory"))?;
     let model_manifest_path = absolute(run_spec_dir, &run_spec.model_manifest);
     let model_manifest = ModelManifest::load_verified(&model_manifest_path)?;
-    // The stage list prepared below and the native routines that run it are
-    // one family's. Another brings its own layer stages.
-    match model_manifest.family()? {
-        inference_artifacts::ModelFamily::GemmaDense => {}
-    }
     let (template_path, template) =
         model_manifest.verified_raster_template(&model_manifest_path)?;
     let model_manifest_dir = model_manifest_path

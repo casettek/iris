@@ -183,6 +183,14 @@ pub fn finalize_prompt(inputs: PromptPrepareDirectInputs<'_>) -> Result<PromptTo
     })
 }
 
+/// A prompt whose ids direct inference was handed, with nothing a chain binds.
+pub fn tokenization_of_ids(token_ids: Vec<u32>) -> PromptTokenization {
+    PromptTokenization {
+        token_ids: List::from(token_ids),
+        ..PromptTokenization::default()
+    }
+}
+
 /// Applies ranked merges until none is eligible.
 pub fn merge_fully(
     mut pieces: Vec<BpePiece>,

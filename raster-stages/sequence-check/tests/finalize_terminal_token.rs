@@ -13,6 +13,7 @@ fn word(text: &str) -> DecoderToken {
         token: text.to_string(),
         special: false,
         terminal: false,
+        bytes: false,
     }
 }
 
@@ -21,6 +22,7 @@ fn end_of_turn() -> DecoderToken {
         token: "<turn|>".to_string(),
         special: true,
         terminal: true,
+        bytes: false,
     }
 }
 

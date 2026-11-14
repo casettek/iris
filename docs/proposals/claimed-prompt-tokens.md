@@ -262,6 +262,10 @@ and newlines). A window that is still merging after the last round is a fault, s
 limit can refuse a true tokenization but never accept a false one. Import should reject a
 vocabulary with a longer entry, so that no honest claim meets the limit.
 
+Version 16 (November 13) raised the count to 152 rounds, for tokens of up to 77 pieces:
+Ministral 3's byte-level vocabulary has entries of up to 76 bytes, and each byte is a
+piece. The argument above does not depend on the count.
+
 ### Measured on the native model
 
 For a 6,000-piece prompt of 1,148 tokens in three ranges, on the production table:
@@ -326,8 +330,8 @@ cases are in place. These points differ from the plan above:
   `prompt-seed` checked cuts against, and no stage read it once ranges could end between
   any two tokens. The tokenizer artifact is now the vocabulary, the merge table and the
   profile, so the model id changed.
-- **Import refuses a merge table whose results are longer than 33 characters**, the most
-  the stage's rounds can check.
+- **Import refuses a merge table whose results are longer than the stage's rounds can
+  check**: 33 characters then, 77 since version 16.
 - **Finished windows leave the rounds** (version 12, November 11). A window whose scan
   finds nothing to merge cannot change again, so the round that finds it so checks that
   each of its tokens is one piece and drops its pieces. The range's token ids are then

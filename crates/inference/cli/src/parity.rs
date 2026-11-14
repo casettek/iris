@@ -33,7 +33,7 @@ struct Case {
     input_token_ids: Vec<u32>,
 }
 
-pub fn run(skip_challenges: bool) -> Result<()> {
+pub fn run(skip_challenges: bool, bundle: &str) -> Result<()> {
     ensure!(
         !cfg!(debug_assertions),
         "test-parity requires a release build; run `just test-parity`"
@@ -51,7 +51,8 @@ pub fn run(skip_challenges: bool) -> Result<()> {
     let started = Instant::now();
     let mut report = json!({"version": 1, "mode": "host_no_auth", "passed": false, "cases": []});
     report["challenge_leg"] = json!(if skip_challenges { "skipped" } else { "run" });
-    let result = run_suite(&root, &run_dir, &mut report, skip_challenges);
+    report["bundle"] = json!(bundle);
+    let result = run_suite(&root, &run_dir, &mut report, skip_challenges, bundle);
     report["elapsed_seconds"] = json!(started.elapsed().as_secs_f64());
     report["passed"] = json!(result.is_ok());
     if let Err(error) = &result {
@@ -71,14 +72,15 @@ pub fn run(skip_challenges: bool) -> Result<()> {
     Ok(())
 }
 
-/// The Raster program that runs a chain stage, from the stage's name.
-fn stage_program(stage: &str) -> &'static str {
+/// The Raster program that runs a chain stage, from the stage's name and the
+/// layer program of the model's family.
+fn stage_program<'a>(stage: &str, layer_program: &'a str) -> &'a str {
     [
         ("prompt_bind_", "prompt-bind"),
         ("prompt_check_", "prompt-check"),
         ("embed_", "input-embedding"),
         ("aux_", "prefill-prepare-aux"),
-        ("range_", "prefill-range"),
+        ("range_", layer_program),
         ("check_", "sequence-check"),
     ]
     .iter()
@@ -104,6 +106,9 @@ fn outcomes(report: &Value) -> Value {
             .map(Vec::len)
             .sum()
     };
+    let layer_program = report["layer_program"]
+        .as_str()
+        .unwrap_or(inference_artifacts::ModelFamily::GemmaDense.layer_program());
     let mut replayed = BTreeMap::<&str, u64>::new();
     let mut found_only = BTreeMap::<&str, u64>::new();
     let mut rejected = 0u64;
@@ -118,7 +123,9 @@ fn outcomes(report: &Value) -> Value {
             } else {
                 &mut found_only
             };
-            *by_program.entry(stage_program(stage)).or_default() += 1;
+            *by_program
+                .entry(stage_program(stage, layer_program))
+                .or_default() += 1;
         } else if entry["rejected"] == json!(true) {
             rejected += 1;
         }
@@ -248,11 +255,23 @@ mod outcome_tests {
     }
 }
 
-fn run_suite(root: &Path, run_dir: &Path, report: &mut Value, skip_challenges: bool) -> Result<()> {
+fn run_suite(
+    root: &Path,
+    run_dir: &Path,
+    report: &mut Value,
+    skip_challenges: bool,
+    bundle: &str,
+) -> Result<()> {
     // Before anything runs: no stage program may read a value its schema does
     // not pin. Raster's own checks do not see one.
     crate::stage_bindings::check_stage_programs(root)?;
-    let model_bundle = root.join("model-bundles/parity-gemma");
+    ensure!(
+        inference_artifacts::ModelFamily::ALL
+            .iter()
+            .any(|family| family.parity_bundle() == bundle),
+        "`{bundle}` is not a family's parity bundle"
+    );
+    let model_bundle = root.join("model-bundles").join(bundle);
     let checksums: BTreeMap<String, String> = read_json(&model_bundle.join("checksums.json"))?;
     ensure!(
         checksums.keys().cloned().collect::<BTreeSet<_>>()
@@ -329,15 +348,22 @@ fn run_suite(root: &Path, run_dir: &Path, report: &mut Value, skip_challenges: b
         .arg(&model_bundle)
         .arg("--artifact-root")
         .arg(&artifact_root)
-        .args(["--model-id", "parity-gemma", "--no-stage-fixtures"])
+        .args(["--model-id", bundle, "--no-stage-fixtures"])
         // Small enough that every case's prompt and 8-token outputs split into
         // several ranges.
         .args(["--range-size", "6"]);
     logged(import, &run_dir.join("import.log"))?;
     report["import_seconds"] = json!(import_started.elapsed().as_secs_f64());
-    let model_dir = artifact_root.join("parity-gemma");
+    let model_dir = artifact_root.join(bundle);
     let model_path = model_dir.join("manifest.json");
     let model = ModelManifest::load_verified(&model_path)?;
+    let family = model.family()?;
+    ensure!(
+        family.parity_bundle() == bundle,
+        "`{bundle}` imported as a {} model",
+        family.name()
+    );
+    report["layer_program"] = json!(family.layer_program());
     validate_model_bundle(&model_bundle, &model_dir, &model)?;
     let cases: Vec<Case> = read_json(&model_bundle.join("cases.json"))?;
     ensure!(
@@ -352,8 +378,17 @@ fn run_suite(root: &Path, run_dir: &Path, report: &mut Value, skip_challenges: b
         cases[0].raw_prompt && cases[0].tokens == 1 && cases[0].input_token_ids.len() < 16,
         "invalid short case"
     );
+    // One token short of Gemma's sliding window. A family without one only
+    // needs the case to stay shorter than the next.
+    let near = cases[1].input_token_ids.len();
     ensure!(
-        cases[1].raw_prompt && cases[1].tokens == 8 && cases[1].input_token_ids.len() == 15,
+        cases[1].raw_prompt
+            && cases[1].tokens == 8
+            && if family.has_auxiliary_stages() {
+                near == 15
+            } else {
+                near < 16
+            },
         "invalid near-window case"
     );
     ensure!(
@@ -479,10 +514,10 @@ fn run_case(
         .context("native chain recorded no stage inventory")?;
     let shape = RangedShape::from_names(&order);
     ensure!(
-        shape.layers == model.shape.num_hidden_layers,
+        shape.layers == model.shape.num_hidden_layers(),
         "the chain has {} layers per range, the model has {}",
         shape.layers,
-        model.shape.num_hidden_layers
+        model.shape.num_hidden_layers()
     );
     let names = teacher_forced_names(shape);
     let raster_outputs =
@@ -492,8 +527,11 @@ fn run_case(
         compare(name, &raster_outputs[name], &native[name])
             .context("Raster-staged ↔ native-staged")?;
     }
-    validate_donor_bindings(&raster_dir, &raster_outputs, shape)?;
-    validate_donor_bindings(&native_dir, &native, shape)?;
+    // Only Gemma's layers borrow another layer's cache.
+    if model.shape.gemma().is_ok() {
+        validate_donor_bindings(&raster_dir, &raster_outputs, shape)?;
+        validate_donor_bindings(&native_dir, &native, shape)?;
+    }
 
     // Direct generation: its own coverage, then the chain position by position.
     ensure!(
@@ -502,8 +540,11 @@ fn run_case(
         claimed.len(),
         case.tokens
     );
-    let direct_names =
-        direct_infer::diagnostics::boundary_names(model.shape.num_hidden_layers, case.tokens);
+    let direct_names = direct_infer::diagnostics::boundary_names(
+        model.shape.num_hidden_layers(),
+        case.tokens,
+        shape.auxiliary,
+    );
     let direct =
         read_boundaries(&direct_dir, &direct_names, true).context("native-direct artifacts")?;
     validate_case(case, model, &direct).context("native-direct coverage")?;
@@ -719,9 +760,9 @@ fn run_chain_fault_leg(
     let greedy = claimed
         .get(..2)
         .context("the pinned case claims too few tokens")?;
-    let not_greedy = [(greedy[0] + 1) % model.shape.vocab_size as u32, greedy[1]];
+    let not_greedy = [(greedy[0] + 1) % model.shape.vocab_size() as u32, greedy[1]];
     // Just past the tables, and far enough past that its page does not exist.
-    let unknown = [model.shape.vocab_size as u32, u32::MAX];
+    let unknown = [model.shape.vocab_size() as u32, u32::MAX];
     let positions = case.input_token_ids.len() as u32;
     // Name, marks, claimed ids, budget, what the record must say, then what to
     // add to the schedule's three counts.
@@ -1345,7 +1386,7 @@ pub(crate) fn compare_teacher_forced(tf_dir: &Path, direct_dir: &Path) -> Result
     let tokens = generated.as_array().context("missing generated ids")?.len();
     ensure!(tokens > 0, "direct generation produced no tokens");
     check_inventory(
-        &direct_infer::diagnostics::boundary_names(shape.layers, tokens as u32),
+        &direct_infer::diagnostics::boundary_names(shape.layers, tokens as u32, shape.auxiliary),
         &direct_names,
     )
     .with_context(|| format!("{}: not a direct run", direct_dir.display()))?;
@@ -1386,13 +1427,15 @@ pub(crate) fn compare_teacher_forced(tf_dir: &Path, direct_dir: &Path) -> Result
             .collect::<Vec<_>>(),
     )];
     for layer in 0..shape.layers {
-        families.push((
-            ranges.iter().map(|r| format!("aux_{r}_l{layer}")).collect(),
-            format!("prefill_prepare_aux_l{layer}"),
-            (0..passes)
-                .map(|t| format!("decode_aux_t{t}_l{layer}"))
-                .collect(),
-        ));
+        if shape.auxiliary {
+            families.push((
+                ranges.iter().map(|r| format!("aux_{r}_l{layer}")).collect(),
+                format!("prefill_prepare_aux_l{layer}"),
+                (0..passes)
+                    .map(|t| format!("decode_aux_t{t}_l{layer}"))
+                    .collect(),
+            ));
+        }
         families.push((
             ranges
                 .iter()
@@ -1560,7 +1603,7 @@ fn validate_case(
         );
         let logits = value["logits"].as_array().context("missing logits")?;
         ensure!(
-            logits.len() == model.shape.vocab_size as usize,
+            logits.len() == model.shape.vocab_size() as usize,
             "{stage}: incomplete logit vector"
         );
         let mut best: Option<(usize, i64)> = None;
@@ -1573,10 +1616,13 @@ fn validate_case(
                 .as_i64()
                 .context("invalid fixed-point logit")?;
             i32::try_from(value)?;
-            ensure!(
-                value.abs() <= i64::from(model.shape.final_logit_softcap),
-                "{stage}: logit {id} exceeds the configured softcap"
-            );
+            // Only Gemma caps its logits.
+            if let Ok(shape) = model.shape.gemma() {
+                ensure!(
+                    value.abs() <= i64::from(shape.final_logit_softcap),
+                    "{stage}: logit {id} exceeds the configured softcap"
+                );
+            }
             if best.is_none_or(|(_, maximum)| value > maximum) {
                 best = Some((id, value));
             }
@@ -1602,7 +1648,7 @@ fn validate_case(
     }
     for token in 0..case.tokens.saturating_sub(1) {
         let position = case.input_token_ids.len() as u32 + token;
-        for layer in 0..model.shape.num_hidden_layers {
+        for layer in 0..model.shape.num_hidden_layers() {
             let stage = format!("decode_range_t{token}_l{layer}");
             let value = &outputs[&stage].value;
             ensure!(
@@ -1617,10 +1663,12 @@ fn validate_case(
                     == 1,
                 "{stage}: decode must contain one row"
             );
-            let first = if model.shape.layer_types[layer as usize] == "sliding_attention" {
-                (position + 1).saturating_sub(model.shape.sliding_window)
-            } else {
-                0
+            // A sliding layer evicts; every other layer keeps the whole prefix.
+            let first = match model.shape.gemma() {
+                Ok(shape) if shape.layer_types[layer as usize] == "sliding_attention" => {
+                    (position + 1).saturating_sub(shape.sliding_window)
+                }
+                _ => 0,
             };
             let positions = value["kv"]
                 .as_array()
@@ -1679,12 +1727,33 @@ fn validate_donor_bindings(
     Ok(())
 }
 
+/// The `mistral-dense` bundle's shape, as the cases and the pages count on it.
+fn validate_mistral_bundle(model: &ModelManifest) -> Result<()> {
+    let shape = model.shape.mistral()?;
+    ensure!(
+        shape.num_hidden_layers == 4
+            && shape.hidden_size == 128
+            && shape.num_attention_heads == 4
+            && shape.num_key_value_heads == 2
+            && shape.head_dim == 32
+            && shape.intermediate_size == 2048
+            && shape.vocab_size == 512
+            && shape.norm_eps > 0
+            && shape.tied_head,
+        "model bundle shape or active numerics changed"
+    );
+    Ok(())
+}
+
 fn validate_model_bundle(
     model_bundle: &Path,
     model_dir: &Path,
     model: &ModelManifest,
 ) -> Result<()> {
-    let shape = &model.shape;
+    if model.shape.mistral().is_ok() {
+        return validate_mistral_bundle(model);
+    }
+    let shape = model.shape.gemma()?;
     ensure!(
         shape.num_hidden_layers == 4
             && shape.hidden_size == 128

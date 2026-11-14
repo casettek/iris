@@ -6,7 +6,10 @@ use prefill_range::input::{
 };
 use raster::List;
 
-use crate::model::{DirectFinalHead, DirectInferenceModel, DirectPleLayer, DirectTransformerLayer};
+use crate::model::{
+    DirectFinalHead, DirectInferenceModel, DirectMistralLayer, DirectPleLayer,
+    DirectTransformerLayer,
+};
 
 pub fn run_input_embedding_view(
     model: &DirectInferenceModel,
@@ -154,6 +157,45 @@ pub fn run_prefill_range_view(
         rows: List::from(output_rows),
         errors: List::new(),
         kv: List::from(output_kv),
+        start_position: activations.start_position,
+    })
+}
+
+/// One `mistral-dense` layer over a range. `prior_keys` are the layer's keys
+/// for every earlier position; the result carries those and the range's own.
+pub fn run_mistral_range_view(
+    activations: &ActivationSequence,
+    layer: &DirectMistralLayer<'_>,
+    prior_keys: &[prefill_range::input::KeyRow],
+) -> Result<ActivationSequence> {
+    let computed = inference_kernels::mistral::layer_rows_and_keys(
+        activations,
+        prior_keys,
+        &inference_kernels::mistral::LayerMatrices {
+            w_q: &layer.w_q,
+            w_k: &layer.w_k,
+            w_v: &layer.w_v,
+            w_o: &layer.w_o,
+            w_gate: &layer.w_gate,
+            w_up: &layer.w_up,
+            w_down: &layer.w_down,
+        },
+        &layer.params,
+    )?;
+    let (rows, own_keys) = computed.unwrap_or_default();
+    Ok(ActivationSequence {
+        // The family has no stage programs, so there is no chain step to
+        // record here: the context passes through as it came.
+        model: activations.model.clone(),
+        rows: List::from(rows),
+        errors: List::new(),
+        kv: List::from(
+            prior_keys
+                .iter()
+                .cloned()
+                .chain(own_keys)
+                .collect::<Vec<_>>(),
+        ),
         start_position: activations.start_position,
     })
 }

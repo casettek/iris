@@ -122,11 +122,13 @@ impl Fixture {
                     token: "a".into(),
                     special: false,
                     terminal: false,
+                    bytes: false,
                 },
                 sequence_check::input::DecoderToken {
                     token: "b".into(),
                     special: false,
                     terminal: false,
+                    bytes: false,
                 },
             ]),
         };

@@ -182,7 +182,10 @@ mod tests {
                 .filter(|item| item["Sequence"]["id"] == callee)
                 .count()
         };
-        let rounds = calls("check_pass", "check_eight") * calls("check_eight", "check_round");
+        let eights = calls("check_pass", "check_sixty_four")
+            * calls("check_sixty_four", "check_eight")
+            + calls("check_pass", "check_eight");
+        let rounds = eights * calls("check_eight", "check_round");
         assert_eq!(rounds, 2 * (run_prep::MAX_MERGED_TOKEN_CHARS - 1));
         // Both passes, and the scan that closes each.
         assert_eq!(calls("main", "check_pass"), 2);

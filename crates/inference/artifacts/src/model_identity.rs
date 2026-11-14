@@ -13,10 +13,13 @@ pub fn descriptor_from_commitments(
         layers > 0 && layers <= MAX_LAYERS,
         "unsupported model layer count"
     );
+    // A model whose layers take no per-layer input commits no auxiliary roots.
+    let auxiliary = entries.len() == 4 + 2 * layers;
     ensure!(
-        entries.len() == 4 + 2 * layers,
+        auxiliary || entries.len() == 4 + layers,
         "model commitment role count mismatch"
     );
+    let first_layer = if auxiliary { 4 + layers } else { 4 };
     let root = |index: usize, role: &str| -> Result<[u8; 32]> {
         let entry = &entries[index];
         ensure!(
@@ -42,11 +45,11 @@ pub fn descriptor_from_commitments(
         decoder: root(1, "decoder")?,
         embedding: root(2, "embedding")?,
         head: root(3, "head")?,
-        auxiliary: (0..layers)
+        auxiliary: (0..if auxiliary { layers } else { 0 })
             .map(|i| root(4 + i, &format!("aux_layer_{i}")))
             .collect::<Result<_>>()?,
         transformer: (0..layers)
-            .map(|i| root(4 + layers + i, &format!("transformer_layer_{i}")))
+            .map(|i| root(first_layer + i, &format!("transformer_layer_{i}")))
             .collect::<Result<_>>()?,
     })
 }
@@ -55,7 +58,7 @@ impl ModelManifest {
     pub fn descriptor(&self) -> Result<ModelDescriptor> {
         let descriptor = descriptor_from_commitments(
             &self.model_commitments,
-            self.shape.num_hidden_layers as usize,
+            self.shape.num_hidden_layers() as usize,
         )?;
         let id = descriptor
             .model_id()

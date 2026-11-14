@@ -267,7 +267,10 @@ pub(super) fn run_challenge_leg(leg: &Leg) -> Result<Value> {
         &honest_manifest,
         &leg.dir.join("tokenizer-substitution-inputs"),
     )?;
-    let substituted = [
+    // A family whose layers take no per-layer input has no auxiliary stage to
+    // give another model's table to, and none to bind to the wrong range.
+    let auxiliary = leg.model.family()?.has_auxiliary_stages();
+    let mut substituted = vec![
         (
             "tokenizer-at-bind",
             "prompt_bind_p0",
@@ -292,20 +295,26 @@ pub(super) fn run_challenge_leg(leg: &Leg) -> Result<Value> {
         // The first check is the first stage to read the decoder table: every
         // check states the output record of the transcript so far.
         ("other-decoder", "check_c0", take("check_c{k}", "decoder")?),
-        ("other-ple", "aux_p0_l0", table("[chain.input.aux_layer]")?),
-        (
-            "other-weights",
-            "range_p0_l0",
-            table("[chain.input.transformer_layer]")?,
-        ),
-        // Transformer layers have no such case: their caches differ by attention
-        // type and donor, so a stage given another layer's weights stops, and
-        // the claimer has no output to post.
-        (
+    ];
+    if auxiliary {
+        substituted.push(("other-ple", "aux_p0_l0", table("[chain.input.aux_layer]")?));
+    }
+    substituted.push((
+        "other-weights",
+        "range_p0_l0",
+        table("[chain.input.transformer_layer]")?,
+    ));
+    // Transformer layers have no such case: their caches differ by attention
+    // type and donor, so a stage given another layer's weights stops, and
+    // the claimer has no output to post.
+    if auxiliary {
+        substituted.push((
             "swapped-ple",
             "aux_p0_l0",
             swapped_ple(leg, &honest_manifest)?,
-        ),
+        ));
+    }
+    substituted.extend([
         (
             "repeated-context",
             "prompt_check_p1",
@@ -328,7 +337,7 @@ pub(super) fn run_challenge_leg(leg: &Leg) -> Result<Value> {
             "check_c0",
             wire("check_c{k}", "prompt", r#"{ from = "prompt_check_p0" }"#)?,
         ),
-    ];
+    ]);
     for (name, stage, manifest) in &substituted {
         replays.push(expect_found(
             leg,
@@ -371,7 +380,7 @@ pub(super) fn run_challenge_leg(leg: &Leg) -> Result<Value> {
 
     // Execute the dishonest wiring itself in both engines. Agreement must end
     // in a committed invalid verdict, even when the altered pipeline runs honestly.
-    let rewired = [
+    let mut rewired = vec![
         (
             "restarted-positions",
             wire("embed_p{j}", "previous", &empty("embed_p0", "previous")?)?,
@@ -384,10 +393,14 @@ pub(super) fn run_challenge_leg(leg: &Leg) -> Result<Value> {
                 &empty("range_p0_l{l}", "prior_kv")?,
             )?,
         ),
-        (
+    ];
+    if auxiliary {
+        rewired.push((
             "wrong-auxiliary-range",
             wire("range_c{k}_l{l}", "ple", r#"{ from = "aux_p0_l{l}" }"#)?,
-        ),
+        ));
+    }
+    rewired.extend([
         (
             "stale-cache-range",
             wire(
@@ -404,7 +417,7 @@ pub(super) fn run_challenge_leg(leg: &Leg) -> Result<Value> {
             "claim-embedding-reset",
             wire("embed_c{k}", "previous", r#"{ from = "embed_p0" }"#)?,
         ),
-    ];
+    ]);
     for (name, manifest) in &rewired {
         replays.push(expect_semantic_rejection(
             leg,
@@ -646,7 +659,9 @@ fn dispute_tie(
         commitment.header(),
         &file_sha256(&replay.join("output.bin"))?,
     )
-    .with_context(|| format!("`{name}`: no Raster challenge can be built from the claimed checkpoint"))?;
+    .with_context(|| {
+        format!("`{name}`: no Raster challenge can be built from the claimed checkpoint")
+    })?;
     let admitted = raster_prover::challenge::verify_challenge(&challenge)
         .map_err(|refusal| anyhow::anyhow!("`{name}`: Raster refuses the challenge: {refusal}"))?;
     ensure!(
@@ -706,7 +721,7 @@ fn not_greedy_ids(leg: &Leg) -> Result<Vec<u32>> {
     let first = ids
         .first_mut()
         .context("the pinned case claims no tokens")?;
-    *first = (*first + 1) % leg.model.shape.vocab_size as u32;
+    *first = (*first + 1) % leg.model.shape.vocab_size() as u32;
     Ok(ids)
 }
 
@@ -774,7 +789,10 @@ fn claimed_run(leg: &Leg, name: &str, manifest: &str) -> Result<(PathBuf, Checkp
 /// Imports the pinned bundle with its weights and tokenizer changed, so every
 /// model input commits to something else.
 fn import_other_model(leg: &Leg) -> Result<(PathBuf, ModelManifest)> {
-    let source = leg.root.join("model-bundles/parity-gemma");
+    let source = leg
+        .root
+        .join("model-bundles")
+        .join(leg.model.family()?.parity_bundle());
     let bundle = leg.dir.join("other-bundle");
     fs::create_dir_all(&bundle)?;
     fs::copy(source.join("config.json"), bundle.join("config.json"))?;
@@ -929,7 +947,7 @@ fn swapped_ple(leg: &Leg, manifest: &str) -> Result<String> {
     let source = model_dir.join("raster/prefill-prepare-aux");
     let target = leg.dir.join("swapped-ple/weights");
     fs::create_dir_all(&target)?;
-    for layer in 0..leg.model.shape.num_hidden_layers {
+    for layer in 0..leg.model.shape.num_hidden_layers() {
         let read_as = match layer {
             0 => 1,
             1 => 0,

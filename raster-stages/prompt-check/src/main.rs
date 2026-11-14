@@ -233,9 +233,61 @@ fn check_eight(
     call_seq!(check_round, pieces7, buckets, count, header, paths, pass)
 }
 
-/// One pass: 64 rounds. The count MUST match `check::ROUNDS_PER_PASS`.
+/// One pass: 152 rounds. The count MUST match `check::ROUNDS_PER_PASS`.
 #[sequence]
 fn check_pass(
+    pieces: List<CheckPiece>,
+    buckets: List<MergeBucket>,
+    count: u32,
+    header: SparseHeader,
+    paths: List<SparsePath>,
+    pass: u32,
+) -> CheckList {
+    let step1 = call_seq!(
+        check_sixty_four,
+        pieces,
+        buckets.clone(),
+        count.clone(),
+        header.clone(),
+        paths.clone(),
+        pass.clone()
+    );
+    let pieces1 = select!(List<CheckPiece>, step1.pieces);
+    let step2 = call_seq!(
+        check_sixty_four,
+        pieces1,
+        buckets.clone(),
+        count.clone(),
+        header.clone(),
+        paths.clone(),
+        pass.clone()
+    );
+    let pieces2 = select!(List<CheckPiece>, step2.pieces);
+    let step3 = call_seq!(
+        check_eight,
+        pieces2,
+        buckets.clone(),
+        count.clone(),
+        header.clone(),
+        paths.clone(),
+        pass.clone()
+    );
+    let pieces3 = select!(List<CheckPiece>, step3.pieces);
+    let step4 = call_seq!(
+        check_eight,
+        pieces3,
+        buckets.clone(),
+        count.clone(),
+        header.clone(),
+        paths.clone(),
+        pass.clone()
+    );
+    let pieces4 = select!(List<CheckPiece>, step4.pieces);
+    call_seq!(check_eight, pieces4, buckets, count, header, paths, pass)
+}
+
+#[sequence]
+fn check_sixty_four(
     pieces: List<CheckPiece>,
     buckets: List<MergeBucket>,
     count: u32,

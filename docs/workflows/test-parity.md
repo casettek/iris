@@ -12,6 +12,11 @@ Add `--skip-challenges` to leave out the [challenge leg](#challenge-leg), whose
 authenticated replays take about an hour. The report records that it was skipped,
 so such a run is not the full gate.
 
+The gate runs one family's small model. `--bundle parity-mistral` runs it on the
+`mistral-dense` bundle in place of `parity-gemma`: that family's layer program, and what
+the shared programs do for a byte-level tokenizer. A model with no per-layer inputs has no
+auxiliary stages, so the cases built on them are left out. `just test-full` runs both.
+
 The command runs the pinned synthetic Gemma model through the complete Raster
 chain (`--no-auth`), the checkpointed native-staged chain, and native-direct
 generation. Each execution owns its intermediate outputs and runtime state.
@@ -178,12 +183,13 @@ bytes, indexes, and commitments alongside the ordinary inference report.
 
 ## Model Bundle Maintenance
 
-`model-bundles/parity-gemma` contains the committed weights, config, tokenizer, corpus,
-checksums, and standard-library-only generator. To verify provenance without
-changing any bundle files:
+`model-bundles/parity-gemma` and `model-bundles/parity-mistral` each contain the committed
+weights, config, tokenizer, corpus, checksums, and standard-library-only generator. To
+verify provenance without changing any bundle files:
 
 ```sh
 python3 model-bundles/parity-gemma/generate.py --check
+python3 model-bundles/parity-mistral/generate.py --check
 ```
 
 To deliberately update the bundle, edit the generator and run it without

@@ -27,3 +27,5 @@ sha2 = "0.10"
 prompt-check = { path = "../../../raster-stages/prompt-check" }
 
 run-prep = { path = "../run-prep" }
+# The `mistral-dense` layer external is the stage's own type.
+layer-mistral = { path = "../../../raster-stages/layer-mistral" }

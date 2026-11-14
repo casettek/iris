@@ -31,7 +31,7 @@ samples() {
     prompt-check) echo "prompt_check_p1 prompt_check_p0 prompt_check_p5" ;;
     input-embedding) echo "embed_p1 embed_p0 embed_c0" ;;
     prefill-prepare-aux) echo "aux_p1_l3 aux_p0_l0 aux_c1_l2" ;;
-    prefill-range) echo "range_p1_l3 range_p0_l0 range_p3_l2 range_c1_l3" ;;
+    prefill-range | layer-mistral) echo "range_p1_l3 range_p0_l0 range_p3_l2 range_c1_l3" ;;
     sequence-check) echo "check_c0 check_c1" ;;
     esac
 }
@@ -40,7 +40,7 @@ window="${IRIS_LADDER_WINDOW:-32}"
 
 # In a subshell: it changes directory.
 ladder() (
-    local program=$1 out="$repo_root/target/stage-ladder/$1" stage first dir produced
+    local program=$1 out="$repo_root/target/stage-ladder$tag/$1" stage first dir produced
     cd "$repo_root/raster-stages/$program" || return 1
     cargo check || return 1
     cargo check -p "$program" --no-default-features || return 1
@@ -85,11 +85,19 @@ ladder() (
     echo "$first: trace commits and audits"
 )
 
+# The run's report names its bundle, and the bundle's family has its own layer
+# program and may have no stage for per-layer inputs.
+tag=""
+family_programs=(prompt-bind prompt-check input-embedding prefill-prepare-aux prefill-range sequence-check)
+if grep -q '"bundle": *"parity-mistral"' "$run/report.json" 2>/dev/null; then
+    tag="-mistral"
+    family_programs=(prompt-bind prompt-check input-embedding layer-mistral sequence-check)
+fi
 programs=("$@")
-[ ${#programs[@]} -eq 0 ] && programs=(prompt-bind prompt-check input-embedding prefill-prepare-aux prefill-range sequence-check)
+[ ${#programs[@]} -eq 0 ] && programs=("${family_programs[@]}")
 echo "== stage ladder on $run"
 for program in "${programs[@]}"; do
-    step "ladder-$program" "$program: runs, commits and audits as Raster" ladder "$program"
+    step "ladder$tag-$program" "$program: runs, commits and audits as Raster" ladder "$program"
 done
 
 exit $failed

@@ -1,0 +1,222 @@
+{
+  "version": 16,
+  "family": "mistral-dense",
+  "model_id": "928fc9c6019f94397eb0bcdd9e9702240e616cc6698ea22377ecbfc78717e89a",
+  "model_commitments": [
+    {
+      "role": "tokenizer",
+      "commitment": "1ea9962d0a5fd735c61480d4e78bc7f700e112b112a69fb11a62dcc57a6efcbb"
+    },
+    {
+      "role": "decoder",
+      "commitment": "e25cf7afbdc35d50f63fbebdb69c6fb10bd1d434cf68601d840da4415b161256"
+    },
+    {
+      "role": "embedding",
+      "commitment": "3a169fdd39e3555c089031c131f9d6ab39606983656414abf246d1d3df1f2dea"
+    },
+    {
+      "role": "head",
+      "commitment": "1fbdb73f26fef0721d6babd58e795dfd17ed5bf1dd1edcbeeee641f8460ba042"
+    },
+    {
+      "role": "transformer_layer_0",
+      "commitment": "312a876d779445068d72674afac3c214e45ad80d45b06ee50a4cade38a425cfc"
+    },
+    {
+      "role": "transformer_layer_1",
+      "commitment": "bf9a9f4b2003e1ceff16aefb089cbd508fbcda5021035e80634520d73fe8f0ab"
+    },
+    {
+      "role": "transformer_layer_2",
+      "commitment": "85fc8c009c42e93dec0e25f5c7d211d6c960218e088fc61a317c0fd58f7c3268"
+    },
+    {
+      "role": "transformer_layer_3",
+      "commitment": "27b4f23a33297cec8bf80df02aa51bf05e311ff656e35e86790bc678b977c211"
+    },
+    {
+      "role": "transformer_layer_4",
+      "commitment": "f199190945c355426fbb709c5dc63850985fd150c2414dc2ff25924171b32399"
+    },
+    {
+      "role": "transformer_layer_5",
+      "commitment": "8bc6c539ce39cff4559ca05c402a1d2a3e6788f4a8c79cc6565c3559b7c8f459"
+    },
+    {
+      "role": "transformer_layer_6",
+      "commitment": "3ac9fd9e8bbc3a5984b12399230662c31be8538f38d9ba45b00ec7a7c8fbb79d"
+    },
+    {
+      "role": "transformer_layer_7",
+      "commitment": "472095036c69691851fa77593c2e73053fff4448444dffbddbf0dd62cd3d4ba1"
+    },
+    {
+      "role": "transformer_layer_8",
+      "commitment": "4a67f29cb130008e02f7fe591c6a8e3639bc8ab6441f81820967d0ca2b9a84f0"
+    },
+    {
+      "role": "transformer_layer_9",
+      "commitment": "d15b4d2cefa4ad08d89455bb5e58249eb260d05b58da16e61611b518d3564133"
+    },
+    {
+      "role": "transformer_layer_10",
+      "commitment": "46014770558145cea00caa8c637808b3409efd75f67ed42040534dc082e6a72a"
+    },
+    {
+      "role": "transformer_layer_11",
+      "commitment": "ab2364d2ff2e8ae57b5c0ee0768ca2592291b82af279614a5fd76a4e0950651a"
+    },
+    {
+      "role": "transformer_layer_12",
+      "commitment": "126f0255a118dd9438d9c2c0dfa8f34399ecd0c795dd3f9cc315f84dd069e443"
+    },
+    {
+      "role": "transformer_layer_13",
+      "commitment": "5ffef967b43dc7e476f62b736d05bde88a06de7b8668408874f69891123e18e5"
+    },
+    {
+      "role": "transformer_layer_14",
+      "commitment": "cda29d9308de59879f1eda5ad8cd562bf53e711fd328148300f9d9ff011ef5de"
+    },
+    {
+      "role": "transformer_layer_15",
+      "commitment": "47c0da8e1d233cd104c02476ee3d173ef0b16daac39c6b189d1d07a34ed11758"
+    },
+    {
+      "role": "transformer_layer_16",
+      "commitment": "54ce7333a9aa3afaa1127b6bda5cba98b7c27cb36dbeec3d3d302c5128e5e941"
+    },
+    {
+      "role": "transformer_layer_17",
+      "commitment": "a19ca484e385fb1b7629b0d80942ed92cb9a5fecdad446c09d266e1b061937ef"
+    },
+    {
+      "role": "transformer_layer_18",
+      "commitment": "9f2d3e89ed58ca6d0c32b45f4b175fb2b982cd9430790f422485b6b66d1fbe4a"
+    },
+    {
+      "role": "transformer_layer_19",
+      "commitment": "0b3b721ac0e8638d5707d236b85de0828ac6c4b9e44e709473ab9c67c4661acb"
+    },
+    {
+      "role": "transformer_layer_20",
+      "commitment": "993ed1bf676883255d9f55526c7002843126f6b8fb37e94945ebcfe0c4d14cbb"
+    },
+    {
+      "role": "transformer_layer_21",
+      "commitment": "72012aba1981f7c2f92626922f73d4ecffadd2484bb588be2a1469ac1fd4ecdf"
+    },
+    {
+      "role": "transformer_layer_22",
+      "commitment": "0eeae8ba2aec59b19b0475ba48a8173ffd1d9ca59473df01bc310ab879835199"
+    },
+    {
+      "role": "transformer_layer_23",
+      "commitment": "69d33f3f14825739b22141e8ee478994544a39666f854a29847473b7cc8f87ee"
+    },
+    {
+      "role": "transformer_layer_24",
+      "commitment": "c404a7e55ed6de0dc08bdc7ae13f0ba8326ad4b4e5b512394bda88842755327a"
+    },
+    {
+      "role": "transformer_layer_25",
+      "commitment": "c7a8926617b8f6f8b2e7be4f428b5ffe79edf0bd4b1f2c27357edaca49c66f88"
+    }
+  ],
+  "range_size": 512,
+  "bundle": {
+    "model_detwgt_path": "/home/amcas/Development/models/ministral-3b-q8/model.detwgt",
+    "model_detwgt_sha256": "3b0b148786d95280888725d90a03447dabdf34d2f6e60f3725c2952a975b2f10",
+    "config_path": "/home/amcas/Development/models/ministral-3b-q8/config.json",
+    "config_sha256": "a9c3658d7bb45ab5be77e660d483a9d3f8a3d54bda2c69a1c576bdfefbc16be6",
+    "tokenizer_path": "/home/amcas/Development/models/ministral-3b-q8/tokenizer.json",
+    "tokenizer_sha256": "99cf274236c60277fcfad861a5a1007518687ad06ba8938760f50b55ffa0b1ef"
+  },
+  "shape": {
+    "hidden_size": 3072,
+    "num_hidden_layers": 26,
+    "num_attention_heads": 32,
+    "num_key_value_heads": 8,
+    "head_dim": 128,
+    "intermediate_size": 9216,
+    "vocab_size": 131072,
+    "norm_eps": 42950,
+    "attention_scale_q32": 379625062,
+    "rope_inverse_frequencies": [
+      4294967296,
+      3461065843,
+      2789072872,
+      2247552586,
+      1811172693,
+      1459519366,
+      1176142279,
+      947785067,
+      763765192,
+      615474213,
+      495975086,
+      399677648,
+      322077110,
+      259543323,
+      209150959,
+      168542666,
+      135818791,
+      109448512,
+      88198228,
+      71073853,
+      57274309,
+      43608794,
+      33090728,
+      25013059,
+      18824646,
+      14096367,
+      10494515,
+      7759924,
+      5691603,
+      4133915,
+      2966544,
+      2096644,
+      1452709,
+      979787,
+      635745,
+      388364,
+      213079,
+      91220,
+      73509,
+      59237,
+      47735,
+      38467,
+      30999,
+      24980,
+      20130,
+      16221,
+      13072,
+      10534,
+      8489,
+      6841,
+      5512,
+      4442,
+      3580,
+      2885,
+      2325,
+      1873,
+      1510,
+      1217,
+      980,
+      790,
+      637,
+      513,
+      413,
+      333
+    ],
+    "max_positions": 16384,
+    "tied_head": true
+  },
+  "eos_token_ids": [
+    2
+  ],
+  "provenance": {
+    "raster_manifest_path": "Raster.toml",
+    "raster_manifest_sha256": "7eb7cf0ba9982d7cefb0c2015a98d66f3e90d35dd12d598a37e6a6f77bc23b7c"
+  }
+}

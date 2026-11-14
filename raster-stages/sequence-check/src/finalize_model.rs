@@ -139,6 +139,7 @@ pub fn advance_authenticated_finalize(
             token: String::new(),
             special: true,
             terminal: false,
+            bytes: false,
         }
     };
     crate::finalize::advance_finalize_state(state, token_id, safe_token)

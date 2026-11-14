@@ -546,6 +546,7 @@ fn head_fixture(pages: usize) -> (Fixture, FinalHead, ActivationSequence) {
                     token: format!("t{id}"),
                     special: false,
                     terminal: false,
+                    bytes: false,
                 })
                 .collect::<Vec<_>>(),
         ),

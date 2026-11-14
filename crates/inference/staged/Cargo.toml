@@ -22,6 +22,7 @@ hex = "0.4"
 input-embedding = { path = "../../../raster-stages/input-embedding" }
 inference-artifacts = { path = "../artifacts" }
 prefill-range = { path = "../../../raster-stages/prefill-range" }
+layer-mistral = { path = "../../../raster-stages/layer-mistral" }
 prefill-prepare-aux = { path = "../../../raster-stages/prefill-prepare-aux" }
 prompt-check = { path = "../../../raster-stages/prompt-check" }
 sequence-check = { path = "../../../raster-stages/sequence-check" }

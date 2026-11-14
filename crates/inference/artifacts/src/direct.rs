@@ -9,7 +9,7 @@ use sha2::{Digest, Sha256};
 pub const MODEL_ARTIFACTS_DIR: &str = "runtime/model-artifacts";
 pub const MODEL_MANIFEST_JSON: &str = "manifest.json";
 
-pub const MODEL_MANIFEST_VERSION: u32 = 15;
+pub const MODEL_MANIFEST_VERSION: u32 = 16;
 
 /// Which layer mathematics, tokenizer rules and stage programs a model uses.
 ///
@@ -23,16 +23,44 @@ pub enum ModelFamily {
     /// RoPE bases, K/V sharing, a gated-GELU feed-forward block, per-layer
     /// embedding inputs and a soft-capped head.
     GemmaDense,
+    /// Mistral's Ministral 3 dense models: full attention in every layer with
+    /// one RoPE table rotating consecutive pairs, a pre-norm layer with a
+    /// gated-SiLU feed-forward block, no per-layer inputs and a plain head.
+    MistralDense,
 }
 
 impl ModelFamily {
     /// Every family this build can import and run.
-    pub const ALL: [Self; 1] = [Self::GemmaDense];
+    pub const ALL: [Self; 2] = [Self::GemmaDense, Self::MistralDense];
 
     /// The name a manifest records.
     pub const fn name(self) -> &'static str {
         match self {
             Self::GemmaDense => "gemma-dense",
+            Self::MistralDense => "mistral-dense",
+        }
+    }
+
+    /// Whether each layer has a stage before it that prepares a per-layer
+    /// input, and with it a step direct inference records.
+    pub const fn has_auxiliary_stages(self) -> bool {
+        matches!(self, Self::GemmaDense)
+    }
+
+    /// The stage program that runs one layer over one range.
+    pub const fn layer_program(self) -> &'static str {
+        match self {
+            Self::GemmaDense => "prefill-range",
+            Self::MistralDense => "layer-mistral",
+        }
+    }
+
+    /// The bundle under `model-bundles` that the parity gate runs this
+    /// family's programs on.
+    pub const fn parity_bundle(self) -> &'static str {
+        match self {
+            Self::GemmaDense => "parity-gemma",
+            Self::MistralDense => "parity-mistral",
         }
     }
 
@@ -89,7 +117,7 @@ pub struct ModelManifest {
     /// Largest range the chain cuts a prompt or an output into, in tokens.
     pub range_size: u32,
     pub bundle: DirectInferBundle,
-    pub shape: DirectInferShape,
+    pub shape: FamilyShape,
     pub eos_token_ids: Vec<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub provenance: Option<DirectInferProvenance>,
@@ -112,7 +140,14 @@ impl ModelManifest {
                 manifest.version
             );
         }
-        manifest.family()?;
+        let family = manifest.family()?;
+        if manifest.shape.family() != family {
+            bail!(
+                "model manifest says family `{}` but its shape is `{}`'s",
+                family.name(),
+                manifest.shape.family().name()
+            );
+        }
         if manifest.model_id != model_id_of(&manifest.model_commitments) {
             bail!("model id does not match the manifest's model commitments");
         }
@@ -224,6 +259,104 @@ pub struct DirectInferShape {
     pub ple_projection_scalar: i32,
     pub ple_input_scale: i32,
     pub final_logit_softcap: i32,
+}
+
+/// `mistral-dense`'s shape.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct MistralShape {
+    pub hidden_size: u32,
+    pub num_hidden_layers: u32,
+    pub num_attention_heads: u32,
+    pub num_key_value_heads: u32,
+    pub head_dim: u32,
+    pub intermediate_size: u32,
+    pub vocab_size: u32,
+    pub norm_eps: i64,
+    /// `2^32 / sqrt(head_dim)`, rounded down: what an attention score is
+    /// multiplied by.
+    pub attention_scale_q32: u32,
+    /// One Q32.32 angle per position for each consecutive pair of a head's
+    /// values. The model's YaRN scaling is already in these.
+    pub rope_inverse_frequencies: Vec<i64>,
+    /// Positions a run may use. From here on the model scales its queries by
+    /// position, which is not built.
+    pub max_positions: u32,
+    /// The head multiplies by the token embedding table.
+    pub tied_head: bool,
+}
+
+/// A model's shape: the numbers its family's code reads. Each family has its
+/// own, and a manifest holds the one its `family` names.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(untagged)]
+pub enum FamilyShape {
+    GemmaDense(DirectInferShape),
+    MistralDense(MistralShape),
+}
+
+impl FamilyShape {
+    pub fn family(&self) -> ModelFamily {
+        match self {
+            Self::GemmaDense(_) => ModelFamily::GemmaDense,
+            Self::MistralDense(_) => ModelFamily::MistralDense,
+        }
+    }
+
+    pub fn hidden_size(&self) -> u32 {
+        match self {
+            Self::GemmaDense(shape) => shape.hidden_size,
+            Self::MistralDense(shape) => shape.hidden_size,
+        }
+    }
+
+    pub fn num_hidden_layers(&self) -> u32 {
+        match self {
+            Self::GemmaDense(shape) => shape.num_hidden_layers,
+            Self::MistralDense(shape) => shape.num_hidden_layers,
+        }
+    }
+
+    pub fn vocab_size(&self) -> u32 {
+        match self {
+            Self::GemmaDense(shape) => shape.vocab_size,
+            Self::MistralDense(shape) => shape.vocab_size,
+        }
+    }
+
+    /// `gemma-dense`'s shape, or why this model has none.
+    pub fn gemma(&self) -> Result<&DirectInferShape> {
+        match self {
+            Self::GemmaDense(shape) => Ok(shape),
+            other => bail!(
+                "this needs a gemma-dense model, and the model is {}",
+                other.family().name()
+            ),
+        }
+    }
+
+    /// `mistral-dense`'s shape, or why this model has none.
+    pub fn mistral(&self) -> Result<&MistralShape> {
+        match self {
+            Self::MistralDense(shape) => Ok(shape),
+            other => bail!(
+                "this needs a mistral-dense model, and the model is {}",
+                other.family().name()
+            ),
+        }
+    }
+}
+
+impl From<DirectInferShape> for FamilyShape {
+    fn from(shape: DirectInferShape) -> Self {
+        Self::GemmaDense(shape)
+    }
+}
+
+impl From<MistralShape> for FamilyShape {
+    fn from(shape: MistralShape) -> Self {
+        Self::MistralDense(shape)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

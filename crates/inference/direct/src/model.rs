@@ -1,7 +1,9 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
-use inference_artifacts::{DirectInferShape, InferenceRunSpec, ModelManifest, PreparedPrompt};
+use inference_artifacts::{
+    DirectInferShape, InferenceRunSpec, MistralShape, ModelFamily, ModelManifest, PreparedPrompt,
+};
 use prompt_check::input::BpePieces;
 use raster::{Bytes, List};
 
@@ -19,6 +21,7 @@ pub struct DirectInferenceModel {
     detwgt: MmapDetwgt,
     ple_params: Vec<prefill_prepare_aux::input::PleLayerParams>,
     layer_params: Vec<prefill_range::input::LayerParams>,
+    mistral_layers: Vec<inference_kernels::mistral::LayerParams>,
     final_head_params: sequence_check::input::FinalHeadParams,
 }
 
@@ -144,6 +147,17 @@ pub struct DirectTransformerLayer<'a> {
     pub ple_layer_projection: DirectMatrixView<'a>,
 }
 
+pub struct DirectMistralLayer<'a> {
+    pub params: inference_kernels::mistral::LayerParams,
+    pub w_q: DirectQ8View<'a>,
+    pub w_k: DirectQ8View<'a>,
+    pub w_v: DirectQ8View<'a>,
+    pub w_o: DirectQ8View<'a>,
+    pub w_gate: DirectQ8View<'a>,
+    pub w_up: DirectQ8View<'a>,
+    pub w_down: DirectQ8View<'a>,
+}
+
 pub struct DirectFinalHead<'a> {
     pub params: sequence_check::input::FinalHeadParams,
     pub projection: DirectQ8View<'a>,
@@ -158,11 +172,7 @@ impl DirectInferenceModel {
             );
         }
         let manifest = ModelManifest::load_verified(manifest_path)?;
-        // What follows (the config's keys, the tensor names, the per-layer
-        // inputs and the head) is one family's. Another loads its own way.
-        match manifest.family()? {
-            inference_artifacts::ModelFamily::GemmaDense => {}
-        }
+        let family = manifest.family()?;
 
         let manifest_dir = manifest_path
             .parent()
@@ -178,9 +188,36 @@ impl DirectInferenceModel {
             .cloned()
             .ok_or_else(|| anyhow::anyhow!("config.json has no text_config"))?;
         let detwgt = MmapDetwgt::open(&detwgt_path)?;
-        let ple_params = build_ple_params(&manifest.shape, &detwgt)?;
-        let layer_params = build_layer_params(&manifest.shape, &detwgt)?;
-        let final_head_params = build_final_head_params(&manifest.shape, &detwgt)?;
+        // The tensor names, the per-layer inputs and the head are a family's
+        // own, so each family reads its layers its own way.
+        let (ple_params, layer_params, mistral_layers, final_head_params) = match family {
+            ModelFamily::GemmaDense => {
+                let shape = manifest.shape.gemma()?;
+                (
+                    build_ple_params(shape, &detwgt)?,
+                    build_layer_params(shape, &detwgt)?,
+                    Vec::new(),
+                    build_final_head_params(shape, &detwgt)?,
+                )
+            }
+            ModelFamily::MistralDense => {
+                let shape = manifest.shape.mistral()?;
+                (
+                    Vec::new(),
+                    Vec::new(),
+                    build_mistral_layers(shape, &detwgt)?,
+                    sequence_check::input::FinalHeadParams {
+                        hidden_size: shape.hidden_size,
+                        norm_eps: shape.norm_eps,
+                        // The head's logits are not capped.
+                        softcap: 0,
+                        norm_weights: pack_i32_page(
+                            &detwgt.values("model.language_model.norm.weight")?,
+                        ),
+                    },
+                )
+            }
+        };
 
         Ok(Self {
             manifest,
@@ -190,6 +227,7 @@ impl DirectInferenceModel {
             detwgt,
             ple_params,
             layer_params,
+            mistral_layers,
             final_head_params,
         })
     }
@@ -270,17 +308,21 @@ impl DirectInferenceModel {
     pub fn embedding_view(&self) -> Result<DirectQ8View<'_>> {
         self.q8_view(
             "model.language_model.embed_tokens.weight",
-            self.shape().vocab_size as usize,
-            self.shape().hidden_size as usize,
+            self.manifest.shape.vocab_size() as usize,
+            self.manifest.shape.hidden_size() as usize,
         )
     }
 
     pub fn scaled_embedding_row(&self, token_id: u32) -> Result<Vec<i32>> {
-        let width = self.shape().hidden_size as usize;
+        let width = self.manifest.shape.hidden_size() as usize;
         let row = self
             .embedding_view()?
             .row_columns(token_id as usize, 0, width)?;
-        let scale = det_num::Act::from_bits(self.shape().embedding_scale);
+        // Only Gemma scales its embeddings.
+        let Ok(shape) = self.manifest.shape.gemma() else {
+            return Ok(row);
+        };
+        let scale = det_num::Act::from_bits(shape.embedding_scale);
         Ok(row
             .into_iter()
             .map(|bits| det_num::ops::mul_sat(det_num::Act::from_bits(bits), scale).to_bits())
@@ -509,8 +551,31 @@ impl DirectInferenceModel {
         })
     }
 
+    pub fn direct_mistral_layer(&self, layer_idx: usize) -> Result<DirectMistralLayer<'_>> {
+        let at = |suffix: &str| format!("model.language_model.layers.{layer_idx}.{suffix}");
+        let params = self
+            .mistral_layers
+            .get(layer_idx)
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("the model has no layer {layer_idx}"))?;
+        let hidden = params.hidden_size as usize;
+        let ffn = params.ffn_size as usize;
+        let q_len = params.num_heads as usize * params.head_dim as usize;
+        let kv_len = params.num_kv_heads as usize * params.head_dim as usize;
+        Ok(DirectMistralLayer {
+            w_q: self.q8_view(&at("self_attn.q_proj.weight"), q_len, hidden)?,
+            w_k: self.q8_view(&at("self_attn.k_proj.weight"), kv_len, hidden)?,
+            w_v: self.q8_view(&at("self_attn.v_proj.weight"), kv_len, hidden)?,
+            w_o: self.q8_view(&at("self_attn.o_proj.weight"), hidden, q_len)?,
+            w_gate: self.q8_view(&at("mlp.gate_proj.weight"), ffn, hidden)?,
+            w_up: self.q8_view(&at("mlp.up_proj.weight"), ffn, hidden)?,
+            w_down: self.q8_view(&at("mlp.down_proj.weight"), hidden, ffn)?,
+            params,
+        })
+    }
+
     pub fn direct_final_head(&self) -> Result<DirectFinalHead<'_>> {
-        let shape = self.shape();
+        let shape = &self.manifest.shape;
         let tied = self
             .config_text
             .get("tie_word_embeddings")
@@ -525,8 +590,8 @@ impl DirectInferenceModel {
             params: self.final_head_params.clone(),
             projection: self.q8_view(
                 tensor,
-                shape.vocab_size as usize,
-                shape.hidden_size as usize,
+                shape.vocab_size() as usize,
+                shape.hidden_size() as usize,
             )?,
         })
     }
@@ -539,8 +604,20 @@ impl DirectInferenceModel {
         &self.manifest
     }
 
+    pub fn family(&self) -> ModelFamily {
+        self.manifest.shape.family()
+    }
+
+    pub fn num_layers(&self) -> u32 {
+        self.manifest.shape.num_hidden_layers()
+    }
+
+    /// `gemma-dense`'s shape. Only that family's loading and layers ask for it.
     pub fn shape(&self) -> &DirectInferShape {
-        &self.manifest.shape
+        self.manifest
+            .shape
+            .gemma()
+            .expect("only a gemma-dense model's code reads its shape")
     }
 
     fn is_sliding(&self, idx: usize) -> bool {
@@ -679,6 +756,33 @@ fn build_layer_params(
                     &detwgt.values(&at("post_per_layer_input_norm.weight"))?,
                 ),
             })
+        })
+        .collect()
+}
+
+fn build_mistral_layers(
+    shape: &MistralShape,
+    detwgt: &MmapDetwgt,
+) -> Result<Vec<inference_kernels::mistral::LayerParams>> {
+    (0..shape.num_hidden_layers)
+        .map(|layer_idx| {
+            let at = |suffix: &str| format!("model.language_model.layers.{layer_idx}.{suffix}");
+            let params = inference_kernels::mistral::LayerParams {
+                layer_idx,
+                hidden_size: shape.hidden_size,
+                ffn_size: shape.intermediate_size,
+                num_heads: shape.num_attention_heads,
+                num_kv_heads: shape.num_key_value_heads,
+                head_dim: shape.head_dim,
+                norm_eps: shape.norm_eps,
+                attention_scale_q32: shape.attention_scale_q32,
+                rope_inverse_frequencies: shape.rope_inverse_frequencies.clone(),
+                max_positions: shape.max_positions,
+                norm_attention: detwgt.values(&at("input_layernorm.weight"))?,
+                norm_feed_forward: detwgt.values(&at("pre_feedforward_layernorm.weight"))?,
+            };
+            inference_kernels::mistral::layer::validate_layer_params(&params)?;
+            Ok(params)
         })
         .collect()
 }

@@ -28,8 +28,8 @@ pub use claim::{
 };
 pub use direct::{
     file_sha256, model_id_of, verify_file_sha256, DirectInferBundle, DirectInferProvenance,
-    DirectInferShape, ModelCommitment, ModelFamily, ModelManifest, MODEL_ARTIFACTS_DIR,
-    MODEL_MANIFEST_JSON, MODEL_MANIFEST_VERSION,
+    DirectInferShape, FamilyShape, MistralShape, ModelCommitment, ModelFamily, ModelManifest,
+    MODEL_ARTIFACTS_DIR, MODEL_MANIFEST_JSON, MODEL_MANIFEST_VERSION,
 };
 pub use inference::{
     InferAuxWaveTiming, InferStageTiming, InferenceResult, InferenceRunReport, InferenceTimings,
@@ -377,7 +377,8 @@ mod tests {
                 ple_projection_scalar: 1 << 16,
                 ple_input_scale: 1 << 16,
                 final_logit_softcap: 0,
-            },
+            }
+            .into(),
             eos_token_ids: vec![1, 2],
             provenance: Some(DirectInferProvenance {
                 raster_manifest_path: PathBuf::from("../Raster.toml"),
