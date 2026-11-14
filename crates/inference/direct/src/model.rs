@@ -117,7 +117,7 @@ impl MatrixSource for DirectQ8View<'_> {
     fn q8_source(&self) -> Option<Q8Source<'_>> {
         let (mapping, offset) = self.inner.place()?;
         Some(Q8Source {
-            bytes: self.inner.bytes(),
+            parts: vec![self.inner.bytes()],
             key: Q8Key::mapped(mapping, offset)?,
         })
     }

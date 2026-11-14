@@ -11,12 +11,43 @@ use prefill_range::input::ActivationSequence;
 use raster::{Bytes, BytesPage, List};
 
 use super::layer::{layer_rows_and_keys, LayerMatrices, LayerParams};
-use crate::tensor::MatrixSource;
+use crate::tensor::{MatrixSource, Q8Key, Q8Source};
 
 pub struct LayerStageInputs<'a> {
     pub activations: &'a ActivationSequence,
     pub layer: &'a TransformerLayer,
+    /// The names of `layer`'s matrices, made with the copy of it that was loaded.
+    pub keys: &'a LayerKeys,
     pub prior_kv: &'a ActivationSequence,
+}
+
+/// Names for the matrices of one loaded copy of a layer (see [`Q8Key`]). A GPU
+/// keeps a matrix under its name, so a copy that serves several ranges keeps
+/// one set of names and its weights are sent to the device once.
+#[derive(Debug, Clone, Copy)]
+pub struct LayerKeys {
+    w_q: Q8Key,
+    w_k: Q8Key,
+    w_v: Q8Key,
+    w_o: Q8Key,
+    w_gate: Q8Key,
+    w_up: Q8Key,
+    w_down: Q8Key,
+}
+
+impl LayerKeys {
+    /// Names no other matrices in this process have.
+    pub fn unique() -> Self {
+        Self {
+            w_q: Q8Key::unique(),
+            w_k: Q8Key::unique(),
+            w_v: Q8Key::unique(),
+            w_o: Q8Key::unique(),
+            w_gate: Q8Key::unique(),
+            w_up: Q8Key::unique(),
+            w_down: Q8Key::unique(),
+        }
+    }
 }
 
 /// The stage's committed parameters as the native layer takes them.
@@ -43,12 +74,14 @@ pub fn native_params(params: &StageParams) -> Result<LayerParams> {
 }
 
 /// A committed `Q8_0` matrix read where it lies: its pages hold whole rows.
+/// A product on the GPU takes its weights from the same pages.
 pub struct PagedQ8<'a> {
     pages: &'a [BytesPage],
     rows: usize,
     cols: usize,
     row_bytes: usize,
     rows_per_page: usize,
+    key: Q8Key,
 }
 
 impl<'a> PagedQ8<'a> {
@@ -57,6 +90,7 @@ impl<'a> PagedQ8<'a> {
         region: &'a Bytes<P>,
         rows: usize,
         cols: usize,
+        key: Q8Key,
     ) -> Result<Self> {
         let Some(row_bytes) = det_num::q8::row_bytes(cols) else {
             bail!("{name} rows of {cols} values are not whole Q8_0 blocks");
@@ -88,6 +122,7 @@ impl<'a> PagedQ8<'a> {
             cols,
             row_bytes,
             rows_per_page,
+            key,
         })
     }
 
@@ -108,6 +143,13 @@ impl MatrixSource for PagedQ8<'_> {
 
     fn row_values_into(&self, _row_idx: usize, _out: &mut Vec<i32>) -> Result<()> {
         bail!("Q8_0 rows have no Q16.16 values; products use row_dot")
+    }
+
+    fn q8_source(&self) -> Option<Q8Source<'_>> {
+        Some(Q8Source {
+            parts: self.pages.iter().map(|page| page.as_slice()).collect(),
+            key: self.key,
+        })
     }
 
     fn row_dot(&self, row_idx: usize, input: &[i32]) -> Result<i32> {
@@ -150,14 +192,14 @@ pub fn run_layer_stage(inputs: LayerStageInputs<'_>) -> Result<ActivationSequenc
         let ffn = params.ffn_size as usize;
         let q_len = (params.num_heads * params.head_dim) as usize;
         let kv_len = (params.num_kv_heads * params.head_dim) as usize;
-        let layer = inputs.layer;
-        let w_q = PagedQ8::new("w_q", &layer.w_q, q_len, hidden)?;
-        let w_k = PagedQ8::new("w_k", &layer.w_k, kv_len, hidden)?;
-        let w_v = PagedQ8::new("w_v", &layer.w_v, kv_len, hidden)?;
-        let w_o = PagedQ8::new("w_o", &layer.w_o, hidden, q_len)?;
-        let w_gate = PagedQ8::new("w_gate", &layer.w_gate, ffn, hidden)?;
-        let w_up = PagedQ8::new("w_up", &layer.w_up, ffn, hidden)?;
-        let w_down = PagedQ8::new("w_down", &layer.w_down, hidden, ffn)?;
+        let (layer, keys) = (inputs.layer, inputs.keys);
+        let w_q = PagedQ8::new("w_q", &layer.w_q, q_len, hidden, keys.w_q)?;
+        let w_k = PagedQ8::new("w_k", &layer.w_k, kv_len, hidden, keys.w_k)?;
+        let w_v = PagedQ8::new("w_v", &layer.w_v, kv_len, hidden, keys.w_v)?;
+        let w_o = PagedQ8::new("w_o", &layer.w_o, hidden, q_len, keys.w_o)?;
+        let w_gate = PagedQ8::new("w_gate", &layer.w_gate, ffn, hidden, keys.w_gate)?;
+        let w_up = PagedQ8::new("w_up", &layer.w_up, ffn, hidden, keys.w_up)?;
+        let w_down = PagedQ8::new("w_down", &layer.w_down, hidden, ffn, keys.w_down)?;
         layer_rows_and_keys(
             inputs.activations,
             &carried,

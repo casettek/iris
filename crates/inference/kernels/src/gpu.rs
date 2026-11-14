@@ -163,7 +163,9 @@ impl Device {
             return Some(held.matrix);
         }
         let blocks = rows * cols / q8::BLOCK;
-        if source.bytes.len() != blocks * q8::BLOCK_BYTES {
+        let whole_blocks = |part: &&[u8]| part.len() % q8::BLOCK_BYTES == 0;
+        let source_bytes: usize = source.parts.iter().map(|part| part.len()).sum();
+        if source_bytes != blocks * q8::BLOCK_BYTES || !source.parts.iter().all(whole_blocks) {
             return None;
         }
         let bytes = (rows * cols + blocks * std::mem::size_of::<i64>()) as u64;
@@ -174,7 +176,11 @@ impl Device {
         // not finite is the CPU's error to report.
         let mut weights = Vec::with_capacity(rows * cols);
         let mut scales = Vec::with_capacity(blocks);
-        for block in source.bytes.chunks_exact(q8::BLOCK_BYTES) {
+        let source_blocks = source
+            .parts
+            .iter()
+            .flat_map(|part| part.chunks_exact(q8::BLOCK_BYTES));
+        for block in source_blocks {
             scales.push(q8::scale_q24(u16::from_le_bytes([block[0], block[1]]))?);
             weights.extend(block[2..].iter().map(|byte| *byte as i8));
         }
@@ -409,6 +415,73 @@ mod tests {
         if !agrees(&matrix, &input) {
             eprintln!("no usable GPU: skipped");
         }
+    }
+
+    /// A matrix whose source is its rows in pieces, as committed pages are.
+    struct InPieces<'a> {
+        matrix: &'a Q8Matrix,
+        piece_bytes: usize,
+        key: Q8Key,
+    }
+
+    impl MatrixSource for InPieces<'_> {
+        fn rows(&self) -> usize {
+            self.matrix.rows()
+        }
+
+        fn cols(&self) -> usize {
+            self.matrix.cols()
+        }
+
+        fn row_values_into(&self, row_idx: usize, out: &mut Vec<i32>) -> Result<()> {
+            self.matrix.row_values_into(row_idx, out)
+        }
+
+        fn q8_source(&self) -> Option<Q8Source<'_>> {
+            let whole = self.matrix.q8_source()?.parts[0];
+            Some(Q8Source {
+                parts: whole.chunks(self.piece_bytes).collect(),
+                key: self.key,
+            })
+        }
+
+        fn row_dot(&self, row_idx: usize, input: &[i32]) -> Result<i32> {
+            self.matrix.row_dot(row_idx, input)
+        }
+    }
+
+    #[test]
+    fn a_matrix_in_pieces_gives_the_products_of_the_whole() {
+        let mut rng = Rng(0x2545_F491_4F6C_DD1D);
+        let (rows, cols, tokens) = (130, 96, 33);
+        let matrix = matrix(rows, cols, 18, &mut rng);
+        let input = activations(tokens, cols, 20, &mut rng);
+        if !agrees(&matrix, &input) {
+            eprintln!("no usable GPU: skipped");
+            return;
+        }
+        let whole = device_product(&input, &matrix).unwrap();
+        let row_bytes = q8::row_bytes(cols).unwrap();
+        // Pieces of one row, of several, of all but a few, and a single piece.
+        for piece_rows in [1, 7, 60, 127, 130] {
+            let pieces = InPieces {
+                matrix: &matrix,
+                piece_bytes: piece_rows * row_bytes,
+                key: Q8Key::unique(),
+            };
+            assert_eq!(
+                device_product(&input, &pieces).unwrap(),
+                whole,
+                "{piece_rows} rows a piece"
+            );
+        }
+        // A piece that ends inside a block is not a matrix the device takes.
+        let torn = InPieces {
+            matrix: &matrix,
+            piece_bytes: row_bytes + 1,
+            key: Q8Key::unique(),
+        };
+        assert!(device_product(&input, &torn).unwrap().is_none());
     }
 
     #[test]

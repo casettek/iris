@@ -5,7 +5,7 @@ use std::path::Path;
 use std::sync::{Arc, OnceLock};
 
 use anyhow::Result;
-use inference_kernels::mistral::stage::{run_layer_stage, LayerStageInputs};
+use inference_kernels::mistral::stage::{run_layer_stage, LayerKeys, LayerStageInputs};
 use inference_kernels::weight_budget::RetainedWeightBytes;
 use layer_mistral::input::TransformerLayer;
 // The pipeline's activation type, which this stage defines as every stage does.
@@ -19,10 +19,12 @@ use crate::cache::{
 
 /// One loaded copy of a layer, with the model-identity root of its bytes. The
 /// root takes a sweep of the whole layer, so it is computed on first use and
-/// kept with the copy.
+/// kept with the copy. The copy's matrices are named with it, so a GPU that
+/// was sent them for one range still has them for the next.
 struct Loaded {
     layer: TransformerLayer,
     root: OnceLock<raster::BytesPage>,
+    keys: LayerKeys,
 }
 
 impl RetainedWeightBytes for Loaded {
@@ -79,6 +81,7 @@ pub fn run_direct(inputs: &Inputs) -> Result<ActivationSequence> {
     let mut output = run_layer_stage(LayerStageInputs {
         activations: &inputs.activations,
         layer: &inputs.layer,
+        keys: &inputs.layer.0.keys,
         prior_kv: &inputs.prior_kv,
     })?;
     output.model = model_identity::stream::verify(
@@ -129,6 +132,7 @@ fn load_inputs_from_initialized_runtime(
                 binding.reference.clone(), "layer"
             )),
             root: OnceLock::new(),
+            keys: LayerKeys::unique(),
         },
     )?);
 

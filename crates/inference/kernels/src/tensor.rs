@@ -107,9 +107,10 @@ impl Q8Key {
     }
 }
 
-/// A matrix's committed `Q8_0` rows: `rows` rows of 34-byte blocks.
+/// A matrix's committed `Q8_0` rows: `rows` rows of 34-byte blocks, in one
+/// piece or in several, in order, that each hold whole blocks.
 pub struct Q8Source<'a> {
-    pub bytes: &'a [u8],
+    pub parts: Vec<&'a [u8]>,
     pub key: Q8Key,
 }
 
@@ -399,7 +400,7 @@ impl MatrixSource for Q8Matrix {
 
     fn q8_source(&self) -> Option<Q8Source<'_>> {
         Some(Q8Source {
-            bytes: &self.bytes,
+            parts: vec![self.bytes.as_slice()],
             key: self.key,
         })
     }
