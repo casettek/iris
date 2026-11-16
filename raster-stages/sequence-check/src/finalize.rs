@@ -195,6 +195,7 @@ pub fn output_record(
             String::from("max_new_tokens")
         },
         input_text_sha256: context.input_text_sha256.clone(),
+        source_sha256: context.source_sha256.clone(),
         model_id: context.model_id.clone(),
         raw_prompt: context.raw_prompt,
         max_new_tokens: context.max_new_tokens,
@@ -212,6 +213,7 @@ fn statement_digest(record: &OutputRecord) -> Option<[u8; 32]> {
     Some(
         Statement {
             input_text: parse_id(&record.input_text_sha256)?,
+            source: parse_id(&record.source_sha256)?,
             model: parse_id(&record.model_id)?,
             raw_prompt: record.raw_prompt,
             max_new_tokens: record.max_new_tokens,

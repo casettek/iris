@@ -39,6 +39,11 @@ pub fn empty_decode_edge() -> DecodeEdge {
     }
 }
 
+/// The source record of a run whose text is taken as given.
+pub fn no_source() -> prompt_check::input::SourceRecord {
+    Default::default()
+}
+
 /// No pieces, no tokens, no context and no text bound yet.
 pub fn empty_prompt() -> PromptState {
     PromptState::default()

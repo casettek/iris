@@ -4,7 +4,8 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use prompt_check::input::{
-    PromptState, PromptText, PromptTokenizer, RunConfig, RunSchedule, TextClaim, TokenizerWitness,
+    PromptState, PromptText, PromptTokenizer, RunConfig, RunSchedule, SourceRecord, TextClaim,
+    TokenizerWitness,
 };
 
 use crate::artifact_io::{with_main_sequence_scope, with_stage_sequence_scope};
@@ -24,6 +25,8 @@ pub struct Inputs {
     pub descriptor: raster::BytesPage,
     pub schedule: RunSchedule,
     pub claim: TextClaim,
+    /// The source the text was built from, or the default for none.
+    pub source: SourceRecord,
     /// The bind of the range before, or the empty state.
     pub previous: PromptState,
 }
@@ -67,6 +70,7 @@ pub fn run_direct(inputs: &Inputs) -> Result<PromptState> {
             descriptor: inputs.descriptor.as_slice(),
             schedule: &inputs.schedule,
             claim: &inputs.claim,
+            source: &inputs.source,
             previous: &inputs.previous,
         },
         &mut proofs,
@@ -87,6 +91,7 @@ fn load_inputs_with_cache(
         raster::entry_argument_spec::<raster::BytesPage>("descriptor"),
         raster::entry_argument_spec::<RunSchedule>("schedule"),
         raster::entry_argument_spec::<TextClaim>("claim"),
+        raster::entry_argument_spec::<SourceRecord>("source"),
         raster::entry_argument_spec::<PromptState>("previous"),
     ])?;
     let witness = materialize_with_cache(materialization_cache, witness_key, || {
@@ -120,6 +125,10 @@ fn load_inputs_with_cache(
         binding.reference.clone(),
         "claim",
     ));
+    let source = raster::materialize_auth_return(raster::entry_argument_auth_ref::<SourceRecord>(
+        binding.reference.clone(),
+        "source",
+    ));
     let previous = match cached.get("previous") {
         Some(value) => value.as_prompt_state()?,
         None => raster::materialize_auth_return(raster::entry_argument_auth_ref::<PromptState>(
@@ -132,6 +141,7 @@ fn load_inputs_with_cache(
         descriptor,
         schedule,
         claim,
+        source,
         previous,
         tokenizer,
         text,

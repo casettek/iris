@@ -24,6 +24,7 @@ pub enum CachedStageValue {
     PleLayerInputs(aux_input::PleLayerInputs),
     RangeActivations(range_input::ActivationSequence),
     DecodeEdge(check_input::DecodeEdge),
+    SourceRecord(source_core::SourceRecord),
 }
 
 #[derive(Clone, Debug)]

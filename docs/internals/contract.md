@@ -78,7 +78,8 @@ them.
 | --- | --- |
 | `output_text` | The plaintext the contract acts on |
 | `input_text_sha256` | The claimer's commitment to the input it ran. The contract takes it as given |
-| `record.statement_sha256` | `Statement::digest()` over the input text hash, model id, raw prompt flag, token budget and range size |
+| `source_sha256` | The digest of the source record the claimer says the text was built from, or 64 zeros. The contract takes it as given, or compares it with a source it expects |
+| `record.statement_sha256` | `Statement::digest()` over the input text hash, the source digest, model id, raw prompt flag, token budget and range size |
 | `record.output_text_sha256` | SHA-256 of the plaintext's exact UTF-8 bytes |
 | `record.valid` | The chain found nothing wrong with its own run |
 | `checkpoints_sha256` | SHA-256 of the claim's `checkpoints.txt` |
@@ -93,8 +94,9 @@ valid one.
 ## On submission
 
 1. **Statement matches.** Recompute the statement digest from the pinned model id,
-   range size and required parameters with the claimed input hash, and compare it
-   with the record's. This one equality covers the model and every parameter.
+   range size and required parameters with the claimed input hash and source
+   digest, and compare it with the record's. This one equality covers the model,
+   every parameter and the source the run names.
 2. **Output matches.** The plaintext hashes to the record's output text hash, and
    the valid flag is set.
 
@@ -238,9 +240,18 @@ These are open. None is closed by anything on this page.
   replay aimed at a checkpoint that ran other inputs fails safely, since the
   defender can refute it.
 
+- **The signer's key is a run input.** The `source` stage checks attestations
+  against the key the run gives it and states that key in its record, which
+  the statement's source digest covers. Nothing pins the key: a contract that
+  cares who signed has to compare the digest with a source it expects.
+- **A small source is a short stage.** With documents of a few hundred bytes
+  the `source` stage is under the trace length a replay needs, as some check
+  stages are, and its checkpoint cannot be disputed.
+
 ## Not here
 
 - Data availability, bonds, the challenge window, and verifying a defence. These
   are the contract's and the settlement layer's.
-- Any check of the input beyond its hash.
+- Any check of the input beyond its hash and the source it names. What a
+  source digest stands for is in `docs/proposals/authenticated-prompt.md`.
 - A way to open one checkpoint without presenting the whole list.

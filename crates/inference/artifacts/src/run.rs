@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 
 pub const INFERENCE_RUN_SPEC_TOML: &str = "inference.toml";
 pub const PREPARED_RUN_JSON: &str = "prepared_run.json";
-pub const PREPARED_RUN_VERSION: u32 = 16;
+pub const PREPARED_RUN_VERSION: u32 = 17;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct InferenceRunSpec {
@@ -15,10 +15,35 @@ pub struct InferenceRunSpec {
     pub prompt: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prompt_file: Option<PathBuf>,
+    /// A prompt built from a document a signer vouches for, in place of
+    /// `prompt` and `prompt_file`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<SourceSpec>,
     #[serde(default)]
     pub raw_prompt: bool,
     #[serde(default = "default_tokens")]
     pub tokens: u32,
+}
+
+/// The files of a run with a source. Paths are relative to the run spec.
+/// See `docs/proposals/authenticated-prompt.md`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct SourceSpec {
+    /// How the prompt is made from the documents, and the forms of its output.
+    pub recipe: PathBuf,
+    /// The public key every attestation must be signed by.
+    pub signer: PathBuf,
+    /// The documents, in the order the recipe names them.
+    pub documents: Vec<SourceDocumentSpec>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct SourceDocumentSpec {
+    /// The document, as the bytes its attestation is over.
+    pub document: PathBuf,
+    pub attestation: PathBuf,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -36,6 +61,26 @@ pub struct PreparedRun {
     pub run_manifest_path: Option<PathBuf>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub run_manifest_sha256: Option<String>,
+    /// The source stage's inputs, for a run that has a source. A challenger
+    /// reruns the stage on these.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_inputs: Option<PreparedSourceInputs>,
+}
+
+/// One committed run input: its files and its commitment.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RunFileRef {
+    pub path: PathBuf,
+    pub index_path: PathBuf,
+    pub commitment: String,
+}
+
+/// The three inputs of the `prompt-source` stage.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PreparedSourceInputs {
+    pub signer: RunFileRef,
+    pub recipe: RunFileRef,
+    pub documents: RunFileRef,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -44,6 +89,11 @@ pub struct PreparedPrompt {
     pub rendered_prompt: String,
     pub initial_pieces: Vec<PreparedPiece>,
     pub eos_token_ids: Vec<u32>,
+    /// What the source step established, for a run whose prompt was built from
+    /// signed documents. The first bind is given it, and the statement names
+    /// its digest.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<source_core::SourceRecord>,
 }
 
 /// Frozen normalization/segmentation output. Old sentinel-based inputs cannot
@@ -81,11 +131,20 @@ fn reject_removed_chain(text: &str, path: &Path) -> Result<()> {
 
 impl InferenceRunSpec {
     pub fn validate(&self) -> Result<()> {
+        if self.source.is_some() {
+            anyhow::ensure!(
+                self.prompt.is_none() && self.prompt_file.is_none(),
+                "run spec with a `[source]` builds its own prompt; remove `prompt` and `prompt_file`"
+            );
+            return Ok(());
+        }
         match (self.prompt.as_ref(), self.prompt_file.as_ref()) {
             (Some(_), Some(_)) => {
                 anyhow::bail!("run spec must set either `prompt` or `prompt_file`, not both")
             }
-            (None, None) => anyhow::bail!("run spec must set `prompt` or `prompt_file`"),
+            (None, None) => {
+                anyhow::bail!("run spec must set `prompt`, `prompt_file` or a `[source]`")
+            }
             _ => Ok(()),
         }
     }

@@ -7,12 +7,12 @@
 #   - run authenticated, it gives the same output, and its trace commits and
 #     audits.
 # The parity gate replays only the stages long enough for its window through
-# authenticated Raster. This runs all six programs through it, with a window
-# small enough for the short ones.
+# authenticated Raster. This runs every program of the run's family through it,
+# with a window small enough for the short ones.
 #
 # usage: stage-ladder.sh [program ...]
 # Reads the newest parity run under target/parity, or the one IRIS_PARITY_RUN
-# names. Without arguments all six programs are run.
+# names. Without arguments every program of the run's family is run.
 # See docs/workflows/testing.md.
 source "$(dirname "${BASH_SOURCE[0]}")/test-env.sh"
 
@@ -33,6 +33,15 @@ samples() {
     prefill-prepare-aux) echo "aux_p1_l3 aux_p0_l0 aux_c1_l2" ;;
     prefill-range | layer-mistral) echo "range_p1_l3 range_p0_l0 range_p3_l2 range_c1_l3" ;;
     sequence-check) echo "check_c0 check_c1" ;;
+    prompt-source) echo "source" ;;
+    esac
+}
+# Where a program's sampled stages ran. The source stage is only in the claim
+# the gate builds from signed documents.
+inputs_of() {
+    case $1 in
+    prompt-source) echo "$run/source/honest/raster" ;;
+    *) echo "$run/over-window/raster" ;;
     esac
 }
 # Trace steps per fraud-proof window. The shortest stages here are about 110.
@@ -40,7 +49,8 @@ window="${IRIS_LADDER_WINDOW:-32}"
 
 # In a subshell: it changes directory.
 ladder() (
-    local program=$1 out="$repo_root/target/stage-ladder$tag/$1" stage first dir produced
+    local program=$1 out="$repo_root/target/stage-ladder$tag/$1" stage first dir produced inputs
+    inputs="$(inputs_of "$program")"
     cd "$repo_root/raster-stages/$program" || return 1
     cargo check || return 1
     cargo check -p "$program" --no-default-features || return 1
@@ -88,10 +98,10 @@ ladder() (
 # The run's report names its bundle, and the bundle's family has its own layer
 # program and may have no stage for per-layer inputs.
 tag=""
-family_programs=(prompt-bind prompt-check input-embedding prefill-prepare-aux prefill-range sequence-check)
+family_programs=(prompt-source prompt-bind prompt-check input-embedding prefill-prepare-aux prefill-range sequence-check)
 if grep -q '"bundle": *"parity-mistral"' "$run/report.json" 2>/dev/null; then
     tag="-mistral"
-    family_programs=(prompt-bind prompt-check input-embedding layer-mistral sequence-check)
+    family_programs=(prompt-source prompt-bind prompt-check input-embedding layer-mistral sequence-check)
 fi
 programs=("$@")
 [ ${#programs[@]} -eq 0 ] && programs=("${family_programs[@]}")

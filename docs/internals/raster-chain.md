@@ -29,6 +29,7 @@ The chain verifies a *known* output with one pass over `prompt ‖ claimed_outpu
 
 | Program | Stages | Work |
 | --- | --- | --- |
+| `prompt-source` | `source` | State what the prompt text was built from. Only in a run that has a source |
 | `prompt-bind` | `prompt_bind_p{j}` | Hash a range's slice of the original text and split it into pieces |
 | `prompt-check` | `prompt_check_p{j}` | Check a range's claimed tokens against the merge and publish their ids |
 | `input-embedding` | `embed_p{j}`, `embed_c{k}` | Gather embedding rows |
@@ -49,9 +50,27 @@ of the whole text, wherever it was cut. A bind publishes its slice's pieces, a
 `PromptContext`, and what the next bind continues from: the hash's state, the scan's
 position with any text it is holding back, and the split's position.
 
-The first range's bind also takes the run's configuration, its stage schedule and a
-*text claim* as committed inputs. It binds the statement, and checks the schedule
-and stores it in the context (see [Stage schedule](#stage-schedule)). The text claim
+The first range's bind also takes the run's configuration, its stage schedule, a
+*text claim* and a *source record* as committed inputs. It binds the statement, and
+checks the schedule and stores it in the context (see [Stage schedule](#stage-schedule)).
+The source record says what the text was built from. In a run that has a source it is the
+`source` stage's output: the bind holds the claimed text's hash and length to the record's,
+and a record with a fault of its own is a fault here. In a run whose prompt is taken as
+given there is no `source` stage. The first bind is given the constant `no_source`, the
+default record, as every later bind is in any run, and the statement's source digest is
+zero.
+
+`source` takes the signer's key, the recipe and the run's documents. The documents are one
+list of chunks of at most 4,096 bytes, each naming its document and whether it is that
+document's last, with one attestation per document. The stage hashes each document and
+chains the hashes and lengths, verifies each attestation's signature and chains what it
+states, and holds the two chains to each other. It hashes the recipe's base prompt, holds
+the documents' servers and targets to the recipe's the same way, and for each field scans
+the chunks for the value at the field's path, stopping where the value ends, and adds the
+field's lead and value to the text hash. Its record states the text's hash and length, a
+hash over the recipe, the number of documents and a hash over their attested facts, the
+signer's key, and the first fault. See
+[the proposal](../proposals/authenticated-prompt.md). The text claim
 is what the first range needs and only the last can know: the whole text's SHA-256,
 its length, and the first and last bytes the template's trim keeps. Every range
 scans with the claimed values, and the range the text ends in compares them with
@@ -156,7 +175,7 @@ committed decoder table, and states the record beside its edge: the ids' hash, t
 `output_text_sha256` (the SHA-256 of the text's exact UTF-8 bytes), the verdict and
 check fault, `output_fault` (no tokens, over the budget, short of the budget without
 EOS, past EOS, or an edge that disagrees with its transcript), and the context the
-chain ran under (`input_text_sha256`, `model_id`, `raw_prompt`, `max_new_tokens`,
+chain ran under (`input_text_sha256`, `source_sha256`, `model_id`, `raw_prompt`, `max_new_tokens`,
 `range_size`, `prompt_tokens`, `prompt_complete`, `prompt_fault`,
 `prompt_fault_position`). The host copies this record into `InferenceResult` and
 computes none of it.
@@ -188,7 +207,7 @@ A repeat's `first` fallback can only name a stage. So the template writes range 
 stages out as plain stages bound to the constants, and each repeat over ranges starts
 at 1 with the range 0 stage as its `first`: `prompt_bind_p0`, `prompt_check_p0`,
 `embed_p0`, `range_p0_l{l}` in every layer block, and `check_c0`. The chain's first
-stage is `prompt_bind_p0`.
+stage is `prompt_bind_p0`, or `source` in a run that has one.
 
 ## Soundness
 
@@ -298,8 +317,8 @@ three affected program identities as described in [development](development.md).
 Every nonempty stage boundary carries a versioned `Execution` record inside
 `ModelContext.execution`. The shared `pipeline-core` crate defines the canonical
 statement hash and position-sensitive token-prefix hash; `model-identity` checks
-stage transitions. The record binds the input-text hash, model ID, raw-prompt
-flag, generation budget, and range size. Embedding folds the actual consumed
+stage transitions. The record binds the input-text hash, the source digest, model
+ID, raw-prompt flag, generation budget, and range size. Embedding folds the actual consumed
 IDs, so changing a token while keeping the same length and final token changes
 the authenticated history.
 

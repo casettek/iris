@@ -17,10 +17,22 @@ impl ModelContext {
     pub fn set_execution(&mut self, value: &Execution) {
         self.execution = raster::BytesPage::__from_parts(0, 0, value.encode());
     }
-    pub fn bind_statement(&mut self, input: &str, raw: bool, budget: u32, range: u32) {
-        if let (Some(input_text), Some(model)) = (parse_id(input), parse_id(&self.model_id)) {
+    /// `source` is the digest of the record the input text was built from, or
+    /// 64 zeros for a text taken as given.
+    pub fn bind_statement(
+        &mut self,
+        input: &str,
+        source: &str,
+        raw: bool,
+        budget: u32,
+        range: u32,
+    ) {
+        if let (Some(input_text), Some(source), Some(model)) =
+            (parse_id(input), parse_id(source), parse_id(&self.model_id))
+        {
             self.set_execution(&Execution::bind(Statement {
                 input_text,
+                source,
                 model,
                 raw_prompt: raw,
                 max_new_tokens: budget,
@@ -410,7 +422,7 @@ mod tests {
             .map(|b| format!("{b:02x}"))
             .collect::<String>();
         let mut p = ModelContext::bind(&descriptor.encode().unwrap(), &id);
-        p.bind_statement(&"11".repeat(32), false, 8, 4);
+        p.bind_statement(&"11".repeat(32), &"00".repeat(32), false, 8, 4);
         p
     }
     fn prepared(ids: &[u32]) -> ModelContext {

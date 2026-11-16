@@ -1,0 +1,72 @@
+{
+  "format": 3,
+  "program_commitment": "e758e28c4dcd7b7c2aa72b525db0a4df2ad3f1c54196c127c32a9651942aa3f0",
+  "tiles": {
+    "attested_seed": {
+      "image_id": "fcc6339532465b3729106fac78f15f05500790ab2dffd07561e3c3f61b87636a",
+      "source_hash": "34a500450c0b4b2500000000000013ea"
+    },
+    "begin_scan": {
+      "image_id": "88fcab887adb67f4cd1ac3c299450ef8b95a95c3daba4626ffd84d65a6681235",
+      "source_hash": "34a500450c0b4b2500000000000013ea"
+    },
+    "bodies_seed": {
+      "image_id": "be0932c162d5b3a97917787212270084b7e9e31146d78316494a31450690f013",
+      "source_hash": "34a500450c0b4b2500000000000013ea"
+    },
+    "close": {
+      "image_id": "d53f587d3615d623653688ec33df9da0123315e47e8243e117435e767dd997a9",
+      "source_hash": "34a500450c0b4b2500000000000013ea"
+    },
+    "end_base": {
+      "image_id": "4fa2b9caf46eb27b9a9d152f90a99a9177c6b745e5e69d2eef0f8638e85b297e",
+      "source_hash": "34a500450c0b4b2500000000000013ea"
+    },
+    "finish_scan": {
+      "image_id": "17708a45181bf80540e5be6ef952aed4a4ec5c932c7ddcf2a6f22a925ddc0851",
+      "source_hash": "34a500450c0b4b2500000000000013ea"
+    },
+    "fold_attested": {
+      "image_id": "54ce34e97d28d9cbf5e3681a1f1500a885de98fe01b4540e2c29fdf960b94028",
+      "source_hash": "34a500450c0b4b2500000000000013ea"
+    },
+    "fold_base": {
+      "image_id": "67a47768d69e005cb5b307b93e0541889d8269e22003e488531107fda288586a",
+      "source_hash": "34a500450c0b4b2500000000000013ea"
+    },
+    "fold_body": {
+      "image_id": "04fafc8bd20cb1a2e477172e05acf0082c31ab8d7f39d61aa0449d48920f2def",
+      "source_hash": "34a500450c0b4b2500000000000013ea"
+    },
+    "fold_name": {
+      "image_id": "f5556e468f01a7ed212ed35154c9ddca477e39acea536d0b47236f20ffce39e2",
+      "source_hash": "34a500450c0b4b2500000000000013ea"
+    },
+    "fold_one_field": {
+      "image_id": "3b74127e17c212f830d222decbf616cc1b6ad8fd422c6a0984690c1ac4824213",
+      "source_hash": "34a500450c0b4b2500000000000013ea"
+    },
+    "hold_bodies": {
+      "image_id": "9f55f1fd84139fd55a10ae4b89d9bc93768468262f458dd27de6dc1a47c4dbbc",
+      "source_hash": "34a500450c0b4b2500000000000013ea"
+    },
+    "hold_documents": {
+      "image_id": "e704d45c746020852d9a1cc4c115f532c638220cb8f26591e2f457ea76d01f0f",
+      "source_hash": "34a500450c0b4b2500000000000013ea"
+    },
+    "scan_chunk": {
+      "image_id": "aee911539182005ee329b468cd2588c7a1d533229e2bd74869c07107f6a5e1fb",
+      "source_hash": "34a500450c0b4b2500000000000013ea"
+    },
+    "text_seed": {
+      "image_id": "5be6d0fe8084e6fa270a8aca0620d5194082660e5eeaa0d0f4499d378f32aa8f",
+      "source_hash": "34a500450c0b4b2500000000000013ea"
+    }
+  },
+  "toolchain": {
+    "risc0": "risc0-zkvm-3.0.6",
+    "build_mode": "local",
+    "rustc": "rustc 1.97.0-dev (e638c6cfe 2026-07-15)"
+  },
+  "guest_inputs": "3b917e2571eef11336e723cc9c9da8500627a2a94ea53341490abaa2f9755f6c"
+}

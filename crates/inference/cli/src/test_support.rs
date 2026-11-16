@@ -37,12 +37,19 @@ index_path = "target/iris/run-prompt-placeholder/claimed_{{k}}.rindex"
 commitments = []
 
 [[chain.stage]]
+name = "source"
+inputs.signer = {{ external = {{ path = "target/iris/run-prompt-placeholder/source_signer.rastered", index_path = "target/iris/run-prompt-placeholder/source_signer.rindex", commitment = "0" }} }}
+inputs.recipe = {{ external = {{ path = "target/iris/run-prompt-placeholder/source_recipe.rastered", index_path = "target/iris/run-prompt-placeholder/source_recipe.rindex", commitment = "0" }} }}
+inputs.documents = {{ external = {{ path = "target/iris/run-prompt-placeholder/source_documents.rastered", index_path = "target/iris/run-prompt-placeholder/source_documents.rindex", commitment = "0" }} }}
+
+[[chain.stage]]
 name = "prompt_bind_p0"
 project = "raster-stages/prompt-bind"
 inputs.text = {{ input = "prompt_text_0" }}
 inputs.config = {{ external = {{ path = "target/iris/run-prompt-placeholder/config.rastered", index_path = "target/iris/run-prompt-placeholder/config.rindex", commitment = "0" }} }}
 inputs.schedule = {{ external = {{ path = "target/iris/run-prompt-placeholder/schedule.rastered", index_path = "target/iris/run-prompt-placeholder/schedule.rindex", commitment = "0" }} }}
 inputs.claim = {{ external = {{ path = "target/iris/run-prompt-placeholder/claim.rastered", index_path = "target/iris/run-prompt-placeholder/claim.rindex", commitment = "0" }} }}
+inputs.source = {{ from = "source" }}
 inputs.previous = {{ external = {{ path = "empty_prompt.rastered", index_path = "empty_prompt.rindex", commitment = "0" }} }}
 
 [[chain.stage]]
@@ -65,6 +72,7 @@ inputs.text = {{ input = "prompt_text_{{j}}" }}
 inputs.config = {{ external = {{ path = "target/iris/run-prompt-placeholder/config.rastered", index_path = "target/iris/run-prompt-placeholder/config.rindex", commitment = "0" }} }}
 inputs.schedule = {{ external = {{ path = "target/iris/run-prompt-placeholder/schedule.rastered", index_path = "target/iris/run-prompt-placeholder/schedule.rindex", commitment = "0" }} }}
 inputs.claim = {{ external = {{ path = "target/iris/run-prompt-placeholder/claim.rastered", index_path = "target/iris/run-prompt-placeholder/claim.rindex", commitment = "0" }} }}
+inputs.source = {{ external = {{ path = "model/prompt-bind/no_source.rastered", index_path = "model/prompt-bind/no_source.rindex", commitment = "n0" }} }}
 inputs.previous = {{ from = "prompt_bind_p{{j-1}}", first = "prompt_bind_p0" }}
 
   [[chain.repeat.stage]]

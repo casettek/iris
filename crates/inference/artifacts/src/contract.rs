@@ -51,7 +51,7 @@ pub const CONTRACT_PINS_JSON: &str = "contract_pins.json";
 /// Written beside a claim's `claim_bundle.json`.
 pub const CLAIM_SUBMISSION_JSON: &str = "claim_submission.json";
 pub const CONTRACT_PINS_VERSION: u32 = 2;
-pub const CLAIM_SUBMISSION_VERSION: u32 = 1;
+pub const CLAIM_SUBMISSION_VERSION: u32 = 2;
 
 /// What a contract pins before any claim arrives, as two entries it opts
 /// into: a pipeline and a model. The model import writes both.
@@ -140,6 +140,11 @@ pub struct ClaimSubmission {
     /// The claimer's commitment to the input it ran. Today the SHA-256 of the
     /// prompt text. The contract takes it as given.
     pub input_text_sha256: String,
+    /// The digest of the source record the claimer says the text was built
+    /// from, or 64 zeros. The statement names it, so a record that is valid
+    /// was produced under it.
+    #[serde(default = "crate::inference::no_source_id")]
+    pub source_sha256: String,
     pub record: SubmittedRecord,
     /// SHA-256 of the claim's `checkpoints.txt`: one checkpoint hash per
     /// stage, in order. This is the claim's commitment to every stage
@@ -598,6 +603,7 @@ impl ClaimSubmission {
             version: CLAIM_SUBMISSION_VERSION,
             output_text: result.generated_text.clone(),
             input_text_sha256: result.input_text_sha256.clone(),
+            source_sha256: result.source_sha256.clone(),
             record: SubmittedRecord {
                 statement_sha256: result.statement_sha256.clone(),
                 output_text_sha256: result.output_text_sha256.clone(),
@@ -609,16 +615,18 @@ impl ClaimSubmission {
 }
 
 /// The statement digest a contract recomputes: its pinned model id and
-/// parameters with the claimed input commitment. `None` when an id is not a
-/// 32-byte hash.
+/// parameters with the claimed input and source commitments. `None` when an
+/// id is not a 32-byte hash.
 pub fn expected_statement(
     model: &ModelPins,
     required: RequiredParameters,
     input_text_sha256: &str,
+    source_sha256: &str,
 ) -> Option<[u8; 32]> {
     Some(
         Statement {
             input_text: parse_id(input_text_sha256)?,
+            source: parse_id(source_sha256)?,
             model: parse_id(&model.model_id)?,
             raw_prompt: required.raw_prompt,
             max_new_tokens: required.max_new_tokens,
@@ -639,7 +647,12 @@ pub fn check_submission(
     if !pins.model.is_consistent() {
         return Err(SubmissionRejection::InconsistentPins);
     }
-    let expected = expected_statement(&pins.model, required, &submission.input_text_sha256)
+    let expected = expected_statement(
+        &pins.model,
+        required,
+        &submission.input_text_sha256,
+        &submission.source_sha256,
+    )
         .ok_or(SubmissionRejection::MalformedInputCommitment)?;
     let expected = hex::encode(expected);
     if submission.record.statement_sha256 != expected {
@@ -1266,12 +1279,14 @@ mod tests {
                 output_text: String::from("ZK"),
                 record: SubmittedRecord {
                     statement_sha256: hex::encode(
-                        expected_statement(&pins.model, REQUIRED, &input).unwrap(),
+                        expected_statement(&pins.model, REQUIRED, &input, &"00".repeat(32))
+                            .unwrap(),
                     ),
                     output_text_sha256: hex::encode(Sha256::digest(b"ZK")),
                     valid: true,
                 },
                 input_text_sha256: input,
+                source_sha256: "00".repeat(32),
                 checkpoints_sha256: hex::encode(Sha256::digest(&list)),
             };
             Self {

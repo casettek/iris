@@ -38,6 +38,8 @@ pub use io::{read_json, write_json};
 pub use manifest::resolve_raster_manifest_paths;
 pub use run::{
     read_run_spec, InferenceRunSpec, PreparedPiece, PreparedPrompt, PreparedRun,
+    PreparedSourceInputs, RunFileRef,
+    SourceDocumentSpec, SourceSpec,
     INFERENCE_RUN_SPEC_TOML, PREPARED_RUN_JSON, PREPARED_RUN_VERSION,
 };
 
@@ -399,6 +401,7 @@ mod tests {
             model_manifest: PathBuf::from("model-artifacts/manifest.json"),
             prompt: Some(String::from("hello")),
             prompt_file: Some(PathBuf::from("prompt.txt")),
+            source: None,
             raw_prompt: false,
             tokens: 1,
         };
@@ -412,6 +415,7 @@ mod tests {
             model_manifest: PathBuf::from("model-artifacts/manifest.json"),
             prompt: None,
             prompt_file: None,
+            source: None,
             raw_prompt: false,
             tokens: 1,
         };
@@ -442,6 +446,53 @@ mod tests {
     }
 
     #[test]
+    fn a_run_spec_takes_a_source_in_place_of_a_prompt() {
+        let base = temp_dir("run-spec-source");
+        fs::create_dir_all(&base).unwrap();
+        let path = base.join("inference.toml");
+        let source = "[source]\nrecipe = \"recipe.json\"\nsigner = \"signer.json\"\n[[source.documents]]\ndocument = \"event.bin\"\nattestation = \"event.json\"\n[[source.documents]]\ndocument = \"comments.bin\"\nattestation = \"comments.json\"\n";
+        fs::write(&path, format!("model_manifest = \"m.json\"\ntokens = 4\n{source}")).unwrap();
+        let spec = read_run_spec(&path).unwrap();
+        assert_eq!(
+            spec.source,
+            Some(SourceSpec {
+                recipe: PathBuf::from("recipe.json"),
+                signer: PathBuf::from("signer.json"),
+                documents: vec![
+                    SourceDocumentSpec {
+                        document: PathBuf::from("event.bin"),
+                        attestation: PathBuf::from("event.json"),
+                    },
+                    SourceDocumentSpec {
+                        document: PathBuf::from("comments.bin"),
+                        attestation: PathBuf::from("comments.json"),
+                    },
+                ],
+            })
+        );
+        assert_eq!(spec.prompt, None);
+
+        fs::write(
+            &path,
+            format!("model_manifest = \"m.json\"\nprompt = \"hi\"\n{source}"),
+        )
+        .unwrap();
+        let error = format!("{:#}", read_run_spec(&path).unwrap_err());
+        assert!(error.contains("builds its own prompt"), "{error}");
+
+        fs::write(
+            &path,
+            format!("model_manifest = \"m.json\"\n{source}extra = \"x\"\n").replace(
+                "signer = ",
+                "notary = \"x\"\nsigner = ",
+            ),
+        )
+        .unwrap();
+        assert!(read_run_spec(&path).is_err());
+        fs::remove_dir_all(base).unwrap();
+    }
+
+    #[test]
     fn prepared_run_metadata_round_trips_as_json() {
         let prepared = PreparedRun {
             version: PREPARED_RUN_VERSION,
@@ -458,10 +509,12 @@ mod tests {
                     segment: 0,
                 }],
                 eos_token_ids: vec![1, 2],
+                source: None,
             },
             tokens: 2,
             run_manifest_path: Some(PathBuf::from("target/runs/run/Raster.toml")),
             run_manifest_sha256: Some(String::from("run-sha")),
+            source_inputs: None,
         };
 
         assert_eq!(

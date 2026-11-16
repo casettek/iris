@@ -32,6 +32,7 @@ pub fn open_bind(
     descriptor: BytesPage,
     schedule: RunSchedule,
     claim: TextClaim,
+    source: SourceRecord,
     root: BytesPage,
     profile: TokenizerProfile,
 ) -> BindOpen {
@@ -42,6 +43,7 @@ pub fn open_bind(
         descriptor.as_slice(),
         &schedule,
         &claim,
+        &source,
         &root,
         &profile,
     )

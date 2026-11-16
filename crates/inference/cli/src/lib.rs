@@ -14,6 +14,7 @@ mod convert;
 mod fault;
 mod infer;
 mod parity;
+mod source;
 #[cfg(feature = "replay-profile")]
 mod replay_profile;
 mod stage_bindings;
@@ -78,6 +79,16 @@ enum Commands {
     },
     /// Fast unconstrained deterministic inference.
     Infer(InferArgs),
+    /// The host signer: a trusted stand-in for a notary.
+    Attest {
+        #[command(subcommand)]
+        command: source::AttestCommand,
+    },
+    /// A run's source, without running the model.
+    Source {
+        #[command(subcommand)]
+        command: source::SourceCommand,
+    },
     /// Measure the heaviest tile replays in one exact stage instance.
     #[cfg(feature = "replay-profile")]
     ReplayProfile(ReplayProfileArgs),
@@ -467,9 +478,36 @@ fn execute(cli: Cli) -> Result<ExitCode> {
             if let Some(count) = report.input_token_count {
                 println!("input token count: {count}");
             }
+            // Before the result: its last lines are the generated text.
+            if let Some(source) = source::run_source_of(&run_spec_path)? {
+                source::print_source_lines(&source, &report.result.generated_text);
+            }
             print_infer_result(&report.result, Some(&run_spec_path));
             print_infer_timing_summary(&report.timings);
             Ok(ExitCode::SUCCESS)
+        }
+        Some(Commands::Attest { command }) => {
+            match command {
+                source::AttestCommand::Keygen { out } => source::keygen(&out)?,
+                source::AttestCommand::Sign(args) => source::sign(args)?,
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+        Some(Commands::Source {
+            command: source::SourceCommand::Inputs { run, out },
+        }) => {
+            source::stage_inputs(&run, &out)?;
+            Ok(ExitCode::SUCCESS)
+        }
+        Some(Commands::Source {
+            command: source::SourceCommand::Render { run, text_out },
+        }) => {
+            let record = source::render(&run, text_out.as_deref())?;
+            Ok(if record.fault == 0 {
+                ExitCode::SUCCESS
+            } else {
+                ExitCode::from(1)
+            })
         }
         Some(Commands::Challenge { command }) => match command {
             ChallengeCommand::Profile(args) => {
@@ -637,6 +675,7 @@ fn print_infer_result(result: &staged_infer::InferenceResult, run_spec_path: Opt
     println!("stop reason: {}", result.stop_reason);
     println!("output text sha256: {}", result.output_text_sha256);
     println!("input text sha256: {}", result.input_text_sha256);
+    println!("source sha256: {}", result.source_sha256);
     println!("model id: {}", result.model_id);
     println!(
         "faults: prompt {}, check {}, output {}, model {}; claim mismatches: {}",

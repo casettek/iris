@@ -172,6 +172,9 @@ pub struct OutputRecord {
     pub output_fault: u32,
     /// SHA-256 of the exact text the chain consumed, before chat formatting.
     pub input_text_sha256: String,
+    /// The source the text was built from: see `source_id` in the shared prompt
+    /// source. 64 zeros for a text taken as given.
+    pub source_sha256: String,
     /// The identifier of the committed model the chain was configured with.
     pub model_id: String,
     pub raw_prompt: bool,
@@ -501,6 +504,9 @@ pub struct GeneratedOutput {
     pub output_fault: u32,
     /// SHA-256 of the exact text the chain consumed, before chat formatting.
     pub input_text_sha256: String,
+    /// The source the text was built from: see `source_id` in the shared prompt
+    /// source. 64 zeros for a text taken as given.
+    pub source_sha256: String,
     /// The identifier of the committed model the chain was configured with.
     pub model_id: String,
     pub raw_prompt: bool,
@@ -575,6 +581,7 @@ pub fn generated_output(edge: &DecodeEdge) -> GeneratedOutput {
         output_text_sha256: record.output_text_sha256,
         output_fault: record.output_fault,
         input_text_sha256: record.input_text_sha256,
+        source_sha256: record.source_sha256,
         model_id: record.model_id,
         raw_prompt: record.raw_prompt,
         max_new_tokens: record.max_new_tokens,

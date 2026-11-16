@@ -26,6 +26,7 @@ layer-mistral = { path = "../../../raster-stages/layer-mistral" }
 prefill-prepare-aux = { path = "../../../raster-stages/prefill-prepare-aux" }
 prompt-check = { path = "../../../raster-stages/prompt-check" }
 sequence-check = { path = "../../../raster-stages/sequence-check" }
+source-core = { path = "../../source-core" }
 raster = { path = "../../../../raster/crates/raster" }
 raster-core = { path = "../../../../raster/crates/raster-core" }
 raster-runtime = { path = "../../../../raster/crates/raster-runtime" }

@@ -4,8 +4,13 @@
     "family": "gemma-dense",
     "stage_programs": [
       {
+        "stage": "prompt-source",
+        "program_commitment": "e758e28c4dcd7b7c2aa72b525db0a4df2ad3f1c54196c127c32a9651942aa3f0",
+        "chained_inputs": []
+      },
+      {
         "stage": "prompt-bind",
-        "program_commitment": "bbc92d54ec906a87bb6aea3ab7cee2aa71daef8a78ffff1d2cb183ef6edc089c",
+        "program_commitment": "2a5b3843e255d99e1a9b6aa1f73b68eca56f5fdddbc21040200b16f9db60d5cc",
         "chained_inputs": [
           {
             "name": "previous",
@@ -13,14 +18,23 @@
               "prompt-bind"
             ],
             "empty_values": [
-              "bc31ff40669f4add4510146f578279f9bd5f2c8824b641f2e803ddb34f6b6f6a"
+              "4dd645d5528856d2f2cc73d99a9e514c7046baee4923e4c69c1248045ed1372e"
+            ]
+          },
+          {
+            "name": "source",
+            "producers": [
+              "prompt-source"
+            ],
+            "empty_values": [
+              "03fb66a51c44fd0df71a12e9fa3d2e5aadfd3789612658d4fdc4caac5051c954"
             ]
           }
         ]
       },
       {
         "stage": "prompt-check",
-        "program_commitment": "64f520da4e8856ca0fa73ed47f28f32369e6631868babd0a445a41dea113404a",
+        "program_commitment": "3465a20a5ca24dc5a34612b88f0a8331a524ac7db9e2a99114ad99222db704ae",
         "chained_inputs": [
           {
             "name": "bound",
@@ -35,14 +49,14 @@
               "prompt-check"
             ],
             "empty_values": [
-              "bc31ff40669f4add4510146f578279f9bd5f2c8824b641f2e803ddb34f6b6f6a"
+              "4dd645d5528856d2f2cc73d99a9e514c7046baee4923e4c69c1248045ed1372e"
             ]
           }
         ]
       },
       {
         "stage": "input-embedding",
-        "program_commitment": "e934d9fdcedda89a94832665bee19d2f947ad56069452391838601d29eb18f68",
+        "program_commitment": "6337703b5ea38da0b202f1025845fccf5c7ffbc8a125c440f5fb11a8c5db2ddc",
         "chained_inputs": [
           {
             "name": "previous",
@@ -59,14 +73,14 @@
               "prompt-check"
             ],
             "empty_values": [
-              "bc31ff40669f4add4510146f578279f9bd5f2c8824b641f2e803ddb34f6b6f6a"
+              "4dd645d5528856d2f2cc73d99a9e514c7046baee4923e4c69c1248045ed1372e"
             ]
           }
         ]
       },
       {
         "stage": "sequence-check",
-        "program_commitment": "8f1b4b6e22ed33bd5390272b565419fe10e6413251c003100c46815267911fca",
+        "program_commitment": "8e1c21e269f14f61ddfd6af36d7f2e98e1cdcedcc332f312b31bccdb63e02fc4",
         "chained_inputs": [
           {
             "name": "activations",
@@ -88,7 +102,7 @@
               "sequence-check"
             ],
             "empty_values": [
-              "f1ebaa369b9aab884b407916e0347dde9096951bead3c3fdaf10e821d5b680a4"
+              "bcd688b2f13ba3a589e34d64f0d1c7c47400dd0ac8ea97bffd9f83f9d0a39dba"
             ]
           },
           {
@@ -102,7 +116,7 @@
       },
       {
         "stage": "prefill-prepare-aux",
-        "program_commitment": "a49e5757bde0c897ec2ec9c8affafa697258ff003c6a08d25ae74d2e0b3d0e5d",
+        "program_commitment": "42d07701b536328b4e4ce06cff1c821f65dbdf3c29db2654eedf0fa6c7c49590",
         "chained_inputs": [
           {
             "name": "embedded",
@@ -115,7 +129,7 @@
       },
       {
         "stage": "prefill-range",
-        "program_commitment": "7098ab2fb69a5b54d835582dc58cddcb068e0e24bfa8229868711c53a2e5dd19",
+        "program_commitment": "d58de1c758e7189d61e101882df363a5cd9a409d15b21a96d7af51f2343da78b",
         "chained_inputs": [
           {
             "name": "activations",

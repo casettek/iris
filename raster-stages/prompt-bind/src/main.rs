@@ -42,8 +42,9 @@ fn look_up_atom(
 
 /// Stage entrypoint for one range: `text` is the range's slice of the original
 /// prompt and `previous` the bind of the range before, or the empty state.
-/// `config`, `descriptor`, `schedule` and `claim` are the run's, read by the
-/// first range only. `tokenizer` is the committed tokenizer.
+/// `config`, `descriptor`, `schedule`, `claim` and `source` are the run's, read
+/// by the first range only. `source` is the source stage's record, or the
+/// constant a run without a source uses. `tokenizer` is the committed tokenizer.
 #[sequence]
 fn main(
     tokenizer: PromptTokenizer,
@@ -53,6 +54,7 @@ fn main(
     descriptor: BytesPage,
     schedule: RunSchedule,
     claim: TextClaim,
+    source: SourceRecord,
     previous: PromptState,
 ) -> PromptState {
     let profile = select!(TokenizerProfile, tokenizer.clone().profile);
@@ -71,6 +73,7 @@ fn main(
         descriptor,
         schedule,
         claim,
+        source,
         root,
         profile.clone()
     );

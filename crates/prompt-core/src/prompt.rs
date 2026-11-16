@@ -29,6 +29,7 @@ use alloc::vec::Vec;
 use raster::{BytesPage, List};
 use serde::{Deserialize, Serialize};
 use sha2::digest::generic_array::GenericArray;
+use sha2::{Digest, Sha256};
 
 /// The word scanner, for a tokenizer whose profile asks for it.
 #[path = "tekken.rs"]
@@ -65,11 +66,17 @@ pub const FAULT_TEXT_AFTER_END: u32 = 11;
 /// The text has a run the word scanner could not hold until it knew which
 /// word the run is in, so its words may not be the tokenizer's.
 pub const FAULT_WORD_SPLIT: u32 = 12;
+/// The source the text was built from has a fault of its own.
+pub const FAULT_SOURCE: u32 = 13;
+/// The text the run claims is not the text its source gives.
+pub const FAULT_TEXT_SOURCE: u32 = 14;
 
 /// What a `PromptContext::fault` value means.
 pub fn fault_description(fault: u32) -> &'static str {
     match fault {
         FAULT_NONE => "no fault",
+        FAULT_SOURCE => "the source the text was built from has a fault",
+        FAULT_TEXT_SOURCE => "the text is not the one its source gives",
         FAULT_CONTEXT_MISMATCH => "prompt predecessors describe different statements",
         FAULT_NO_TEXT => "the committed text has no chunks",
         FAULT_EMPTY_RANGE => "a range's cut does not move past the previous range's",
@@ -268,6 +275,54 @@ pub struct TextClaim {
     pub keep_end: u64,
 }
 
+/// What the source step established about the text: see `source-core`, whose
+/// record this is field for field. A run whose text is taken as given has the
+/// default, with `present` false.
+///
+/// Small, so a tile may take it whole.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
+pub struct SourceRecord {
+    pub present: bool,
+    /// SHA-256 and length of the prompt text the recipe and documents give.
+    pub text_sha256: String,
+    pub text_total: u64,
+    pub recipe_sha256: String,
+    pub documents: u32,
+    pub documents_sha256: String,
+    pub signer: String,
+    pub fault: u32,
+    pub fault_position: u64,
+}
+
+/// One hash for the whole record, which the statement names: 64 hex digits,
+/// all zero for a run without a source.
+pub fn source_id(record: &SourceRecord) -> String {
+    let mut digest = [0_u8; 32];
+    if record.present {
+        let mut hasher = Sha256::new();
+        hasher.update(b"iris/source/v1\0");
+        for text in [
+            &record.text_sha256,
+            &record.recipe_sha256,
+            &record.documents_sha256,
+            &record.signer,
+        ] {
+            hasher.update((text.len() as u32).to_le_bytes());
+            hasher.update(text.as_bytes());
+        }
+        hasher.update(record.text_total.to_le_bytes());
+        hasher.update(record.documents.to_le_bytes());
+        hasher.update(record.fault.to_le_bytes());
+        hasher.update(record.fault_position.to_le_bytes());
+        digest = hasher.finalize().into();
+    }
+    let mut hex = String::with_capacity(64);
+    for byte in digest {
+        hex.push_str(&format!("{byte:02x}"));
+    }
+    hex
+}
+
 /// The run's configuration, as one committed value.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
 pub struct RunConfig {
@@ -319,6 +374,8 @@ pub struct PromptContext {
     pub model: model_identity::ModelContext,
     /// SHA-256 of the original UTF-8 prompt bytes, in lowercase hex.
     pub input_text_sha256: String,
+    /// [`source_id`] of the record the text was built from.
+    pub source_sha256: String,
     pub model_id: String,
     pub raw_prompt: bool,
     pub max_new_tokens: u32,
@@ -953,6 +1010,8 @@ pub struct BindOpen {
 ///
 /// The first range has nothing before it (`previous` is the empty state): it
 /// binds the model, the statement and the schedule, and starts the three loops.
+/// It also holds the text the run claims to the text its source gives, when
+/// the run has a source.
 /// Every later range continues the bind before it, and reads none of the run's
 /// inputs again. Each checks the tokenizer it was given against the model.
 #[allow(clippy::too_many_arguments)]
@@ -963,16 +1022,28 @@ pub fn open_bind_range(
     descriptor: &[u8],
     schedule: &RunSchedule,
     claim: &TextClaim,
+    source: &SourceRecord,
     tokenizer_root: &BytesPage,
     profile: &TokenizerProfile,
 ) -> BindOpen {
     use model_identity::{stream, ModelContext, Role};
     if *previous == PromptContext::default() {
         let mut context = open_prompt_context(claim, config);
+        context.source_sha256 = source_id(source);
+        if source.present {
+            if source.fault != 0 {
+                record_fault(&mut context, FAULT_SOURCE, source.fault_position);
+            } else if claim.input_text_sha256 != source.text_sha256
+                || claim.total != source.text_total
+            {
+                record_fault(&mut context, FAULT_TEXT_SOURCE, 0);
+            }
+        }
         context.model = ModelContext::bind(descriptor, &config.model_id);
         context.model = stream::verify(context.model, tokenizer_root, Role::Tokenizer);
         context.model.bind_statement(
             &context.input_text_sha256,
+            &context.source_sha256,
             context.raw_prompt,
             context.max_new_tokens,
             context.range_size,
@@ -1269,6 +1340,7 @@ pub fn join_prompt_models(previous: PromptContext, bound: &PromptContext) -> Pro
     };
     if !first {
         if previous.input_text_sha256 != bound.input_text_sha256
+            || previous.source_sha256 != bound.source_sha256
             || previous.model_id != bound.model_id
             || previous.raw_prompt != bound.raw_prompt
             || previous.max_new_tokens != bound.max_new_tokens

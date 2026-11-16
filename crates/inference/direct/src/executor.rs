@@ -81,10 +81,14 @@ impl DirectInferenceExecutor {
         // Direct inference is the independent numerical oracle; construct its
         // diagnostic statement/history from the actual prompt and selected IDs.
         let prompt_ranges = model.prompt_ranges(&prepared_prompt);
+        // What the statement names as the text's source: zeros when the text
+        // is taken as given.
+        let source_sha256 = run_prep::source_id(prepared_prompt.source.as_ref());
         let execution_context = |generated: Option<&[u32]>, claimed_tokens: usize| {
             let mut context = crate::view_kernels::bound_model_context(&model);
             context.bind_statement(
                 &sequence_check::sha256_hex(prepared_prompt.resolved_prompt.as_bytes()),
+                &source_sha256,
                 run_spec.raw_prompt,
                 run_spec.tokens,
                 model.manifest().range_size,
@@ -208,6 +212,7 @@ impl DirectInferenceExecutor {
                 input_text_sha256: sequence_check::sha256_hex(
                     prepared_prompt.resolved_prompt.as_bytes(),
                 ),
+                source_sha256: source_sha256.clone(),
                 model_id: model.manifest().model_id.clone(),
                 raw_prompt: run_spec.raw_prompt,
                 max_new_tokens: run_spec.tokens,
@@ -249,6 +254,7 @@ impl DirectInferenceExecutor {
             output_text_sha256: output.output_text_sha256,
             output_fault: output.output_fault,
             input_text_sha256: output.input_text_sha256,
+            source_sha256: output.source_sha256,
             model_id: output.model_id,
             raw_prompt: output.raw_prompt,
             max_new_tokens: output.max_new_tokens,

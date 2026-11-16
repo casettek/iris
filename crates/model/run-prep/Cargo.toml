@@ -12,6 +12,7 @@ sequence-check = { path = "../../../raster-stages/sequence-check" }
 raster = { path = "../../../../raster/crates/raster" }
 input-embedding = { path = "../../../raster-stages/input-embedding" }
 serde = "1.0"
+source-core = { path = "../../source-core" }
 serde_json = "1.0"
 
 [dev-dependencies]

@@ -864,7 +864,8 @@ fn chain_template(
     );
     // `j` is the range as the names spell it: `0`, or `{j}` inside the repeat.
     // `previous` binds what the bind, the check and the embedding continue.
-    let prompt_stages = |header: &str, j: &str, previous: [String; 3]| -> String {
+    let prompt_stages =
+        |header: &str, j: &str, bind_source: &str, previous: [String; 3]| -> String {
         let [bind_previous, check_previous, embed_previous] = previous;
         format!(
             "\n{header}\n\
@@ -873,6 +874,7 @@ fn chain_template(
              {descriptor_line}\n\
              {tokenizer_line}\
              inputs.text = {{ input = \"prompt_text_{j}\" }}\n\
+             {}\
              {}\
              {}\
              {}\
@@ -894,11 +896,57 @@ fn chain_template(
             run_external("config"),
             run_external("schedule"),
             run_external("claim"),
+            bind_source,
         )
     };
+    // The source stage states what the prompt text was built from, and the
+    // first bind holds the text to its record. A run without a source has no
+    // such stage: run preparation removes it, and gives the first bind the
+    // constant every later bind is given, which none of them reads.
+    let no_source = write_external(
+        &origin::no_source(),
+        layout,
+        "raster-stages/prompt-bind",
+        "no_source",
+    )?;
+    let no_source_line = external_line(
+        "source",
+        layout,
+        "raster-stages/prompt-bind",
+        "no_source",
+        &no_source,
+    );
+    out.push_str(&format!(
+        "\n[[chain.stage]]\n\
+         name = \"source\"\n\
+         project = \"raster-stages/prompt-source\"\n\
+         {}{}{}",
+        external_line(
+            "signer",
+            layout,
+            RUN_PLACEHOLDER_DIR,
+            "source_signer",
+            INITIAL_PIECES_PLACEHOLDER_COMMITMENT,
+        ),
+        external_line(
+            "recipe",
+            layout,
+            RUN_PLACEHOLDER_DIR,
+            "source_recipe",
+            INITIAL_PIECES_PLACEHOLDER_COMMITMENT,
+        ),
+        external_line(
+            "documents",
+            layout,
+            RUN_PLACEHOLDER_DIR,
+            "source_documents",
+            INITIAL_PIECES_PLACEHOLDER_COMMITMENT,
+        ),
+    ));
     out.push_str(&prompt_stages(
         "[[chain.stage]]",
         "0",
+        "inputs.source = { from = \"source\" }\n",
         [
             no_prompt_state("previous"),
             no_prompt_state("previous"),
@@ -909,6 +957,7 @@ fn chain_template(
     out.push_str(&prompt_stages(
         "  [[chain.repeat.stage]]",
         "{j}",
+        &no_source_line,
         ["prompt_bind", "prompt_check", "embed"].map(|stage| {
             format!("inputs.previous = {{ from = \"{stage}_p{{j-1}}\", first = \"{stage}_p0\" }}\n")
         }),

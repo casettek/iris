@@ -46,14 +46,15 @@ without it a tier rebuilds that binary for the CPU. Variables such as
 The gate replays a falsified stage through authenticated Raster only when the
 stage is longer than its replay window. On the synthetic model that is
 `prompt-check` and `prefill-range`; the gate's report says which stages replayed.
-The stage ladder is what runs the other four programs through authenticated
-Raster, with a smaller window.
+The stage ladder is what runs the other programs through authenticated Raster,
+with a smaller window. That includes `prompt-source`, on the claim the gate's
+source leg builds.
 
 ## The pieces on their own
 
 ```sh
 just test-parity                      # the gate alone
-just stage-ladder                     # all six programs, on the newest parity run
+just stage-ladder                     # every program of the run's family, on the newest parity run
 just stage-ladder prefill-range       # one program
 just test-ignored --skip-proof
 just test-real-model

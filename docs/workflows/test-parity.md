@@ -121,6 +121,36 @@ layer at a time.
 Batched prefill over `N` rows and single-row decode must be bit-identical, or an
 honest claimer would convict itself.
 
+## Source leg
+
+Before the three cases, the gate builds one claim whose prompt comes from two signed
+documents (`crates/inference/cli/src/parity/source.rs`). The documents, the recipe and
+the signing key are made in the run. The recipe takes values from both documents, one of
+them through an array and a key with a dot in it.
+
+The claim is run three ways, as each case is. Its chain starts at the `source` stage, and
+every stage's output must be the same bytes through Raster and natively. The record of
+direct inference must be the claim's, its source digest the one the source step gives, and
+a contract's checks must pass with every native checkpoint held to the Raster run's
+boundary.
+
+Then the source stage and the binds are run, through Raster and natively, on sources that
+are wrong. Each must finish, give the same bytes both ways, and record its fault: the
+source stage's own, and the bind's fault that its source has one.
+
+| Case | The source records | The bind records |
+| --- | --- | --- |
+| `untampered` | no fault | no fault |
+| `altered-document` | a document is not the attested one | the source has a fault |
+| `other-signer` | the signature is not the signer's | the source has a fault |
+| `swapped-documents`, `missing-document` | the documents are not the recipe's | the source has a fault |
+| `missing-field` | no member at a field's path | the source has a fault |
+| `object-for-a-value` | a field's value is not a scalar | the source has a fault |
+| `other-text` | no fault | the text is not the one its source gives |
+
+The challenge leg has no case that falsifies the source stage. On this model the stage is
+shorter than the replay window.
+
 ## Challenge leg
 
 On the templated case the gate then runs `challenge build`, the command a
@@ -165,8 +195,9 @@ Build/import logs are at the run root. Files are retained on success and failure
 
 Under the final `PASS` the command prints what the run covered, and the report
 holds the same as `outcomes`: how many honest checkpoints, rows and cache entries
-agreed; how many bad prompts and bad chains published their fault; and, for the
-challenge leg, how many claims were found at the expected stage, which stage
+agreed; how many bad prompts and bad chains published their fault; how many
+checkpoints the claim with a source had and how many bad sources recorded theirs; and,
+for the challenge leg, how many claims were found at the expected stage, which stage
 programs a falsified claim was replayed through authenticated Raster, and which
 were found only because the stage is shorter than the replay window. See
 [testing](testing.md) for where this gate sits among the other checks.

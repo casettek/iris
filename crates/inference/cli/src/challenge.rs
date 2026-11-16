@@ -285,6 +285,7 @@ fn rebuild_teacher_forced_run(
         model_manifest: selected.model_manifest,
         prompt: Some(frozen.prompt.resolved_prompt.clone()),
         prompt_file: None,
+        source: None,
         raw_prompt: frozen.raw_prompt,
         tokens: frozen.tokens,
     };
@@ -298,6 +299,11 @@ fn rebuild_teacher_forced_run(
             direct_output_ids: None,
         },
         &run_spec,
+        frozen
+            .prompt
+            .source
+            .as_ref()
+            .zip(frozen.source_inputs.as_ref()),
     )?;
     if rebuilt.prepared_run.model_id != frozen.model_id {
         eprintln!(
@@ -1126,10 +1132,12 @@ mod tests {
                     segment: 0,
                 }],
                 eos_token_ids: Vec::new(),
+                source: None,
             },
             tokens: 1,
             run_manifest_path: Some(run_manifest),
             run_manifest_sha256: Some(String::from("wrong")),
+            source_inputs: None,
         };
 
         let error = verify_prepared_run(&prepared).unwrap_err();

@@ -1,6 +1,6 @@
 {
   "format": 3,
-  "program_commitment": "bfc4936b3ed8fe266053ae6158ff0d1e85b29f28159fa03b3011256a1ebc7ec5",
+  "program_commitment": "10c0c891782fee3277e02f299d6c6697caa26d5bd4c4f2d53a033324dc3bfe6b",
   "tiles": {
     "accumulate_context": {
       "image_id": "534a3666f32f2b02a9ba46de3e8c515771f3afa8bd80f1b3ba22c13b9dcb4ea5",
@@ -27,7 +27,7 @@
       "source_hash": "93e084a05fb472860000000000007694"
     },
     "begin_cache_coverage": {
-      "image_id": "9c17cd4d49cbec8f3177b5cc23f5e924abe1b9c1c56acb8196e8164a93d1ca76",
+      "image_id": "9ec80946589a4edeae74c38e991b2a1b7e9d89f171346d991de6ac40aced2db5",
       "source_hash": "93e084a05fb472860000000000007694"
     },
     "begin_cursor": {
@@ -55,7 +55,7 @@
       "source_hash": "93e084a05fb472860000000000007694"
     },
     "binding_validate_rows": {
-      "image_id": "0e3872efded2caf639bc5b6cc0922a97bee9a85f56d385db83ba558a7f9d7a38",
+      "image_id": "62bddf36c56b9ea65417da53b750984e0d2ab9cd8c3bd976d7cd2d5edcff70ef",
       "source_hash": "93e084a05fb472860000000000007694"
     },
     "carry_cached_key": {
@@ -127,7 +127,7 @@
       "source_hash": "93e084a05fb472860000000000007694"
     },
     "layer_model_context": {
-      "image_id": "dc4c16dc1a258b954ad74156cf811f5542c8867d1c8860e64b247314a74aabdf",
+      "image_id": "e37694f1e4a4220a9c76449390a7fb1fc15e7166d779d3c65805b13100fd4382",
       "source_hash": "93e084a05fb472860000000000007694"
     },
     "mac_q8_gate_page": {
@@ -192,5 +192,5 @@
     "build_mode": "local",
     "rustc": "rustc 1.97.0-dev (e638c6cfe 2026-07-15)"
   },
-  "guest_inputs": "324b51d719892efab576e0760f104a9631d808692c108f6a19b893a131022206"
+  "guest_inputs": "1afb8f86ef2a8379fa05e98367e41733182c25fe67d602fecc6c95a69b45792e"
 }

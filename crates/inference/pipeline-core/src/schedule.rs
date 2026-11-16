@@ -275,6 +275,7 @@ mod tests {
     fn statement(max_new_tokens: u32, range_size: u32) -> Statement {
         Statement {
             input_text: [1; 32],
+            source: [0; 32],
             model: [2; 32],
             raw_prompt: false,
             max_new_tokens,

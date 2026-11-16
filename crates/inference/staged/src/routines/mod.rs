@@ -14,10 +14,13 @@ pub mod prefill_prepare_aux;
 pub mod prefill_range;
 pub mod prompt_bind;
 pub mod prompt_check;
+pub mod prompt_source;
 pub mod sequence_check;
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum StageKind {
+    /// What the prompt text was built from, for a run that has a source.
+    PromptSource,
     PromptBind,
     PromptCheck,
     InputEmbedding,
@@ -66,6 +69,7 @@ pub struct DirectTimings {
 impl StageKind {
     pub fn from_stage_spec(project: &str, name: &str) -> Result<Self> {
         match project_basename(project) {
+            "prompt-source" if name == "source" => Ok(Self::PromptSource),
             "prompt-bind" if name.starts_with("prompt_bind_p") => Ok(Self::PromptBind),
             "prompt-check" if name.starts_with("prompt_check_p") => Ok(Self::PromptCheck),
             "input-embedding" if name.starts_with("embed_") => Ok(Self::InputEmbedding),
@@ -108,6 +112,7 @@ impl StageKind {
 
     pub fn from_stage_name(name: &str) -> Result<Self> {
         match name {
+            "source" => Ok(Self::PromptSource),
             _ if name.starts_with("prompt_bind_p") => Ok(Self::PromptBind),
             _ if name.starts_with("prompt_check_p") => Ok(Self::PromptCheck),
             _ if name.starts_with("embed_") => Ok(Self::InputEmbedding),
@@ -127,6 +132,7 @@ impl StageKind {
 
     pub fn project(&self) -> &'static str {
         match self {
+            Self::PromptSource => "prompt-source",
             Self::PromptBind => "prompt-bind",
             Self::PromptCheck => "prompt-check",
             Self::InputEmbedding => "input-embedding",
@@ -139,6 +145,7 @@ impl StageKind {
 
     pub fn routine(&self) -> &'static str {
         match self {
+            Self::PromptSource => "prompt_source",
             Self::PromptBind => "prompt_bind",
             Self::PromptCheck => "prompt_check",
             Self::InputEmbedding => "input_embedding",
@@ -154,15 +161,22 @@ impl StageKind {
             Self::PrefillPrepareAux { layer }
             | Self::PrefillRange { layer }
             | Self::LayerMistral { layer } => Some(*layer),
-            Self::PromptBind | Self::PromptCheck | Self::InputEmbedding | Self::SequenceCheck => {
-                None
-            }
+            Self::PromptSource
+            | Self::PromptBind
+            | Self::PromptCheck
+            | Self::InputEmbedding
+            | Self::SequenceCheck => None,
         }
     }
 }
 
 pub fn run_for_compare(kind: &StageKind) -> Result<DirectCompareOutput> {
     match kind {
+        StageKind::PromptSource => compare(
+            prompt_source::load_inputs_from_args,
+            prompt_source::run_direct,
+            "prompt_source",
+        ),
         StageKind::PromptBind => compare(
             prompt_bind::load_inputs_from_args,
             prompt_bind::run_direct,
@@ -203,6 +217,12 @@ pub fn run_for_compare(kind: &StageKind) -> Result<DirectCompareOutput> {
 
 pub fn run_and_publish(kind: &StageKind) -> Result<DirectPublishOutput> {
     match kind {
+        StageKind::PromptSource => publish(
+            prompt_source::load_inputs_from_args,
+            prompt_source::run_direct,
+            "prompt_source",
+            CachedStageValue::SourceRecord,
+        ),
         StageKind::PromptBind => publish(
             prompt_bind::load_inputs_from_args,
             prompt_bind::run_direct,
@@ -271,6 +291,19 @@ pub fn run_and_publish_from_paths_with_caches(
     caches: RoutineRunCaches<'_>,
 ) -> Result<DirectPublishOutput> {
     match kind {
+        StageKind::PromptSource => publish(
+            || {
+                prompt_source::load_inputs_from_paths_with_cache(
+                    input_path,
+                    input_manifest_path,
+                    cached_inputs,
+                    caches.materializations,
+                )
+            },
+            prompt_source::run_direct,
+            "prompt_source",
+            CachedStageValue::SourceRecord,
+        ),
         StageKind::PromptBind => publish(
             || {
                 prompt_bind::load_inputs_from_paths_with_cache(
@@ -375,6 +408,19 @@ pub fn run_cached_from_paths_with_caches(
     caches: RoutineRunCaches<'_>,
 ) -> Result<DirectCachedOutput> {
     match kind {
+        StageKind::PromptSource => cache(
+            || {
+                prompt_source::load_inputs_from_paths_with_cache(
+                    input_path,
+                    input_manifest_path,
+                    cached_inputs,
+                    caches.materializations,
+                )
+            },
+            prompt_source::run_direct,
+            "prompt_source",
+            CachedStageValue::SourceRecord,
+        ),
         StageKind::PromptBind => cache(
             || {
                 prompt_bind::load_inputs_from_paths_with_cache(
@@ -605,6 +651,14 @@ mod tests {
         assert_eq!(
             StageKind::from_stage_spec("raster-stages/sequence-check", "check_c1").unwrap(),
             StageKind::SequenceCheck
+        );
+        assert_eq!(
+            StageKind::from_stage_spec("raster-stages/prompt-source", "source").unwrap(),
+            StageKind::PromptSource
+        );
+        assert_eq!(
+            StageKind::from_stage_name("source").unwrap(),
+            StageKind::PromptSource
         );
         assert!(
             StageKind::from_stage_spec("raster-stages/decode-embed", "decode_embed_t0").is_err()

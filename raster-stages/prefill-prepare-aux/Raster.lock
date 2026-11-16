@@ -1,6 +1,6 @@
 {
   "format": 3,
-  "program_commitment": "a49e5757bde0c897ec2ec9c8affafa697258ff003c6a08d25ae74d2e0b3d0e5d",
+  "program_commitment": "42d07701b536328b4e4ce06cff1c821f65dbdf3c29db2654eedf0fa6c7c49590",
   "tiles": {
     "assert_layer_complete": {
       "image_id": "fbf225cc9c5cfd7fefd66ff1e5f843b511df1b7bb00b3ea6aa4f8afda91a6280",
@@ -15,7 +15,7 @@
       "source_hash": "7aa2d5390ac1919900000000000027c8"
     },
     "begin_ple_layer": {
-      "image_id": "c5d2a45603b5e8f69a64f9a11dcf3973ec101a41721c52d0fa9374a6c9b2de4f",
+      "image_id": "f890682f3fcf79563fe1b742e505f54463568dce3187fcd13c81dec963712110",
       "source_hash": "7aa2d5390ac1919900000000000027c8"
     },
     "begin_ple_task": {
@@ -100,5 +100,5 @@
     "build_mode": "local",
     "rustc": "rustc 1.97.0-dev (e638c6cfe 2026-07-15)"
   },
-  "guest_inputs": "91082fa1497c3dee7b0fb92f342329ce8c414d7217d0f579b76190c75cd704b0"
+  "guest_inputs": "da0d8917fbb268d339e24c546a4a7a6f3cfa2043916f65f2d7f6b12876a21929"
 }

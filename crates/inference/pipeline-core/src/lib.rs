@@ -6,6 +6,9 @@ use sha2::{Digest, Sha256};
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Statement {
     pub input_text: [u8; 32],
+    /// What the input text was built from: a digest of the source record, or
+    /// all zero for a run whose text is taken as given.
+    pub source: [u8; 32],
     pub model: [u8; 32],
     pub raw_prompt: bool,
     pub max_new_tokens: u32,
@@ -14,8 +17,9 @@ pub struct Statement {
 impl Statement {
     pub fn digest(&self) -> [u8; 32] {
         let mut h = Sha256::new();
-        h.update(b"iris/statement/v1\0");
+        h.update(b"iris/statement/v2\0");
         h.update(self.input_text);
+        h.update(self.source);
         h.update(self.model);
         h.update([u8::from(self.raw_prompt)]);
         h.update(self.max_new_tokens.to_le_bytes());
@@ -105,6 +109,7 @@ mod tests {
     fn statement() -> Statement {
         Statement {
             input_text: [1; 32],
+            source: [0; 32],
             model: [2; 32],
             raw_prompt: false,
             max_new_tokens: 8,
@@ -134,7 +139,15 @@ mod tests {
     #[test]
     fn statement_fields_are_bound() {
         let s = statement();
-        let mut variants = [s.clone(), s.clone(), s.clone(), s.clone(), s.clone()];
+        let mut variants = [
+            s.clone(),
+            s.clone(),
+            s.clone(),
+            s.clone(),
+            s.clone(),
+            s.clone(),
+        ];
+        variants[5].source[0] ^= 1;
         variants[0].input_text[0] ^= 1;
         variants[1].model[0] ^= 1;
         variants[2].raw_prompt = true;

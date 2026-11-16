@@ -264,25 +264,37 @@ impl ClaimBuildOptions {
 pub(crate) fn prepare_claim_run(options: &ClaimBuildOptions) -> Result<PreparedClaimRun> {
     let run_spec_path = absolute(&options.base_dir, &options.run_spec_path);
     let run_spec = read_run_spec(&run_spec_path)?;
-    prepare_run(options, run_spec_path, &run_spec, true)
+    prepare_run(options, run_spec_path, &run_spec, None, true)
 }
 
 /// Prepares a run from a spec a claim already fixed, as a challenger does.
 ///
 /// The ids are not held to the run's token budget here. A claim that breaks the
 /// budget still has a chain to recompute, and is rejected on its final record.
+///
+/// `source` is the claim's source record with the source stage's inputs. A
+/// challenger reruns that stage on the inputs the claim committed to.
 pub(crate) fn prepare_challenge_run(
     options: &ClaimBuildOptions,
     run_spec: &InferenceRunSpec,
+    source: Option<FrozenSource<'_>>,
 ) -> Result<PreparedClaimRun> {
     let run_spec_path = absolute(&options.base_dir, &options.run_spec_path);
-    prepare_run(options, run_spec_path, run_spec, false)
+    prepare_run(options, run_spec_path, run_spec, source, false)
 }
+
+/// A claim's source as a challenger is given it: the record, and the files
+/// the source stage ran on.
+pub(crate) type FrozenSource<'a> = (
+    &'a run_prep::source::SourceRecord,
+    &'a inference_artifacts::PreparedSourceInputs,
+);
 
 fn prepare_run(
     options: &ClaimBuildOptions,
     run_spec_path: PathBuf,
     run_spec: &InferenceRunSpec,
+    frozen_source: Option<FrozenSource<'_>>,
     check_claimed_length: bool,
 ) -> Result<PreparedClaimRun> {
     let run_spec_dir = run_spec_path
@@ -297,7 +309,10 @@ fn prepare_run(
         .ok_or_else(|| anyhow::anyhow!("model manifest has no parent directory"))?;
     let tokenizer_path = absolute(model_manifest_dir, &model_manifest.bundle.tokenizer_path);
     let tokenizer: serde_json::Value = read_json(&tokenizer_path)?;
-    let prompt = run_prep::prepare_prompt(&tokenizer, run_spec_dir, run_spec, &model_manifest)?;
+    let mut prompt = run_prep::prepare_prompt(&tokenizer, run_spec_dir, run_spec, &model_manifest)?;
+    if let Some((record, _)) = frozen_source {
+        prompt.source = Some(record.clone());
+    }
 
     let run_dir = options
         .base_dir
@@ -310,6 +325,16 @@ fn prepare_run(
             run_spec.tokens,
         ));
     let prompt_dir = run_dir.join("prompt");
+    // The source stage's inputs: written from the run's own source, or the
+    // claim's for a challenger. A run without a source has no such stage.
+    let source_inputs = match (run_spec.source.as_ref(), frozen_source) {
+        (Some(source), _) => Some(run_prep::write_source_inputs(
+            &run_prep::source::load_source(run_spec_dir, source)?,
+            &prompt_dir,
+        )?),
+        (None, Some((_, inputs))) => Some(inputs.clone()),
+        (None, None) => None,
+    };
     let ids = match options
         .claimed_token_ids
         .as_ref()
@@ -363,6 +388,7 @@ fn prepare_run(
         )?,
         &run_prep::write_run_schedule(mark_files.len(), claimed_files.len(), &prompt_dir)?,
         &run_prep::write_text_claim(&bound.claim, &prompt_dir)?,
+        source_inputs.as_ref(),
         &mark_files,
         &claimed_files,
     )?;
@@ -383,6 +409,7 @@ fn prepare_run(
         tokens: run_spec.tokens,
         run_manifest_path: Some(manifest_path.clone()),
         run_manifest_sha256: Some(run_manifest_sha256),
+        source_inputs,
     };
     write_json(&run_dir.join(PREPARED_RUN_JSON), &prepared_run)?;
 
@@ -399,9 +426,50 @@ const RUN_PLACEHOLDER_DIR: &str = "target/iris/run-prompt-placeholder/";
 /// Marks where the template names the last prompt range.
 const LAST_PROMPT_RANGE: &str = "@LAST_PROMPT_RANGE@";
 
+/// The chain of a run whose text is taken as given: the template without its
+/// source stage, and the first bind given the constant the later binds are.
+pub(crate) fn without_source_stage(template: &str) -> Result<String> {
+    let constant = template
+        .lines()
+        .map(str::trim_start)
+        .find(|line| line.starts_with("inputs.source = { external"))
+        .context("chain template gives no bind a constant source")?
+        .to_string();
+    let mut out = Vec::new();
+    let mut lines = template.lines().peekable();
+    let (mut dropped, mut rebound) = (0, 0);
+    while let Some(line) = lines.next() {
+        let is_source_stage = line.trim() == "[[chain.stage]]"
+            && lines
+                .peek()
+                .is_some_and(|next| next.trim() == "name = \"source\"");
+        if is_source_stage {
+            while lines
+                .peek()
+                .is_some_and(|next| !next.trim_start().starts_with('['))
+            {
+                lines.next();
+            }
+            dropped += 1;
+        } else if line.trim() == "inputs.source = { from = \"source\" }" {
+            out.push(constant.clone());
+            rebound += 1;
+        } else {
+            out.push(line.to_string());
+        }
+    }
+    anyhow::ensure!(
+        dropped == 1 && rebound == 1,
+        "incompatible chain template: expected one source stage and one bind that takes its record; found {dropped} and {rebound}"
+    );
+    out.push(String::new());
+    Ok(out.join("\n"))
+}
+
 /// Fills the template for one run: the configuration, the stage schedule and
-/// the text claim, the range counts, the last prompt range's index, and each
-/// range's committed text, marks or claimed ids.
+/// the text claim, the range counts, the last prompt range's index, each
+/// range's committed text, marks or claimed ids, and the source stage's
+/// inputs. A run without a source gets a chain without the source stage.
 pub(crate) fn render_ranged_manifest(
     template: &str,
     template_dir: &Path,
@@ -409,6 +477,7 @@ pub(crate) fn render_ranged_manifest(
     config: &run_prep::RunFile,
     schedule: &run_prep::RunFile,
     claim: &run_prep::RunFile,
+    source: Option<&inference_artifacts::PreparedSourceInputs>,
     prompt: &[run_prep::RunFile],
     claimed: &[run_prep::RunFile],
 ) -> Result<String> {
@@ -421,6 +490,10 @@ pub(crate) fn render_ranged_manifest(
         "a run needs one slice of text for each prompt range"
     );
     let template = inference_artifacts::resolve_raster_manifest_paths(template, template_dir)?;
+    let template = match source {
+        Some(_) => template,
+        None => without_source_stage(&template)?,
+    };
     let last_prompt = (prompt.len() - 1).to_string();
     let mut table = String::new();
     let mut name = String::new();
@@ -431,8 +504,9 @@ pub(crate) fn render_ranged_manifest(
     let mut start = 0_usize;
     // Prompt repeats, claimed repeats, prompt externals, claimed externals,
     // per-layer prompt fans, per-layer claimed fans, text externals,
-    // configuration bindings, schedule bindings, text claim bindings.
-    let mut replaced = [0_usize; 10];
+    // configuration bindings, schedule bindings, text claim bindings, the
+    // source stage's inputs.
+    let mut replaced = [0_usize; 11];
     let mut out = Vec::new();
     for line in template.lines() {
         let trimmed = line.trim();
@@ -480,6 +554,24 @@ pub(crate) fn render_ranged_manifest(
             };
             if let Some((param, file, slot)) = binding {
                 replaced[slot] += 1;
+                out.push(
+                    RunExternal::new(&file.path, &file.index_path, &file.commitment).binding(param),
+                );
+                continue;
+            }
+        }
+        if let (("[[chain.stage]]", "source"), Some(source)) =
+            ((table.as_str(), name.as_str()), source)
+        {
+            let binding = [
+                ("signer", &source.signer),
+                ("recipe", &source.recipe),
+                ("documents", &source.documents),
+            ]
+            .into_iter()
+            .find(|(param, _)| trimmed.starts_with(&format!("inputs.{param} =")));
+            if let Some((param, file)) = binding {
+                replaced[10] += 1;
                 out.push(
                     RunExternal::new(&file.path, &file.index_path, &file.commitment).binding(param),
                 );
@@ -560,9 +652,10 @@ pub(crate) fn render_ranged_manifest(
     if replaced[..4] != [1, 2, 1, 1]
         || replaced[4] == 0
         || replaced[4] != replaced[5]
-        || replaced[6..] != [1, 2, 2, 2]
+        || replaced[6..10] != [1, 2, 2, 2]
+        || replaced[10] != if source.is_some() { 3 } else { 0 }
     {
-        anyhow::bail!("incompatible chain template: expected [prompt repeats, claimed repeats, prompt commitments, claimed commitments] = [1, 2, 1, 1], matching per-layer range fans, one set of text commitments, and a configuration, a schedule and a text claim binding for range 0's bind and for the later ranges'; found {replaced:?}");
+        anyhow::bail!("incompatible chain template: expected [prompt repeats, claimed repeats, prompt commitments, claimed commitments] = [1, 2, 1, 1], matching per-layer range fans, one set of text commitments, a configuration, a schedule and a text claim binding for range 0's bind and for the later ranges', and three inputs for the source stage of a run that has a source; found {replaced:?}");
     }
     out.push(String::new());
     Ok(out.join("\n"))
@@ -835,10 +928,12 @@ mod tests {
                         segment: 0,
                     }],
                     eos_token_ids: Vec::new(),
+                    source: None,
                 },
                 tokens: 1,
                 run_manifest_path: Some(manifest_path.clone()),
                 run_manifest_sha256: Some(String::from("run-sha")),
+                source_inputs: None,
             },
         )
         .unwrap();
@@ -962,11 +1057,18 @@ index_path = "/repo/target/iris/run-prompt-placeholder/claimed_{k}.rindex"
 commitments = []
 
 [[chain.stage]]
+name = "source"
+inputs.signer = { external = { path = "/repo/target/iris/run-prompt-placeholder/source_signer.rastered", index_path = "/repo/target/iris/run-prompt-placeholder/source_signer.rindex", commitment = "0" } }
+inputs.recipe = { external = { path = "/repo/target/iris/run-prompt-placeholder/source_recipe.rastered", index_path = "/repo/target/iris/run-prompt-placeholder/source_recipe.rindex", commitment = "0" } }
+inputs.documents = { external = { path = "/repo/target/iris/run-prompt-placeholder/source_documents.rastered", index_path = "/repo/target/iris/run-prompt-placeholder/source_documents.rindex", commitment = "0" } }
+
+[[chain.stage]]
 name = "prompt_bind_p0"
 inputs.text = { input = "prompt_text_0" }
 inputs.config = { external = { path = "/repo/target/iris/run-prompt-placeholder/config.rastered", index_path = "/repo/target/iris/run-prompt-placeholder/config.rindex", commitment = "0" } }
 inputs.schedule = { external = { path = "/repo/target/iris/run-prompt-placeholder/schedule.rastered", index_path = "/repo/target/iris/run-prompt-placeholder/schedule.rindex", commitment = "0" } }
 inputs.claim = { external = { path = "/repo/target/iris/run-prompt-placeholder/claim.rastered", index_path = "/repo/target/iris/run-prompt-placeholder/claim.rindex", commitment = "0" } }
+inputs.source = { from = "source" }
 inputs.previous = { external = { path = "/repo/model/empty_prompt.rastered", index_path = "/repo/model/empty_prompt.rindex", commitment = "e0" } }
 
 [[chain.stage]]
@@ -987,6 +1089,7 @@ inputs.text = { input = "prompt_text_{j}" }
 inputs.config = { external = { path = "/repo/target/iris/run-prompt-placeholder/config.rastered", index_path = "/repo/target/iris/run-prompt-placeholder/config.rindex", commitment = "0" } }
 inputs.schedule = { external = { path = "/repo/target/iris/run-prompt-placeholder/schedule.rastered", index_path = "/repo/target/iris/run-prompt-placeholder/schedule.rindex", commitment = "0" } }
 inputs.claim = { external = { path = "/repo/target/iris/run-prompt-placeholder/claim.rastered", index_path = "/repo/target/iris/run-prompt-placeholder/claim.rindex", commitment = "0" } }
+inputs.source = { external = { path = "/repo/model/prompt-bind/no_source.rastered", index_path = "/repo/model/prompt-bind/no_source.rindex", commitment = "n0" } }
 inputs.previous = { from = "prompt_bind_p{j-1}", first = "prompt_bind_p0" }
 
   [[chain.repeat.stage]]
@@ -1070,6 +1173,7 @@ count = 0
                 &config,
                 &schedule,
                 &claim,
+                None,
                 &prompt,
                 claimed,
             )
@@ -1131,6 +1235,40 @@ count = 0
         assert!(manifest.contains(r#"commitment = "g0""#));
         assert!(manifest.contains(r#"commitment = "s0""#));
         assert!(manifest.contains(r#"commitment = "m0""#));
+        // A run without a source: no source stage, and the first bind is given
+        // the constant.
+        assert!(!manifest.contains(r#"name = "source""#));
+        assert!(!manifest.contains(r#"from = "source""#));
+        assert_eq!(manifest.matches(r#"commitment = "n0""#).count(), 2);
+
+        let run_file = |name: &str, commitment: &str| inference_artifacts::RunFileRef {
+            path: PathBuf::from(format!("/tmp/run/prompt/{name}.rastered")),
+            index_path: PathBuf::from(format!("/tmp/run/prompt/{name}.rindex")),
+            commitment: commitment.into(),
+        };
+        let source = inference_artifacts::PreparedSourceInputs {
+            signer: run_file("source_signer", "k0"),
+            recipe: run_file("source_recipe", "r0"),
+            documents: run_file("source_documents", "d0"),
+        };
+        let sourced = render_ranged_manifest(
+            template,
+            Path::new("/repo"),
+            &text,
+            &config,
+            &schedule,
+            &claim,
+            Some(&source),
+            &prompt,
+            &claimed,
+        )
+        .unwrap();
+        assert!(sourced.contains(r#"name = "source""#));
+        assert!(sourced.contains(r#"inputs.source = { from = "source" }"#));
+        for commitment in ["k0", "r0", "d0"] {
+            assert!(sourced.contains(&format!(r#"commitment = "{commitment}""#)));
+        }
+        assert_eq!(sourced.matches(r#"commitment = "n0""#).count(), 1);
         // Each range needs its own slice of the text.
         assert!(render_ranged_manifest(
             template,
@@ -1139,6 +1277,7 @@ count = 0
             &config,
             &schedule,
             &claim,
+            None,
             &prompt,
             &claimed,
         )

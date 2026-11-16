@@ -30,7 +30,7 @@ fn statement() -> ModelContext {
         .map(|b| format!("{b:02x}"))
         .collect::<String>();
     let mut context = ModelContext::bind(&d.encode().unwrap(), &id);
-    context.bind_statement(&"11".repeat(32), false, 8, 4);
+    context.bind_statement(&"11".repeat(32), &"00".repeat(32), false, 8, 4);
     context
 }
 fn bind(schedule: StageSchedule) -> ModelContext {

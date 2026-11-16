@@ -121,7 +121,7 @@ fn component_roles_and_sticky_context_are_enforced_in_guests() {
         &d.encode().unwrap(),
         &hex::encode(d.model_id().unwrap()),
     );
-    context.bind_statement(&"11".repeat(32), false, 4, 4);
+    context.bind_statement(&"11".repeat(32), &"00".repeat(32), false, 4, 4);
     context.bind_schedule(model_identity::pipeline_core::StageSchedule {
         prompt_ranges: 1,
         claimed_ranges: 1,
@@ -496,7 +496,7 @@ fn prompt_statement_substitution_is_rejected_in_guest() {
     };
     let model_id = hex::encode(descriptor.model_id().unwrap());
     let mut model = model_identity::ModelContext::bind(&descriptor.encode().unwrap(), &model_id);
-    model.bind_statement(&"11".repeat(32), false, 8, 4);
+    model.bind_statement(&"11".repeat(32), &"00".repeat(32), false, 8, 4);
     model.bind_schedule(model_identity::pipeline_core::StageSchedule {
         prompt_ranges: 2,
         claimed_ranges: 1,
@@ -548,6 +548,7 @@ fn a_bind_opens_and_continues_in_guest_as_it_does_natively() {
     use model_identity::pipeline_core::{Step, MAX_RANGES};
     use sequence_check::prompt::{
         open_bind_range, text_claim_of, BindCarry, BindOpen, PromptContext, RunConfig, RunSchedule,
+        SourceRecord,
         TokenizerProfile,
     };
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -587,6 +588,7 @@ fn a_bind_opens_and_continues_in_guest_as_it_does_natively() {
         ..Default::default()
     };
     let claim = text_claim_of(&Default::default(), false, &profile);
+    let source = SourceRecord::default();
     let open = |previous: &PromptContext, carry: &BindCarry, schedule: &RunSchedule| {
         let expected = open_bind_range(
             previous,
@@ -595,6 +597,7 @@ fn a_bind_opens_and_continues_in_guest_as_it_does_natively() {
             descriptor.as_slice(),
             schedule,
             &claim,
+            &source,
             &root,
             &profile,
         );
@@ -607,6 +610,7 @@ fn a_bind_opens_and_continues_in_guest_as_it_does_natively() {
                     &descriptor,
                     schedule,
                     &claim,
+                    &source,
                     &root,
                     &profile,
                 ))
@@ -687,7 +691,7 @@ fn execution_fixture() -> (
         transformer: vec![[6; 32]],
     };
     let mut p = ModelContext::bind(&d.encode().unwrap(), &hex::encode(d.model_id().unwrap()));
-    p.bind_statement(&"11".repeat(32), false, 4, 4);
+    p.bind_statement(&"11".repeat(32), &"00".repeat(32), false, 4, 4);
     p.bind_schedule(model_identity::pipeline_core::StageSchedule {
         prompt_ranges: 1,
         claimed_ranges: 1,

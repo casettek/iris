@@ -30,6 +30,9 @@ pub struct InferenceResult {
     pub output_fault: u32,
     /// SHA-256 of the exact text the chain consumed.
     pub input_text_sha256: String,
+    /// The digest of the source record the text was built from, or 64 zeros.
+    #[serde(default = "no_source_id")]
+    pub source_sha256: String,
     /// The committed model the chain was configured with.
     pub model_id: String,
     pub raw_prompt: bool,
@@ -49,6 +52,11 @@ pub struct InferenceResult {
     /// without a verdict is not a valid one.
     #[serde(default)]
     pub valid: bool,
+}
+
+/// The source digest of a run whose text is taken as given.
+pub fn no_source_id() -> String {
+    "00".repeat(32)
 }
 
 /// Lowercase hex, the form every hash in an [`InferenceResult`] takes.

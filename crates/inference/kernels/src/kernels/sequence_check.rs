@@ -31,6 +31,7 @@ pub fn prompt_context(source: &prompt_check::input::PromptContext) -> PromptCont
     PromptContext {
         model: source.model.clone(),
         input_text_sha256: source.input_text_sha256.clone(),
+        source_sha256: source.source_sha256.clone(),
         model_id: source.model_id.clone(),
         raw_prompt: source.raw_prompt,
         max_new_tokens: source.max_new_tokens,

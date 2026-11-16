@@ -5,7 +5,7 @@ use anyhow::{ensure, Result};
 use prompt_check::input::{
     bind_range, merge_bucket_of, open_bind_range, record_fault, vocab_bucket_of, BpePiece,
     BpePieces, MergeCandidate, PromptContext, PromptState, PromptText, PromptTokenization,
-    PromptTokenizer, RunConfig, RunSchedule, TextClaim, FAULT_MERGES_INCOMPLETE,
+    PromptTokenizer, RunConfig, RunSchedule, SourceRecord, TextClaim, FAULT_MERGES_INCOMPLETE,
     FAULT_RANGE_TOO_LARGE,
 };
 use raster::{BytesPage, List};
@@ -67,6 +67,8 @@ pub struct PromptBindInputs<'a> {
     pub descriptor: &'a [u8],
     pub schedule: &'a RunSchedule,
     pub claim: &'a TextClaim,
+    /// The source the text was built from, or the default for none.
+    pub source: &'a SourceRecord,
     /// The bind of the range before, or the empty state.
     pub previous: &'a PromptState,
 }
@@ -90,6 +92,7 @@ pub fn run_prompt_bind(
         inputs.descriptor,
         inputs.schedule,
         inputs.claim,
+        inputs.source,
         inputs.root,
         profile,
     );

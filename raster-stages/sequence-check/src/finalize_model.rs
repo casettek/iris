@@ -223,6 +223,7 @@ pub fn final_context_fault(
     let mut statement = expected.clone();
     statement.bind_statement(
         &prompt.input_text_sha256,
+        &prompt.source_sha256,
         prompt.raw_prompt,
         prompt.max_new_tokens,
         prompt.range_size,

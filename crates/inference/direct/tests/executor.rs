@@ -725,6 +725,7 @@ fn write_run_spec(dir: &Path, manifest_path: &Path, prompt: &str, tokens: u32) -
         model_manifest: manifest_path.strip_prefix(dir).unwrap().to_path_buf(),
         prompt: Some(prompt.to_string()),
         prompt_file: None,
+        source: None,
         raw_prompt: true,
         tokens,
     };

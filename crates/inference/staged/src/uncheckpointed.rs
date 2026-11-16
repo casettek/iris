@@ -172,6 +172,7 @@ pub(crate) fn inference_result_from_generated(output: GeneratedOutput) -> Infere
         output_text_sha256: output.output_text_sha256,
         output_fault: output.output_fault,
         input_text_sha256: output.input_text_sha256,
+        source_sha256: output.source_sha256,
         model_id: output.model_id,
         raw_prompt: output.raw_prompt,
         max_new_tokens: output.max_new_tokens,

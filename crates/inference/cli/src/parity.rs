@@ -2,6 +2,7 @@
 //! checked against direct generation position by position. Every worker owns its
 //! runtime state.
 mod challenge;
+mod source;
 pub(crate) mod compare;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -152,6 +153,13 @@ fn outcomes(report: &Value) -> Value {
             "prompt_cases": listed("prompt_faults"),
             "chain_cases": listed("chain_faults"),
         },
+        "a_source_is_held": {
+            "checkpoints": report["source"]["claim"]["checkpoints"],
+            // Every case but the untampered one.
+            "bad_sources": report["source"]["faults"]
+                .as_array()
+                .map_or(0, |faults| faults.len().saturating_sub(1)),
+        },
         "cheating_is_caught": caught,
     })
 }
@@ -183,6 +191,13 @@ fn outcome_lines(outcomes: &Value) -> Vec<String> {
             faults["prompt_cases"], faults["chain_cases"]
         ),
     ];
+    let source = &outcomes["a_source_is_held"];
+    if source["checkpoints"].is_u64() {
+        lines.push(format!(
+            "a source is held: 1 claim with a source, {} checkpoints the same through Raster and natively and its record the same as direct inference; {} bad sources finish through both and record the fault",
+            source["checkpoints"], source["bad_sources"]
+        ));
+    }
     let caught = &outcomes["cheating_is_caught"];
     if caught.is_object() {
         lines.push(format!(
@@ -395,6 +410,11 @@ fn run_suite(
         !cases[2].raw_prompt && cases[2].tokens == 8 && cases[2].input_token_ids.len() > 16,
         "invalid over-window case"
     );
+    // First, because it is the quickest leg to fail.
+    println!("Running the source leg...");
+    report["source"] = source::run_source_leg(root, run_dir, &exe, &raster, &model_path, &model)
+        .context("source leg")?;
+    write_json(&run_dir.join("report.json"), report)?;
     let mut selected = BTreeSet::new();
     let mut logit_vectors = BTreeSet::new();
     for case in cases {
@@ -880,6 +900,7 @@ fn run_chain_fault_leg(
                 &files,
             )?,
             &run_prep::write_text_claim(&text_claim, &files)?,
+            None,
             &mark_files,
             &claimed_files,
         )?;
@@ -1129,7 +1150,7 @@ fn run_prompt_fault_leg(
         let manifest = dir.join("Raster.toml");
         fs::write(
             &manifest,
-            prompt_only_manifest(&template, &texts, &files, claim.as_ref())?,
+            prompt_only_manifest(&template, &texts, &files, claim.as_ref(), None)?,
         )?;
 
         let raster_dir = dir.join("raster");
@@ -1202,7 +1223,7 @@ fn run_long_text_case(
     let manifest = dir.join("Raster.toml");
     fs::write(
         &manifest,
-        prompt_only_manifest(template, &texts, &[], Some(&claim))?,
+        prompt_only_manifest(template, &texts, &[], Some(&claim), None)?,
     )?;
 
     let raster_dir = dir.join("raster");
@@ -1265,11 +1286,16 @@ fn block_name(block: &[&str]) -> String {
 /// A run manifest's prompt stages alone: a bind of each of these slices of
 /// text, and a check of each range over these marks. With no marks, only the
 /// binds. `claim`, when given, replaces what the run claims of the text.
+///
+/// `source`, when given, keeps the source stage in front, on these inputs, and
+/// the first bind takes its record. Without it the first bind is given the
+/// constant, as in a run whose text is taken as given.
 fn prompt_only_manifest(
     template: &str,
     texts: &[run_prep::RunFile],
     cuts: &[run_prep::RunFile],
     claim: Option<&run_prep::RunFile>,
+    source: Option<&inference_artifacts::PreparedSourceInputs>,
 ) -> Result<String> {
     let input = |name: &str, family: &str, files: &[run_prep::RunFile]| -> Result<String> {
         let dir = files[0]
@@ -1282,6 +1308,14 @@ fn prompt_only_manifest(
             dir.join(format!("{family}_{{j}}.rindex")),
             files.iter().map(|file| &file.commitment).collect::<Vec<_>>(),
         ))
+    };
+    // These chains have no source stage: the first bind is given the constant.
+    let plain;
+    let template = if source.is_none() && template.contains("name = \"source\"") {
+        plain = crate::claim::without_source_stage(template)?;
+        plain.as_str()
+    } else {
+        template
     };
     ensure!(!texts.is_empty(), "a prompt needs at least one range");
     ensure!(
@@ -1314,6 +1348,30 @@ fn prompt_only_manifest(
                             out.push('\n');
                         }
                     }
+                }
+            }
+            "[[chain.stage]]" if name == "source" => {
+                let source = source.context("the chain has a source stage and no source")?;
+                for line in block {
+                    let binding = [
+                        ("signer", &source.signer),
+                        ("recipe", &source.recipe),
+                        ("documents", &source.documents),
+                    ]
+                    .into_iter()
+                    .find(|(param, _)| line.trim().starts_with(&format!("inputs.{param} =")));
+                    match binding {
+                        Some((param, file)) => out.push_str(
+                            &crate::claim::RunExternal::new(
+                                &file.path,
+                                &file.index_path,
+                                &file.commitment,
+                            )
+                            .binding(param),
+                        ),
+                        None => out.push_str(line),
+                    }
+                    out.push('\n');
                 }
             }
             "[[chain.stage]]" | "[[chain.repeat.stage]]"

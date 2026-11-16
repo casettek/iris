@@ -760,6 +760,7 @@ fn render(model_path: &Path, model: &ModelManifest, run: &RunInputs, dir: &Path)
             dir,
         )?,
         &run_prep::write_text_claim(&text_claim, dir)?,
+        None,
         &mark_files,
         &claimed_files,
     )

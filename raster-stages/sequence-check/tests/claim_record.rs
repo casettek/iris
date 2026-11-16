@@ -25,6 +25,7 @@ fn clean() -> OutputRecord {
         output_text_sha256: hex(&Sha256::digest(b"ZK")),
         output_fault: 0,
         input_text_sha256: hex(&[1; 32]),
+        source_sha256: hex(&[0; 32]),
         model_id: hex(&[2; 32]),
         raw_prompt: true,
         max_new_tokens: 8,
@@ -42,6 +43,7 @@ fn a_clean_record_states_its_statement_its_text_hash_and_a_valid_verdict() {
 
     let statement = Statement {
         input_text: [1; 32],
+        source: [0; 32],
         model: [2; 32],
         raw_prompt: true,
         max_new_tokens: 8,
@@ -65,6 +67,7 @@ fn every_statement_field_moves_the_digest() {
     let base = digest(|_| {});
 
     assert_ne!(digest(|r| r.input_text_sha256 = hex(&[9; 32])), base);
+    assert_ne!(digest(|r| r.source_sha256 = hex(&[9; 32])), base);
     assert_ne!(digest(|r| r.model_id = hex(&[9; 32])), base);
     assert_ne!(digest(|r| r.raw_prompt = false), base);
     assert_ne!(digest(|r| r.max_new_tokens = 9), base);
@@ -94,6 +97,7 @@ fn an_id_that_is_not_a_hash_leaves_a_zero_statement_and_no_verdict() {
     for change in [
         (|r| r.model_id = String::from("gemma")) as fn(&mut OutputRecord),
         |r| r.input_text_sha256 = String::new(),
+        |r| r.source_sha256 = String::new(),
         // Uppercase is not the canonical spelling the chain binds.
         |r| r.model_id = "AB".repeat(32),
     ] {

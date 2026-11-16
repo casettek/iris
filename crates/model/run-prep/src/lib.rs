@@ -13,7 +13,8 @@ use prompt_check::input::{
 };
 pub use prompt_check::input::{
     fault_description, RunConfig, RunSchedule, TextClaim, FAULT_CUT_BEYOND_TEXT, FAULT_EMPTY_RANGE,
-    FAULT_NONE, FAULT_NOT_THE_MERGE, FAULT_TEXT_AFTER_END, FAULT_TEXT_CLAIM, FAULT_TOKEN_SPLIT,
+    FAULT_NONE, FAULT_NOT_THE_MERGE, FAULT_SOURCE, FAULT_TEXT_AFTER_END, FAULT_TEXT_CLAIM,
+    FAULT_TEXT_SOURCE, FAULT_TOKEN_SPLIT,
 };
 use prompt_check::input::{BpePiece, TokenEntry, VocabBucket};
 use raster::List;
@@ -29,6 +30,7 @@ use sequence_check::input::{DecoderTable, DecoderToken};
 pub const GEMMA_PROMPT_PREFIX: &str = "<bos><|turn>user\n";
 pub const GEMMA_PROMPT_SUFFIX: &str = "<turn|>\n<|turn>model\n";
 
+pub mod source;
 pub mod tekken;
 
 const BOS_TOKEN: &str = "<bos>";
@@ -45,7 +47,7 @@ pub fn prepare_prompt(
     // The template is the tokenizer profile's, which is what the prompt stages
     // render the text with, whatever the model's family.
     let profile = tokenizer_profile(tokenizer)?;
-    let prompt = resolve_prompt(spec_dir, spec)?;
+    let (prompt, source) = resolve_prompt(spec_dir, spec)?;
     let rendered_prompt = if !spec.raw_prompt && profile.templated() {
         format!(
             "{}{}{}",
@@ -63,6 +65,57 @@ pub fn prepare_prompt(
         rendered_prompt,
         initial_pieces,
         eos_token_ids: model.eos_token_ids.clone(),
+        source,
+    })
+}
+
+/// The source record as the first bind takes it: the run's, or the default
+/// for a run whose text is taken as given.
+pub fn bind_source(record: Option<&source::SourceRecord>) -> prompt_check::input::SourceRecord {
+    match record {
+        Some(record) => prompt_check::input::SourceRecord {
+            present: record.present,
+            text_sha256: record.text_sha256.clone(),
+            text_total: record.text_total,
+            recipe_sha256: record.recipe_sha256.clone(),
+            documents: record.documents,
+            documents_sha256: record.documents_sha256.clone(),
+            signer: record.signer.clone(),
+            fault: record.fault,
+            fault_position: record.fault_position,
+        },
+        None => Default::default(),
+    }
+}
+
+/// The digest a statement names for a run's source: 64 zeros for none.
+pub fn source_id(record: Option<&source::SourceRecord>) -> String {
+    prompt_check::input::source_id(&bind_source(record))
+}
+
+/// Writes the `prompt-source` stage's inputs for a run: the signer's key, the
+/// recipe, and the documents in chunks with their attestations.
+pub fn write_source_inputs(
+    source: &source::LoadedSource,
+    dir: &Path,
+) -> Result<inference_artifacts::PreparedSourceInputs> {
+    let file = |file: RunFile| inference_artifacts::RunFileRef {
+        path: file.path,
+        index_path: file.index_path,
+        commitment: file.commitment,
+    };
+    Ok(inference_artifacts::PreparedSourceInputs {
+        signer: file(write_run_file(&source.signer, dir, "source_signer")?),
+        recipe: file(write_run_file(
+            &source.recipe.recipe(),
+            dir,
+            "source_recipe",
+        )?),
+        documents: file(write_run_file(
+            &source.documents(),
+            dir,
+            "source_documents",
+        )?),
     })
 }
 
@@ -784,9 +837,18 @@ pub fn special_tokens(tokenizer: &serde_json::Value) -> Vec<String> {
     tokens
 }
 
-fn resolve_prompt(spec_dir: &Path, spec: &InferenceRunSpec) -> Result<String> {
+/// The run's prompt text, and the source record when the text was built from
+/// signed documents.
+fn resolve_prompt(
+    spec_dir: &Path,
+    spec: &InferenceRunSpec,
+) -> Result<(String, Option<source::SourceRecord>)> {
+    if let Some(source) = spec.source.as_ref() {
+        let run = source::sourced_run(spec_dir, source)?;
+        return Ok((run.text, Some(run.record)));
+    }
     if let Some(prompt) = spec.prompt.as_ref() {
-        return Ok(prompt.clone());
+        return Ok((prompt.clone(), None));
     }
     let prompt_file = spec
         .prompt_file
@@ -797,8 +859,9 @@ fn resolve_prompt(spec_dir: &Path, spec: &InferenceRunSpec) -> Result<String> {
     } else {
         spec_dir.join(prompt_file)
     };
-    fs::read_to_string(&path)
-        .with_context(|| format!("failed to read prompt file {}", path.display()))
+    let prompt = fs::read_to_string(&path)
+        .with_context(|| format!("failed to read prompt file {}", path.display()))?;
+    Ok((prompt, None))
 }
 
 fn tokenizer_model(tokenizer: &serde_json::Value) -> Result<&serde_json::Value> {
@@ -1046,6 +1109,16 @@ mod tests {
         bound: &BoundPrompt,
         config: &RunConfig,
     ) -> (Vec<BpePiece>, Vec<u32>, prompt_check::input::PromptState) {
+        run_sourced_prompt_stages(tokenizer, bound, config, &Default::default())
+    }
+
+    /// The same, with the source record the first bind is given.
+    fn run_sourced_prompt_stages(
+        tokenizer: &PromptTokenizer,
+        bound: &BoundPrompt,
+        config: &RunConfig,
+        source: &prompt_check::input::SourceRecord,
+    ) -> (Vec<BpePiece>, Vec<u32>, prompt_check::input::PromptState) {
         use inference_kernels::kernels::prompt_check_stage::{run_prompt_check, Trusted};
         use inference_kernels::kernels::prompt_prepare::{run_prompt_bind, PromptBindInputs};
         use prompt_check::input::PromptState;
@@ -1067,6 +1140,7 @@ mod tests {
                     descriptor: &[],
                     schedule: &schedule,
                     claim: &bound.claim,
+                    source,
                     previous: &binding,
                 },
                 &mut Trusted,
@@ -1145,6 +1219,115 @@ mod tests {
                 assert!(last.rest.is_empty(), "{label}");
                 assert_eq!(last.context.prompt_tokens as usize, whole_ids.len());
             }
+        }
+    }
+
+    #[test]
+    fn a_run_with_a_source_is_held_to_the_text_its_source_gives() {
+        use prompt_check::input::{FAULT_SOURCE, FAULT_TEXT_SOURCE};
+        let tokenizer = prompt_tokenizer(&chat_tokenizer()).unwrap();
+        let (prompt, raw_prompt) = PROMPTS[0];
+        let config = RunConfig {
+            raw_prompt,
+            ..RunConfig::default()
+        };
+        let bound = bound_ranges(prompt, raw_prompt, 3, &tokenizer).unwrap();
+        assert!(bound.ranges.len() > 1);
+        let honest = source::SourceRecord {
+            present: true,
+            text_sha256: bound.claim.input_text_sha256.clone(),
+            text_total: bound.claim.total,
+            recipe_sha256: "aa".repeat(32),
+            documents: 2,
+            documents_sha256: "bb".repeat(32),
+            signer: "02ab".to_string(),
+            fault: 0,
+            fault_position: 0,
+        };
+        let last = |record: Option<&source::SourceRecord>| {
+            run_sourced_prompt_stages(&tokenizer, &bound, &config, &bind_source(record))
+                .2
+                .context
+        };
+        let edited = |edit: &dyn Fn(&mut source::SourceRecord)| {
+            let mut record = honest.clone();
+            edit(&mut record);
+            record
+        };
+
+        let none = last(None);
+        assert_eq!((none.fault, none.complete), (FAULT_NONE, true));
+        assert_eq!(none.source_sha256, "00".repeat(32));
+        assert_eq!(source_id(None), "00".repeat(32));
+
+        // Every range carries the record's digest, and the statement names it.
+        let sourced = last(Some(&honest));
+        assert_eq!((sourced.fault, sourced.complete), (FAULT_NONE, true));
+        assert_eq!(sourced.source_sha256, source_id(Some(&honest)));
+        assert_ne!(sourced.source_sha256, none.source_sha256);
+        assert_eq!(sourced.input_text_sha256, none.input_text_sha256);
+
+        // Another text than the source's, by hash or by length.
+        let other = edited(&|record| record.text_sha256 = "00".repeat(32));
+        assert_eq!(last(Some(&other)).fault, FAULT_TEXT_SOURCE);
+        let other = edited(&|record| record.text_total += 1);
+        assert_eq!(last(Some(&other)).fault, FAULT_TEXT_SOURCE);
+
+        // A source with a fault of its own, which comes first.
+        let faulty = edited(&|record| {
+            record.fault = 6;
+            record.fault_position = 2;
+            record.text_sha256 = "00".repeat(32);
+        });
+        let context = last(Some(&faulty));
+        assert_eq!((context.fault, context.fault_position), (FAULT_SOURCE, 2));
+
+        // A record that is not present is no source, whatever else it says.
+        let absent = edited(&|record| {
+            record.present = false;
+            record.fault = 6;
+        });
+        let context = last(Some(&absent));
+        assert_eq!(context.fault, FAULT_NONE);
+        assert_eq!(context.source_sha256, "00".repeat(32));
+
+        // The digest is over every field.
+        let stated = source_id(Some(&honest));
+        for other in [
+            edited(&|record| record.text_sha256 = "11".repeat(32)),
+            edited(&|record| record.text_total += 1),
+            edited(&|record| record.recipe_sha256 = "11".repeat(32)),
+            edited(&|record| record.documents += 1),
+            edited(&|record| record.documents_sha256 = "11".repeat(32)),
+            edited(&|record| record.signer.push('0')),
+            edited(&|record| record.fault = 1),
+            edited(&|record| record.fault_position = 1),
+        ] {
+            assert_ne!(source_id(Some(&other)), stated);
+        }
+    }
+
+    #[test]
+    fn the_source_record_is_one_value_under_both_of_its_types() {
+        // The source step states `source_core::SourceRecord` and the bind
+        // reads `SourceRecord` of the shared prompt source. A chain links
+        // them by structure, so the two must commit alike.
+        let record = source::SourceRecord {
+            present: true,
+            text_sha256: "11".repeat(32),
+            text_total: 2388,
+            recipe_sha256: "22".repeat(32),
+            documents: 3,
+            documents_sha256: "33".repeat(32),
+            signer: "02ab".to_string(),
+            fault: 4,
+            fault_position: 7,
+        };
+        for record in [record, source::SourceRecord::default()] {
+            assert_eq!(
+                raster::core::tree::value_root(&record).unwrap(),
+                raster::core::tree::value_root(&bind_source(Some(&record))).unwrap()
+            );
         }
     }
 
@@ -1260,6 +1443,7 @@ mod tests {
             model_manifest: PathBuf::from("model-artifacts/manifest.json"),
             prompt: Some(prompt.to_string()),
             prompt_file: None,
+            source: None,
             raw_prompt,
             tokens: 1,
         }

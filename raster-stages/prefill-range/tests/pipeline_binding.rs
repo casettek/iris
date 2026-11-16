@@ -4,7 +4,7 @@ use prefill_range::{cache_coverage, consume_cache_position, validate_cache_cover
 fn context(start: u32, end: u32) -> ModelContext {
     let mut model = ModelContext::default();
     model.model_id = "22".repeat(32);
-    model.bind_statement(&"11".repeat(32), false, 16, 8);
+    model.bind_statement(&"11".repeat(32), &"00".repeat(32), false, 16, 8);
     let mut execution: Execution = model.execution_context().unwrap();
     for _ in 0..start {
         execution.end.append(0).unwrap();

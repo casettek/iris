@@ -230,6 +230,7 @@ pub(super) fn validate_errors(stage: &str, value: &Value) -> Result<()> {
     // `decode_init` and `output_finalize` are direct inference's names for
     // its empty edge and its final one; no chain stage has them.
     if stage != "prompt_prepare"
+        && stage != "source"
         && !stage.starts_with("prompt_bind_p")
         && stage != "decode_init"
         && stage != "output_finalize"

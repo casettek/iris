@@ -716,8 +716,10 @@ fn authenticate_decoder_inputs(mut inputs: FinalizeCase) -> FinalizeCase {
     inputs.context.input_text_sha256 = "11".repeat(32);
     inputs.context.range_size = inputs.context.range_size.max(4);
     inputs.context.prompt_tokens = inputs.context.prompt_tokens.max(1);
+    inputs.context.source_sha256 = "00".repeat(32);
     inputs.context.model.bind_statement(
         &inputs.context.input_text_sha256,
+        &inputs.context.source_sha256,
         inputs.context.raw_prompt,
         inputs.context.max_new_tokens,
         inputs.context.range_size,
