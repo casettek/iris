@@ -51,7 +51,7 @@ pub const CONTRACT_PINS_JSON: &str = "contract_pins.json";
 /// Written beside a claim's `claim_bundle.json`.
 pub const CLAIM_SUBMISSION_JSON: &str = "claim_submission.json";
 pub const CONTRACT_PINS_VERSION: u32 = 2;
-pub const CLAIM_SUBMISSION_VERSION: u32 = 2;
+pub const CLAIM_SUBMISSION_VERSION: u32 = 3;
 
 /// What a contract pins before any claim arrives, as two entries it opts
 /// into: a pipeline and a model. The model import writes both.
@@ -130,8 +130,67 @@ pub struct SubmittedRecord {
     pub valid: bool,
 }
 
-/// What a claimer submits: the plaintext, the record, and the commitment to
-/// its checkpoints, which a contract stores without reading.
+/// What the result stage states of a claim's output, as submitted: see
+/// `ResultRecord` in the `claim-result` stage.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SubmittedResult {
+    /// The code of the first of the run's forms the output text is, or zero.
+    pub code: u32,
+    /// The stage's hash over the forms it compared the output with.
+    pub forms_sha256: String,
+}
+
+/// What a contract requires of where a claim's prompt came from and of how
+/// its output was read. Its own choice, like [`RequiredParameters`].
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RequiredOrigin {
+    /// The source the prompt must be built from, or `None` for a prompt taken
+    /// as given, when the claim must name no source.
+    pub source: Option<RequiredSource>,
+    /// The forms the output must be read by, in order. A contract holds them
+    /// and not only their hash: the result step is a comparison per form, so
+    /// a contract takes it on the submitted output itself and does not rest
+    /// on the result stage, which is too short to be replayed in a dispute.
+    pub forms: Vec<source_core::Form>,
+}
+
+impl RequiredOrigin {
+    /// What the result step states of an output read by these forms.
+    pub fn result_of(&self, output_text: &str) -> SubmittedResult {
+        let matched = source_core::run_forms(&self.forms, output_text);
+        SubmittedResult {
+            code: matched.code,
+            forms_sha256: source_core::forms_id(&matched),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RequiredSource {
+    /// The key every attestation must be signed by.
+    pub signer: String,
+    /// The hash over the recipe the prompt must be built with.
+    pub recipe_sha256: String,
+}
+
+/// The digest a statement names for a source record: see `source_id` in the
+/// shared prompt source, which is where the first bind computes it.
+pub fn source_record_id(record: &source_core::SourceRecord) -> String {
+    prompt_core::source_id(&prompt_core::SourceRecord {
+        present: record.present,
+        text_sha256: record.text_sha256.clone(),
+        text_total: record.text_total,
+        recipe_sha256: record.recipe_sha256.clone(),
+        documents: record.documents,
+        documents_sha256: record.documents_sha256.clone(),
+        signer: record.signer.clone(),
+        fault: record.fault,
+        fault_position: record.fault_position,
+    })
+}
+
+/// What a claimer submits: the plaintext, the record, the result, and the
+/// commitment to its checkpoints, which a contract stores without reading.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ClaimSubmission {
     pub version: u32,
@@ -145,7 +204,14 @@ pub struct ClaimSubmission {
     /// was produced under it.
     #[serde(default = "crate::inference::no_source_id")]
     pub source_sha256: String,
+    /// The source record that digest is over, for a claim that names a
+    /// source. A contract reads the signer and the recipe from it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<source_core::SourceRecord>,
     pub record: SubmittedRecord,
+    /// What the result stage made of the output.
+    #[serde(default)]
+    pub result: SubmittedResult,
     /// SHA-256 of the claim's `checkpoints.txt`: one checkpoint hash per
     /// stage, in order. This is the claim's commitment to every stage
     /// boundary.
@@ -167,6 +233,23 @@ pub enum SubmissionRejection {
     OutputMismatch { expected: String, submitted: String },
     /// The chain found a fault in its own run.
     NotValid,
+    /// The source record submitted is not the one the claimed digest is over.
+    AnotherSourceRecord { digest: String, submitted: String },
+    /// The contract takes its prompt as given, and the claim names a source.
+    UnexpectedSource,
+    /// The contract requires a source, and the claim submits no record of one.
+    MissingSource,
+    /// The source record has a fault.
+    SourceFault { fault: u32 },
+    /// The documents were signed by another key than the contract's.
+    AnotherSigner { expected: String, submitted: String },
+    /// The prompt was built with another recipe than the contract's.
+    AnotherRecipe { expected: String, submitted: String },
+    /// The output was compared with other forms than the contract's.
+    AnotherForms { expected: String, submitted: String },
+    /// The submitted code is not the one the contract's forms give the
+    /// submitted output.
+    AnotherResult { expected: u32, submitted: u32 },
 }
 
 impl std::fmt::Display for SubmissionRejection {
@@ -195,6 +278,50 @@ impl std::fmt::Display for SubmissionRejection {
                 "the plaintext hashes to {expected}, but the record commits to {submitted}"
             ),
             Self::NotValid => write!(f, "the record's valid flag is not set"),
+            Self::AnotherSourceRecord { digest, submitted } => write!(
+                f,
+                "the source record submitted has digest {submitted}, but the claim names {digest}"
+            ),
+            Self::UnexpectedSource => write!(
+                f,
+                "the contract takes its prompt as given, and the claim names a source"
+            ),
+            Self::MissingSource => write!(
+                f,
+                "the contract requires a source, and the claim submits no source record"
+            ),
+            Self::SourceFault { fault } => {
+                write!(f, "the source record has fault {fault}")
+            }
+            Self::AnotherSigner {
+                expected,
+                submitted,
+            } => write!(
+                f,
+                "the documents were signed by {submitted}, but the contract's signer is {expected}"
+            ),
+            Self::AnotherRecipe {
+                expected,
+                submitted,
+            } => write!(
+                f,
+                "the prompt was built with recipe {submitted}, but the contract's is {expected}"
+            ),
+            Self::AnotherForms {
+                expected,
+                submitted,
+            } => write!(
+                f,
+                "the output was compared with forms {submitted}, but the contract's are {expected}"
+            ),
+            Self::AnotherResult {
+                expected,
+                submitted,
+            } => write!(
+                f,
+                "the claim states result code {submitted}, but the contract's forms give the \
+                 submitted output {expected}"
+            ),
         }
     }
 }
@@ -364,16 +491,33 @@ impl std::fmt::Display for LinkFault {
     }
 }
 
-/// Whether the submitted record is the one the claim's last stage committed.
+/// Whether what was submitted is what a stage of the claim committed: the
+/// record against the last check, the result against the last stage.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RecordBinding {
     Bound,
-    /// The output presented is not the one the last checkpoint commits to.
-    /// The comparison proves nothing.
+    /// The output presented is not the one the checkpoint commits to. The
+    /// comparison proves nothing.
     NotTheLastOutput { committed: String, presented: String },
-    /// The last stage's output holds a different record: the claim is void.
+    /// The stage's output holds a different record: the claim is void.
     AnotherRecord,
+    /// The checkpoint at that place names another program than the one that
+    /// states this record: the claim is void.
+    AnotherStage { expected: &'static str },
 }
+
+/// What the result stage's output holds, as a contract compares it: the claim
+/// record it was given, and the result.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResultInOutput {
+    pub record: SubmittedRecord,
+    pub result: SubmittedResult,
+}
+
+/// The stage program that states the claim record, and the one that states
+/// the result. A claim's last two checkpoints are theirs, in this order.
+pub const RECORD_STAGE: &str = "sequence-check";
+pub const RESULT_STAGE: &str = "claim-result";
 
 impl ContractPins {
     /// The pins of an import: its model, and the pipeline its chain template
@@ -594,8 +738,13 @@ pub fn locked_program_commitment(stage_project: &Path) -> Result<String> {
 
 impl ClaimSubmission {
     /// What a claimer submits for a finished run: the last check's record and
-    /// text, with the commitment to the checkpoint list in the run directory.
-    pub fn from_run(result: &InferenceResult, chain_dir: &Path) -> Result<Self> {
+    /// text, the result stage's code, the source record when the run has one,
+    /// and the commitment to the checkpoint list in the run directory.
+    pub fn from_run(
+        result: &InferenceResult,
+        source: Option<&source_core::SourceRecord>,
+        chain_dir: &Path,
+    ) -> Result<Self> {
         let checkpoints_path = chain_dir.join(crate::checkpoint::CHECKPOINTS_TXT);
         let checkpoints = fs::read(&checkpoints_path)
             .with_context(|| format!("failed to read {}", checkpoints_path.display()))?;
@@ -604,10 +753,15 @@ impl ClaimSubmission {
             output_text: result.generated_text.clone(),
             input_text_sha256: result.input_text_sha256.clone(),
             source_sha256: result.source_sha256.clone(),
+            source: source.cloned(),
             record: SubmittedRecord {
                 statement_sha256: result.statement_sha256.clone(),
                 output_text_sha256: result.output_text_sha256.clone(),
                 valid: result.valid,
+            },
+            result: SubmittedResult {
+                code: result.result_code,
+                forms_sha256: result.result_forms_sha256.clone(),
             },
             checkpoints_sha256: hex::encode(Sha256::digest(checkpoints)),
         })
@@ -670,6 +824,70 @@ pub fn check_submission(
     }
     if !submission.record.valid {
         return Err(SubmissionRejection::NotValid);
+    }
+    Ok(())
+}
+
+/// The checks a contract makes on submission of where the prompt came from
+/// and how the output was read.
+///
+/// The statement already names the source digest, so a valid record was
+/// produced under it. This holds the digest to the record submitted, and the
+/// record and the forms to what the contract requires.
+pub fn check_origin(
+    required: &RequiredOrigin,
+    submission: &ClaimSubmission,
+) -> std::result::Result<(), SubmissionRejection> {
+    if let Some(record) = &submission.source {
+        let submitted = source_record_id(record);
+        if submitted != submission.source_sha256 {
+            return Err(SubmissionRejection::AnotherSourceRecord {
+                digest: submission.source_sha256.clone(),
+                submitted,
+            });
+        }
+    }
+    match (&required.source, &submission.source) {
+        (None, _) => {
+            if submission.source_sha256 != crate::inference::no_source_id() {
+                return Err(SubmissionRejection::UnexpectedSource);
+            }
+        }
+        (Some(_), None) => return Err(SubmissionRejection::MissingSource),
+        (Some(required), Some(record)) => {
+            if !record.present || record.fault != 0 {
+                return Err(SubmissionRejection::SourceFault {
+                    fault: record.fault,
+                });
+            }
+            if record.signer != required.signer {
+                return Err(SubmissionRejection::AnotherSigner {
+                    expected: required.signer.clone(),
+                    submitted: record.signer.clone(),
+                });
+            }
+            if record.recipe_sha256 != required.recipe_sha256 {
+                return Err(SubmissionRejection::AnotherRecipe {
+                    expected: required.recipe_sha256.clone(),
+                    submitted: record.recipe_sha256.clone(),
+                });
+            }
+        }
+    }
+    // The output text is held to the record by `check_submission`, so the
+    // result taken on it here is the one the claim's own output has.
+    let expected = required.result_of(&submission.output_text);
+    if submission.result.forms_sha256 != expected.forms_sha256 {
+        return Err(SubmissionRejection::AnotherForms {
+            expected: expected.forms_sha256,
+            submitted: submission.result.forms_sha256.clone(),
+        });
+    }
+    if submission.result.code != expected.code {
+        return Err(SubmissionRejection::AnotherResult {
+            expected: expected.code,
+            submitted: submission.result.code,
+        });
     }
     Ok(())
 }
@@ -868,29 +1086,96 @@ impl CheckpointList {
         Ok(LinkCheck::Linked)
     }
 
-    /// Whether the submitted record is the last stage's: `last_checkpoint` is
-    /// the claim's last checkpoint, `last_output` that stage's `output.bin`,
-    /// and `record_in_output` the claim record decoded from it by the caller.
+    /// Holds a presented checkpoint, `from_end` places before the end of the
+    /// list, to the list, to the program that states a record there, and to
+    /// the output presented with it.
+    fn opened_record<'a>(
+        &self,
+        pins: &ContractPins,
+        from_end: usize,
+        stage: &'static str,
+        checkpoint: &'a Checkpoint,
+        output: &[u8],
+    ) -> std::result::Result<Option<RecordBinding>, ChallengeRefusal> {
+        let index = self
+            .hashes
+            .len()
+            .checked_sub(from_end + 1)
+            .ok_or(ChallengeRefusal::UnknownStage {
+                challenged: 0,
+                stages: self.hashes.len(),
+            })?;
+        let checkpoint = self.opened(index as u32, checkpoint)?;
+        let is_stage = pins
+            .pipeline
+            .program(&checkpoint.program_commitment)
+            .is_some_and(|program| program.stage == stage);
+        if !is_stage {
+            return Ok(Some(RecordBinding::AnotherStage { expected: stage }));
+        }
+        let presented = hex::encode(Sha256::digest(output));
+        if checkpoint.output_sha256 != presented {
+            return Ok(Some(RecordBinding::NotTheLastOutput {
+                committed: checkpoint.output_sha256.clone(),
+                presented,
+            }));
+        }
+        Ok(None)
+    }
+
+    /// Whether the submitted record is the last check's: `check_checkpoint` is
+    /// the claim's checkpoint before its last, `check_output` that stage's
+    /// `output.bin`, and `record_in_output` the claim record decoded from it
+    /// by the caller.
+    ///
+    /// The record is held to the check and not to the result stage after it,
+    /// so the verdict a contract accepts rests on the stage that scored the
+    /// output.
     pub fn check_record_binding(
         &self,
+        pins: &ContractPins,
         submission: &ClaimSubmission,
-        last_checkpoint: &Checkpoint,
-        last_output: &[u8],
+        check_checkpoint: &Checkpoint,
+        check_output: &[u8],
         record_in_output: &SubmittedRecord,
     ) -> std::result::Result<RecordBinding, ChallengeRefusal> {
-        let last = self.opened(self.hashes.len() as u32 - 1, last_checkpoint)?;
-        let presented = hex::encode(Sha256::digest(last_output));
-        if last.output_sha256 != presented {
-            return Ok(RecordBinding::NotTheLastOutput {
-                committed: last.output_sha256.clone(),
-                presented,
-            });
+        if let Some(unbound) =
+            self.opened_record(pins, 1, RECORD_STAGE, check_checkpoint, check_output)?
+        {
+            return Ok(unbound);
         }
         Ok(if *record_in_output == submission.record {
             RecordBinding::Bound
         } else {
             RecordBinding::AnotherRecord
         })
+    }
+
+    /// Whether the submitted result is the last stage's: `last_checkpoint` is
+    /// the claim's last checkpoint, `last_output` that stage's `output.bin`,
+    /// and `in_output` what the caller decoded from it. The result stage
+    /// states the claim record it was given beside its code, and both must
+    /// be the ones submitted.
+    pub fn check_result_binding(
+        &self,
+        pins: &ContractPins,
+        submission: &ClaimSubmission,
+        last_checkpoint: &Checkpoint,
+        last_output: &[u8],
+        in_output: &ResultInOutput,
+    ) -> std::result::Result<RecordBinding, ChallengeRefusal> {
+        if let Some(unbound) =
+            self.opened_record(pins, 0, RESULT_STAGE, last_checkpoint, last_output)?
+        {
+            return Ok(unbound);
+        }
+        Ok(
+            if in_output.record == submission.record && in_output.result == submission.result {
+                RecordBinding::Bound
+            } else {
+                RecordBinding::AnotherRecord
+            },
+        )
     }
 }
 
@@ -1156,15 +1441,17 @@ mod tests {
     };
     const BIND: [u8; 32] = [1; 32];
     const CHECK: [u8; 32] = [2; 32];
+    const RESULT: [u8; 32] = [0x1e; 32];
     const LAYER: [u8; 32] = [4; 32];
 
     fn empty_edge() -> String {
         hex::encode([0xee; 32])
     }
 
-    /// Three programs: the first takes nothing from the chain, a layer takes
-    /// `activations` from a bind or another layer, and the check takes
-    /// `activations` from a layer and `prior` from a check or the empty edge.
+    /// Four programs: the first takes nothing from the chain, a layer takes
+    /// `activations` from a bind or another layer, the check takes
+    /// `activations` from a layer and `prior` from a check or the empty edge,
+    /// and the result takes `check` from a check.
     fn pins() -> ContractPins {
         let model_commitments = vec![ModelCommitment {
             role: String::from("tokenizer"),
@@ -1202,6 +1489,11 @@ mod tests {
                             input("activations", &["prefill-range"], vec![]),
                             input("prior", &["sequence-check"], vec![empty_edge()]),
                         ],
+                    ),
+                    program(
+                        "claim-result",
+                        RESULT,
+                        vec![input("check", &["sequence-check"], vec![])],
                     ),
                 ],
             },
@@ -1259,8 +1551,8 @@ mod tests {
         text.into_bytes()
     }
 
-    /// An honest claim of three stages, bind then layer then check, with each
-    /// stage's input list.
+    /// An honest claim of four stages, bind then layer then check then
+    /// result, with each stage's input list.
     struct Claim {
         submission: ClaimSubmission,
         trace: CheckpointTrace,
@@ -1287,6 +1579,8 @@ mod tests {
                 },
                 input_text_sha256: input,
                 source_sha256: "00".repeat(32),
+                source: None,
+                result: no_source(forms()).result_of("ZK"),
                 checkpoints_sha256: hex::encode(Sha256::digest(&list)),
             };
             Self {
@@ -1308,6 +1602,10 @@ mod tests {
                     ("activations", &output_commitment(b"layered")),
                     ("prior", &empty_edge()),
                 ]),
+                manifest(&[
+                    ("check", &output_commitment(b"last")),
+                    ("forms", &hex::encode([6; 32])),
+                ]),
             ];
             Self::of(
                 vec![
@@ -1326,6 +1624,7 @@ mod tests {
                         &[("activations", 1)],
                         b"last",
                     ),
+                    checkpoint("result", RESULT, &manifests[3], &[("check", 2)], b"result"),
                 ],
                 manifests,
             )
@@ -1500,12 +1799,12 @@ mod tests {
         ));
 
         let opened = claim.opened();
-        assert_eq!(opened.len(), 3);
+        assert_eq!(opened.len(), 4);
         assert_eq!(
-            opened.admit_stage_challenge(&pins(), 3, &claim.trace.checkpoints[2]),
+            opened.admit_stage_challenge(&pins(), 4, &claim.trace.checkpoints[2]),
             Err(ChallengeRefusal::UnknownStage {
-                challenged: 3,
-                stages: 3
+                challenged: 4,
+                stages: 4
             })
         );
         // A challenger cannot present a checkpoint of its own for a stage: a
@@ -1714,38 +2013,238 @@ mod tests {
     }
 
     #[test]
-    fn the_record_is_held_to_the_last_stage_output() {
+    fn the_record_is_held_to_the_last_check_and_the_result_to_the_last_stage() {
         let claim = Claim::honest();
         let opened = claim.opened();
-        let last = &claim.trace.checkpoints[2];
+        let check = &claim.trace.checkpoints[2];
+        let last = &claim.trace.checkpoints[3];
         let record = &claim.submission.record;
         assert_eq!(
-            opened.check_record_binding(&claim.submission, last, b"last", record),
+            opened.check_record_binding(&pins(), &claim.submission, check, b"last", record),
             Ok(RecordBinding::Bound)
         );
 
-        // The last stage committed a record the claimer did not submit.
+        // The check committed a record the claimer did not submit.
         let mut in_output = record.clone();
         in_output.valid = false;
         assert_eq!(
-            opened.check_record_binding(&claim.submission, last, b"last", &in_output),
+            opened.check_record_binding(&pins(), &claim.submission, check, b"last", &in_output),
             Ok(RecordBinding::AnotherRecord)
         );
-
-        // Bytes that are not the last stage's output prove nothing either way.
+        // Bytes that are not the check's output prove nothing either way.
         assert!(matches!(
-            opened.check_record_binding(&claim.submission, last, b"bound", record),
+            opened.check_record_binding(&pins(), &claim.submission, check, b"bound", record),
             Ok(RecordBinding::NotTheLastOutput { .. })
         ));
-        // Nor does another stage's checkpoint stand for the last.
+        // Nor does the result stage's checkpoint stand for the check's.
         assert!(matches!(
-            opened.check_record_binding(
+            opened.check_record_binding(&pins(), &claim.submission, last, b"result", record),
+            Err(ChallengeRefusal::NotTheCheckpoint { stage: 2, .. })
+        ));
+
+        let in_output = ResultInOutput {
+            record: record.clone(),
+            result: claim.submission.result.clone(),
+        };
+        let bind = |in_output: &ResultInOutput, output: &[u8]| {
+            opened.check_result_binding(&pins(), &claim.submission, last, output, in_output)
+        };
+        assert_eq!(bind(&in_output, b"result"), Ok(RecordBinding::Bound));
+        // The result stage committed another code, other forms, or a claim
+        // record that is not the one submitted.
+        let mut other = in_output.clone();
+        other.result.code += 1;
+        assert_eq!(bind(&other, b"result"), Ok(RecordBinding::AnotherRecord));
+        let mut other = in_output.clone();
+        other.result.forms_sha256 = hex::encode([9; 32]);
+        assert_eq!(bind(&other, b"result"), Ok(RecordBinding::AnotherRecord));
+        let mut other = in_output.clone();
+        other.record.valid = false;
+        assert_eq!(bind(&other, b"result"), Ok(RecordBinding::AnotherRecord));
+        assert!(matches!(
+            bind(&in_output, b"last"),
+            Ok(RecordBinding::NotTheLastOutput { .. })
+        ));
+        assert!(matches!(
+            opened.check_result_binding(&pins(), &claim.submission, check, b"last", &in_output),
+            Err(ChallengeRefusal::NotTheCheckpoint { stage: 3, .. })
+        ));
+    }
+
+    #[test]
+    fn a_claim_that_does_not_end_in_the_check_and_the_result_is_void() {
+        // A claim that stops at the check: its last stage states no result,
+        // and the stage before it no record.
+        let honest = Claim::honest();
+        let mut checkpoints = honest.trace.checkpoints.clone();
+        checkpoints.pop();
+        let claim = Claim::of(checkpoints, honest.manifests[..3].to_vec());
+        let opened = claim.opened();
+        let record = &claim.submission.record;
+        let in_output = ResultInOutput {
+            record: record.clone(),
+            result: claim.submission.result.clone(),
+        };
+        assert_eq!(
+            opened.check_result_binding(
+                &pins(),
                 &claim.submission,
-                &claim.trace.checkpoints[0],
-                b"bound",
+                &claim.trace.checkpoints[2],
+                b"last",
+                &in_output
+            ),
+            Ok(RecordBinding::AnotherStage {
+                expected: RESULT_STAGE
+            })
+        );
+        assert_eq!(
+            opened.check_record_binding(
+                &pins(),
+                &claim.submission,
+                &claim.trace.checkpoints[1],
+                b"layered",
                 record
             ),
-            Err(ChallengeRefusal::NotTheCheckpoint { stage: 2, .. })
+            Ok(RecordBinding::AnotherStage {
+                expected: RECORD_STAGE
+            })
+        );
+    }
+
+    /// The fixture's forms: its output, `ZK`, is the second.
+    fn forms() -> Vec<source_core::Form> {
+        [("no", 2), ("ZK", 1)]
+            .into_iter()
+            .map(|(text, code)| source_core::Form {
+                text: text.to_string(),
+                code,
+            })
+            .collect()
+    }
+
+    fn no_source(forms: Vec<source_core::Form>) -> RequiredOrigin {
+        RequiredOrigin {
+            source: None,
+            forms,
+        }
+    }
+
+    #[test]
+    fn the_source_and_the_forms_are_held_to_what_the_contract_requires() {
+        let plain = Claim::honest().submission;
+        assert_eq!(plain.result.code, 1);
+        let none = no_source(forms());
+        assert_eq!(check_origin(&none, &plain), Ok(()));
+        // Other forms, or the same in another order.
+        let mut other = forms();
+        other[0].text = String::from("nay");
+        assert!(matches!(
+            check_origin(&no_source(other), &plain),
+            Err(SubmissionRejection::AnotherForms { .. })
+        ));
+        let mut reversed = forms();
+        reversed.reverse();
+        assert!(matches!(
+            check_origin(&no_source(reversed), &plain),
+            Err(SubmissionRejection::AnotherForms { .. })
+        ));
+        assert!(matches!(
+            check_origin(&no_source(Vec::new()), &plain),
+            Err(SubmissionRejection::AnotherForms { .. })
+        ));
+        // The right forms and a code they do not give this output. No stage
+        // has to be replayed to refuse it.
+        let mut miscoded = plain.clone();
+        miscoded.result.code = 2;
+        assert_eq!(
+            check_origin(&none, &miscoded),
+            Err(SubmissionRejection::AnotherResult {
+                expected: 1,
+                submitted: 2
+            })
+        );
+        let mut unread = plain.clone();
+        unread.result.code = 0;
+        assert_eq!(
+            check_origin(&none, &unread),
+            Err(SubmissionRejection::AnotherResult {
+                expected: 1,
+                submitted: 0
+            })
+        );
+
+        let record = source_core::SourceRecord {
+            present: true,
+            text_sha256: hex::encode([5; 32]),
+            text_total: 2388,
+            recipe_sha256: hex::encode([10; 32]),
+            documents: 3,
+            documents_sha256: hex::encode([11; 32]),
+            signer: String::from("02ab"),
+            fault: 0,
+            fault_position: 0,
+        };
+        let mut sourced = plain.clone();
+        sourced.source_sha256 = source_record_id(&record);
+        sourced.source = Some(record.clone());
+        assert_ne!(sourced.source_sha256, "00".repeat(32));
+        let required = RequiredOrigin {
+            source: Some(RequiredSource {
+                signer: String::from("02ab"),
+                recipe_sha256: hex::encode([10; 32]),
+            }),
+            forms: forms(),
+        };
+        assert_eq!(check_origin(&required, &sourced), Ok(()));
+
+        // A contract that takes its prompt as given accepts no source, and
+        // one that requires a source accepts no claim without its record.
+        assert_eq!(
+            check_origin(&none, &sourced),
+            Err(SubmissionRejection::UnexpectedSource)
+        );
+        assert_eq!(
+            check_origin(&required, &plain),
+            Err(SubmissionRejection::MissingSource)
+        );
+        let mut digest_only = sourced.clone();
+        digest_only.source = None;
+        assert_eq!(
+            check_origin(&required, &digest_only),
+            Err(SubmissionRejection::MissingSource)
+        );
+        assert_eq!(
+            check_origin(&none, &digest_only),
+            Err(SubmissionRejection::UnexpectedSource)
+        );
+
+        // The record must be the one the statement's digest is over.
+        let mut swapped = sourced.clone();
+        swapped.source.as_mut().unwrap().documents_sha256 = hex::encode([12; 32]);
+        assert!(matches!(
+            check_origin(&required, &swapped),
+            Err(SubmissionRejection::AnotherSourceRecord { .. })
+        ));
+
+        let with = |edit: &dyn Fn(&mut source_core::SourceRecord)| {
+            let mut record = record.clone();
+            edit(&mut record);
+            let mut submission = sourced.clone();
+            submission.source_sha256 = source_record_id(&record);
+            submission.source = Some(record);
+            check_origin(&required, &submission)
+        };
+        assert_eq!(
+            with(&|record| record.fault = 3),
+            Err(SubmissionRejection::SourceFault { fault: 3 })
+        );
+        assert!(matches!(
+            with(&|record| record.signer = String::from("02cd")),
+            Err(SubmissionRejection::AnotherSigner { .. })
+        ));
+        assert!(matches!(
+            with(&|record| record.recipe_sha256 = hex::encode([13; 32])),
+            Err(SubmissionRejection::AnotherRecipe { .. })
         ));
     }
 
@@ -1806,7 +2305,7 @@ mod tests {
         let shorter = chain(vec![stage(&trace.checkpoints[0])]);
         assert!(raster_boundary_mismatch(&trace, &shorter)
             .unwrap()
-            .contains("3 checkpoints"));
+            .contains("4 checkpoints"));
     }
 
     #[test]

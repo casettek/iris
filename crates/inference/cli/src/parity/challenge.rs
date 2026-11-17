@@ -139,6 +139,31 @@ pub(super) fn run_challenge_leg(leg: &Leg) -> Result<Value> {
         replays.push(outcome);
     }
 
+    // A false result. The result stage is a handful of steps, under the
+    // replay window, so the leg checks only that recomputation finds it.
+    {
+        let mut lying = honest_trace.clone();
+        let stated = lying
+            .checkpoints
+            .last_mut()
+            .filter(|checkpoint| checkpoint.stage == "result")
+            .context("the honest claim does not end in the result stage")?;
+        stated.output_sha256 = "5a".repeat(32);
+        let found = locate_divergence(
+            &honest.checkpoint_trace_path,
+            &lying,
+            &honest.checkpoint_trace_path,
+            &honest_trace,
+        )
+        .context("a false result did not differ from honest execution")?;
+        ensure!(
+            found.stage == "result",
+            "a false result first differs at `{}`",
+            found.stage
+        );
+        replays.push(json!({"case": "falsified-result", "stage": "result", "replayed": false}));
+    }
+
     // Correct execution over ids that are not the greedy output: every
     // checkpoint agrees, and the claim's own record refutes it.
     let not_greedy = not_greedy_ids(leg)?;
@@ -761,6 +786,7 @@ fn render(model_path: &Path, model: &ModelManifest, run: &RunInputs, dir: &Path)
         )?,
         &run_prep::write_text_claim(&text_claim, dir)?,
         None,
+        &run_prep::write_result_forms(&[], dir)?,
         &mark_files,
         &claimed_files,
     )

@@ -52,6 +52,13 @@ pub struct InferenceResult {
     /// without a verdict is not a valid one.
     #[serde(default)]
     pub valid: bool,
+    /// What the result stage made of the output: the code of the first of the
+    /// run's forms the output text is, or zero.
+    #[serde(default)]
+    pub result_code: u32,
+    /// The result stage's hash over the forms it compared the output with.
+    #[serde(default)]
+    pub result_forms_sha256: String,
 }
 
 /// The source digest of a run whose text is taken as given.

@@ -240,6 +240,9 @@ impl DirectInferenceExecutor {
         // The run's last boundary is its final edge with the output record.
         trace.record("output_finalize", &final_edge)?;
         let output = sequence_check::input::generated_output(&final_edge);
+        // What the chain's result stage states of this output.
+        let matched =
+            run_prep::source::run_forms(prepared_prompt.forms.iter(), &output.generated_text);
         let result = InferenceResult {
             model_fault: output.model_fault,
             generated_token_count: output.generated_token_count,
@@ -267,6 +270,8 @@ impl DirectInferenceExecutor {
                 output.claim.statement.as_slice(),
             ),
             valid: output.claim.valid,
+            result_code: matched.code,
+            result_forms_sha256: run_prep::source::forms_id(&matched),
         };
         timings.push(phase_timing("output_finalize", finalize_started.elapsed()));
 

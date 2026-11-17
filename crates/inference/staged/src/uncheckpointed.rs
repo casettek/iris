@@ -183,6 +183,9 @@ pub(crate) fn inference_result_from_generated(output: GeneratedOutput) -> Infere
         prompt_fault_position: output.prompt_fault_position,
         statement_sha256: hex::encode(output.claim.statement.as_slice()),
         valid: output.claim.valid,
+        // The result stage's, filled in by a run that reaches it.
+        result_code: 0,
+        result_forms_sha256: String::new(),
     }
 }
 

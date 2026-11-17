@@ -232,7 +232,7 @@ pub fn stage_inputs(run: &Path, out: &Path) -> Result<()> {
 }
 
 /// The lines `iris infer` prints for a run with a source, before the result.
-pub fn print_source_lines(source: &LoadedSource, generated_text: &str) {
+pub fn print_source_lines(source: &LoadedSource) {
     let record = source.run().record;
     for (index, document) in source.documents.iter().enumerate() {
         let attestation = &document.attestation;
@@ -245,9 +245,6 @@ pub fn print_source_lines(source: &LoadedSource, generated_text: &str) {
     println!("source documents sha256: {}", record.documents_sha256);
     println!("source recipe sha256: {}", record.recipe_sha256);
     println!("source fault: {}", record.fault);
-    let result = source.result(generated_text);
-    println!("result code: {}", result.code);
-    println!("result forms sha256: {}", result.forms_sha256);
 }
 
 #[cfg(test)]
@@ -328,8 +325,8 @@ mod tests {
         assert_eq!(record.fault, FAULT_NONE);
         assert_eq!(record.documents, 2);
         assert_eq!(record.text_sha256, hex(&sha256(text.as_bytes())));
-        assert_eq!(source.result("{\"verdict\":\"denied\"}\n").code, 2);
-        assert_eq!(source.result("maybe").code, 0);
+        assert_eq!(source.result_code("{\"verdict\":\"denied\"}\n"), 2);
+        assert_eq!(source.result_code("maybe"), 0);
 
         // A second keygen keeps the key, so the attestations still verify.
         keygen(&dir).unwrap();

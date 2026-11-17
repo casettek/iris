@@ -8,6 +8,7 @@ use serde::Serialize;
 use crate::artifact_io::{encode_output, write_output, EncodedArtifact};
 use crate::cache::{CachedInputs, CachedStageValue, MaterializationCache};
 
+pub mod claim_result;
 pub mod input_embedding;
 pub mod layer_mistral;
 pub mod prefill_prepare_aux;
@@ -30,6 +31,8 @@ pub enum StageKind {
     /// `PrefillRange`'s are: the project tells the two apart.
     LayerMistral { layer: usize },
     SequenceCheck,
+    /// What the claim's output stands for: the chain's last stage.
+    ClaimResult,
 }
 
 #[derive(Debug)]
@@ -85,6 +88,7 @@ impl StageKind {
             "sequence-check" if name == "sequence_check" || name.starts_with("check_") => {
                 Ok(Self::SequenceCheck)
             }
+            "claim-result" if name == "result" => Ok(Self::ClaimResult),
             _ => bail!("stage `{name}` with project `{project}` is not supported by staged-infer"),
         }
     }
@@ -113,6 +117,7 @@ impl StageKind {
     pub fn from_stage_name(name: &str) -> Result<Self> {
         match name {
             "source" => Ok(Self::PromptSource),
+            "result" => Ok(Self::ClaimResult),
             _ if name.starts_with("prompt_bind_p") => Ok(Self::PromptBind),
             _ if name.starts_with("prompt_check_p") => Ok(Self::PromptCheck),
             _ if name.starts_with("embed_") => Ok(Self::InputEmbedding),
@@ -140,6 +145,7 @@ impl StageKind {
             Self::PrefillRange { .. } => "prefill-range",
             Self::LayerMistral { .. } => "layer-mistral",
             Self::SequenceCheck => "sequence-check",
+            Self::ClaimResult => "claim-result",
         }
     }
 
@@ -153,6 +159,7 @@ impl StageKind {
             Self::PrefillRange { .. } => "prefill_range",
             Self::LayerMistral { .. } => "layer_mistral",
             Self::SequenceCheck => "sequence_check",
+            Self::ClaimResult => "claim_result",
         }
     }
 
@@ -165,7 +172,8 @@ impl StageKind {
             | Self::PromptBind
             | Self::PromptCheck
             | Self::InputEmbedding
-            | Self::SequenceCheck => None,
+            | Self::SequenceCheck
+            | Self::ClaimResult => None,
         }
     }
 }
@@ -211,6 +219,11 @@ pub fn run_for_compare(kind: &StageKind) -> Result<DirectCompareOutput> {
             sequence_check::load_inputs_from_args,
             sequence_check::run_direct,
             "sequence_check",
+        ),
+        StageKind::ClaimResult => compare(
+            claim_result::load_inputs_from_args,
+            claim_result::run_direct,
+            "claim_result",
         ),
     }
 }
@@ -264,6 +277,12 @@ pub fn run_and_publish(kind: &StageKind) -> Result<DirectPublishOutput> {
             sequence_check::run_direct,
             "sequence_check",
             CachedStageValue::DecodeEdge,
+        ),
+        StageKind::ClaimResult => publish(
+            claim_result::load_inputs_from_args,
+            claim_result::run_direct,
+            "claim_result",
+            CachedStageValue::ResultRecord,
         ),
     }
 }
@@ -397,6 +416,19 @@ pub fn run_and_publish_from_paths_with_caches(
             "sequence_check",
             CachedStageValue::DecodeEdge,
         ),
+        StageKind::ClaimResult => publish(
+            || {
+                claim_result::load_inputs_from_paths_with_cache(
+                    input_path,
+                    input_manifest_path,
+                    cached_inputs,
+                    caches.materializations,
+                )
+            },
+            claim_result::run_direct,
+            "claim_result",
+            CachedStageValue::ResultRecord,
+        ),
     }
 }
 
@@ -513,6 +545,19 @@ pub fn run_cached_from_paths_with_caches(
             sequence_check::run_direct,
             "sequence_check",
             CachedStageValue::DecodeEdge,
+        ),
+        StageKind::ClaimResult => cache(
+            || {
+                claim_result::load_inputs_from_paths_with_cache(
+                    input_path,
+                    input_manifest_path,
+                    cached_inputs,
+                    caches.materializations,
+                )
+            },
+            claim_result::run_direct,
+            "claim_result",
+            CachedStageValue::ResultRecord,
         ),
     }
 }

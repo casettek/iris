@@ -5,7 +5,7 @@
     "stage_programs": [
       {
         "stage": "prompt-source",
-        "program_commitment": "e758e28c4dcd7b7c2aa72b525db0a4df2ad3f1c54196c127c32a9651942aa3f0",
+        "program_commitment": "da372b9dd85f2adf59809a3e5a32928ec6f99fd0c83ca1cf10255b6b805392fa",
         "chained_inputs": []
       },
       {
@@ -109,6 +109,19 @@
             "name": "prompt",
             "producers": [
               "prompt-check"
+            ],
+            "empty_values": []
+          }
+        ]
+      },
+      {
+        "stage": "claim-result",
+        "program_commitment": "00d4f4926abbef4a0a26d616051771f7f7df33b5044146d6a2489afd11b32749",
+        "chained_inputs": [
+          {
+            "name": "check",
+            "producers": [
+              "sequence-check"
             ],
             "empty_values": []
           }

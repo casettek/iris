@@ -25,6 +25,7 @@ pub enum CachedStageValue {
     RangeActivations(range_input::ActivationSequence),
     DecodeEdge(check_input::DecodeEdge),
     SourceRecord(source_core::SourceRecord),
+    ResultRecord(claim_result::forms::ResultRecord),
 }
 
 #[derive(Clone, Debug)]

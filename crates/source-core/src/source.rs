@@ -170,14 +170,6 @@ pub struct SourceDocuments {
     pub chunks: List<DocumentChunk>,
 }
 
-/// An output text the result step recognizes, and what it stands for.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
-pub struct Form {
-    pub text: String,
-    /// Not zero: zero is what an unrecognized output gets.
-    pub code: u32,
-}
-
 // ---------------------------------------------------------------------------
 // Outputs
 // ---------------------------------------------------------------------------
@@ -207,15 +199,6 @@ pub struct SourceRecord {
     /// Where: a document's index for a fault in a document, a field's index
     /// for a fault in a field, zero otherwise.
     pub fault_position: u64,
-}
-
-/// What the result step establishes about an output text.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
-pub struct ResultRecord {
-    /// The code of the first form the output is, or zero.
-    pub code: u32,
-    /// A hash over every form the output was compared with, in order.
-    pub forms_sha256: String,
 }
 
 // ---------------------------------------------------------------------------
@@ -1195,55 +1178,4 @@ pub fn text_chunks(text: &str) -> Vec<String> {
         rest = &rest[end..];
     }
     chunks
-}
-
-// ---------------------------------------------------------------------------
-// The result
-// ---------------------------------------------------------------------------
-
-/// What the result step carries from form to form.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
-pub struct FormMatch {
-    pub code: u32,
-    /// A hash chained over every form so far: 32 bytes.
-    pub forms: BytesPage,
-}
-
-pub fn begin_form_match() -> FormMatch {
-    FormMatch {
-        code: 0,
-        forms: page([0_u8; 32].to_vec()),
-    }
-}
-
-/// Compares the output with one form. The output is compared without the
-/// whitespace around it. The first form that matches gives the code.
-pub fn match_form(mut matched: FormMatch, form: &Form, output: &str) -> FormMatch {
-    if matched.code == 0 && form.text.len() <= MAX_PART && form.text == output.trim() {
-        matched.code = form.code;
-    }
-    matched.forms = page(
-        chain(
-            matched.forms.as_slice(),
-            &[&form.code.to_le_bytes()[..], form.text.as_bytes()],
-        )
-        .to_vec(),
-    );
-    matched
-}
-
-pub fn close_form_match(matched: FormMatch) -> ResultRecord {
-    ResultRecord {
-        code: matched.code,
-        forms_sha256: hex(matched.forms.as_slice()),
-    }
-}
-
-/// The result step from end to end.
-pub fn run_result(forms: &[Form], output: &str) -> ResultRecord {
-    let mut matched = begin_form_match();
-    for form in forms {
-        matched = match_form(matched, form, output);
-    }
-    close_form_match(matched)
 }

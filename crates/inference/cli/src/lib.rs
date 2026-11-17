@@ -480,7 +480,7 @@ fn execute(cli: Cli) -> Result<ExitCode> {
             }
             // Before the result: its last lines are the generated text.
             if let Some(source) = source::run_source_of(&run_spec_path)? {
-                source::print_source_lines(&source, &report.result.generated_text);
+                source::print_source_lines(&source);
             }
             print_infer_result(&report.result, Some(&run_spec_path));
             print_infer_timing_summary(&report.timings);
@@ -688,6 +688,9 @@ fn print_infer_result(result: &staged_infer::InferenceResult, run_spec_path: Opt
     // The claim record a contract reads, beside the fields it is stated from.
     println!("statement sha256: {}", result.statement_sha256);
     println!("valid: {}", result.valid);
+    // What the result stage made of the output.
+    println!("result code: {}", result.result_code);
+    println!("result forms sha256: {}", result.result_forms_sha256);
     println!("generated text:");
     println!("{}", result.generated_text);
 }

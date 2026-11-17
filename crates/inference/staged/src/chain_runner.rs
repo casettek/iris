@@ -27,6 +27,9 @@ pub struct HybridRun {
     pub chain_dir: PathBuf,
     pub selected_stage_dir: Option<PathBuf>,
     pub final_output: Option<CachedStageValue>,
+    /// The output of the last check the run reached, when it is not the
+    /// run's last stage: the result stage follows it.
+    pub final_check: Option<CachedStageValue>,
 }
 
 /// A native prefix ending at one exact expanded chain stage.
@@ -249,6 +252,7 @@ struct ChainRunState {
     output_cache: StageOutputCache,
     selected_stage_dir: Option<PathBuf>,
     last_output: Option<CachedStageValue>,
+    last_check: Option<CachedStageValue>,
     checkpoint_verifier: Option<CheckpointVerifierState>,
 }
 
@@ -564,6 +568,7 @@ fn run_inner(
         output_cache: StageOutputCache::default(),
         selected_stage_dir: None,
         last_output: None,
+        last_check: None,
         checkpoint_verifier: checkpoint_verifier.map(CheckpointVerifierState::new),
     };
     let recomputed_trace_path = chain_dir.join(CHECKPOINT_TRACE_JSON);
@@ -673,6 +678,7 @@ fn run_inner(
             chain_dir,
             selected_stage_dir: state.selected_stage_dir,
             final_output: state.last_output,
+            final_check: state.last_check,
         },
         recomputed_trace,
         divergence,
@@ -1120,6 +1126,9 @@ fn finish_stage(
     record_stage_program(stage, &stage_dir, stage_index)?;
     let output = collect_output(&stage_dir)?;
     if let Some(value) = stage_run.output {
+        if matches!(value, CachedStageValue::DecodeEdge(_)) {
+            state.last_check = Some(value.clone());
+        }
         state.last_output = Some(value.clone());
         output_cache_insert(
             &mut state.output_cache,

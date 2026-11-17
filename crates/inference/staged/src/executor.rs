@@ -85,7 +85,7 @@ impl CheckpointedInferenceExecutor {
             &config.current_exe,
             config.staged_backend,
         )?;
-        let final_result = final_result(run.final_output);
+        let final_result = final_result(run.final_check, run.final_output);
         Ok(CheckpointedInferenceResult {
             chain_dir: run.chain_dir,
             selected_stage_dir: run.selected_stage_dir,
@@ -109,7 +109,7 @@ impl CheckpointedInferenceExecutor {
             },
         )?;
         Ok(CheckpointHashChallengeResult {
-            final_result: final_result(verified.run.final_output),
+            final_result: final_result(verified.run.final_check, verified.run.final_output),
             chain_dir: verified.run.chain_dir,
             recomputed_trace: verified.recomputed_trace,
             divergence: verified.divergence,
@@ -117,13 +117,21 @@ impl CheckpointedInferenceExecutor {
     }
 }
 
-fn final_result(output: Option<CachedStageValue>) -> Option<InferenceResult> {
-    match output {
-        Some(CachedStageValue::DecodeEdge(edge)) => Some(inference_result_from_generated(
-            sequence_check::input::generated_output(&edge),
-        )),
-        _ => None,
+/// A run's result: the last check's record, with what the result stage made
+/// of it when the run reached that stage.
+fn final_result(
+    check: Option<CachedStageValue>,
+    last: Option<CachedStageValue>,
+) -> Option<InferenceResult> {
+    let Some(CachedStageValue::DecodeEdge(edge)) = check else {
+        return None;
+    };
+    let mut result = inference_result_from_generated(sequence_check::input::generated_output(&edge));
+    if let Some(CachedStageValue::ResultRecord(record)) = last {
+        result.result_code = record.code;
+        result.result_forms_sha256 = record.forms_sha256;
     }
+    Some(result)
 }
 
 fn ensure_supported_manifest_path(base_dir: &Path, manifest_path: &Path) -> Result<()> {

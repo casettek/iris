@@ -36,6 +36,7 @@ The chain verifies a *known* output with one pass over `prompt ‖ claimed_outpu
 | `prefill-prepare-aux` | `aux_p{j}_l{l}`, `aux_c{k}_l{l}` | Per-layer PLE inputs |
 | `prefill-range` | `range_p{j}_l{l}`, `range_c{k}_l{l}` | Run one transformer layer over one range |
 | `sequence-check` | `check_c{k}` | Re-derive the greedy selections and compare them with the claimed ids |
+| `claim-result` | `result` | Compare the output text with the run's forms and state the first one's code beside the claim record |
 
 Autoregressive generation is not a chain. It lives in `direct-infer`, which discovers the output a claim then verifies.
 
@@ -360,8 +361,9 @@ layer count `L` they fix every stage:
 3. for each claimed range `k`: `embed_c{k}`
 4. for each layer: the auxiliary stage of every range, then the transformer
    stage of every range
-5. for each claimed range `k`: `check_c{k}`, the last of which is the chain's
-   last stage
+5. for each claimed range `k`: `check_c{k}`, the last of which states the
+   claim's record
+6. `result`, the chain's last stage
 
 The first range's `prompt_bind` checks that each count is at least one and within its limit, and
 that `C` fits the token budget at this range size. It stores the schedule in the
@@ -390,6 +392,19 @@ puts before it, under the same statement and schedule. The rules are in
 The schedule keeps a final step after the last check. A check states its record by
 taking that step from its own edge, so only the record of range `C-1` can be without
 a fault: an earlier range's record always carries one and cannot stand as a claim's.
+
+`result` is not a step of the schedule and checks no place in it. It reads the
+output of the check the template names, the last, and a run input `forms`: a list
+of texts, each with a code, that may be empty. It compares the output text, with
+the whitespace around it removed, with each form in order, and states the code of
+the first form the text is, or zero, a hash chained over the forms, and the three
+values of the claim record it was given. It judges nothing: an invalid record is
+restated as invalid, with whatever code its text has. A claim that wired it to
+another check would restate that check's record, which is not the one a contract
+holds to the last check (see [the contract](contract.md)). The stage is three steps
+and one per form, so it is under the replay window at every size
+([short stages](../issues/short-stage-fraud-window.md)); the claim's record and
+verdict stay with the last check for that reason.
 
 A failed requirement sets the execution fault, which is sticky and reaches
 `model_fault` in the final record. A valid record therefore means every scheduled

@@ -10,7 +10,7 @@ use anyhow::{ensure, Context, Result};
 use inference_artifacts::SourceSpec;
 use serde::{Deserialize, Serialize};
 pub use source_core::{
-    fault_description, run_result, Attestation, DocumentName, Field, Form, Recipe, ResultRecord,
+    fault_description, forms_id, run_forms, Attestation, DocumentName, Field, Form, Recipe,
     SignerKey, SourceDocument, SourceRecord, SourceRun, FAULT_NONE,
 };
 
@@ -184,9 +184,42 @@ impl LoadedSource {
     }
 
     /// The result step over an output text.
-    pub fn result(&self, output: &str) -> ResultRecord {
-        run_result(&self.recipe.forms(), output)
+    pub fn result_code(&self, output: &str) -> u32 {
+        source_core::run_forms(&self.recipe.forms(), output).code
     }
+}
+
+/// What a run's `[source]` table fixes before any document is fetched: who
+/// must have signed the documents, the recipe the prompt is built by, and the
+/// forms the output is read by.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SourceTerms {
+    /// As in [`source_core::SourceRecord::signer`].
+    pub signer: String,
+    /// As in [`source_core::SourceRecord::recipe_sha256`].
+    pub recipe_sha256: String,
+    /// The forms the output is read by, in order.
+    pub forms: Vec<Form>,
+}
+
+pub fn source_terms(spec_dir: &Path, spec: &SourceSpec) -> Result<SourceTerms> {
+    let recipe: RecipeFile = read_json(&beside(spec_dir, &spec.recipe), "recipe")?;
+    let signer: SignerKey = read_json(&beside(spec_dir, &spec.signer), "signer key")?;
+    // The recipe's hash is over the recipe alone, so the source step over no
+    // documents states it.
+    let record =
+        source_core::run_source_steps(&signer, &recipe.recipe(), &source_core::source_documents(&[]))
+            .record;
+    Ok(SourceTerms {
+        signer: signer.key,
+        recipe_sha256: record.recipe_sha256,
+        forms: recipe.forms(),
+    })
+}
+
+/// The forms hash of a run that names no forms.
+pub fn no_forms_id() -> String {
+    forms_id(&run_forms(&[], ""))
 }
 
 /// The prompt of a run with a source. A source with a fault gives no prompt:

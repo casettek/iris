@@ -1,8 +1,8 @@
 # A prompt built from authenticated data, and a result stage after the claim
 
-Proposed November 16, 2026. The source stage and the tie to it are built, natively and as a
-Raster program, and every stage is re-locked at manifest version 17; see
-[What is built](#what-is-built). The result stage is not built.
+Proposed November 16, 2026. Both stages and the tie between source and prompt are built,
+natively and as Raster programs, and every stage is re-locked at manifest version 18; see
+[What is built](#what-is-built).
 
 ## Goal
 
@@ -147,14 +147,21 @@ gives is a fault in a large stage.
 ### `result` (new program)
 
 Takes the last check's output and the recipe's forms. It compares the output text with
-each form, publishes the matching form's code or 0, and states the claim record, which
-moves here from `sequence-check`. Today that is all it does. It is where several models'
+each form and publishes the first matching form's code or 0, a hash over the forms, and
+the claim record it was given. Today that is all it does. It is where several models'
 answers would later be compared.
 
-At small outputs this stage is a few dozen trace steps by my estimate, under the 128 a
-replay needs today. Its record cannot be disputed until Raster handles short traces. What
-it carries is only the output's code: the source, the prompt and the output all rest on
-`source`, `prompt-bind` and the checks.
+As built, the claim record does not move here. It stays the last check's, and this stage
+restates it beside the code so a reader can tell which claim the code belongs to.
+
+The stage is three trace steps and one per form, under the 128 a replay needs today at
+any size. Its checkpoint cannot be disputed by a replay until Raster handles short
+traces. Two things keep that from mattering now. What it carries is only the output's
+code: the source, the prompt, the output and the verdict all rest on `source`,
+`prompt-bind` and the checks. And a contract that holds the forms takes the comparison
+on the submitted output itself, so a claim with a false code is refused when it is
+submitted. A result step too large for a contract to repeat will need to be a stage long
+enough to replay.
 
 Neither new stage joins the stage schedule. `source` runs before the first bind creates
 the context, and its place is held by the bind taking its record. `result` reads the last
@@ -209,13 +216,16 @@ that change.
 | The claimer | What shows it |
 | --- | --- |
 | alters a document | its hash is not the signed one: fault in `source` |
-| signs with another key, or not at all | the signature fails against the pinned key: fault in `source` |
+| signs with a key other than the one the run names, or not at all | the signature fails: fault in `source` |
+| names its own signer key, or builds the prompt by another recipe | the submitted source record's signer or recipe is not the contract's: refused at submission |
+| claims a source the contract did not ask for, or none where it asked for one | refused at submission |
 | uses a document from another server or path | server or target is not the recipe's: fault in `source` |
 | leaves a document out, adds one or swaps two | the documents' names are not the recipe's, in order: fault in `source` |
 | gives the model a text the recipe does not produce | the bind's text hash is not the source's: fault in `prompt-bind` |
 | skips `source` and makes up its record | the link check: the bind's input is no output of the source program |
 | lies about a stage's output | that stage's checkpoint diverges and is replayed |
-| lies in `result` | divergent, and not replayable while the stage is short |
+| lies in `result` | the contract's own comparison of the output with its forms gives another code: refused at submission. The checkpoint also diverges, and is not replayable while the stage is short |
+| reads the output by other forms | the forms hash is not the one the contract's forms give: refused at submission |
 
 The signer itself is trusted. A signer that signs a false document is outside all of this
 until the notary replaces it.
@@ -340,10 +350,48 @@ full test tier passes again, for both families, challenge legs included:
 | Gemma | 198 checkpoints the same through Raster and natively; its record is direct inference's | 7 finish through both and record the fault |
 | Mistral | 112 checkpoints, the same | 7, the same |
 
+The result stage and the contract, the same day: `raster-stages/claim-result`, with its
+lock, at manifest version 18.
+
+- **The stage.** Three tiles: a seed, a loop over the forms, and one that states the
+  record. Its logic is `crates/source-core/src/forms.rs`, which the stage compiles on its
+  own, direct inference calls and the native routine calls. It reads the last check's
+  output through its own copy of the edge type, and a test holds the copy to the check's
+  commitment. The forms are a run input, empty for a run that names none, so every chain
+  ends in the stage.
+- **The claim.** A result carries `result_code` and `result_forms_sha256`. A challenger
+  reruns the stage on the forms the claim's prepared run holds.
+- **What a claimer submits** (`claim_submission.json`, version 3): the source record
+  beside its digest, and the result code with the forms hash. About 1,200 bytes for the
+  impact claim.
+- **What a contract checks.** At submission (`check_origin`): the source record hashes
+  to the digest the statement names; its signer and recipe are the ones the contract
+  requires, or there is none where the contract requires none; and the result code and
+  forms hash are what the contract's own forms give the submitted output. At a
+  challenge: the claim record is in the output of the checkpoint before the last, which
+  must run the check, and the result is in the last, which must run the result stage.
+  `iris claim check` takes the signer, the recipe and the forms from the run spec.
+- **Challenges are unchanged.** `source` and `result` are stages with approved programs
+  and chained inputs. A challenger recomputes, finds the first checkpoint that differs
+  and replays that stage.
+
+Checked:
+
+| What | Result |
+| --- | --- |
+| Workspace tests | 76 test binaries pass |
+| Re-lock of all nine stage programs | verified |
+| Full test tier | passes. Gemma: the claim with a source is 199 checkpoints, the same through Raster and natively, and its result stage states the code of the form its output is. Mistral: 113, the same. A false `result` checkpoint is found by recomputation in both |
+| Stage ladder | `claim-result` gives the native output as Raster, and commits and audits at a window of two |
+| Re-import of Gemma 4 E2B, Gemma 4 E4B and Ministral 3B at version 18 | done; the version 17 imports are in `runtime/model-artifact-backups` |
+| Real-model check, references rewritten | E2B and E4B claims build with no fault; `result` and one stage of each other program give the native output as Raster |
+| The impact claim on the real documents, Gemma 4 E2B | 220 stages in 101 s, valid, `{"verdict":"confirmed"}`, result code 1; `claim check` passes all six checks |
+| The same submission with a false code, no code, other forms, another signer, a fault, or no source record | each refused at the submission check |
+| Challenges of that claim with one false checkpoint | at `source`: found and replayed in 8 s. At `check_c0`: found and replayed in 64 s. At `result`: found, and the replay is refused because the trace is shorter than the window |
+| iris-backend at manifest version 18 | typecheck, 146 unit tests and the 4 database tests pass, the last on a throwaway Postgres container |
+
 Not done:
 
-- **The result stage.** The record still comes from the last check, and the result code
-  is computed by the host.
 - **A gate case that falsifies the source checkpoint.** On the gate's model the source
   stage is shorter than the replay window. The by-hand challenge above, on the real
   documents, is the only replay of it.
@@ -358,10 +406,13 @@ Not done:
 - **The recur sequence's exact shape**: carried state, an inner recur that stops early,
   and a per-field result read from the inner recur's state.
 - **The output text as a tile argument.** The last check's record holds it
-  (`OutputRecord.generated_text`), and `result` would pass it to a tile once per form. That
+  (`OutputRecord.generated_text`), and `result` passes it to a tile once per form. That
   is fine for a verdict of a few dozen bytes and unmeasured for a 600-token output.
-- **The claim tooling with a stage before the first bind and one after the last check**
-  (`pipeline_wiring`, the contract pins, `check_record_binding`).
+- **A replay of the result stage.** It cannot be replayed at the challenge window. The
+  contract's own comparison is what refuses a false code, and that is modelled in
+  `check_origin`, not run in a contract.
+- **A signer other than the host.** The contract compares the signer's key, and the key
+  is the host's own.
 - **Decryption and HTTP framing costs.** Not measured, and TLSNotary's own attestation
   format was not studied.
 - **The cost of a field's scan.** It walks every chunk before its own document's, one

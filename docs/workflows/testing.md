@@ -47,8 +47,9 @@ The gate replays a falsified stage through authenticated Raster only when the
 stage is longer than its replay window. On the synthetic model that is
 `prompt-check` and `prefill-range`; the gate's report says which stages replayed.
 The stage ladder is what runs the other programs through authenticated Raster,
-with a smaller window. That includes `prompt-source`, on the claim the gate's
-source leg builds.
+with a smaller window. That includes `prompt-source` and `claim-result`, on the
+claim the gate's source leg builds. `claim-result` is a handful of steps and is
+committed at a window of two.
 
 ## The pieces on their own
 

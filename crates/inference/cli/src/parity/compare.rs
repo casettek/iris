@@ -39,7 +39,8 @@ impl RangedShape {
 
 /// The ranged teacher-forced chain: every prompt range bound, tokenized and
 /// embedded, every claimed range embedded, each layer across all ranges, then
-/// each claimed range checked. The last check is the chain's last stage.
+/// each claimed range checked. The result stage reads the last check and is
+/// the chain's last stage.
 pub(super) fn teacher_forced_names(shape: RangedShape) -> Vec<String> {
     let mut names = Vec::new();
     for j in 0..shape.prompt_ranges {
@@ -60,6 +61,7 @@ pub(super) fn teacher_forced_names(shape: RangedShape) -> Vec<String> {
         names.extend((0..shape.claimed_ranges).map(|k| format!("range_c{k}_l{l}")));
     }
     names.extend((0..shape.claimed_ranges).map(|k| format!("check_c{k}")));
+    names.push(String::from("result"));
     names
 }
 
@@ -231,6 +233,7 @@ pub(super) fn validate_errors(stage: &str, value: &Value) -> Result<()> {
     // its empty edge and its final one; no chain stage has them.
     if stage != "prompt_prepare"
         && stage != "source"
+        && stage != "result"
         && !stage.starts_with("prompt_bind_p")
         && stage != "decode_init"
         && stage != "output_finalize"
@@ -281,6 +284,31 @@ pub(super) fn final_record(edge: &Value) -> Result<Value> {
     );
     record.insert("valid".to_string(), claim["valid"].clone());
     Ok(Value::Object(record))
+}
+
+/// A final record with what the result stage made of it, as a result names
+/// both. The stage restates the claim record it was given, which must be the
+/// last check's.
+pub(super) fn with_result(mut record: Value, stated: &Value) -> Result<Value> {
+    ensure!(
+        stated["statement"]["bytes"] == record["statement_sha256"]
+            && stated["output_text_sha256"]["bytes"] == record["output_text_sha256"]
+            && stated["valid"] == record["valid"],
+        "the result stage states another claim record than the last check's: {stated}"
+    );
+    ensure!(
+        stated["code"].is_u64() && stated["forms_sha256"].is_string(),
+        "the result stage's output has no code or forms hash: {stated}"
+    );
+    let fields = record
+        .as_object_mut()
+        .context("the final record is not an object")?;
+    fields.insert("result_code".to_string(), stated["code"].clone());
+    fields.insert(
+        "result_forms_sha256".to_string(),
+        stated["forms_sha256"].clone(),
+    );
+    Ok(record)
 }
 
 pub(super) fn compare(stage: &str, left: &Boundary, right: &Boundary) -> Result<()> {
@@ -437,18 +465,21 @@ mod tests {
             ..shape
         };
         // A model with no per-layer inputs has half the layer stages.
-        assert_eq!(teacher_forced_names(plain).len(), 3 * 7 + 2 * 6);
+        assert_eq!(teacher_forced_names(plain).len(), 3 * 7 + 2 * 6 + 1);
         assert_eq!(
             RangedShape::from_names(&teacher_forced_names(plain)),
             plain
         );
         let names = teacher_forced_names(shape);
         // 3 × (bind + check + embed + 8 layer stages),
-        // 2 × (embed + 8 layer stages + check).
-        assert_eq!(names.len(), 3 * 11 + 2 * 10);
+        // 2 × (embed + 8 layer stages + check), and the result.
+        assert_eq!(names.len(), 3 * 11 + 2 * 10 + 1);
         assert_eq!(names.first().map(String::as_str), Some("prompt_bind_p0"));
         assert_eq!(RangedShape::from_names(&names), shape);
-        assert_eq!(names.last().map(String::as_str), Some("check_c1"));
+        assert_eq!(
+            names[names.len() - 2..],
+            [String::from("check_c1"), String::from("result")]
+        );
         assert!(!names.iter().any(|name| name.starts_with("decode_")));
     }
 

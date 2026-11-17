@@ -119,6 +119,11 @@ name = "claimed"
 index = "k"
 start = 1
 count = 0
+
+[[chain.stage]]
+name = "result"
+inputs.check = {{ from = "check_c@LAST_CLAIMED_RANGE@" }}
+inputs.forms = {{ external = {{ path = "target/iris/run-prompt-placeholder/result_forms.rastered", index_path = "target/iris/run-prompt-placeholder/result_forms.rindex", commitment = "0" }} }}
 "#)).unwrap();
     let commitments = [inference_artifacts::ModelCommitment {
         role: String::from("embedding"),

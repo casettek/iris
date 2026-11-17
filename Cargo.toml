@@ -14,6 +14,7 @@ members = [
     "crates/inference/direct",
     "crates/inference/staged",
     "crates/inference/cli",
+    "raster-stages/claim-result",
     "raster-stages/input-embedding",
     "raster-stages/layer-mistral",
     "raster-stages/prefill-prepare-aux",

@@ -71,12 +71,15 @@ the chain then checks it.
   model id and the prompt's token count.
 - The final record: its context is the last prompt context's, its
   `output_text_sha256` is the SHA-256 of its own text, its faults and verdict are
-  clean, and the native result artifact and direct's result are exactly this record.
+  clean, and the native result artifact and direct's result are exactly this record
+  with what the `result` stage states: code 0 and the hash of no forms, beside the
+  same claim record.
 - The [contract checks](../internals/contract.md): the native claim's submission
   passes the submission checks against the import's pins, every checkpoint names
   an approved program, every input a stage takes from an earlier stage is that
-  stage's committed output, and the submitted claim record is the one in the last
-  stage's output. Every checkpoint of the native claim is also the boundary the
+  stage's committed output, the submitted claim record is the one in the last
+  check's output, and the submitted result is the one in the last stage's. Every
+  checkpoint of the native claim is also the boundary the
   Raster run committed: the same program id, input manifest commitment, producers
   and output commitments at every stage.
 - For each falsified claim whose stage replays: which rule settles the
@@ -128,11 +131,18 @@ documents (`crates/inference/cli/src/parity/source.rs`). The documents, the reci
 the signing key are made in the run. The recipe takes values from both documents, one of
 them through an array and a key with a dot in it.
 
-The claim is run three ways, as each case is. Its chain starts at the `source` stage, and
-every stage's output must be the same bytes through Raster and natively. The record of
-direct inference must be the claim's, its source digest the one the source step gives, and
-a contract's checks must pass with every native checkpoint held to the Raster run's
-boundary.
+The gate first asks direct inference alone for the answer to that prompt and adds the
+answer to the recipe as its second form. The forms are no part of the prompt, so the
+answer stays what it was, and the claim's `result` stage has one form to pass by and one
+to stop at.
+
+The claim is run three ways, as each case is. Its chain starts at the `source` stage and
+ends at the `result` stage, and every stage's output must be the same bytes through Raster
+and natively. The record of direct inference must be the claim's, its source digest the
+one the source step gives, and its result code the second form's. A contract's checks must
+pass with every native checkpoint held to the Raster run's boundary: those include the
+source record's signer and recipe and the result code, each against what the run spec
+names.
 
 Then the source stage and the binds are run, through Raster and natively, on sources that
 are wrong. Each must finish, give the same bytes both ways, and record its fault: the
@@ -149,7 +159,9 @@ source stage's own, and the bind's fault that its source has one.
 | `other-text` | no fault | the text is not the one its source gives |
 
 The challenge leg has no case that falsifies the source stage. On this model the stage is
-shorter than the replay window.
+shorter than the replay window. It has one for the result stage, which is shorter than the
+window on any model: a false `result` checkpoint must be where recomputation first differs,
+and no replay is asked for.
 
 ## Challenge leg
 

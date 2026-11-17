@@ -519,18 +519,39 @@ fn an_output_is_the_first_form_it_matches() {
             code: 3,
         },
     ];
-    assert_eq!(run_result(&forms, r#"{"verdict":"confirmed"}"#).code, 1);
-    assert_eq!(run_result(&forms, "  {\"verdict\":\"denied\"}\n").code, 2);
-    assert_eq!(run_result(&forms, r#"{"verdict": "denied"}"#).code, 0);
-    assert_eq!(run_result(&forms, "").code, 0);
-    assert_eq!(run_result(&[], "anything").code, 0);
+    let code = |forms: &[Form], output: &str| run_forms(forms, output).code;
+    assert_eq!(code(&forms, r#"{"verdict":"confirmed"}"#), 1);
+    assert_eq!(code(&forms, "  {\"verdict\":\"denied\"}\n"), 2);
+    assert_eq!(code(&forms, r#"{"verdict": "denied"}"#), 0);
+    assert_eq!(code(&forms, ""), 0);
+    assert_eq!(code(&[], "anything"), 0);
+    let long = vec![Form {
+        text: "x".repeat(MAX_FORM + 1),
+        code: 5,
+    }];
+    assert_eq!(code(&long, &"x".repeat(MAX_FORM + 1)), 0);
 
-    let stated = run_result(&forms, "").forms_sha256;
-    assert_eq!(run_result(&forms, "another output").forms_sha256, stated);
-    assert_ne!(run_result(&forms[..2], "").forms_sha256, stated);
+    let id = |forms: &[Form], output: &str| forms_id(&run_forms(forms, output));
+    let stated = id(&forms, "");
+    assert_eq!(id(&forms, "another output"), stated);
+    assert_ne!(id(&forms[..2], ""), stated);
+    assert_ne!(id(&[], ""), stated);
     let mut other = forms.clone();
     other[0].code = 9;
-    assert_ne!(run_result(&other, "").forms_sha256, stated);
+    assert_ne!(id(&other, ""), stated);
+
+    // The record carries the claim record it was given, untouched.
+    let record = close_result(
+        run_forms(&forms, r#"{"verdict":"denied"}"#),
+        &[1; 32],
+        &[2; 32],
+        true,
+    );
+    assert_eq!(record.statement.as_slice(), [1; 32]);
+    assert_eq!(record.output_text_sha256.as_slice(), [2; 32]);
+    assert!(record.valid);
+    assert_eq!(record.code, 2);
+    assert_eq!(record.forms_sha256, stated);
 }
 
 #[test]

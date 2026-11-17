@@ -53,8 +53,20 @@ at 512), `check_c{k}` (131,209 at 8 tokens) and `prompt_check_p{j}` (2,730,134 a
 512 tokens; it replays at the pinned model's six-token ranges, and was not measured
 on fewer).
 
-The chain has no origin stages and no `output_finalize` stage (see below), so no
-stage is short at every size, and none is short because the output is.
+The chain has no origin stages and no `output_finalize` stage (see below), so
+through version 17 no stage was short at every size, and none is short because the
+output is.
+
+Since version 18 (2026-11-16) one stage is short at every size again: `result`,
+the chain's last, which compares the output text with the run's forms. It is three
+steps and one per form. It was made a stage of its own knowingly, as the place a
+larger result step will grow from, and the claim is arranged so that nothing rests
+on its checkpoint: the claim's record and verdict are the last check's, and a
+contract takes the comparison with the forms on the submitted text itself
+(`check_origin`, see [the contract](../internals/contract.md)). A false `result`
+checkpoint is found by a challenger's recomputation and cannot be replayed. The
+`source` stage of a run with small documents is short too: 63 steps on the parity
+gate's two documents, 158 on the three documents of a real impact claim.
 
 The bind stages are new in version 11. Until then one
 `prompt_bind` stage bound the whole prompt and was long at every real size. A bind

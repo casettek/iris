@@ -227,7 +227,11 @@ fn write_claim_result(
         .final_result
         .as_ref()
         .map(|result| -> Result<PathBuf> {
-            let submission = ClaimSubmission::from_run(result, &checkpointed.chain_dir)?;
+            let submission = ClaimSubmission::from_run(
+                result,
+                prepared_run.prompt.source.as_ref(),
+                &checkpointed.chain_dir,
+            )?;
             let path = checkpointed.chain_dir.join(CLAIM_SUBMISSION_JSON);
             inference_artifacts::write_json(&path, &submission)?;
             Ok(path)
@@ -264,7 +268,7 @@ impl ClaimBuildOptions {
 pub(crate) fn prepare_claim_run(options: &ClaimBuildOptions) -> Result<PreparedClaimRun> {
     let run_spec_path = absolute(&options.base_dir, &options.run_spec_path);
     let run_spec = read_run_spec(&run_spec_path)?;
-    prepare_run(options, run_spec_path, &run_spec, None, true)
+    prepare_run(options, run_spec_path, &run_spec, None, None, true)
 }
 
 /// Prepares a run from a spec a claim already fixed, as a challenger does.
@@ -272,15 +276,17 @@ pub(crate) fn prepare_claim_run(options: &ClaimBuildOptions) -> Result<PreparedC
 /// The ids are not held to the run's token budget here. A claim that breaks the
 /// budget still has a chain to recompute, and is rejected on its final record.
 ///
-/// `source` is the claim's source record with the source stage's inputs. A
-/// challenger reruns that stage on the inputs the claim committed to.
+/// `source` is the claim's source record with the source stage's inputs, and
+/// `forms` the forms its result stage compared the output with. A challenger
+/// reruns both stages on what the claim committed to.
 pub(crate) fn prepare_challenge_run(
     options: &ClaimBuildOptions,
     run_spec: &InferenceRunSpec,
     source: Option<FrozenSource<'_>>,
+    forms: &[run_prep::source::Form],
 ) -> Result<PreparedClaimRun> {
     let run_spec_path = absolute(&options.base_dir, &options.run_spec_path);
-    prepare_run(options, run_spec_path, run_spec, source, false)
+    prepare_run(options, run_spec_path, run_spec, source, Some(forms), false)
 }
 
 /// A claim's source as a challenger is given it: the record, and the files
@@ -295,6 +301,7 @@ fn prepare_run(
     run_spec_path: PathBuf,
     run_spec: &InferenceRunSpec,
     frozen_source: Option<FrozenSource<'_>>,
+    frozen_forms: Option<&[run_prep::source::Form]>,
     check_claimed_length: bool,
 ) -> Result<PreparedClaimRun> {
     let run_spec_dir = run_spec_path
@@ -312,6 +319,9 @@ fn prepare_run(
     let mut prompt = run_prep::prepare_prompt(&tokenizer, run_spec_dir, run_spec, &model_manifest)?;
     if let Some((record, _)) = frozen_source {
         prompt.source = Some(record.clone());
+    }
+    if let Some(forms) = frozen_forms {
+        prompt.forms = forms.to_vec();
     }
 
     let run_dir = options
@@ -389,6 +399,7 @@ fn prepare_run(
         &run_prep::write_run_schedule(mark_files.len(), claimed_files.len(), &prompt_dir)?,
         &run_prep::write_text_claim(&bound.claim, &prompt_dir)?,
         source_inputs.as_ref(),
+        &run_prep::write_result_forms(&prompt.forms, &prompt_dir)?,
         &mark_files,
         &claimed_files,
     )?;
@@ -425,6 +436,9 @@ const RUN_PLACEHOLDER_DIR: &str = "target/iris/run-prompt-placeholder/";
 
 /// Marks where the template names the last prompt range.
 const LAST_PROMPT_RANGE: &str = "@LAST_PROMPT_RANGE@";
+
+/// Marks where the template names the last claimed range.
+const LAST_CLAIMED_RANGE: &str = "@LAST_CLAIMED_RANGE@";
 
 /// The chain of a run whose text is taken as given: the template without its
 /// source stage, and the first bind given the constant the later binds are.
@@ -478,6 +492,7 @@ pub(crate) fn render_ranged_manifest(
     schedule: &run_prep::RunFile,
     claim: &run_prep::RunFile,
     source: Option<&inference_artifacts::PreparedSourceInputs>,
+    forms: &run_prep::RunFile,
     prompt: &[run_prep::RunFile],
     claimed: &[run_prep::RunFile],
 ) -> Result<String> {
@@ -495,6 +510,7 @@ pub(crate) fn render_ranged_manifest(
         None => without_source_stage(&template)?,
     };
     let last_prompt = (prompt.len() - 1).to_string();
+    let last_claimed = (claimed.len() - 1).to_string();
     let mut table = String::new();
     let mut name = String::new();
     let mut fan_index = String::new();
@@ -505,8 +521,8 @@ pub(crate) fn render_ranged_manifest(
     // Prompt repeats, claimed repeats, prompt externals, claimed externals,
     // per-layer prompt fans, per-layer claimed fans, text externals,
     // configuration bindings, schedule bindings, text claim bindings, the
-    // source stage's inputs.
-    let mut replaced = [0_usize; 11];
+    // source stage's inputs, the result stage's forms.
+    let mut replaced = [0_usize; 12];
     let mut out = Vec::new();
     for line in template.lines() {
         let trimmed = line.trim();
@@ -578,6 +594,16 @@ pub(crate) fn render_ranged_manifest(
                 continue;
             }
         }
+        if (table.as_str(), name.as_str()) == ("[[chain.stage]]", "result")
+            && trimmed.starts_with("inputs.forms =")
+        {
+            replaced[11] += 1;
+            out.push(
+                RunExternal::new(&forms.path, &forms.index_path, &forms.commitment)
+                    .binding("forms"),
+            );
+            continue;
+        }
         let files = match table.as_str() {
             "[chain.input.prompt_text]" => Some((text, 6)),
             "[chain.input.prompt_marks]" => Some((prompt, 2)),
@@ -647,15 +673,19 @@ pub(crate) fn render_ranged_manifest(
                 continue;
             }
         }
-        out.push(line.replace(LAST_PROMPT_RANGE, &last_prompt));
+        out.push(
+            line.replace(LAST_PROMPT_RANGE, &last_prompt)
+                .replace(LAST_CLAIMED_RANGE, &last_claimed),
+        );
     }
     if replaced[..4] != [1, 2, 1, 1]
         || replaced[4] == 0
         || replaced[4] != replaced[5]
         || replaced[6..10] != [1, 2, 2, 2]
         || replaced[10] != if source.is_some() { 3 } else { 0 }
+        || replaced[11] != 1
     {
-        anyhow::bail!("incompatible chain template: expected [prompt repeats, claimed repeats, prompt commitments, claimed commitments] = [1, 2, 1, 1], matching per-layer range fans, one set of text commitments, a configuration, a schedule and a text claim binding for range 0's bind and for the later ranges', and three inputs for the source stage of a run that has a source; found {replaced:?}");
+        anyhow::bail!("incompatible chain template: expected [prompt repeats, claimed repeats, prompt commitments, claimed commitments] = [1, 2, 1, 1], matching per-layer range fans, one set of text commitments, a configuration, a schedule and a text claim binding for range 0's bind and for the later ranges', three inputs for the source stage of a run that has a source, and the result stage's forms; found {replaced:?}");
     }
     out.push(String::new());
     Ok(out.join("\n"))
@@ -929,6 +959,7 @@ mod tests {
                     }],
                     eos_token_ids: Vec::new(),
                     source: None,
+                    forms: Vec::new(),
                 },
                 tokens: 1,
                 run_manifest_path: Some(manifest_path.clone()),
@@ -1145,6 +1176,11 @@ name = "claimed"
 index = "k"
 start = 1
 count = 0
+
+[[chain.stage]]
+name = "result"
+inputs.check = { from = "check_c@LAST_CLAIMED_RANGE@" }
+inputs.forms = { external = { path = "/repo/target/iris/run-prompt-placeholder/result_forms.rastered", index_path = "/repo/target/iris/run-prompt-placeholder/result_forms.rindex", commitment = "0" } }
 "#;
         let file = |name: &str, commitment: &str| run_prep::RunFile {
             path: PathBuf::from(format!("/tmp/run/prompt/{name}.rastered")),
@@ -1159,6 +1195,7 @@ count = 0
         let config = file("config", "g0");
         let schedule = file("schedule", "s0");
         let claim = file("claim", "m0");
+        let forms = file("result_forms", "f0");
         let prompt = [
             file("marks_0", "a0"),
             file("marks_1", "a1"),
@@ -1174,6 +1211,7 @@ count = 0
                 &schedule,
                 &claim,
                 None,
+                &forms,
                 &prompt,
                 claimed,
             )
@@ -1235,6 +1273,9 @@ count = 0
         assert!(manifest.contains(r#"commitment = "g0""#));
         assert!(manifest.contains(r#"commitment = "s0""#));
         assert!(manifest.contains(r#"commitment = "m0""#));
+        // The result stage reads the last check and the run's forms.
+        assert!(manifest.contains(r#"inputs.check = { from = "check_c0" }"#));
+        assert!(manifest.contains(r#"commitment = "f0""#));
         // A run without a source: no source stage, and the first bind is given
         // the constant.
         assert!(!manifest.contains(r#"name = "source""#));
@@ -1259,6 +1300,7 @@ count = 0
             &schedule,
             &claim,
             Some(&source),
+            &forms,
             &prompt,
             &claimed,
         )
@@ -1278,6 +1320,7 @@ count = 0
             &schedule,
             &claim,
             None,
+            &forms,
             &prompt,
             &claimed,
         )

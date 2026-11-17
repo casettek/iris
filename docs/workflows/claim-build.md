@@ -19,7 +19,7 @@ Flow:
 7. Claim build applies the rule a challenger will. If the final record's committed verdict counts any claimed id that is not the greedy selection, claim build fails: direct and teacher-forced inference are not in parity, and the claim would refute itself.
 8. `inference-artifacts` scans the completed chain directory and writes the claim files.
 
-`prepared_run.json` holds no copy of the ids: the claim's output is the record the chain's last stage, the last range's check, states with its edge, which also holds the input text's SHA-256, the model id and the output text's SHA-256.
+`prepared_run.json` holds no copy of the ids: the claim's output is the record the last range's check states with its edge, which also holds the input text's SHA-256, the model id and the output text's SHA-256.
 
 When `iris infer` has already run this spec, pass the ids it printed with
 `--direct-output-ids 1,2,3` and step 2 is skipped: the claim is built from them
@@ -45,7 +45,7 @@ Claim files live beside the generated checkpoint tree:
 - `checkpoint_trace.json`: ordered checkpoint records.
 - `checkpoints.txt`: one SHA-256 per checkpoint record.
 - `claim_bundle.json`: whole-claim input/output commitments plus the checkpoint trace and prepared-run metadata references.
-- `claim_submission.json`: what a claimer would submit to a [contract](../internals/contract.md): the plaintext, the input text hash, the claim record and the SHA-256 of `checkpoints.txt`. Claim build fails if a contract holding the import's pins would not accept the claim: its statement, its output, the program every checkpoint names, every input a stage takes from an earlier stage, and the record in the last stage's output. `iris claim check --run <spec> --submission <file>` makes the same checks afterwards.
+- `claim_submission.json`: what a claimer would submit to a [contract](../internals/contract.md): the plaintext, the input text hash, the source record of a run that has one, the claim record, the result code with the hash of the forms it was read by, and the SHA-256 of `checkpoints.txt`. Claim build fails if a contract holding the import's pins would not accept the claim: its statement, its output, its source and result against what the run spec names, the program every checkpoint names, every input a stage takes from an earlier stage, the record in the last check's output and the result in the last stage's. `iris claim check --run <spec> --submission <file>` makes the same checks afterwards.
 
 `checkpoints.txt` is the compact public checkpoint reference used by the hash-based challenge flow. For manual challenge testing, copy and corrupt one hash:
 

@@ -961,6 +961,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "claim-result"
+version = "0.1.0"
+dependencies = [
+ "model-identity",
+ "raster",
+ "serde",
+ "sha2",
+]
+
+[[package]]
 name = "clang-sys"
 version = "1.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2535,6 +2545,7 @@ dependencies = [
  "hex",
  "model-identity",
  "postcard",
+ "prompt-core",
  "raster-core",
  "serde",
  "serde_json",
@@ -5202,6 +5213,7 @@ name = "staged-infer"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "claim-result",
  "clap",
  "det-num",
  "hex",

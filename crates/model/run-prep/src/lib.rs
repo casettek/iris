@@ -47,7 +47,7 @@ pub fn prepare_prompt(
     // The template is the tokenizer profile's, which is what the prompt stages
     // render the text with, whatever the model's family.
     let profile = tokenizer_profile(tokenizer)?;
-    let (prompt, source) = resolve_prompt(spec_dir, spec)?;
+    let (prompt, source, forms) = resolve_prompt(spec_dir, spec)?;
     let rendered_prompt = if !spec.raw_prompt && profile.templated() {
         format!(
             "{}{}{}",
@@ -66,7 +66,19 @@ pub fn prepare_prompt(
         initial_pieces,
         eos_token_ids: model.eos_token_ids.clone(),
         source,
+        forms,
     })
+}
+
+/// Writes the `claim-result` stage's forms for a run.
+pub fn write_result_forms(forms: &[source::Form], dir: &Path) -> Result<RunFile> {
+    write_run_file(
+        &source_core::ResultForms {
+            forms: forms.to_vec().into(),
+        },
+        dir,
+        "result_forms",
+    )
 }
 
 /// The source record as the first bind takes it: the run's, or the default
@@ -837,18 +849,19 @@ pub fn special_tokens(tokenizer: &serde_json::Value) -> Vec<String> {
     tokens
 }
 
-/// The run's prompt text, and the source record when the text was built from
-/// signed documents.
+/// The run's prompt text, and for a prompt built from signed documents the
+/// source record and the recipe's forms.
 fn resolve_prompt(
     spec_dir: &Path,
     spec: &InferenceRunSpec,
-) -> Result<(String, Option<source::SourceRecord>)> {
+) -> Result<(String, Option<source::SourceRecord>, Vec<source::Form>)> {
     if let Some(source) = spec.source.as_ref() {
+        let forms = source::load_source(spec_dir, source)?.recipe.forms();
         let run = source::sourced_run(spec_dir, source)?;
-        return Ok((run.text, Some(run.record)));
+        return Ok((run.text, Some(run.record), forms));
     }
     if let Some(prompt) = spec.prompt.as_ref() {
-        return Ok((prompt.clone(), None));
+        return Ok((prompt.clone(), None, Vec::new()));
     }
     let prompt_file = spec
         .prompt_file
@@ -861,7 +874,7 @@ fn resolve_prompt(
     };
     let prompt = fs::read_to_string(&path)
         .with_context(|| format!("failed to read prompt file {}", path.display()))?;
-    Ok((prompt, None))
+    Ok((prompt, None, Vec::new()))
 }
 
 fn tokenizer_model(tokenizer: &serde_json::Value) -> Result<&serde_json::Value> {

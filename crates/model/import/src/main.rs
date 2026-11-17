@@ -1134,11 +1134,30 @@ fn chain_template(
         ),
         String::from("inputs.prior = { from = \"check_c{k-1}\", first = \"check_c0\" }\n"),
     ));
+    // Last, what the output stands for: the result stage reads the last
+    // check's output and the run's forms.
+    out.push_str(&format!(
+        "\n[[chain.stage]]\n\
+         name = \"result\"\n\
+         project = \"raster-stages/claim-result\"\n\
+         inputs.check = {{ from = \"check_c{LAST_CLAIMED_RANGE}\" }}\n\
+         {}",
+        external_line(
+            "forms",
+            layout,
+            RUN_PLACEHOLDER_DIR,
+            "result_forms",
+            INITIAL_PIECES_PLACEHOLDER_COMMITMENT,
+        ),
+    ));
     Ok(out)
 }
 
 /// Run preparation replaces this with the index of the last prompt range.
 const LAST_PROMPT_RANGE: &str = "@LAST_PROMPT_RANGE@";
+
+/// Run preparation replaces this with the index of the last claimed range.
+const LAST_CLAIMED_RANGE: &str = "@LAST_CLAIMED_RANGE@";
 
 /// The empty prompt a claimed range embeds before its claimed ids.
 fn no_prompt_commitment(layout: &ArtifactLayout) -> Result<String, Box<dyn Error>> {

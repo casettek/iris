@@ -382,3 +382,9 @@ inputs.head = { external = { path = "/home/amcas/Development/iris/runtime/model-
 inputs.decoder = { external = { path = "/home/amcas/Development/iris/runtime/model-artifacts/gemma-4-E2B-q8/raster/sequence-check/decoder.rastered", index_path = "/home/amcas/Development/iris/runtime/model-artifacts/gemma-4-E2B-q8/raster/sequence-check/decoder.rindex", commitment = "ff7262af390d1a802cd95097b455a1ed9671b819ddba6b5726fc221fd3f16c6b" } }
 inputs.descriptor = { external = { path = "/home/amcas/Development/iris/runtime/model-artifacts/gemma-4-E2B-q8/raster/sequence-check/descriptor.rastered", index_path = "/home/amcas/Development/iris/runtime/model-artifacts/gemma-4-E2B-q8/raster/sequence-check/descriptor.rindex", commitment = "94275f881d28da3fd7b1644af20181d9dabdc4776da4bbd331a00ce2747650e6" } }
 inputs.witness = { external = { path = "/home/amcas/Development/iris/runtime/model-artifacts/gemma-4-E2B-q8/raster/sequence-check/witness.rastered", index_path = "/home/amcas/Development/iris/runtime/model-artifacts/gemma-4-E2B-q8/raster/sequence-check/witness.rindex", commitment = "e37831a997f2dbb0c137197851e48688e795dd87f5b1ed0ba0b5f935104f6adc" } }
+
+[[chain.stage]]
+name = "result"
+project = "/home/amcas/Development/iris/raster-stages/claim-result"
+inputs.check = { from = "check_c@LAST_CLAIMED_RANGE@" }
+inputs.forms = { external = { path = "/home/amcas/Development/iris/target/iris/run-prompt-placeholder/result_forms.rastered", index_path = "/home/amcas/Development/iris/target/iris/run-prompt-placeholder/result_forms.rindex", commitment = "0000000000000000000000000000000000000000000000000000000000000000" } }

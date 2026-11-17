@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
-use anyhow::{ensure, Context, Result};
+use anyhow::{bail, ensure, Context, Result};
 use direct_infer::{DirectInferenceConfig, DirectInferenceExecutor};
 use inference_artifacts::{file_sha256, read_json, write_json, InferenceResult, ModelManifest};
 use serde::Deserialize;
@@ -21,7 +21,8 @@ use staged_infer::chain_runner::StagedExecutionBackend;
 
 use crate::claim::{build_claim, prepare_claim_run, ClaimBuildOptions};
 use compare::{
-    check_inventory, compare, final_record, read_boundaries, teacher_forced_names, Boundary,
+    check_inventory, compare, final_record, read_boundaries, teacher_forced_names, with_result,
+    Boundary,
     RangedShape,
 };
 
@@ -83,6 +84,7 @@ fn stage_program<'a>(stage: &str, layer_program: &'a str) -> &'a str {
         ("aux_", "prefill-prepare-aux"),
         ("range_", layer_program),
         ("check_", "sequence-check"),
+        ("result", "claim-result"),
     ]
     .iter()
     .find(|(prefix, _)| stage.starts_with(prefix))
@@ -610,7 +612,16 @@ fn run_case(
     // The final record is what a contract reads: the context it reports is the
     // one the prompt stages established, and its commitment hashes its own text.
     let last_check = format!("check_c{}", shape.claimed_ranges - 1);
-    let record = &final_record(&raster_outputs[&last_check].value)?;
+    let record = &with_result(
+        final_record(&raster_outputs[&last_check].value)?,
+        &raster_outputs["result"].value,
+    )?;
+    // A run that names no forms has no code, and its forms hash says so.
+    ensure!(
+        record["result_code"] == json!(0)
+            && record["result_forms_sha256"] == json!(run_prep::source::no_forms_id()),
+        "a run without forms states a result: {record}"
+    );
     // Every check states a record, and only the last range's is a claim's:
     // an earlier one carries a fault, so it cannot be presented as final.
     for earlier in 0..shape.claimed_ranges - 1 {
@@ -680,7 +691,7 @@ fn run_case(
         );
     }
     ensure!(
-        contract.lines.len() == 5,
+        contract.lines.len() == 7,
         "the contract checks did not reach the Raster run"
     );
     comparison["contract_checks"] = json!(contract.lines.len());
@@ -901,6 +912,7 @@ fn run_chain_fault_leg(
             )?,
             &run_prep::write_text_claim(&text_claim, &files)?,
             None,
+            &run_prep::write_result_forms(&[], &files)?,
             &mark_files,
             &claimed_files,
         )?;
@@ -934,8 +946,16 @@ fn run_chain_fault_leg(
                 .with_context(|| format!("chain fault `{name}`"))?;
         }
 
-        let last = order.last().context("the chain ran no stage")?;
-        let record = &final_record(&raster_outputs[last].value)?;
+        // The record is the last check's. The result stage after it restates
+        // the claim record whatever that record says.
+        let (last, result) = match order.as_slice() {
+            [.., last, result] if result == "result" => (last, result),
+            _ => bail!("chain fault `{name}`: the chain does not end in a check and the result"),
+        };
+        let record = &with_result(
+            final_record(&raster_outputs[last].value)?,
+            &raster_outputs[result].value,
+        )?;
         ensure!(
             (record["prompt_fault"] != json!(0)) == prompt_fault,
             "chain fault `{name}`: expected a prompt fault: {prompt_fault}; got {record}"

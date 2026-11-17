@@ -304,6 +304,7 @@ fn rebuild_teacher_forced_run(
             .source
             .as_ref()
             .zip(frozen.source_inputs.as_ref()),
+        &frozen.prompt.forms,
     )?;
     if rebuilt.prepared_run.model_id != frozen.model_id {
         eprintln!(
@@ -1133,6 +1134,7 @@ mod tests {
                 }],
                 eos_token_ids: Vec::new(),
                 source: None,
+                forms: Vec::new(),
             },
             tokens: 1,
             run_manifest_path: Some(run_manifest),

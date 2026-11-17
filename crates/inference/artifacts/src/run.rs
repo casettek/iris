@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 
 pub const INFERENCE_RUN_SPEC_TOML: &str = "inference.toml";
 pub const PREPARED_RUN_JSON: &str = "prepared_run.json";
-pub const PREPARED_RUN_VERSION: u32 = 17;
+pub const PREPARED_RUN_VERSION: u32 = 18;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct InferenceRunSpec {
@@ -94,6 +94,10 @@ pub struct PreparedPrompt {
     /// its digest.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source: Option<source_core::SourceRecord>,
+    /// The texts the result stage compares the output with. Empty for a run
+    /// that names none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub forms: Vec<source_core::Form>,
 }
 
 /// Frozen normalization/segmentation output. Old sentinel-based inputs cannot

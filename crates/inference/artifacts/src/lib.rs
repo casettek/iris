@@ -510,6 +510,7 @@ mod tests {
                 }],
                 eos_token_ids: vec![1, 2],
                 source: None,
+                forms: Vec::new(),
             },
             tokens: 2,
             run_manifest_path: Some(PathBuf::from("target/runs/run/Raster.toml")),

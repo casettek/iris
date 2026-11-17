@@ -31,9 +31,11 @@ if [ ${#references[@]} -eq 0 ]; then
 fi
 
 # The stage of each program to run through Raster: the first prompt range,
-# which is a full range, its first layer, and the first claimed range's check.
+# which is a full range, its first layer, the first claimed range's check, and
+# the result stage.
 raster_samples="prompt-bind:prompt_bind_p0 prompt-check:prompt_check_p0 input-embedding:embed_p0
-    prefill-prepare-aux:aux_p0_l0 prefill-range:range_p0_l0 sequence-check:check_c0"
+    prefill-prepare-aux:aux_p0_l0 prefill-range:range_p0_l0 sequence-check:check_c0
+    claim-result:result"
 
 claim() {
     local reference=$1 out=$2

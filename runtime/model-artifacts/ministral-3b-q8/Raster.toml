@@ -203,3 +203,9 @@ inputs.head = { external = { path = "/home/amcas/Development/iris/runtime/model-
 inputs.decoder = { external = { path = "/home/amcas/Development/iris/runtime/model-artifacts/ministral-3b-q8/raster/sequence-check/decoder.rastered", index_path = "/home/amcas/Development/iris/runtime/model-artifacts/ministral-3b-q8/raster/sequence-check/decoder.rindex", commitment = "e25cf7afbdc35d50f63fbebdb69c6fb10bd1d434cf68601d840da4415b161256" } }
 inputs.descriptor = { external = { path = "/home/amcas/Development/iris/runtime/model-artifacts/ministral-3b-q8/raster/sequence-check/descriptor.rastered", index_path = "/home/amcas/Development/iris/runtime/model-artifacts/ministral-3b-q8/raster/sequence-check/descriptor.rindex", commitment = "5f85fa0cbca76df7568c98b6ce779d9d56bc20253817f2d26e5ac317aabd6ec1" } }
 inputs.witness = { external = { path = "/home/amcas/Development/iris/runtime/model-artifacts/ministral-3b-q8/raster/sequence-check/witness.rastered", index_path = "/home/amcas/Development/iris/runtime/model-artifacts/ministral-3b-q8/raster/sequence-check/witness.rindex", commitment = "99f8e46c4a57814abbd779e8c3491e9a28d8000cff832297fe3aefdb0f0e5a10" } }
+
+[[chain.stage]]
+name = "result"
+project = "/home/amcas/Development/iris/raster-stages/claim-result"
+inputs.check = { from = "check_c@LAST_CLAIMED_RANGE@" }
+inputs.forms = { external = { path = "/home/amcas/Development/iris/target/iris/run-prompt-placeholder/result_forms.rastered", index_path = "/home/amcas/Development/iris/target/iris/run-prompt-placeholder/result_forms.rindex", commitment = "0000000000000000000000000000000000000000000000000000000000000000" } }

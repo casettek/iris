@@ -1,7 +1,9 @@
 //! The gate's source leg: a prompt built from signed documents.
 //!
 //! One honest claim with a source is run three ways, as every case is: direct,
-//! native stages, and the whole chain through Raster. Then sources that are
+//! native stages, and the whole chain through Raster. Its recipe names the
+//! output as one of its forms, so the result stage states that form's code.
+//! Then sources that are
 //! wrong are run through the `source` stage and the binds, in Raster and
 //! natively: each must finish, give the same bytes both ways, and record the
 //! fault it should.
@@ -31,6 +33,8 @@ const EVENT_TARGET: &str = "/event/us1.json";
 const COMMENTS_TARGET: &str = "/product/p1/comments.json";
 /// The gate's signing key. It signs nothing outside a gate run.
 const SECRET: [u8; 32] = [7; 32];
+/// The code of the form the honest claim's output is.
+const OUTPUT_CODE: u32 = 7;
 
 fn attest(secret: &[u8], target: &str, body: &[u8]) -> Result<Attestation> {
     let mut attestation = Attestation {
@@ -157,6 +161,31 @@ fn write_run(dir: &Path, source: &LoadedSource, model_path: &Path) -> Result<std
     Ok(spec)
 }
 
+/// What the model answers the source's prompt with, from direct inference
+/// alone. The forms are no part of the prompt, so naming this text as a form
+/// afterwards leaves the answer as it is.
+fn direct_output(
+    root: &Path,
+    dir: &Path,
+    exe: &Path,
+    model_path: &Path,
+    source: &LoadedSource,
+) -> Result<String> {
+    let spec = write_run(dir, source, model_path)?;
+    let mut run = command(exe, root);
+    run.args(["parity-worker", "--run"])
+        .arg(&spec)
+        .arg("--output")
+        .arg(dir.join("native-direct"))
+        .arg("--direct");
+    logged(run, &dir.join("native-direct.log")).context("direct inference")?;
+    let result: Value = inference_artifacts::read_json(&dir.join("native-direct/result.json"))?;
+    Ok(result["generated_text"]
+        .as_str()
+        .context("direct inference recorded no text")?
+        .to_string())
+}
+
 /// The honest claim, three ways.
 fn run_honest(
     root: &Path,
@@ -229,6 +258,17 @@ fn run_honest(
     ensure!(
         record["valid"] == json!(true),
         "an honest claim with a source is not valid: {record}"
+    );
+    // The result stage: last in the chain, the same bytes through Raster and
+    // natively (compared above), and the code of the form the output is.
+    let stated = &raster_outputs[order.last().expect("the order is not empty")].value;
+    ensure!(
+        order.last().map(String::as_str) == Some("result")
+            && stated["code"] == json!(OUTPUT_CODE)
+            && record["result_code"] == json!(OUTPUT_CODE)
+            && stated["forms_sha256"] == record["result_forms_sha256"]
+            && stated["statement"]["bytes"] == record["statement_sha256"],
+        "the result stage does not state the output's form: {stated} for {record}"
     );
     ensure!(
         raster_outputs["source"].value["fault"] == json!(FAULT_NONE)
@@ -355,7 +395,15 @@ pub(super) fn run_source_leg(
 ) -> Result<Value> {
     use run_prep::{FAULT_SOURCE, FAULT_TEXT_SOURCE};
     let dir = run_dir.join("source");
-    let honest = honest_source()?;
+    let mut honest = honest_source()?;
+    // The answer is learned first and named as the second form, so the claim's
+    // result stage passes one form by and stops at the next.
+    let output = direct_output(root, &dir.join("answer"), exe, model_path, &honest)
+        .context("the answer to the source's prompt")?;
+    honest.recipe.forms.push(FormFile {
+        text: output.trim().to_string(),
+        code: OUTPUT_CODE,
+    });
     let (claim, prepared) = run_honest(root, &dir.join("honest"), exe, raster, model_path, &honest)
         .context("the honest claim with a source")?;
 

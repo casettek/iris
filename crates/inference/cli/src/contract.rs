@@ -5,20 +5,21 @@
 //! finds their inputs: the pins beside the model manifest a run spec names,
 //! the parameters that spec requires, and the claim directory `claim build`
 //! wrote, which holds the submission, the checkpoint list, the checkpoints and
-//! the last stage's output.
+//! the outputs of the last check and of the result stage after it.
 
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{ensure, Context, Result};
 use inference_artifacts::contract::{
-    check_submission, first_unapproved_stage, raster_boundary_mismatch, ChallengeRefusal,
-    CheckpointList, ClaimSubmission, ContractPins, LinkCheck, RecordBinding, RequiredParameters,
-    StageAdmission, SubmittedRecord, CONTRACT_PINS_JSON,
+    check_origin, check_submission, first_unapproved_stage, raster_boundary_mismatch,
+    ChallengeRefusal, CheckpointList, ClaimSubmission, ContractPins, LinkCheck, RecordBinding,
+    RequiredOrigin, RequiredParameters, RequiredSource, ResultInOutput, StageAdmission,
+    SubmittedRecord, SubmittedResult, CONTRACT_PINS_JSON,
 };
 use inference_artifacts::{
-    read_checkpoint_trace, read_json, read_run_spec, CheckpointTrace, ModelManifest, PreparedRun,
-    CHECKPOINTS_TXT, CHECKPOINT_TRACE_JSON,
+    read_checkpoint_trace, read_json, read_run_spec, Checkpoint, CheckpointTrace, InferenceRunSpec,
+    ModelManifest, PreparedRun, CHECKPOINTS_TXT, CHECKPOINT_TRACE_JSON,
 };
 use raster::core::chain::ChainCommitment;
 
@@ -91,6 +92,29 @@ pub(crate) fn load_pins(model_manifest_path: &Path) -> Result<ContractPins> {
     Ok(pins)
 }
 
+/// What a run spec requires of where a claim's prompt came from and of the
+/// forms its output is read by. A contract holds these as it holds the
+/// parameters: they are the terms the claim was asked for under.
+fn required_origin(run_spec_path: &Path, run_spec: &InferenceRunSpec) -> Result<RequiredOrigin> {
+    let Some(source) = &run_spec.source else {
+        return Ok(RequiredOrigin {
+            source: None,
+            forms: Vec::new(),
+        });
+    };
+    let run_spec_dir = run_spec_path
+        .parent()
+        .context("run spec has no parent directory")?;
+    let terms = run_prep::source::source_terms(run_spec_dir, source)?;
+    Ok(RequiredOrigin {
+        source: Some(RequiredSource {
+            signer: terms.signer,
+            recipe_sha256: terms.recipe_sha256,
+        }),
+        forms: terms.forms,
+    })
+}
+
 /// The checks as a claimer applies them to its own claim before posting it:
 /// the first one a contract would reject it at. `Ok(None)` when it would be
 /// accepted, or when the import has no pins to check against.
@@ -110,7 +134,11 @@ pub(crate) fn claim_rejection(
         raw_prompt: prepared.raw_prompt,
         max_new_tokens: prepared.tokens,
     };
-    Ok(check_claim_dir(&pins, required, submission_path)?.rejection())
+    let origin = required_origin(
+        &prepared.run_spec_path,
+        &read_run_spec(&prepared.run_spec_path)?,
+    )?;
+    Ok(check_claim_dir(&pins, required, &origin, submission_path)?.rejection())
 }
 
 pub fn check_claim(options: ClaimCheckOptions) -> Result<ClaimCheckReport> {
@@ -124,8 +152,9 @@ pub fn check_claim(options: ClaimCheckOptions) -> Result<ClaimCheckReport> {
         raw_prompt: run_spec.raw_prompt,
         max_new_tokens: run_spec.tokens,
     };
+    let origin = required_origin(&run_spec_path, &run_spec)?;
     let submission_path = absolute(&options.base_dir, &options.submission_path);
-    let mut report = check_claim_dir(&pins, required, &submission_path)?;
+    let mut report = check_claim_dir(&pins, required, &origin, &submission_path)?;
 
     if let Some(raster_run) = options.raster_run {
         let commitment_path = absolute(&options.base_dir, &raster_run).join("chain-commitment");
@@ -151,26 +180,35 @@ fn claim_trace(submission_path: &Path) -> Result<CheckpointTrace> {
     read_checkpoint_trace(&claim_dir(submission_path)?.join(CHECKPOINT_TRACE_JSON))
 }
 
-/// The submission checks, then the two comparisons a contract makes against
-/// the claimer's checkpoint list when a challenge arrives, on the files in the
+/// The submission checks, then the comparisons a contract makes against the
+/// claimer's checkpoint list when a challenge arrives, on the files in the
 /// claim's directory.
 fn check_claim_dir(
     pins: &ContractPins,
     required: RequiredParameters,
+    origin: &RequiredOrigin,
     submission_path: &Path,
 ) -> Result<ClaimCheckReport> {
     let submission: ClaimSubmission = read_json(submission_path)?;
     let dir = claim_dir(submission_path)?;
-    let mut lines = vec![CheckLine {
-        check: "submission: statement, output and valid flag",
-        rejection: check_submission(pins, required, &submission)
-            .err()
-            .map(|rejection| rejection.to_string()),
-    }];
+    let mut lines = vec![
+        CheckLine {
+            check: "submission: statement, output and valid flag",
+            rejection: check_submission(pins, required, &submission)
+                .err()
+                .map(|rejection| rejection.to_string()),
+        },
+        CheckLine {
+            check: "submission: source record, forms and result code",
+            rejection: check_origin(origin, &submission)
+                .err()
+                .map(|rejection| rejection.to_string()),
+        },
+    ];
 
     let list_path = dir.join(CHECKPOINTS_TXT);
-    let list = fs::read(&list_path)
-        .with_context(|| format!("failed to read {}", list_path.display()))?;
+    let list =
+        fs::read(&list_path).with_context(|| format!("failed to read {}", list_path.display()))?;
     let trace = claim_trace(submission_path)?;
     let refusal = |refusal: ChallengeRefusal| {
         anyhow::anyhow!(
@@ -268,47 +306,90 @@ fn check_claim_dir(
         rejection,
     });
 
-    let last = trace
-        .checkpoints
-        .last()
-        .context("the claim has no checkpoints")?;
+    // A claim ends in the last check and then the result stage. The record is
+    // held to the first and the result to the second.
+    let stages = trace.checkpoints.len();
+    ensure!(
+        stages >= 2,
+        "the claim has {stages} checkpoints: it does not end in a check and the result stage"
+    );
+    let unbound = |bound: RecordBinding, checkpoint: &Checkpoint, output_path: &Path| match bound {
+        RecordBinding::Bound => None,
+        RecordBinding::AnotherRecord => Some(format!(
+            "stage {} committed another record than the one submitted",
+            checkpoint.stage
+        )),
+        RecordBinding::AnotherStage { expected } => Some(format!(
+            "stage {} does not run {expected}, so the claim does not end in the check and \
+             the result stage",
+            checkpoint.stage
+        )),
+        RecordBinding::NotTheLastOutput {
+            committed,
+            presented,
+        } => Some(format!(
+            "{} hashes to {presented}, but the checkpoint of stage {} commits to {committed}",
+            output_path.display(),
+            checkpoint.stage
+        )),
+    };
+
+    let check = &trace.checkpoints[stages - 2];
+    let check_dir = dir.join(&check.stage);
+    let output_path = check_dir.join("output.bin");
+    let output = fs::read(&output_path)
+        .with_context(|| format!("failed to read {}", output_path.display()))?;
+    let edge = stage_output(&output_path, &check_dir.join("output.rindex"))?;
+    let record = edge
+        .get("claim")
+        .with_context(|| format!("{} holds no claim record", output_path.display()))?;
+    lines.push(CheckLine {
+        check: "challenge admission: the record is the last check's",
+        rejection: unbound(
+            list.check_record_binding(pins, &submission, check, &output, &claim_record(record)?)
+                .map_err(refusal)?,
+            check,
+            &output_path,
+        ),
+    });
+
+    let last = &trace.checkpoints[stages - 1];
     let last_dir = dir.join(&last.stage);
     let output_path = last_dir.join("output.bin");
     let output = fs::read(&output_path)
         .with_context(|| format!("failed to read {}", output_path.display()))?;
-    let in_output = record_in_output(&output_path, &last_dir.join("output.rindex"))?;
+    let stated = stage_output(&output_path, &last_dir.join("output.rindex"))?;
+    // A last stage that is not the result stage is reported by the binding
+    // check, so what its output holds is only read when it decodes.
+    let in_output = result_in_output(&stated).unwrap_or_else(|_| ResultInOutput {
+        record: submission.record.clone(),
+        result: submission.result.clone(),
+    });
+    let binding = list
+        .check_result_binding(pins, &submission, last, &output, &in_output)
+        .map_err(refusal)?;
+    if binding == RecordBinding::Bound {
+        // Bound to a decoded record, never to the submission's own.
+        result_in_output(&stated)
+            .with_context(|| format!("{} holds no result record", output_path.display()))?;
+    }
     lines.push(CheckLine {
-        check: "challenge admission: the record is the last stage's",
-        rejection: match list
-            .check_record_binding(&submission, last, &output, &in_output)
-            .map_err(refusal)?
-        {
-            RecordBinding::Bound => None,
-            RecordBinding::AnotherRecord => Some(format!(
-                "the last stage ({}) committed another record than the one submitted",
-                last.stage
-            )),
-            RecordBinding::NotTheLastOutput {
-                committed,
-                presented,
-            } => Some(format!(
-                "{} hashes to {presented}, but the claim's last checkpoint commits to \
-                 {committed}",
-                output_path.display()
-            )),
-        },
+        check: "challenge admission: the result is the last stage's",
+        rejection: unbound(binding, last, &output_path),
     });
     Ok(ClaimCheckReport { lines })
 }
 
-/// The claim record a last check's `output.bin` holds.
-fn record_in_output(data: &Path, index: &Path) -> Result<SubmittedRecord> {
+/// A stage's `output.bin` as JSON.
+fn stage_output(data: &Path, index: &Path) -> Result<serde_json::Value> {
     let value =
         raster_runtime::read_raster_value(data, index, &raster_runtime::ReadLimits::unbounded())?;
-    let edge = crate::parity::compare::value_json(&value)?;
-    let claim = edge
-        .get("claim")
-        .with_context(|| format!("{} holds no claim record", data.display()))?;
+    crate::parity::compare::value_json(&value)
+}
+
+/// A claim record as a check commits it, or as the result stage restates it:
+/// both name the statement, the output hash and the valid flag the same way.
+fn claim_record(claim: &serde_json::Value) -> Result<SubmittedRecord> {
     let hash = |field: &str| -> Result<String> {
         let bytes = claim
             .get(field)
@@ -328,5 +409,24 @@ fn record_in_output(data: &Path, index: &Path) -> Result<SubmittedRecord> {
             .get("valid")
             .and_then(serde_json::Value::as_bool)
             .context("the claim record has no `valid` flag")?,
+    })
+}
+
+/// What the result stage's output states.
+fn result_in_output(stated: &serde_json::Value) -> Result<ResultInOutput> {
+    Ok(ResultInOutput {
+        record: claim_record(stated)?,
+        result: SubmittedResult {
+            code: stated
+                .get("code")
+                .and_then(serde_json::Value::as_u64)
+                .and_then(|code| u32::try_from(code).ok())
+                .context("the result record has no `code`")?,
+            forms_sha256: stated
+                .get("forms_sha256")
+                .and_then(serde_json::Value::as_str)
+                .context("the result record has no `forms_sha256`")?
+                .to_string(),
+        },
     })
 }
