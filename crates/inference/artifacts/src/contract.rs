@@ -45,13 +45,14 @@ use sha2::{Digest, Sha256};
 use crate::checkpoint::{checkpoint_hash, Checkpoint, CheckpointTrace};
 use crate::direct::{model_id_of, ModelCommitment, ModelManifest};
 use crate::inference::InferenceResult;
+use crate::pipeline::Pipeline;
 
 /// Written beside a model import's `manifest.json`.
 pub const CONTRACT_PINS_JSON: &str = "contract_pins.json";
 /// Written beside a claim's `claim_bundle.json`.
 pub const CLAIM_SUBMISSION_JSON: &str = "claim_submission.json";
 pub const CONTRACT_PINS_VERSION: u32 = 2;
-pub const CLAIM_SUBMISSION_VERSION: u32 = 3;
+pub const CLAIM_SUBMISSION_VERSION: u32 = 4;
 
 /// What a contract pins before any claim arrives, as two entries it opts
 /// into: a pipeline and a model. The model import writes both.
@@ -194,6 +195,8 @@ pub fn source_record_id(record: &source_core::SourceRecord) -> String {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ClaimSubmission {
     pub version: u32,
+    /// The pipeline the claim is of. A contract accepts claims of one.
+    pub pipeline: Pipeline,
     /// The output plaintext: what the contract acts on.
     pub output_text: String,
     /// The claimer's commitment to the input it ran. Today the SHA-256 of the
@@ -245,6 +248,11 @@ pub enum SubmissionRejection {
     AnotherSigner { expected: String, submitted: String },
     /// The prompt was built with another recipe than the contract's.
     AnotherRecipe { expected: String, submitted: String },
+    /// The claim is of another pipeline than the contract accepts.
+    AnotherPipeline {
+        expected: Pipeline,
+        submitted: Pipeline,
+    },
     /// The output was compared with other forms than the contract's.
     AnotherForms { expected: String, submitted: String },
     /// The submitted code is not the one the contract's forms give the
@@ -306,6 +314,13 @@ impl std::fmt::Display for SubmissionRejection {
             } => write!(
                 f,
                 "the prompt was built with recipe {submitted}, but the contract's is {expected}"
+            ),
+            Self::AnotherPipeline {
+                expected,
+                submitted,
+            } => write!(
+                f,
+                "the claim is of the `{submitted}` pipeline, but the contract accepts `{expected}`"
             ),
             Self::AnotherForms {
                 expected,
@@ -514,10 +529,10 @@ pub struct ResultInOutput {
     pub result: SubmittedResult,
 }
 
-/// The stage program that states the claim record, and the one that states
-/// the result. A claim's last two checkpoints are theirs, in this order.
+/// The stage program that states a claim record. In a claim of the `single`
+/// pipeline the checkpoint before the last is its, and the last is the
+/// pipeline's result program ([`Pipeline::result_program`]).
 pub const RECORD_STAGE: &str = "sequence-check";
-pub const RESULT_STAGE: &str = "claim-result";
 
 impl ContractPins {
     /// The pins of an import: its model, and the pipeline its chain template
@@ -741,6 +756,7 @@ impl ClaimSubmission {
     /// text, the result stage's code, the source record when the run has one,
     /// and the commitment to the checkpoint list in the run directory.
     pub fn from_run(
+        pipeline: Pipeline,
         result: &InferenceResult,
         source: Option<&source_core::SourceRecord>,
         chain_dir: &Path,
@@ -750,6 +766,7 @@ impl ClaimSubmission {
             .with_context(|| format!("failed to read {}", checkpoints_path.display()))?;
         Ok(Self {
             version: CLAIM_SUBMISSION_VERSION,
+            pipeline,
             output_text: result.generated_text.clone(),
             input_text_sha256: result.input_text_sha256.clone(),
             source_sha256: result.source_sha256.clone(),
@@ -788,6 +805,23 @@ pub fn expected_statement(
         }
         .digest(),
     )
+}
+
+/// The first check a contract makes on submission: the claim is of the
+/// pipeline the contract accepts. Everything else a contract checks is that
+/// pipeline's: which records a claim states and which stage states its
+/// result.
+pub fn check_pipeline(
+    required: Pipeline,
+    submission: &ClaimSubmission,
+) -> std::result::Result<(), SubmissionRejection> {
+    if submission.pipeline != required {
+        return Err(SubmissionRejection::AnotherPipeline {
+            expected: required,
+            submitted: submission.pipeline,
+        });
+    }
+    Ok(())
 }
 
 /// The checks a contract makes on submission, before it opens a challenge
@@ -1155,7 +1189,8 @@ impl CheckpointList {
     /// the claim's last checkpoint, `last_output` that stage's `output.bin`,
     /// and `in_output` what the caller decoded from it. The result stage
     /// states the claim record it was given beside its code, and both must
-    /// be the ones submitted.
+    /// be the ones submitted. The stage must run the result program of the
+    /// claim's pipeline, which `check_pipeline` held to the contract's.
     pub fn check_result_binding(
         &self,
         pins: &ContractPins,
@@ -1165,7 +1200,13 @@ impl CheckpointList {
         in_output: &ResultInOutput,
     ) -> std::result::Result<RecordBinding, ChallengeRefusal> {
         if let Some(unbound) =
-            self.opened_record(pins, 0, RESULT_STAGE, last_checkpoint, last_output)?
+            self.opened_record(
+                pins,
+                0,
+                submission.pipeline.result_program(),
+                last_checkpoint,
+                last_output,
+            )?
         {
             return Ok(unbound);
         }
@@ -1568,6 +1609,7 @@ mod tests {
             let list = checkpoints_txt(&trace);
             let submission = ClaimSubmission {
                 version: CLAIM_SUBMISSION_VERSION,
+                pipeline: Pipeline::Single,
                 output_text: String::from("ZK"),
                 record: SubmittedRecord {
                     statement_sha256: hex::encode(
@@ -2094,7 +2136,7 @@ mod tests {
                 &in_output
             ),
             Ok(RecordBinding::AnotherStage {
-                expected: RESULT_STAGE
+                expected: Pipeline::Single.result_program()
             })
         );
         assert_eq!(
@@ -2127,6 +2169,24 @@ mod tests {
             source: None,
             forms,
         }
+    }
+
+    #[test]
+    fn a_submission_names_its_pipeline() {
+        let submission = Claim::honest().submission;
+        assert_eq!(check_pipeline(Pipeline::Single, &submission), Ok(()));
+        let written = serde_json::to_value(&submission).unwrap();
+        assert_eq!(written["pipeline"], "single");
+        assert_eq!(written["version"], 4);
+
+        // A submission that names no pipeline, or one that does not exist, is
+        // not a submission.
+        let mut unnamed = written.clone();
+        unnamed.as_object_mut().unwrap().remove("pipeline");
+        assert!(serde_json::from_value::<ClaimSubmission>(unnamed).is_err());
+        let mut unknown = written;
+        unknown["pipeline"] = serde_json::json!("consensus");
+        assert!(serde_json::from_value::<ClaimSubmission>(unknown).is_err());
     }
 
     #[test]

@@ -691,7 +691,7 @@ fn run_case(
         );
     }
     ensure!(
-        contract.lines.len() == 7,
+        contract.lines.len() == 8,
         "the contract checks did not reach the Raster run"
     );
     comparison["contract_checks"] = json!(contract.lines.len());

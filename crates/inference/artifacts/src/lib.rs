@@ -7,6 +7,7 @@ pub mod inference;
 pub mod io;
 pub mod manifest;
 pub mod model_identity;
+pub mod pipeline;
 pub mod replay_profile;
 pub mod run;
 
@@ -36,6 +37,7 @@ pub use inference::{
 };
 pub use io::{read_json, write_json};
 pub use manifest::resolve_raster_manifest_paths;
+pub use pipeline::Pipeline;
 pub use run::{
     read_run_spec, InferenceRunSpec, PreparedPiece, PreparedPrompt, PreparedRun,
     PreparedSourceInputs, RunFileRef,
@@ -398,6 +400,7 @@ mod tests {
     #[test]
     fn run_spec_requires_exactly_one_prompt_source() {
         let both = InferenceRunSpec {
+            pipeline: Default::default(),
             model_manifest: PathBuf::from("model-artifacts/manifest.json"),
             prompt: Some(String::from("hello")),
             prompt_file: Some(PathBuf::from("prompt.txt")),
@@ -412,6 +415,7 @@ mod tests {
             .contains("not both"));
 
         let neither = InferenceRunSpec {
+            pipeline: Default::default(),
             model_manifest: PathBuf::from("model-artifacts/manifest.json"),
             prompt: None,
             prompt_file: None,
@@ -440,6 +444,26 @@ mod tests {
         let error = read_run_spec(&path).unwrap_err().to_string();
         assert!(
             error.contains("teacher-forced is the only staged chain"),
+            "{error}"
+        );
+        fs::remove_dir_all(base).unwrap();
+    }
+
+    #[test]
+    fn a_run_spec_names_its_pipeline_or_runs_the_single_one() {
+        let base = temp_dir("run-spec-pipeline");
+        fs::create_dir_all(&base).unwrap();
+        let path = base.join("inference.toml");
+        let spec = "model_manifest = \"m.json\"\nprompt = \"hi\"\n";
+        fs::write(&path, spec).unwrap();
+        assert_eq!(read_run_spec(&path).unwrap().pipeline, Pipeline::Single);
+        fs::write(&path, format!("pipeline = \"single\"\n{spec}")).unwrap();
+        assert_eq!(read_run_spec(&path).unwrap().pipeline, Pipeline::Single);
+        // A name that is no pipeline must not silently run the single one.
+        fs::write(&path, format!("pipeline = \"consensus\"\n{spec}")).unwrap();
+        let error = format!("{:#}", read_run_spec(&path).unwrap_err());
+        assert!(
+            error.contains("consensus") && error.contains("single"),
             "{error}"
         );
         fs::remove_dir_all(base).unwrap();
@@ -496,6 +520,7 @@ mod tests {
     fn prepared_run_metadata_round_trips_as_json() {
         let prepared = PreparedRun {
             version: PREPARED_RUN_VERSION,
+            pipeline: Pipeline::Single,
             run_spec_path: PathBuf::from("inference.toml"),
             model_manifest_path: PathBuf::from("model-artifacts/manifest.json"),
             model_manifest_sha256: String::from("model-sha"),

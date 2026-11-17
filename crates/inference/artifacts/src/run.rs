@@ -4,12 +4,17 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
+use crate::pipeline::Pipeline;
+
 pub const INFERENCE_RUN_SPEC_TOML: &str = "inference.toml";
 pub const PREPARED_RUN_JSON: &str = "prepared_run.json";
-pub const PREPARED_RUN_VERSION: u32 = 18;
+pub const PREPARED_RUN_VERSION: u32 = 19;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct InferenceRunSpec {
+    /// Which pipeline the run is of. `single` when the spec does not say.
+    #[serde(default, skip_serializing_if = "Pipeline::is_default")]
+    pub pipeline: Pipeline,
     pub model_manifest: PathBuf,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prompt: Option<String>,
@@ -49,6 +54,8 @@ pub struct SourceDocumentSpec {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PreparedRun {
     pub version: u32,
+    /// The pipeline the claim is of. A challenger's run spec must name it.
+    pub pipeline: Pipeline,
     pub run_spec_path: PathBuf,
     pub model_manifest_path: PathBuf,
     pub model_manifest_sha256: String,

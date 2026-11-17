@@ -277,11 +277,20 @@ fn rebuild_teacher_forced_run(
 ) -> Result<crate::claim::PreparedClaimRun> {
     let run_spec_path = resolve_bundle_path(&options.base_dir, &options.run_spec_path);
     let selected = inference_artifacts::read_run_spec(&run_spec_path)?;
+    // A challenger rebuilds the claim's own arrangement of stages, so its run
+    // spec has to name the pipeline the claim is of.
+    anyhow::ensure!(
+        selected.pipeline == frozen.pipeline,
+        "the claim is of the `{}` pipeline, but --run names `{}`",
+        frozen.pipeline,
+        selected.pipeline
+    );
     let frozen_manifest = frozen
         .run_manifest_path
         .as_ref()
         .context("prepared run has no run_manifest_path")?;
     let run_spec = InferenceRunSpec {
+        pipeline: frozen.pipeline,
         model_manifest: selected.model_manifest,
         prompt: Some(frozen.prompt.resolved_prompt.clone()),
         prompt_file: None,
@@ -1120,6 +1129,7 @@ mod tests {
 
         let prepared = PreparedRun {
             version: inference_artifacts::PREPARED_RUN_VERSION,
+            pipeline: inference_artifacts::Pipeline::Single,
             run_spec_path: base.join("inference.toml"),
             model_manifest_path: model_manifest.clone(),
             model_manifest_sha256: format!("{:x}", sha2::Sha256::digest(b"model")),

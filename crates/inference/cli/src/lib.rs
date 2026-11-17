@@ -414,6 +414,7 @@ fn execute(cli: Cli) -> Result<ExitCode> {
             warn_if_debug_build("claim build");
             let run_spec_path = args.run.clone();
             let result = build_claim(args.into_options()?)?;
+            println!("pipeline: {}", result.pipeline);
             if let Some(final_result) = result.final_result.as_ref() {
                 print_infer_result(final_result, Some(&run_spec_path));
             }
@@ -475,6 +476,10 @@ fn execute(cli: Cli) -> Result<ExitCode> {
             warn_if_debug_build("infer");
             let run_spec_path = args.run.clone();
             let report = run_infer(args.run)?;
+            println!(
+                "pipeline: {}",
+                inference_artifacts::read_run_spec(&run_spec_path)?.pipeline
+            );
             if let Some(count) = report.input_token_count {
                 println!("input token count: {count}");
             }

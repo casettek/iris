@@ -14,6 +14,7 @@ Start with the workflow docs when you want to run the repo, and the internals do
 
 ## Internals
 
+- [Pipelines](internals/pipelines.md)
 - [Raster chain](internals/raster-chain.md)
 - [What a contract holds and checks](internals/contract.md)
 - [Numerics](internals/numerics.md)

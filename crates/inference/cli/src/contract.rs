@@ -12,14 +12,15 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{ensure, Context, Result};
 use inference_artifacts::contract::{
-    check_origin, check_submission, first_unapproved_stage, raster_boundary_mismatch,
+    check_origin, check_pipeline, check_submission, first_unapproved_stage,
+    raster_boundary_mismatch,
     ChallengeRefusal, CheckpointList, ClaimSubmission, ContractPins, LinkCheck, RecordBinding,
     RequiredOrigin, RequiredParameters, RequiredSource, ResultInOutput, StageAdmission,
     SubmittedRecord, SubmittedResult, CONTRACT_PINS_JSON,
 };
 use inference_artifacts::{
     read_checkpoint_trace, read_json, read_run_spec, Checkpoint, CheckpointTrace, InferenceRunSpec,
-    ModelManifest, PreparedRun, CHECKPOINTS_TXT, CHECKPOINT_TRACE_JSON,
+    ModelManifest, Pipeline, PreparedRun, CHECKPOINTS_TXT, CHECKPOINT_TRACE_JSON,
 };
 use raster::core::chain::ChainCommitment;
 
@@ -134,11 +135,12 @@ pub(crate) fn claim_rejection(
         raw_prompt: prepared.raw_prompt,
         max_new_tokens: prepared.tokens,
     };
-    let origin = required_origin(
-        &prepared.run_spec_path,
-        &read_run_spec(&prepared.run_spec_path)?,
-    )?;
-    Ok(check_claim_dir(&pins, required, &origin, submission_path)?.rejection())
+    let run_spec = read_run_spec(&prepared.run_spec_path)?;
+    let origin = required_origin(&prepared.run_spec_path, &run_spec)?;
+    Ok(
+        check_claim_dir(&pins, run_spec.pipeline, required, &origin, submission_path)?
+            .rejection(),
+    )
 }
 
 pub fn check_claim(options: ClaimCheckOptions) -> Result<ClaimCheckReport> {
@@ -154,7 +156,13 @@ pub fn check_claim(options: ClaimCheckOptions) -> Result<ClaimCheckReport> {
     };
     let origin = required_origin(&run_spec_path, &run_spec)?;
     let submission_path = absolute(&options.base_dir, &options.submission_path);
-    let mut report = check_claim_dir(&pins, required, &origin, &submission_path)?;
+    let mut report = check_claim_dir(
+        &pins,
+        run_spec.pipeline,
+        required,
+        &origin,
+        &submission_path,
+    )?;
 
     if let Some(raster_run) = options.raster_run {
         let commitment_path = absolute(&options.base_dir, &raster_run).join("chain-commitment");
@@ -185,6 +193,7 @@ fn claim_trace(submission_path: &Path) -> Result<CheckpointTrace> {
 /// claim's directory.
 fn check_claim_dir(
     pins: &ContractPins,
+    pipeline: Pipeline,
     required: RequiredParameters,
     origin: &RequiredOrigin,
     submission_path: &Path,
@@ -192,6 +201,12 @@ fn check_claim_dir(
     let submission: ClaimSubmission = read_json(submission_path)?;
     let dir = claim_dir(submission_path)?;
     let mut lines = vec![
+        CheckLine {
+            check: "submission: pipeline",
+            rejection: check_pipeline(pipeline, &submission)
+                .err()
+                .map(|rejection| rejection.to_string()),
+        },
         CheckLine {
             check: "submission: statement, output and valid flag",
             rejection: check_submission(pins, required, &submission)

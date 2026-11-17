@@ -48,6 +48,8 @@ pub(crate) struct PreparedClaimRun {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClaimBuildResult {
+    /// The pipeline the claim is of.
+    pub pipeline: inference_artifacts::Pipeline,
     pub chain_dir: PathBuf,
     pub checkpoint_trace_path: PathBuf,
     pub checkpoint_hashes_path: PathBuf,
@@ -228,6 +230,7 @@ fn write_claim_result(
         .as_ref()
         .map(|result| -> Result<PathBuf> {
             let submission = ClaimSubmission::from_run(
+                prepared_run.pipeline,
                 result,
                 prepared_run.prompt.source.as_ref(),
                 &checkpointed.chain_dir,
@@ -238,6 +241,7 @@ fn write_claim_result(
         })
         .transpose()?;
     Ok(ClaimBuildResult {
+        pipeline: prepared_run.pipeline,
         chain_dir: checkpointed.chain_dir,
         checkpoint_trace_path,
         checkpoint_hashes_path,
@@ -411,6 +415,7 @@ fn prepare_run(
     let run_manifest_sha256 = format!("{:x}", Sha256::digest(run_manifest.as_bytes()));
     let prepared_run = PreparedRun {
         version: inference_artifacts::PREPARED_RUN_VERSION,
+        pipeline: run_spec.pipeline,
         run_spec_path,
         model_manifest_path: model_manifest_path.clone(),
         model_manifest_sha256: sha256_file(&model_manifest_path)?,
@@ -945,6 +950,7 @@ mod tests {
             &manifest_path,
             &PreparedRun {
                 version: inference_artifacts::PREPARED_RUN_VERSION,
+                pipeline: inference_artifacts::Pipeline::Single,
                 run_spec_path: base.join("inference.toml"),
                 model_manifest_path: base.join("model-artifacts/manifest.json"),
                 model_manifest_sha256: String::from("model-sha"),

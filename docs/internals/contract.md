@@ -91,6 +91,7 @@ them.
 
 | Field | Meaning |
 | --- | --- |
+| `pipeline` | The [pipeline](pipelines.md) the claim is of |
 | `output_text` | The plaintext the contract acts on |
 | `input_text_sha256` | The claimer's commitment to the input it ran. The contract takes it as given |
 | `source_sha256` | The digest of the source record the text was built from, or 64 zeros. The statement names it |
@@ -121,6 +122,9 @@ bind takes it from that stage, holds the claimed text to it, and puts its digest
 in the prompt context, from where it reaches the statement.
 
 ## On submission
+
+A contract accepts claims of one pipeline, and first requires the submission to
+name it (`check_pipeline`). The checks below are the `single` pipeline's.
 
 1. **Statement matches.** Recompute the statement digest from the pinned model id,
    range size and required parameters with the claimed input hash and source
@@ -253,8 +257,9 @@ cargo run --release -p iris-cli -- claim check \
 
 The command reads the checkpoint files, every stage's input list and the
 outputs of the last check and the result stage from the directory the
-submission is in. It makes the four submission checks and the challenge-time
-comparisons, the link comparison for every chained input of every stage.
+submission is in. It makes the pipeline check, the four submission checks and
+the challenge-time comparisons, the link comparison for every chained input of
+every stage.
 `claim build` makes the same checks on its own claim before it reports success,
 when the import has pins.
 

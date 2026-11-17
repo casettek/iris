@@ -26,6 +26,7 @@ each range's cut and each claimed range are written under
 
 `inference.toml` records run-time inputs:
 
+- `pipeline`: optional, `single` when absent. See [Pipelines](pipelines.md)
 - `model_manifest`
 - Exactly one of `prompt` or `prompt_file`
 - `raw_prompt`
