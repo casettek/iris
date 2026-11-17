@@ -10,7 +10,7 @@ just claim inference.toml
 
 Flow:
 
-1. The CLI loads the run spec and its model manifest, then verifies the weight, config, tokenizer, and model-specific template hashes once before preparing the run. Missing template provenance is an error.
+1. The CLI loads the run spec and its model manifest, then verifies the weight, config, tokenizer, and model-specific template hashes once before preparing the run. Missing template provenance is an error. The run's [pipeline](../internals/pipelines.md) makes the chain template from the model's part: the `source` stage in front and its result stage behind.
 2. Direct inference discovers the output ids. They must fill `tokens` unless the last one is EOS.
 3. The prompt's pieces are tokenized natively and the tokens cut into ranges of at most the model's range size, and the ids into ranges of the same size. A prompt range may end between any two tokens. The text is cut to match: slice `j` is the bytes whose scan yields range `j`'s pieces, so each range's bind stage reads only its own part of the prompt.
 4. Each prompt range's slice of the original text (`text_{j}`), the text claim (`claim`: the whole text's SHA-256, its length, and the first and last bytes the template's trim keeps), the run's configuration (`config`), its stage schedule (`schedule`), each prompt range's token marks (`marks_{j}`: one number per piece, 1 where a token starts) and each claimed range (`claimed_{k}`) are written as externals under `target/iris/runs/<run>/prompt/`, and a run-specific `Raster.toml` beside it commits to them. The configuration holds the model id, `raw_prompt`, `tokens` and the range size. The model id comes from the model manifest, which recomputes it from its commitments by role when it is loaded.

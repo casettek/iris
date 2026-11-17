@@ -1,5 +1,5 @@
 {
-  "version": 18,
+  "version": 19,
   "family": "gemma-dense",
   "model_id": "6e49887a1ea8ad33026bf0336fec256c8aa93a84ed0da3fc4fe1b9fffc942a8a",
   "model_commitments": [
@@ -373,6 +373,6 @@
   ],
   "provenance": {
     "raster_manifest_path": "Raster.toml",
-    "raster_manifest_sha256": "fabc619ba0c9998f09dc7c228a9c47f8ef0bb32448e2de3b16140435b72955d2"
+    "raster_manifest_sha256": "0b697227f32654122f94cca33d2494a60bed194cccad06edb041bd89289c24a5"
   }
 }

@@ -752,7 +752,8 @@ fn not_greedy_ids(leg: &Leg) -> Result<Vec<u32>> {
 
 /// This model's chain over these inputs.
 fn render(model_path: &Path, model: &ModelManifest, run: &RunInputs, dir: &Path) -> Result<String> {
-    let (template_path, template) = model.verified_raster_template(model_path)?;
+    let (template_path, part) = model.verified_raster_template(model_path)?;
+    let template = inference_artifacts::Pipeline::Single.chain_template(&[&part])?;
     let range_size = run.config.range_size as usize;
     let mark_files = run_prep::write_marks(&run.marks, dir)?;
     let claimed_files = run_prep::write_claimed_ranges(&run.ids, range_size, dir)?;

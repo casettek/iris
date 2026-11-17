@@ -71,6 +71,9 @@ pub struct DirectTimings {
 
 impl StageKind {
     pub fn from_stage_spec(project: &str, name: &str) -> Result<Self> {
+        // A stage of a pipeline with several inferences is named with its
+        // inference's label in front.
+        let name = inference_artifacts::pipeline::unlabelled(name);
         match project_basename(project) {
             "prompt-source" if name == "source" => Ok(Self::PromptSource),
             "prompt-bind" if name.starts_with("prompt_bind_p") => Ok(Self::PromptBind),
@@ -115,6 +118,7 @@ impl StageKind {
     }
 
     pub fn from_stage_name(name: &str) -> Result<Self> {
+        let name = inference_artifacts::pipeline::unlabelled(name);
         match name {
             "source" => Ok(Self::PromptSource),
             "result" => Ok(Self::ClaimResult),
@@ -696,6 +700,19 @@ mod tests {
         assert_eq!(
             StageKind::from_stage_spec("raster-stages/sequence-check", "check_c1").unwrap(),
             StageKind::SequenceCheck
+        );
+        // The same stages, as the second inference of a pipeline names them.
+        assert_eq!(
+            StageKind::from_stage_spec("raster-stages/sequence-check", "m1_check_c1").unwrap(),
+            StageKind::SequenceCheck
+        );
+        assert_eq!(
+            StageKind::from_stage_name("m1_range_p0_l13").unwrap(),
+            StageKind::PrefillRange { layer: 13 }
+        );
+        assert_eq!(
+            StageKind::from_stage_name("m0_prompt_bind_p2").unwrap(),
+            StageKind::PromptBind
         );
         assert_eq!(
             StageKind::from_stage_spec("raster-stages/prompt-source", "source").unwrap(),

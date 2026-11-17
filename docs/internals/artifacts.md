@@ -12,7 +12,7 @@ The stable contract types and filenames live in `crates/inference/artifacts`.
 - Model, config, and tokenizer paths plus SHA-256 hashes.
 - Model shape and fixed-point scaling parameters.
 - EOS token ids.
-- Optional provenance pointing back to the prompt-free Raster manifest template used during import.
+- Optional provenance pointing back to the model's prompt-free part of a chain, written during import. A [pipeline](pipelines.md) makes a chain template from it.
 
 The same model-scoped directory owns the imported Raster externals under
 `runtime/model-artifacts/<model-id>/raster/`. Stage program directories remain

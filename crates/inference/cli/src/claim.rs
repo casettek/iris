@@ -313,8 +313,10 @@ fn prepare_run(
         .ok_or_else(|| anyhow::anyhow!("run spec has no parent directory"))?;
     let model_manifest_path = absolute(run_spec_dir, &run_spec.model_manifest);
     let model_manifest = ModelManifest::load_verified(&model_manifest_path)?;
-    let (template_path, template) =
-        model_manifest.verified_raster_template(&model_manifest_path)?;
+    // The import wrote the model's part of a chain. The pipeline makes the
+    // chain's template from it.
+    let (template_path, part) = model_manifest.verified_raster_template(&model_manifest_path)?;
+    let template = run_spec.pipeline.chain_template(&[&part])?;
     let model_manifest_dir = model_manifest_path
         .parent()
         .ok_or_else(|| anyhow::anyhow!("model manifest has no parent directory"))?;

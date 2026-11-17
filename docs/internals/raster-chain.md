@@ -1,6 +1,6 @@
 # Raster Chain Internals
 
-A chain manifest has a `[chain]` table and no `[program]` table. `model import` writes a template for the model, and `claim build` fills it in for one run. The member directories under `raster-stages/` are ordinary Raster programs with their own `Cargo.toml`, `Raster.lock`, no-std tile library, and sequence entry point.
+A chain manifest has a `[chain]` table and no `[program]` table. `model import` writes the model's part of a chain, the run's [pipeline](pipelines.md) makes a chain template from it, and `claim build` fills that in for one run. The member directories under `raster-stages/` are ordinary Raster programs with their own `Cargo.toml`, `Raster.lock`, no-std tile library, and sequence entry point.
 
 ```text
 model import
@@ -9,7 +9,11 @@ model import
   -> PLE layer externals
   -> transformer layer externals
   -> output head
-  -> Raster.toml chain template
+  -> Raster.toml: the model's part of a chain
+
+claim build
+  -> the pipeline's chain template: source stage, the model's part, result stage
+  -> the run's Raster.toml
 ```
 
 Stage outputs are linked by structural commitment, not Rust type name. Boundary structs that cross stage edges therefore need to stay field-for-field compatible between producer and consumer crates.

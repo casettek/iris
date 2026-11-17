@@ -617,14 +617,17 @@ fn finish_import(
 /// Writes what a contract pins for this import beside its manifest, as two
 /// entries. The pipeline: the program id each stage project has locked, and
 /// for each program the inputs it takes from earlier stages, read from the
-/// chain template. The model: its id with the commitments it hashes, and the
-/// range size.
+/// chain template of the `single` pipeline over this import. The model: its
+/// id with the commitments it hashes, and the range size.
 ///
 /// An import made where the stage projects are not locked gets no pins and
 /// says so. It can still run; it cannot have a claim checked against it.
 fn write_contract_pins(model_manifest_path: &Path, template: &str) {
     let pins = inference_artifacts::ModelManifest::load_verified(model_manifest_path).and_then(
-        |manifest| inference_artifacts::contract::ContractPins::from_import(&manifest, template),
+        |manifest| {
+            let chain = inference_artifacts::Pipeline::Single.chain_template(&[template])?;
+            inference_artifacts::contract::ContractPins::from_import(&manifest, &chain)
+        },
     );
     let path =
         model_manifest_path.with_file_name(inference_artifacts::contract::CONTRACT_PINS_JSON);
@@ -899,10 +902,10 @@ fn chain_template(
             bind_source,
         )
     };
-    // The source stage states what the prompt text was built from, and the
-    // first bind holds the text to its record. A run without a source has no
-    // such stage: run preparation removes it, and gives the first bind the
-    // constant every later bind is given, which none of them reads.
+    // What a bind is given as its source record when nothing produced one.
+    // The template gives it to every bind. A pipeline with a source stage
+    // gives the first bind that stage's record in its place, and every later
+    // bind keeps the constant, which none of them reads.
     let no_source = write_external(
         &origin::no_source(),
         layout,
@@ -916,37 +919,10 @@ fn chain_template(
         "no_source",
         &no_source,
     );
-    out.push_str(&format!(
-        "\n[[chain.stage]]\n\
-         name = \"source\"\n\
-         project = \"raster-stages/prompt-source\"\n\
-         {}{}{}",
-        external_line(
-            "signer",
-            layout,
-            RUN_PLACEHOLDER_DIR,
-            "source_signer",
-            INITIAL_PIECES_PLACEHOLDER_COMMITMENT,
-        ),
-        external_line(
-            "recipe",
-            layout,
-            RUN_PLACEHOLDER_DIR,
-            "source_recipe",
-            INITIAL_PIECES_PLACEHOLDER_COMMITMENT,
-        ),
-        external_line(
-            "documents",
-            layout,
-            RUN_PLACEHOLDER_DIR,
-            "source_documents",
-            INITIAL_PIECES_PLACEHOLDER_COMMITMENT,
-        ),
-    ));
     out.push_str(&prompt_stages(
         "[[chain.stage]]",
         "0",
-        "inputs.source = { from = \"source\" }\n",
+        &no_source_line,
         [
             no_prompt_state("previous"),
             no_prompt_state("previous"),
@@ -1134,30 +1110,11 @@ fn chain_template(
         ),
         String::from("inputs.prior = { from = \"check_c{k-1}\", first = \"check_c0\" }\n"),
     ));
-    // Last, what the output stands for: the result stage reads the last
-    // check's output and the run's forms.
-    out.push_str(&format!(
-        "\n[[chain.stage]]\n\
-         name = \"result\"\n\
-         project = \"raster-stages/claim-result\"\n\
-         inputs.check = {{ from = \"check_c{LAST_CLAIMED_RANGE}\" }}\n\
-         {}",
-        external_line(
-            "forms",
-            layout,
-            RUN_PLACEHOLDER_DIR,
-            "result_forms",
-            INITIAL_PIECES_PLACEHOLDER_COMMITMENT,
-        ),
-    ));
     Ok(out)
 }
 
 /// Run preparation replaces this with the index of the last prompt range.
 const LAST_PROMPT_RANGE: &str = "@LAST_PROMPT_RANGE@";
-
-/// Run preparation replaces this with the index of the last claimed range.
-const LAST_CLAIMED_RANGE: &str = "@LAST_CLAIMED_RANGE@";
 
 /// The empty prompt a claimed range embeds before its claimed ids.
 fn no_prompt_commitment(layout: &ArtifactLayout) -> Result<String, Box<dyn Error>> {

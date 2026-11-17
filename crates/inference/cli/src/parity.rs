@@ -783,7 +783,8 @@ fn run_chain_fault_leg(
         .position(|mark| *mark != 0)
         .map(|index| index + 1)
         .context("the pinned case's prompt is a single token")?;
-    let (template_path, template) = model.verified_raster_template(model_path)?;
+    let (template_path, part) = model.verified_raster_template(model_path)?;
+    let template = inference_artifacts::Pipeline::Single.chain_template(&[&part])?;
     let template_dir = template_path
         .parent()
         .context("manifest template has no parent directory")?;

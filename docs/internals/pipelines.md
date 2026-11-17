@@ -19,6 +19,46 @@ without each command growing its own switch.
 See [Raster chain](raster-chain.md) for the stages and
 [the contract](contract.md) for what is checked.
 
+## How a chain is put together
+
+A model import knows nothing of pipelines. It writes one inference's part of a
+chain to its `Raster.toml`: the chain inputs and the stages from the first bind
+to the last check. The first bind is given the constant source record, as every
+later bind is, so the part on its own is a chain for a text taken as given, with
+no result.
+
+A pipeline makes the chain template from one part per model
+(`Pipeline::chain_template`):
+
+1. the `[chain]` table and each part's chain inputs;
+2. the `source` stage;
+3. each part's stages, in order, with its first bind taking the `source` stage's
+   record in place of the constant;
+4. the pipeline's result stage, reading each inference's last check.
+
+`claim build` then fills the template in for one run, as before. A run whose
+text is taken as given removes the `source` stage again and gives the first bind
+back its constant. The inputs of the `source` and result stages are written in
+the template as `{ run = "..." }`, which is no binding Raster reads: a template a
+run has not filled in is not a chain.
+
+The stage projects are found beside the model's own: the template names the
+directory of `prompt-bind`, and `prompt-source` and the result program are its
+neighbours.
+
+### Labels
+
+In a pipeline of one inference the stages keep the names an import gives them:
+`prompt_bind_p0`, `check_c1`. In a pipeline of several, each inference's names
+carry its label in front, `m0_` for the first model and `m1_` for the second:
+its stages, its repeats, its chain inputs, what its stages take from each other,
+and the marks a run replaces with its range counts. `source` and the result
+stage have no label. The native runner reads a stage's kind through the label
+(`unlabelled`).
+
+Labels are applied when the template is made and tested there. No pipeline uses
+them yet, and filling in a labelled template for a run is not built.
+
 ## Where the name is
 
 | Place | Field | Notes |
@@ -50,8 +90,8 @@ wrong program.
 ## Adding a pipeline
 
 In code a pipeline is a variant of `Pipeline`
-(`crates/inference/artifacts/src/pipeline.rs`) with its name and its result
-program. The rest is not built: a run spec that names more than one model,
-stage names that say which inference a stage belongs to, a chain assembled from
-per-model parts, contract pins for more than one model, and the result program
-itself.
+(`crates/inference/artifacts/src/pipeline.rs`) with its name, how many
+inferences it makes, its result program and its result stage's bindings. The
+rest is not built: a run spec that names more than one model, run preparation
+and direct inference for more than one model, filling in a labelled template,
+contract pins for more than one model, and the result program itself.
