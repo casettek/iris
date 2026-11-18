@@ -293,6 +293,7 @@ fn run_honest(
         run_spec_path: spec,
         submission_path: native_dir.join(inference_artifacts::contract::CLAIM_SUBMISSION_JSON),
         raster_run: Some(raster_dir),
+        pins_path: None,
     })
     .context("contract checks")?;
     for line in &contract.lines {

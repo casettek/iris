@@ -214,6 +214,21 @@ enum ClaimCommand {
     Corrupt(ClaimCorruptHashesArgs),
     /// Make the checks a contract would make on a claim's submission.
     Check(ClaimCheckArgs),
+    /// Write what a contract of a run's pipeline over its models would pin.
+    Pins(ClaimPinsArgs),
+}
+
+#[derive(Debug, Args)]
+struct ClaimPinsArgs {
+    /// Run spec naming the pipeline and its models.
+    #[arg(long, default_value = inference_artifacts::INFERENCE_RUN_SPEC_TOML)]
+    run: PathBuf,
+
+    /// Where to write the pins. They are made from the models' imports and
+    /// the stage projects' locks as they are now, so run this from the iris
+    /// root.
+    #[arg(long)]
+    out: PathBuf,
 }
 
 #[derive(Debug, Args)]
@@ -231,6 +246,12 @@ struct ClaimCheckArgs {
     /// the same program, input manifest and output at every stage.
     #[arg(long = "raster-run")]
     raster_run: Option<PathBuf>,
+
+    /// The pins the contract holds, as `iris claim pins` wrote them. Without
+    /// it a `single` contract's are the model import's, and those of a
+    /// pipeline over several models are made from the imports now.
+    #[arg(long)]
+    pins: Option<PathBuf>,
 }
 
 #[derive(Debug, Args)]
@@ -449,6 +470,7 @@ fn execute(cli: Cli) -> Result<ExitCode> {
                 run_spec_path: args.run,
                 submission_path: args.submission,
                 raster_run: args.raster_run,
+                pins_path: args.pins,
             })?;
             for line in &report.lines {
                 match &line.rejection {
@@ -461,6 +483,21 @@ fn execute(cli: Cli) -> Result<ExitCode> {
             } else {
                 ExitCode::FAILURE
             })
+        }
+        Some(Commands::Claim {
+            command: ClaimCommand::Pins(args),
+        }) => {
+            let base_dir =
+                std::env::current_dir().context("failed to resolve current directory")?;
+            let pins = contract::run_pins(&base_dir, &args.run)?;
+            inference_artifacts::write_json(&args.out, &pins)?;
+            println!("pipeline: {}", pins.pipeline);
+            for model in &pins.models {
+                println!("model id: {}", model.model_id);
+            }
+            println!("stage programs: {}", pins.programs.stage_programs.len());
+            println!("contract pins: {}", args.out.display());
+            Ok(ExitCode::SUCCESS)
         }
         Some(Commands::Claim {
             command: ClaimCommand::Corrupt(args),

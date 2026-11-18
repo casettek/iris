@@ -201,12 +201,26 @@ pub(super) fn run_consensus_leg(
         .claim_submission_path
         .clone()
         .context("the consensus claim wrote no submission")?;
+    // The contract's pins are a file: the consensus pipeline's programs and
+    // both models, as `iris claim pins` writes them.
+    let pins_path = claim_dir.join(inference_artifacts::contract::CONTRACT_PINS_JSON);
+    let pins = crate::contract::run_pins(&claim_dir, &spec).context("the contract's pins")?;
+    ensure!(
+        pins.pipeline == Pipeline::Consensus
+            && pins.models.len() == 2
+            && pins.models[0].model_id == prepared.inferences[0].model_id
+            && pins.models[1].model_id == prepared.inferences[1].model_id
+            && pins.models[0].model_id != pins.models[1].model_id,
+        "the pins are not of this claim's two models"
+    );
+    inference_artifacts::write_json(&pins_path, &pins)?;
     let check = |submission: &Path, raster_run: Option<PathBuf>| {
         crate::contract::check_claim(crate::contract::ClaimCheckOptions {
             base_dir: claim_dir.clone(),
             run_spec_path: spec.clone(),
             submission_path: submission.to_path_buf(),
             raster_run,
+            pins_path: Some(pins_path.clone()),
         })
         .context("contract checks")
     };

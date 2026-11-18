@@ -704,6 +704,7 @@ fn run_case(
         run_spec_path: spec.clone(),
         submission_path: native_dir.join(inference_artifacts::contract::CLAIM_SUBMISSION_JSON),
         raster_run: Some(raster_dir.clone()),
+        pins_path: None,
     })
     .context("contract checks")?;
     for line in &contract.lines {

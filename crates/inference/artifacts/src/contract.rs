@@ -51,16 +51,23 @@ use crate::pipeline::Pipeline;
 pub const CONTRACT_PINS_JSON: &str = "contract_pins.json";
 /// Written beside a claim's `claim_bundle.json`.
 pub const CLAIM_SUBMISSION_JSON: &str = "claim_submission.json";
-pub const CONTRACT_PINS_VERSION: u32 = 2;
+pub const CONTRACT_PINS_VERSION: u32 = 3;
 pub const CLAIM_SUBMISSION_VERSION: u32 = 5;
 
-/// What a contract pins before any claim arrives, as two entries it opts
-/// into: a pipeline and a model. The model import writes both.
+/// What a contract pins before any claim arrives: the pipeline it accepts
+/// claims of, that pipeline's stage programs, and the model of each inference
+/// the pipeline makes, in order.
+///
+/// A model import writes the pins of the `single` pipeline over that model.
+/// `iris claim pins` writes those of any pipeline over the models a run spec
+/// names.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct ContractPins {
     pub version: u32,
-    pub pipeline: PipelinePins,
-    pub model: ModelPins,
+    pub pipeline: Pipeline,
+    pub programs: PipelinePins,
+    pub models: Vec<ModelPins>,
 }
 
 /// What is true of the stage programs whatever model they run: which
@@ -625,12 +632,53 @@ pub const RECORD_STAGE: &str = "sequence-check";
 impl ContractPins {
     /// The pins of an import: its model, and the pipeline its chain template
     /// describes, with the program id each stage project has locked.
-    pub fn from_import(manifest: &ModelManifest, template: &str) -> Result<Self> {
+    pub fn from_import(manifest: &ModelManifest, part: &str) -> Result<Self> {
+        Self::of(Pipeline::Single, &[(manifest, part)])
+    }
+
+    /// The pins of a pipeline over imported models: each model as its import
+    /// identifies it, and the stage programs of the pipeline's chain over the
+    /// imports' parts, with the program id each stage project has locked now.
+    pub fn of(pipeline: Pipeline, imports: &[(&ModelManifest, &str)]) -> Result<Self> {
+        let parts: Vec<&str> = imports.iter().map(|(_, part)| *part).collect();
+        let template = pipeline.chain_template(&parts)?;
+        let mut families: Vec<&str> = Vec::new();
+        for (manifest, _) in imports {
+            if !families.contains(&manifest.family.as_str()) {
+                families.push(&manifest.family);
+            }
+        }
         Ok(Self {
             version: CONTRACT_PINS_VERSION,
-            pipeline: PipelinePins::from_template(manifest.family.clone(), template)?,
-            model: ModelPins::of(manifest),
+            pipeline,
+            programs: PipelinePins::from_template(families.join("+"), &template)?,
+            models: imports
+                .iter()
+                .map(|(manifest, _)| ModelPins::of(manifest))
+                .collect(),
         })
+    }
+
+    /// Why these are not the pins of this pipeline over these models, if they
+    /// are not: another version, another pipeline, or other models.
+    pub fn mismatch(&self, pipeline: Pipeline, models: &[&ModelManifest]) -> Option<String> {
+        if self.version != CONTRACT_PINS_VERSION {
+            return Some(format!(
+                "they are version {}, and this build reads version {CONTRACT_PINS_VERSION}",
+                self.version
+            ));
+        }
+        if self.pipeline != pipeline {
+            return Some(format!(
+                "they are of the `{}` pipeline, not `{pipeline}`",
+                self.pipeline
+            ));
+        }
+        let same = self.models.len() == models.len()
+            && self.models.iter().zip(models).all(|(pinned, manifest)| {
+                pinned.model_id == manifest.model_id && pinned.range_size == manifest.range_size
+            });
+        (!same).then(|| String::from("they pin other models, or the same in another order"))
     }
 }
 
@@ -1709,7 +1757,8 @@ mod tests {
         };
         ContractPins {
             version: CONTRACT_PINS_VERSION,
-            pipeline: PipelinePins {
+            pipeline: Pipeline::Single,
+            programs: PipelinePins {
                 family: String::from("gemma-dense"),
                 stage_programs: vec![
                     program("prompt-bind", BIND, vec![]),
@@ -1737,11 +1786,11 @@ mod tests {
                     ),
                 ],
             },
-            model: ModelPins {
+            models: vec![ModelPins {
                 model_id: model_id_of(&model_commitments),
                 model_commitments,
                 range_size: 512,
-            },
+            }],
         }
     }
 
@@ -1825,7 +1874,7 @@ mod tests {
             let submission = ClaimSubmission {
                 version: CLAIM_SUBMISSION_VERSION,
                 pipeline: Pipeline::Single,
-                inferences: vec![inference(&pins.model, &input, "ZK")],
+                inferences: vec![inference(&pins.models[0], &input, "ZK")],
                 consensus: None,
                 input_text_sha256: input,
                 source_sha256: "00".repeat(32),
@@ -1892,7 +1941,7 @@ mod tests {
                 .get(input)
                 .and_then(|index| self.trace.checkpoints.get(*index as usize));
             self.opened().check_link(
-                &pins().pipeline,
+                &pins().programs,
                 stage,
                 checkpoint,
                 &self.manifests[stage as usize],
@@ -1906,7 +1955,7 @@ mod tests {
     fn an_honest_submission_opens_a_window() {
         let claim = Claim::honest();
         assert_eq!(
-            check_submission(&pins().model, REQUIRED, &claim.submission, 0),
+            check_submission(&pins().models[0], REQUIRED, &claim.submission, 0),
             Ok(())
         );
     }
@@ -1916,19 +1965,19 @@ mod tests {
         let submission = Claim::honest().submission;
         let mismatch = |pins: &ContractPins, required: RequiredParameters| {
             matches!(
-                check_submission(&pins.model, required, &submission, 0),
+                check_submission(&pins.models[0], required, &submission, 0),
                 Err(SubmissionRejection::StatementMismatch { .. })
             )
         };
 
         // Another model: a consistent pin of other commitments.
         let mut other_model = pins();
-        other_model.model.model_commitments[0].commitment = hex::encode([8; 32]);
-        other_model.model.model_id = model_id_of(&other_model.model.model_commitments);
+        other_model.models[0].model_commitments[0].commitment = hex::encode([8; 32]);
+        other_model.models[0].model_id = model_id_of(&other_model.models[0].model_commitments);
         assert!(mismatch(&other_model, REQUIRED));
 
         let mut other_range = pins();
-        other_range.model.range_size = 256;
+        other_range.models[0].range_size = 256;
         assert!(mismatch(&other_range, REQUIRED));
 
         assert!(mismatch(
@@ -1950,7 +1999,7 @@ mod tests {
         let mut other_input = submission.clone();
         other_input.input_text_sha256 = hex::encode([6; 32]);
         assert!(matches!(
-            check_submission(&pins().model, REQUIRED, &other_input, 0),
+            check_submission(&pins().models[0], REQUIRED, &other_input, 0),
             Err(SubmissionRejection::StatementMismatch { .. })
         ));
     }
@@ -1962,21 +2011,21 @@ mod tests {
         let mut other_text = submission.clone();
         other_text.inferences[0].output_text = String::from("ZK!");
         assert!(matches!(
-            check_submission(&pins().model, REQUIRED, &other_text, 0),
+            check_submission(&pins().models[0], REQUIRED, &other_text, 0),
             Err(SubmissionRejection::OutputMismatch { .. })
         ));
 
         let mut faulted = submission.clone();
         faulted.inferences[0].record.valid = false;
         assert_eq!(
-            check_submission(&pins().model, REQUIRED, &faulted, 0),
+            check_submission(&pins().models[0], REQUIRED, &faulted, 0),
             Err(SubmissionRejection::NotValid)
         );
 
         let mut malformed = submission;
         malformed.input_text_sha256 = String::from("prompt");
         assert_eq!(
-            check_submission(&pins().model, REQUIRED, &malformed, 0),
+            check_submission(&pins().models[0], REQUIRED, &malformed, 0),
             Err(SubmissionRejection::MalformedInputCommitment)
         );
     }
@@ -1985,9 +2034,9 @@ mod tests {
     fn pins_whose_id_is_not_the_hash_of_their_commitments_reject_everything() {
         let submission = Claim::honest().submission;
         let mut pins = pins();
-        pins.model.model_commitments[0].commitment = hex::encode([8; 32]);
+        pins.models[0].model_commitments[0].commitment = hex::encode([8; 32]);
         assert_eq!(
-            check_submission(&pins.model, REQUIRED, &submission, 0),
+            check_submission(&pins.models[0], REQUIRED, &submission, 0),
             Err(SubmissionRejection::InconsistentPins)
         );
     }
@@ -1998,12 +2047,12 @@ mod tests {
         assert_eq!(
             claim
                 .opened()
-                .admit_stage_challenge(&pins().pipeline, 2, &claim.trace.checkpoints[2]),
+                .admit_stage_challenge(&pins().programs, 2, &claim.trace.checkpoints[2]),
             Ok(StageAdmission::Disputed {
                 program_commitment: hex::encode(CHECK)
             })
         );
-        assert_eq!(first_unapproved_stage(&pins().pipeline, &claim.trace), None);
+        assert_eq!(first_unapproved_stage(&pins().programs, &claim.trace), None);
 
         // A claimer that swapped a program in the middle of its chain, or
         // named none, and committed to that.
@@ -2014,17 +2063,17 @@ mod tests {
             assert_eq!(
                 swapped
                     .opened()
-                    .admit_stage_challenge(&pins().pipeline, 1, &swapped.trace.checkpoints[1]),
+                    .admit_stage_challenge(&pins().programs, 1, &swapped.trace.checkpoints[1]),
                 Ok(StageAdmission::UnapprovedProgram {
                     program_commitment: program
                 })
             );
-            assert_eq!(first_unapproved_stage(&pins().pipeline, &swapped.trace), Some(1));
+            assert_eq!(first_unapproved_stage(&pins().programs, &swapped.trace), Some(1));
             // The stages around it are still ordinary disputes.
             assert!(matches!(
                 swapped
                     .opened()
-                    .admit_stage_challenge(&pins().pipeline, 2, &swapped.trace.checkpoints[2]),
+                    .admit_stage_challenge(&pins().programs, 2, &swapped.trace.checkpoints[2]),
                 Ok(StageAdmission::Disputed { .. })
             ));
             // Its inputs are not defined, so a link challenge is refused: the
@@ -2050,7 +2099,7 @@ mod tests {
         let opened = claim.opened();
         assert_eq!(opened.len(), 4);
         assert_eq!(
-            opened.admit_stage_challenge(&pins().pipeline, 4, &claim.trace.checkpoints[2]),
+            opened.admit_stage_challenge(&pins().programs, 4, &claim.trace.checkpoints[2]),
             Err(ChallengeRefusal::UnknownStage {
                 challenged: 4,
                 stages: 4
@@ -2061,7 +2110,7 @@ mod tests {
         let mut forged = claim.trace.checkpoints[1].clone();
         forged.program_commitment = hex::encode([3; 32]);
         assert!(matches!(
-            opened.admit_stage_challenge(&pins().pipeline, 1, &forged),
+            opened.admit_stage_challenge(&pins().programs, 1, &forged),
             Err(ChallengeRefusal::NotTheCheckpoint { stage: 1, .. })
         ));
 
@@ -2231,7 +2280,7 @@ mod tests {
         // Another stage's input list.
         assert!(matches!(
             opened.check_link(
-                &pins().pipeline,
+                &pins().programs,
                 2,
                 check,
                 &claim.manifests[1],
@@ -2242,7 +2291,7 @@ mod tests {
         ));
         // The named producer withheld, or another checkpoint in its place.
         assert_eq!(
-            opened.check_link(&pins().pipeline, 2, check, &claim.manifests[2], "activations", None),
+            opened.check_link(&pins().programs, 2, check, &claim.manifests[2], "activations", None),
             Err(ChallengeRefusal::ProducerNotPresented {
                 stage: 2,
                 producer: 1
@@ -2250,7 +2299,7 @@ mod tests {
         );
         assert!(matches!(
             opened.check_link(
-                &pins().pipeline,
+                &pins().programs,
                 2,
                 check,
                 &claim.manifests[2],
@@ -2265,7 +2314,7 @@ mod tests {
     fn the_record_is_held_to_the_last_check_and_the_result_to_the_last_stage() {
         let claim = Claim::honest();
         let opened = claim.opened();
-        let programs = pins().pipeline;
+        let programs = pins().programs;
         let check = &claim.trace.checkpoints[2];
         let last = &claim.trace.checkpoints[3];
         let record = &claim.submission.inferences[0].record;
@@ -2368,7 +2417,7 @@ mod tests {
         checkpoints.pop();
         let claim = Claim::of(checkpoints, honest.manifests[..3].to_vec());
         let opened = claim.opened();
-        let programs = pins().pipeline;
+        let programs = pins().programs;
         let last = &claim.trace.checkpoints[2];
         let void = Ok(RecordBinding::AnotherStage {
             expected: Pipeline::Single.result_program(),
@@ -2439,7 +2488,7 @@ mod tests {
             model_commitments,
             range_size: 512,
         };
-        let mut programs = single.pipeline;
+        let mut programs = single.programs;
         programs.stage_programs.retain(|program| program.stage != "claim-result");
         let check = |name: &str| ChainedInput {
             name: name.to_string(),
@@ -2451,7 +2500,7 @@ mod tests {
             program_commitment: hex::encode(CONSENSUS),
             chained_inputs: vec![check("first"), check("second")],
         });
-        (programs, [single.model, second])
+        (programs, [single.models[0].clone(), second])
     }
 
     /// An honest consensus claim: the single fixture's three stages for each
@@ -2698,7 +2747,7 @@ mod tests {
         // And a single contract's programs do not make this claim's last
         // stage a result stage.
         assert_eq!(
-            opened.check_result_binding(&pins().pipeline, submission, last, b"agreed", &stated),
+            opened.check_result_binding(&pins().programs, submission, last, b"agreed", &stated),
             Ok(RecordBinding::AnotherStage {
                 expected: Pipeline::Consensus.result_program()
             })
@@ -2721,6 +2770,82 @@ mod tests {
             source: None,
             forms,
         }
+    }
+
+    #[test]
+    fn pins_are_of_one_pipeline_over_its_models_in_order() {
+        let manifest = |pins: &ModelPins| -> ModelManifest {
+            serde_json::from_value(serde_json::json!({
+                "version": crate::MODEL_MANIFEST_VERSION,
+                "model_id": pins.model_id,
+                "model_commitments": pins.model_commitments,
+                "range_size": pins.range_size,
+                "bundle": {
+                    "model_detwgt_path": "m", "model_detwgt_sha256": "",
+                    "config_path": "c", "config_sha256": "",
+                    "tokenizer_path": "t", "tokenizer_sha256": ""
+                },
+                "shape": {
+                    "hidden_size": 2, "num_hidden_layers": 0, "num_attention_heads": 1,
+                    "num_key_value_heads": 1, "head_dim": 2, "global_head_dim": 2,
+                    "vocab_size": 1, "hidden_size_per_layer_input": 1, "sliding_window": 0,
+                    "layer_types": [], "num_kv_shared_layers": 0, "norm_eps": 0,
+                    "rope_base_sliding": 0, "rope_base_full": 0,
+                    "full_partial_rotary_factor_q16": 0, "embedding_scale": 0,
+                    "ple_embedding_scale": 0, "ple_projection_scalar": 0,
+                    "ple_input_scale": 0, "final_logit_softcap": 0
+                },
+                "eos_token_ids": []
+            }))
+            .unwrap()
+        };
+        let single = pins();
+        let first = manifest(&single.models[0]);
+        assert_eq!(single.mismatch(Pipeline::Single, &[&first]), None);
+        // The file says which pipeline it is of and which models, in order.
+        let written = serde_json::to_value(&single).unwrap();
+        assert_eq!(written["version"], 3);
+        assert_eq!(written["pipeline"], "single");
+        assert_eq!(written["models"].as_array().unwrap().len(), 1);
+        assert!(written["programs"]["stage_programs"].is_array());
+        assert_eq!(
+            serde_json::from_value::<ContractPins>(written.clone()).unwrap(),
+            single
+        );
+        // A file of the version before, which named one `model`, is not read
+        // as this one.
+        let mut older = written.clone();
+        let fields = older.as_object_mut().unwrap();
+        let models = fields.remove("models").unwrap();
+        fields.insert("model".into(), models[0].clone());
+        assert!(serde_json::from_value::<ContractPins>(older).is_err());
+
+        let (programs, models) = consensus_pins();
+        let consensus = ContractPins {
+            version: CONTRACT_PINS_VERSION,
+            pipeline: Pipeline::Consensus,
+            programs,
+            models: models.to_vec(),
+        };
+        let second = manifest(&models[1]);
+        assert_eq!(consensus.mismatch(Pipeline::Consensus, &[&first, &second]), None);
+        // Another pipeline, the models the other way round, one model, or a
+        // file of another version: not this contract's pins.
+        for (pipeline, models) in [
+            (Pipeline::Single, vec![&first, &second]),
+            (Pipeline::Consensus, vec![&second, &first]),
+            (Pipeline::Consensus, vec![&first]),
+            (Pipeline::Consensus, vec![&first, &first]),
+        ] {
+            assert!(consensus.mismatch(pipeline, &models).is_some());
+        }
+        assert!(single.mismatch(Pipeline::Consensus, &[&first]).is_some());
+        let mut other_range = manifest(&single.models[0]);
+        other_range.range_size = 256;
+        assert!(single.mismatch(Pipeline::Single, &[&other_range]).is_some());
+        let mut old = single.clone();
+        old.version = 2;
+        assert!(old.mismatch(Pipeline::Single, &[&first]).is_some());
     }
 
     #[test]
@@ -2760,7 +2885,7 @@ mod tests {
         let claim = Claim::honest();
         assert_eq!(
             claim.opened().check_result_binding(
-                &pins().pipeline,
+                &pins().programs,
                 &relabelled,
                 &claim.trace.checkpoints[3],
                 b"result",

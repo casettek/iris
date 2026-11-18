@@ -7,7 +7,7 @@ each command growing its own switch.
 
 `consensus` runs directly, builds a claim with a submission, passes a
 contract's checks, can be challenged, and has a leg in the parity gate. The
-backend does not run it: see [What is not built](#what-is-not-built).
+backend runs either pipeline.
 
 ## What a pipeline arranges
 
@@ -107,6 +107,7 @@ there is naming it for all of them:
 | --- | --- |
 | `iris infer` | Runs the pipeline directly: each inference in turn, then the result |
 | `iris claim build` | Builds the pipeline's chain and records the name in the frozen run and the submission |
+| `iris claim pins` | Writes what a contract of the spec's pipeline over its models pins |
 | `iris claim check` | Requires the submission to be of the spec's pipeline and to hold what a claim of it does, each inference to be of the model the spec names for it, and the claim's last stage to run that pipeline's result program |
 | `iris challenge build` | Refuses a run spec that names another pipeline than the claim's, then rebuilds the claim's arrangement from what the claim froze: the text, the source inputs, the forms and each inference's claimed ids |
 
@@ -186,9 +187,8 @@ runs one consensus claim over the gate's own model and the other family's.
 
 For `consensus`:
 
-- **A file of contract pins.** `iris claim check` makes a consensus contract's
-  pins from the run spec's imports when it runs.
-- **The backend.** iris-backend runs `single` only.
+Nothing in iris itself. `iris claim pins` writes a consensus contract's pins as
+a file, and `iris claim check --pins` checks a claim against it.
 
 ## Adding a pipeline
 

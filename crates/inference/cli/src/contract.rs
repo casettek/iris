@@ -35,6 +35,10 @@ pub struct ClaimCheckOptions {
     /// A Raster chain run of the same claim. With it, every checkpoint is held
     /// to the boundary that run committed.
     pub raster_run: Option<PathBuf>,
+    /// The pins the contract holds, as `iris claim pins` wrote them. Without
+    /// it a `single` contract's are the model import's, and those of a
+    /// pipeline over several models are made from the imports now.
+    pub pins_path: Option<PathBuf>,
 }
 
 /// One check a contract would make, and how it came out.
@@ -73,24 +77,59 @@ fn absolute(base: &Path, path: &Path) -> PathBuf {
     }
 }
 
-/// The pins written beside a model manifest, held to that manifest.
-pub(crate) fn load_pins(model_manifest_path: &Path) -> Result<ContractPins> {
-    let path = model_manifest_path.with_file_name(CONTRACT_PINS_JSON);
+/// A pins file, held to the pipeline and the models it is used for.
+fn load_pins(path: &Path, pipeline: Pipeline, models: &[&ModelManifest]) -> Result<ContractPins> {
     ensure!(
         path.exists(),
-        "{} does not exist: import the model again from the iris root, where the stage \
-         projects and their Raster.lock files are",
+        "{} does not exist: write it with `iris claim pins`, or import the model again from \
+         the iris root, where the stage projects and their Raster.lock files are",
         path.display()
     );
-    let pins: ContractPins = read_json(&path)?;
-    let manifest = ModelManifest::load_verified(model_manifest_path)?;
-    ensure!(
-        pins.model.model_id == manifest.model_id && pins.model.range_size == manifest.range_size,
-        "{} pins another model than {}",
-        path.display(),
-        model_manifest_path.display()
-    );
+    let pins: ContractPins = read_json(path).with_context(|| {
+        format!(
+            "{} is not a contract pins file of this build: write it again with `iris claim \
+             pins`, or import the model again",
+            path.display()
+        )
+    })?;
+    if let Some(mismatch) = pins.mismatch(pipeline, models) {
+        anyhow::bail!("{} are not this run's pins: {mismatch}", path.display());
+    }
     Ok(pins)
+}
+
+/// The imports a run spec names: each model's manifest path, the manifest
+/// and the model's part of a chain.
+fn run_imports(
+    run_spec_path: &Path,
+    run_spec: &InferenceRunSpec,
+) -> Result<Vec<(PathBuf, ModelManifest, String)>> {
+    let run_spec_dir = run_spec_path
+        .parent()
+        .context("run spec has no parent directory")?;
+    run_spec
+        .model_manifests()
+        .into_iter()
+        .map(|manifest| {
+            let path = absolute(run_spec_dir, manifest);
+            let manifest = ModelManifest::load_verified(&path)?;
+            let part = manifest.verified_raster_template(&path)?.1;
+            Ok((path, manifest, part))
+        })
+        .collect()
+}
+
+/// What a contract of a run spec's pipeline over its models pins, made from
+/// the imports and the stage projects' locks as they are now.
+pub fn run_pins(base_dir: &Path, run_spec_path: &Path) -> Result<ContractPins> {
+    let run_spec_path = absolute(base_dir, run_spec_path);
+    let run_spec = read_run_spec(&run_spec_path)?;
+    let imports = run_imports(&run_spec_path, &run_spec)?;
+    let imports: Vec<(&ModelManifest, &str)> = imports
+        .iter()
+        .map(|(_, manifest, part)| (manifest, part.as_str()))
+        .collect();
+    ContractPins::of(run_spec.pipeline, &imports)
 }
 
 /// What a run spec requires of where a claim's prompt came from and of the
@@ -127,56 +166,48 @@ struct Contract {
     origin: RequiredOrigin,
 }
 
-/// The contract a run spec describes. `Ok(None)` when a model's import has
-/// no pins: it was made where the stage projects are not locked.
+/// The contract a run spec describes. `Ok(None)` when no pins file is given
+/// and a model's import has none: it was made where the stage projects are
+/// not locked.
 ///
-/// A contract of the `single` pipeline pins what the model's import wrote.
-/// One of several inferences pins each model as its import identifies it, and
-/// the stage programs of the pipeline's chain over those imports, with the
-/// program id each stage project has locked now.
-fn contract_of(run_spec_path: &Path, run_spec: &InferenceRunSpec) -> Result<Option<Contract>> {
-    let run_spec_dir = run_spec_path
-        .parent()
-        .context("run spec has no parent directory")?;
+/// The pins are those of the file given. Without one, a contract of the
+/// `single` pipeline pins what the model's import wrote, and one of several
+/// inferences what [`run_pins`] makes from the imports now.
+fn contract_of(
+    run_spec_path: &Path,
+    run_spec: &InferenceRunSpec,
+    pins_path: Option<&Path>,
+) -> Result<Option<Contract>> {
     let pipeline = run_spec.pipeline;
-    let manifests: Vec<PathBuf> = run_spec
-        .model_manifests()
-        .into_iter()
-        .map(|manifest| absolute(run_spec_dir, manifest))
-        .collect();
-    if manifests
-        .iter()
-        .any(|manifest| !manifest.with_file_name(CONTRACT_PINS_JSON).exists())
-    {
-        return Ok(None);
-    }
-    let (programs, models) = match manifests.as_slice() {
-        [manifest] => {
-            let pins = load_pins(manifest)?;
-            (pins.pipeline, vec![pins.model])
-        }
-        manifests => {
-            let mut models = Vec::new();
-            let mut parts = Vec::new();
-            let mut families = Vec::new();
-            for path in manifests {
-                let manifest = ModelManifest::load_verified(path)?;
-                parts.push(manifest.verified_raster_template(path)?.1);
-                models.push(ModelPins::of(&manifest));
-                if !families.contains(&manifest.family) {
-                    families.push(manifest.family.clone());
+    let imports = run_imports(run_spec_path, run_spec)?;
+    let manifests: Vec<&ModelManifest> = imports.iter().map(|(_, manifest, _)| manifest).collect();
+    let pins = match (pins_path, imports.as_slice()) {
+        (Some(path), _) => load_pins(path, pipeline, &manifests)?,
+        (None, imports) => {
+            if imports
+                .iter()
+                .any(|(path, _, _)| !path.with_file_name(CONTRACT_PINS_JSON).exists())
+            {
+                return Ok(None);
+            }
+            match imports {
+                [(path, _, _)] => {
+                    load_pins(&path.with_file_name(CONTRACT_PINS_JSON), pipeline, &manifests)?
+                }
+                imports => {
+                    let imports: Vec<(&ModelManifest, &str)> = imports
+                        .iter()
+                        .map(|(_, manifest, part)| (manifest, part.as_str()))
+                        .collect();
+                    ContractPins::of(pipeline, &imports)?
                 }
             }
-            let parts: Vec<&str> = parts.iter().map(String::as_str).collect();
-            let programs =
-                PipelinePins::from_template(families.join("+"), &pipeline.chain_template(&parts)?)?;
-            (programs, models)
         }
     };
     Ok(Some(Contract {
         pipeline,
-        programs,
-        models,
+        programs: pins.programs,
+        models: pins.models,
         required: RequiredParameters {
             raw_prompt: run_spec.raw_prompt,
             max_new_tokens: run_spec.tokens,
@@ -193,7 +224,7 @@ pub(crate) fn claim_rejection(
     submission_path: &Path,
 ) -> Result<Option<String>> {
     let run_spec = read_run_spec(&prepared.run_spec_path)?;
-    let Some(contract) = contract_of(&prepared.run_spec_path, &run_spec)? else {
+    let Some(contract) = contract_of(&prepared.run_spec_path, &run_spec, None)? else {
         return Ok(None);
     };
     Ok(check_claim_dir(&contract, submission_path)?.rejection())
@@ -202,7 +233,11 @@ pub(crate) fn claim_rejection(
 pub fn check_claim(options: ClaimCheckOptions) -> Result<ClaimCheckReport> {
     let run_spec_path = absolute(&options.base_dir, &options.run_spec_path);
     let run_spec = read_run_spec(&run_spec_path)?;
-    let contract = contract_of(&run_spec_path, &run_spec)?.with_context(|| {
+    let pins_path = options
+        .pins_path
+        .as_ref()
+        .map(|path| absolute(&options.base_dir, path));
+    let contract = contract_of(&run_spec_path, &run_spec, pins_path.as_deref())?.with_context(|| {
         format!(
             "a model {} names has no {CONTRACT_PINS_JSON}: import it again from the iris root, \
              where the stage projects and their Raster.lock files are",

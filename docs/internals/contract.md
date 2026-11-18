@@ -19,12 +19,24 @@ result code. See [the authenticated prompt](../proposals/authenticated-prompt.md
 
 ## What the contract pins
 
-A contract opts into two entries, and chooses two parameters of its own. The
-model import writes both entries to `contract_pins.json`, beside the import's
-`manifest.json`.
+A contract pins the [pipeline](pipelines.md) it accepts claims of, that
+pipeline's stage programs, and one model per inference the pipeline makes. It
+chooses its parameters itself. The pins are a file, `contract_pins.json`
+(version 3):
 
-**The pipeline entry** is true of the stage programs whatever model they run.
-Two models of one family have the same one.
+| Field | Meaning |
+| --- | --- |
+| `pipeline` | The pipeline's name: `single` or `consensus` |
+| `programs` | The program entry, below |
+| `models` | One model entry per inference, in the order the pipeline runs them |
+
+A model import writes the pins of the `single` pipeline over that model beside
+the import's `manifest.json`. `iris claim pins --run <spec> --out <file>` writes
+those of the run spec's pipeline over the models it names, from their imports and
+the stage projects' locks as they are when it runs.
+
+**The program entry** is true of the stage programs whatever model they run.
+Two models of one family under one pipeline have the same one.
 
 | Value | Where it comes from |
 | --- | --- |
@@ -33,7 +45,7 @@ Two models of one family have the same one.
 | For each chained input, the programs that may produce it | The chain template |
 | For each chained input, the empty values it may hold | The fixed externals the chain's first stages are given in its place |
 
-**The model entry** is true of one model.
+**A model entry** is true of one model.
 
 | Value | Where it comes from |
 | --- | --- |
@@ -57,15 +69,17 @@ the result step on the submitted output itself (below).
 Re-locking a stage changes its program id, so import again afterwards. An import
 made where the stage projects are not locked writes no pins and says so.
 
-An import's `contract_pins.json` is what a contract of the `single`
-[pipeline](pipelines.md) over that model pins. A contract of a pipeline over
-several models pins one model entry per inference, in order, and the stage
-programs of that pipeline's chain over those models: both models' own programs,
-`prompt-source`, and the pipeline's result program in place of `claim-result`.
-No file holds those pins yet. `iris claim check` makes them from the run spec's
-imports: each model entry from its import's manifest, and the pipeline entry from
-the pipeline's chain template over the imports, with the program id each stage
-project has locked when the command runs.
+A contract of a pipeline over several models pins the stage programs of that
+pipeline's chain over those models: both models' own programs, `prompt-source`,
+and the pipeline's result program in place of `claim-result`. Each model entry
+is read from its import's manifest, and the program entry from the pipeline's
+chain template over the imports.
+
+`iris claim check --pins <file>` checks a claim against a pins file, and refuses
+one that is of another pipeline, of other models or of the same models in another
+order. Without `--pins`, a `single` claim is checked against its model's import's
+file, and a claim of several models against pins made from the imports at that
+moment, as `iris claim pins` would make them.
 
 The approved programs are a set, not a map from position to program. Which stage
 runs where is the stage schedule's to enforce, inside the programs: the first
@@ -332,9 +346,9 @@ These are open. None is closed by anything on this page.
 - **A small source is a short stage.** With documents of a few hundred bytes
   the `source` stage is under the trace length a replay needs, as some check
   stages are, and its checkpoint cannot be disputed.
-- **A consensus contract's pins are not a file.** They are made from the imports
-  when a claim is checked, so they follow the stage locks of that moment and
-  not of a fixed one.
+- **`claim build` checks its own consensus claim against pins made at that
+  moment.** A contract's are the file it was given. The two differ only if a
+  stage was re-locked in between.
 - **The result stage is short at every size.** It is three steps and one per
   form, so a false `result` checkpoint cannot be disputed by a replay. A
   challenger's recomputation still finds it. The contract does not rest on it:
