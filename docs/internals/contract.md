@@ -57,6 +57,16 @@ the result step on the submitted output itself (below).
 Re-locking a stage changes its program id, so import again afterwards. An import
 made where the stage projects are not locked writes no pins and says so.
 
+An import's `contract_pins.json` is what a contract of the `single`
+[pipeline](pipelines.md) over that model pins. A contract of a pipeline over
+several models pins one model entry per inference, in order, and the stage
+programs of that pipeline's chain over those models: both models' own programs,
+`prompt-source`, and the pipeline's result program in place of `claim-result`.
+No file holds those pins yet. `iris claim check` makes them from the run spec's
+imports: each model entry from its import's manifest, and the pipeline entry from
+the pipeline's chain template over the imports, with the program id each stage
+project has locked when the command runs.
+
 The approved programs are a set, not a map from position to program. Which stage
 runs where is the stage schedule's to enforce, inside the programs: the first
 stage verifies the schedule and every later one checks its own place in it.
@@ -92,19 +102,21 @@ them.
 | Field | Meaning |
 | --- | --- |
 | `pipeline` | The [pipeline](pipelines.md) the claim is of |
-| `output_text` | The plaintext the contract acts on |
-| `input_text_sha256` | The claimer's commitment to the input it ran. The contract takes it as given |
+| `input_text_sha256` | The claimer's commitment to the input it ran. The contract takes it as given. Every inference's statement is recomputed over it |
 | `source_sha256` | The digest of the source record the text was built from, or 64 zeros. The statement names it |
 | `source` | The source record itself, for a claim that has one: the text's hash and length, the recipe's hash, the count and chained hash of the documents' attested facts, the signer's key, and the fault, which must be zero |
+| `inferences` | One entry per inference, in the order the pipeline runs them: one for `single`, two for `consensus`. Each holds the five values below |
+| `output_text` | The inference's plaintext: what the contract acts on |
 | `record.statement_sha256` | `Statement::digest()` over the input text hash, the source digest, model id, raw prompt flag, token budget and range size |
 | `record.output_text_sha256` | SHA-256 of the plaintext's exact UTF-8 bytes |
-| `record.valid` | The chain found nothing wrong with its own run |
+| `record.valid` | The chain found nothing wrong with the inference |
 | `result.code` | The code of the first form the plaintext is, or zero |
 | `result.forms_sha256` | A hash chained over the forms the plaintext was compared with |
+| `consensus` | For a `consensus` claim: `same_input`, `agree` and `code`, as its result stage states them. Absent for `single` |
 | `checkpoints_sha256` | SHA-256 of the claim's `checkpoints.txt` |
 
-The three `record` values are the claim record the last check states in its
-output (`ClaimRecord` in `raster-stages/sequence-check/src/input.rs`). The
+The three `record` values are the claim record an inference's last check states
+in its output (`ClaimRecord` in `raster-stages/sequence-check/src/input.rs`). The
 verdict is computed in the stage from every field that can reject a claim: the
 model fault, the prompt fault and completeness, the check fault, the mismatch
 count and the output fault. Only the schedule's last claimed range can state a
@@ -123,15 +135,21 @@ in the prompt context, from where it reaches the statement.
 
 ## On submission
 
-A contract accepts claims of one pipeline, and first requires the submission to
-name it (`check_pipeline`). The checks below are the `single` pipeline's.
+A contract accepts claims of one pipeline. It first requires the submission to
+name it and to hold what a claim of it does (`check_pipeline`): one inference
+for `single`, and two with their agreement for `consensus`. Checks 1 and 2 are
+then made of each inference, against the model the contract pins for it
+(`check_submission`).
 
 1. **Statement matches.** Recompute the statement digest from the pinned model id,
    range size and required parameters with the claimed input hash and source
    digest, and compare it with the record's. This one equality covers the model,
-   every parameter and the source the run names.
+   every parameter and the source the run names. Every inference's statement is
+   recomputed over the submission's one input hash and source digest, so two
+   inferences that both pass ran the same input.
 2. **Output matches.** The plaintext hashes to the record's output text hash, and
-   the valid flag is set.
+   the valid flag is set. A claim with an invalid record in any inference is not
+   accepted.
 3. **Source matches** (`check_origin`). The submitted source record hashes to
    the digest the statement names. A contract that requires a source rejects a
    claim without the record, a record with a fault, another signer or another
@@ -140,7 +158,12 @@ name it (`check_pipeline`). The checks below are the `single` pipeline's.
    own forms, as the result stage does, and rejects a claim whose forms hash or
    code is not what that gives. The result stage is a step per form, so a
    contract can afford this, and it means a false result is refused at
-   submission and needs no dispute.
+   submission and needs no dispute. It does this for each inference.
+5. **Agreement matches**, for a `consensus` claim. The contract reads both
+   submitted plaintexts by its forms and works out whether they agree, as the
+   consensus result stage does, and rejects a claim that states another
+   agreement or another code. A claim in which the models disagree is accepted
+   as that: the contract acts on the answer `agree: false`.
 
 The record's fields other than the signer and the recipe are not the contract's
 to judge. Which documents were fetched, and that the text is what the recipe
@@ -171,13 +194,16 @@ way.
   names as its producer, that checkpoint must be earlier in the list, and its
   program must be one that may produce the input. Or the input holds one of its
   pinned empty values. Otherwise the claim is void.
-- **The record is the last check's, and the result the last stage's.** A claim
-  ends in a check and then the result stage. The submitted record must be the
-  one in the output the checkpoint before the last commits to, and that
-  checkpoint's program must be the check. The submitted result, with the same
-  record beside it, must be the one in the output the last checkpoint commits
-  to, and that checkpoint's program must be the result stage. A claim that ends
-  any other way is void.
+- **Each record is its inference's last check's, and the results the last
+  stage's.** A claim ends in its pipeline's result stage: the last checkpoint's
+  program must be that pipeline's result program. That checkpoint names, for
+  each inference, the earlier checkpoint whose output it read as that
+  inference's check (`check` in a `single` claim, `first` and `second` in a
+  `consensus` one). The record submitted for an inference must be the one in
+  the output that checkpoint commits to, and its program must be the check.
+  What the last checkpoint's own output states, every record with its result
+  and the agreement, must be what was submitted. A claim that ends any other
+  way is void.
 
 The second comparison reads the stage's `input_manifest.json`, held to the
 checkpoint's `input_commitment`. It must be exactly the canonical encoding of
@@ -256,12 +282,13 @@ cargo run --release -p iris-cli -- claim check \
 ```
 
 The command reads the checkpoint files, every stage's input list and the
-outputs of the last check and the result stage from the directory the
-submission is in. It makes the pipeline check, the four submission checks and
-the challenge-time comparisons, the link comparison for every chained input of
-every stage.
+outputs of each inference's last check and of the result stage from the
+directory the submission is in. It makes the pipeline check, the submission
+checks and the challenge-time comparisons, the link comparison for every chained
+input of every stage. It prints seven lines for a `single` claim and nine for a
+`consensus` one, which has a statement line and a record line per inference.
 `claim build` makes the same checks on its own claim before it reports success,
-when the import has pins.
+when the imports have pins.
 
 Add `--raster-run <dir>` with a Raster chain run of the same claim to hold every
 checkpoint to the boundary that run committed: the same stages in the same order,
@@ -305,10 +332,14 @@ These are open. None is closed by anything on this page.
 - **A small source is a short stage.** With documents of a few hundred bytes
   the `source` stage is under the trace length a replay needs, as some check
   stages are, and its checkpoint cannot be disputed.
+- **A consensus contract's pins are not a file.** They are made from the imports
+  when a claim is checked, so they follow the stage locks of that moment and
+  not of a fixed one.
 - **The result stage is short at every size.** It is three steps and one per
   form, so a false `result` checkpoint cannot be disputed by a replay. A
   challenger's recomputation still finds it. The contract does not rest on it:
-  it takes the result on the submitted plaintext itself. A result step that
+  it takes the result on the submitted plaintext itself, and for a consensus
+  the agreement on the two. A result step that
   grows past what a contract can recompute, such as one that weighs several
   answers, has to be a stage long enough to replay.
 - **The source's host choices are not checked.** Which documents to fetch, and

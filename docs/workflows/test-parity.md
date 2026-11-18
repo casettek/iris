@@ -163,6 +163,38 @@ shorter than the replay window. It has one for the result stage, which is shorte
 window on any model: a false `result` checkpoint must be where recomputation first differs,
 and no replay is asked for.
 
+## Consensus leg
+
+After the source leg the gate builds one claim of the `consensus`
+[pipeline](../internals/pipelines.md) (`crates/inference/cli/src/parity/consensus.rs`).
+Its first model is the gate's own. Its second is the other family's bundle,
+imported into the run, so one chain holds both families' stage programs under
+their labels. The prompt is the source leg's, built from its two signed
+documents.
+
+The gate first asks direct inference for each model's answer and names both as
+forms with one code. The forms are no part of the prompt, so the answers stay
+what they were, and the claim's result stage finds two different texts that
+stand for the same thing.
+
+The claim is then run directly, natively and through Raster:
+
+- The chain is the `source` stage, the first model's stages, the second model's
+  and the `result` stage, and every stage's output is the same bytes through
+  Raster and natively.
+- The claim states what direct inference does: each inference's result and that
+  the two agree.
+- The result stage states both answers' codes, that they agree, and each
+  inference's own statement.
+- A contract's checks pass, with every native checkpoint held to the Raster
+  run's boundary. A copy of the submission that denies the agreement is refused
+  at the submission check.
+- `challenge build` finds nothing to dispute in the honest claim, finds a
+  falsified `m1_prompt_check_p0` and replays it through authenticated Raster,
+  and recomputation finds a false `result`.
+
+The leg is skipped with the challenge leg, because it replays a stage.
+
 ## Challenge leg
 
 On the templated case the gate then runs `challenge build`, the command a

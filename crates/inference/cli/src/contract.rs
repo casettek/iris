@@ -13,9 +13,9 @@ use std::path::{Path, PathBuf};
 use anyhow::{ensure, Context, Result};
 use inference_artifacts::contract::{
     check_origin, check_pipeline, check_submission, first_unapproved_stage,
-    raster_boundary_mismatch,
-    ChallengeRefusal, CheckpointList, ClaimSubmission, ContractPins, LinkCheck, RecordBinding,
-    RequiredOrigin, RequiredParameters, RequiredSource, ResultInOutput, StageAdmission,
+    raster_boundary_mismatch, ChallengeRefusal, CheckpointList, ClaimSubmission, ContractPins,
+    LinkCheck, ModelPins, PipelinePins, RecordBinding, RequiredOrigin, RequiredParameters,
+    RequiredSource, ResultInOutput, StageAdmission, StatedInference, SubmittedConsensus,
     SubmittedRecord, SubmittedResult, CONTRACT_PINS_JSON,
 };
 use inference_artifacts::{
@@ -116,60 +116,101 @@ fn required_origin(run_spec_path: &Path, run_spec: &InferenceRunSpec) -> Result<
     })
 }
 
+/// What a contract over a run would pin and require: the pipeline it
+/// accepts claims of, that pipeline's approved stage programs, the model of
+/// each inference, and its own parameters.
+struct Contract {
+    pipeline: Pipeline,
+    programs: PipelinePins,
+    models: Vec<ModelPins>,
+    required: RequiredParameters,
+    origin: RequiredOrigin,
+}
+
+/// The contract a run spec describes. `Ok(None)` when a model's import has
+/// no pins: it was made where the stage projects are not locked.
+///
+/// A contract of the `single` pipeline pins what the model's import wrote.
+/// One of several inferences pins each model as its import identifies it, and
+/// the stage programs of the pipeline's chain over those imports, with the
+/// program id each stage project has locked now.
+fn contract_of(run_spec_path: &Path, run_spec: &InferenceRunSpec) -> Result<Option<Contract>> {
+    let run_spec_dir = run_spec_path
+        .parent()
+        .context("run spec has no parent directory")?;
+    let pipeline = run_spec.pipeline;
+    let manifests: Vec<PathBuf> = run_spec
+        .model_manifests()
+        .into_iter()
+        .map(|manifest| absolute(run_spec_dir, manifest))
+        .collect();
+    if manifests
+        .iter()
+        .any(|manifest| !manifest.with_file_name(CONTRACT_PINS_JSON).exists())
+    {
+        return Ok(None);
+    }
+    let (programs, models) = match manifests.as_slice() {
+        [manifest] => {
+            let pins = load_pins(manifest)?;
+            (pins.pipeline, vec![pins.model])
+        }
+        manifests => {
+            let mut models = Vec::new();
+            let mut parts = Vec::new();
+            let mut families = Vec::new();
+            for path in manifests {
+                let manifest = ModelManifest::load_verified(path)?;
+                parts.push(manifest.verified_raster_template(path)?.1);
+                models.push(ModelPins::of(&manifest));
+                if !families.contains(&manifest.family) {
+                    families.push(manifest.family.clone());
+                }
+            }
+            let parts: Vec<&str> = parts.iter().map(String::as_str).collect();
+            let programs =
+                PipelinePins::from_template(families.join("+"), &pipeline.chain_template(&parts)?)?;
+            (programs, models)
+        }
+    };
+    Ok(Some(Contract {
+        pipeline,
+        programs,
+        models,
+        required: RequiredParameters {
+            raw_prompt: run_spec.raw_prompt,
+            max_new_tokens: run_spec.tokens,
+        },
+        origin: required_origin(run_spec_path, run_spec)?,
+    }))
+}
+
 /// The checks as a claimer applies them to its own claim before posting it:
 /// the first one a contract would reject it at. `Ok(None)` when it would be
-/// accepted, or when the import has no pins to check against.
+/// accepted, or when an import has no pins to check against.
 pub(crate) fn claim_rejection(
     prepared: &PreparedRun,
     submission_path: &Path,
 ) -> Result<Option<String>> {
-    let model_manifest_path = &prepared.first()?.model_manifest_path;
-    if !model_manifest_path
-        .with_file_name(CONTRACT_PINS_JSON)
-        .exists()
-    {
-        return Ok(None);
-    }
-    let pins = load_pins(model_manifest_path)?;
-    let required = RequiredParameters {
-        raw_prompt: prepared.raw_prompt,
-        max_new_tokens: prepared.tokens,
-    };
     let run_spec = read_run_spec(&prepared.run_spec_path)?;
-    let origin = required_origin(&prepared.run_spec_path, &run_spec)?;
-    Ok(
-        check_claim_dir(&pins, run_spec.pipeline, required, &origin, submission_path)?
-            .rejection(),
-    )
+    let Some(contract) = contract_of(&prepared.run_spec_path, &run_spec)? else {
+        return Ok(None);
+    };
+    Ok(check_claim_dir(&contract, submission_path)?.rejection())
 }
 
 pub fn check_claim(options: ClaimCheckOptions) -> Result<ClaimCheckReport> {
     let run_spec_path = absolute(&options.base_dir, &options.run_spec_path);
     let run_spec = read_run_spec(&run_spec_path)?;
-    let run_spec_dir = run_spec_path
-        .parent()
-        .context("run spec has no parent directory")?;
-    // A contract's pins are of one model and the `single` pipeline's stage
-    // programs. Those of a pipeline over several models are not built.
-    ensure!(
-        run_spec.pipeline.inferences() == 1,
-        "the contract's checks are not built for the `{}` pipeline yet",
-        run_spec.pipeline
-    );
-    let pins = load_pins(&absolute(run_spec_dir, run_spec.model_manifest_of(0)?))?;
-    let required = RequiredParameters {
-        raw_prompt: run_spec.raw_prompt,
-        max_new_tokens: run_spec.tokens,
-    };
-    let origin = required_origin(&run_spec_path, &run_spec)?;
+    let contract = contract_of(&run_spec_path, &run_spec)?.with_context(|| {
+        format!(
+            "a model {} names has no {CONTRACT_PINS_JSON}: import it again from the iris root, \
+             where the stage projects and their Raster.lock files are",
+            run_spec_path.display()
+        )
+    })?;
     let submission_path = absolute(&options.base_dir, &options.submission_path);
-    let mut report = check_claim_dir(
-        &pins,
-        run_spec.pipeline,
-        required,
-        &origin,
-        &submission_path,
-    )?;
+    let mut report = check_claim_dir(&contract, &submission_path)?;
 
     if let Some(raster_run) = options.raster_run {
         let commitment_path = absolute(&options.base_dir, &raster_run).join("chain-commitment");
@@ -198,35 +239,40 @@ fn claim_trace(submission_path: &Path) -> Result<CheckpointTrace> {
 /// The submission checks, then the comparisons a contract makes against the
 /// claimer's checkpoint list when a challenge arrives, on the files in the
 /// claim's directory.
-fn check_claim_dir(
-    pins: &ContractPins,
-    pipeline: Pipeline,
-    required: RequiredParameters,
-    origin: &RequiredOrigin,
-    submission_path: &Path,
-) -> Result<ClaimCheckReport> {
+fn check_claim_dir(contract: &Contract, submission_path: &Path) -> Result<ClaimCheckReport> {
     let submission: ClaimSubmission = read_json(submission_path)?;
     let dir = claim_dir(submission_path)?;
-    let mut lines = vec![
-        CheckLine {
-            check: "submission: pipeline",
-            rejection: check_pipeline(pipeline, &submission)
+    let pins = &contract.programs;
+    let several = contract.models.len() > 1;
+    let mut lines = vec![CheckLine {
+        check: "submission: pipeline",
+        rejection: check_pipeline(contract.pipeline, &submission)
+            .err()
+            .map(|rejection| rejection.to_string()),
+    }];
+    // Each inference against the model the contract pins for it.
+    for (inference, model) in contract.models.iter().enumerate() {
+        lines.push(CheckLine {
+            check: match (several, inference) {
+                (false, _) => "submission: statement, output and valid flag",
+                (true, 0) => "submission: the first inference's statement, output and valid flag",
+                (true, _) => "submission: the second inference's statement, output and valid flag",
+            },
+            rejection: check_submission(model, contract.required, &submission, inference)
                 .err()
                 .map(|rejection| rejection.to_string()),
+        });
+    }
+    lines.push(CheckLine {
+        check: if several {
+            "submission: source record, forms, result codes and agreement"
+        } else {
+            "submission: source record, forms and result code"
         },
-        CheckLine {
-            check: "submission: statement, output and valid flag",
-            rejection: check_submission(pins, required, &submission)
-                .err()
-                .map(|rejection| rejection.to_string()),
-        },
-        CheckLine {
-            check: "submission: source record, forms and result code",
-            rejection: check_origin(origin, &submission)
-                .err()
-                .map(|rejection| rejection.to_string()),
-        },
-    ];
+        rejection: check_origin(&contract.origin, &submission)
+            .err()
+            .map(|rejection| rejection.to_string()),
+    });
 
     let list_path = dir.join(CHECKPOINTS_TXT);
     let list =
@@ -282,7 +328,7 @@ fn check_claim_dir(
     // inputs to check and is reported above.
     let mut rejection = None;
     'stages: for (stage, checkpoint) in trace.checkpoints.iter().enumerate() {
-        let Some(program) = pins.pipeline.program(&checkpoint.program_commitment) else {
+        let Some(program) = pins.program(&checkpoint.program_commitment) else {
             continue;
         };
         let manifest_path = dir.join(&checkpoint.stage).join("input_manifest.json");
@@ -328,21 +374,22 @@ fn check_claim_dir(
         rejection,
     });
 
-    // A claim ends in the last check and then the result stage. The record is
-    // held to the first and the result to the second.
-    let stages = trace.checkpoints.len();
-    ensure!(
-        stages >= 2,
-        "the claim has {stages} checkpoints: it does not end in a check and the result stage"
-    );
-    let unbound = |bound: RecordBinding, checkpoint: &Checkpoint, output_path: &Path| match bound {
+    // A claim ends in its pipeline's result stage, which names the last check
+    // it read of each inference. Each record is held to its check, and the
+    // results to the last stage.
+    let last = trace
+        .checkpoints
+        .last()
+        .context("the claim has no checkpoints")?;
+    let unbound = |bound: RecordBinding, checkpoint: &Checkpoint, output_path: &Path| match bound
+    {
         RecordBinding::Bound => None,
         RecordBinding::AnotherRecord => Some(format!(
             "stage {} committed another record than the one submitted",
             checkpoint.stage
         )),
         RecordBinding::AnotherStage { expected } => Some(format!(
-            "stage {} does not run {expected}, so the claim does not end in the check and \
+            "stage {} does not run {expected}, so the claim does not end in its checks and \
              the result stage",
             checkpoint.stage
         )),
@@ -356,26 +403,74 @@ fn check_claim_dir(
         )),
     };
 
-    let check = &trace.checkpoints[stages - 2];
-    let check_dir = dir.join(&check.stage);
-    let output_path = check_dir.join("output.bin");
-    let output = fs::read(&output_path)
-        .with_context(|| format!("failed to read {}", output_path.display()))?;
-    let edge = stage_output(&output_path, &check_dir.join("output.rindex"))?;
-    let record = edge
-        .get("claim")
-        .with_context(|| format!("{} holds no claim record", output_path.display()))?;
-    lines.push(CheckLine {
-        check: "challenge admission: the record is the last check's",
-        rejection: unbound(
-            list.check_record_binding(pins, &submission, check, &output, &claim_record(record)?)
-                .map_err(refusal)?,
-            check,
-            &output_path,
-        ),
-    });
+    for (inference, input) in contract.pipeline.result_inputs().iter().enumerate() {
+        let check_line = match (several, inference) {
+            (false, _) => "challenge admission: the record is the last check's",
+            (true, 0) => "challenge admission: the first inference's record is its last check's",
+            (true, _) => "challenge admission: the second inference's record is its last check's",
+        };
+        // The check the result stage's own checkpoint names for this input.
+        // A claim whose last stage names none, or one past its list, has no
+        // check to present.
+        let producer = last
+            .input_sources
+            .get(*input)
+            .map(|index| trace.checkpoints.get(*index as usize));
+        let rejection = match producer {
+            Some(Some(check)) => {
+                let check_dir = dir.join(&check.stage);
+                let output_path = check_dir.join("output.bin");
+                let output = fs::read(&output_path)
+                    .with_context(|| format!("failed to read {}", output_path.display()))?;
+                let edge = stage_output(&output_path, &check_dir.join("output.rindex"))?;
+                // A stage that is no check is reported by the binding check,
+                // so its record is only read when its output holds one.
+                let record = edge.get("claim").map(claim_record).transpose()?;
+                let in_output = record.clone().or_else(|| {
+                    submission
+                        .inferences
+                        .get(inference)
+                        .map(|claimed| claimed.record.clone())
+                });
+                match in_output {
+                    Some(in_output) => {
+                        let binding = list
+                            .check_record_binding(
+                                pins,
+                                &submission,
+                                inference,
+                                last,
+                                check,
+                                &output,
+                                &in_output,
+                            )
+                            .map_err(refusal)?;
+                        ensure!(
+                            binding != RecordBinding::Bound || record.is_some(),
+                            "{} holds no claim record",
+                            output_path.display()
+                        );
+                        unbound(binding, check, &output_path)
+                    }
+                    None => Some(String::from("the claim submits no such inference")),
+                }
+            }
+            Some(None) => Some(format!(
+                "the claim's last stage ({}) names a checkpoint past the list as its `{input}`",
+                last.stage
+            )),
+            None => Some(format!(
+                "the claim's last stage ({}) takes no `{input}` from an earlier stage, so the \
+                 claim does not end in its checks and the result stage",
+                last.stage
+            )),
+        };
+        lines.push(CheckLine {
+            check: check_line,
+            rejection,
+        });
+    }
 
-    let last = &trace.checkpoints[stages - 1];
     let last_dir = dir.join(&last.stage);
     let output_path = last_dir.join("output.bin");
     let output = fs::read(&output_path)
@@ -383,17 +478,16 @@ fn check_claim_dir(
     let stated = stage_output(&output_path, &last_dir.join("output.rindex"))?;
     // A last stage that is not the result stage is reported by the binding
     // check, so what its output holds is only read when it decodes.
-    let in_output = result_in_output(&stated).unwrap_or_else(|_| ResultInOutput {
-        record: submission.record.clone(),
-        result: submission.result.clone(),
-    });
+    let decoded = result_in_output(contract.pipeline, &stated);
+    let in_output = decoded
+        .as_ref()
+        .map_or_else(|_| submission.stated(), Clone::clone);
     let binding = list
         .check_result_binding(pins, &submission, last, &output, &in_output)
         .map_err(refusal)?;
     if binding == RecordBinding::Bound {
         // Bound to a decoded record, never to the submission's own.
-        result_in_output(&stated)
-            .with_context(|| format!("{} holds no result record", output_path.display()))?;
+        decoded.with_context(|| format!("{} holds no result record", output_path.display()))?;
     }
     lines.push(CheckLine {
         check: "challenge admission: the result is the last stage's",
@@ -434,9 +528,10 @@ fn claim_record(claim: &serde_json::Value) -> Result<SubmittedRecord> {
     })
 }
 
-/// What the result stage's output states.
-fn result_in_output(stated: &serde_json::Value) -> Result<ResultInOutput> {
-    Ok(ResultInOutput {
+/// One inference as a result stage states it: the claim record it was given,
+/// the code it gave the output and the hash of the forms.
+fn stated_inference(stated: &serde_json::Value) -> Result<StatedInference> {
+    Ok(StatedInference {
         record: claim_record(stated)?,
         result: SubmittedResult {
             code: stated
@@ -450,5 +545,41 @@ fn result_in_output(stated: &serde_json::Value) -> Result<ResultInOutput> {
                 .context("the result record has no `forms_sha256`")?
                 .to_string(),
         },
+    })
+}
+
+/// What the result stage of this pipeline states in its output.
+fn result_in_output(pipeline: Pipeline, stated: &serde_json::Value) -> Result<ResultInOutput> {
+    Ok(match pipeline {
+        Pipeline::Single => ResultInOutput {
+            inferences: vec![stated_inference(stated)?],
+            consensus: None,
+        },
+        Pipeline::Consensus => {
+            let part = |name: &str| {
+                stated
+                    .get(name)
+                    .with_context(|| format!("the consensus record has no `{name}`"))
+            };
+            let flag = |name: &str| -> Result<bool> {
+                part(name)?
+                    .as_bool()
+                    .with_context(|| format!("the consensus record's `{name}` is no flag"))
+            };
+            ResultInOutput {
+                inferences: vec![
+                    stated_inference(part("first")?)?,
+                    stated_inference(part("second")?)?,
+                ],
+                consensus: Some(SubmittedConsensus {
+                    same_input: flag("same_input")?,
+                    agree: flag("agree")?,
+                    code: part("code")?
+                        .as_u64()
+                        .and_then(|code| u32::try_from(code).ok())
+                        .context("the consensus record has no `code`")?,
+                }),
+            }
+        }
     })
 }

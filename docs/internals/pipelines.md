@@ -5,9 +5,9 @@ A pipeline is a named arrangement of the parts a claim is made of. Two exist:
 two models and whether they agree. Others can be added beside them without
 each command growing its own switch.
 
-`consensus` runs directly, builds a claim and can be challenged. What a claimer
-would submit for it, what a contract would pin and check, and a parity gate
-case are not built: see [What is not built](#what-is-not-built).
+`consensus` runs directly, builds a claim with a submission, passes a
+contract's checks, can be challenged, and has a leg in the parity gate. The
+backend does not run it: see [What is not built](#what-is-not-built).
 
 ## What a pipeline arranges
 
@@ -73,7 +73,7 @@ keeps its files in `prompt/`.
 | --- | --- | --- |
 | Run spec | `pipeline = "consensus"` | Optional. A spec that names none runs `single`. A name that is no pipeline is an error |
 | `prepared_run.json` | `pipeline` | The claim's frozen run, which its claim bundle points at. Required, version 20 |
-| `claim_submission.json` | `pipeline` | Required, version 4. Written for `single` only |
+| `claim_submission.json` | `pipeline` | Required, version 5. It holds one entry per inference, and for `consensus` the agreement |
 | `iris infer`, `iris claim build` | a `pipeline:` line | Printed before the result |
 
 A `single` run names its model as `model_manifest`. A run of several
@@ -106,8 +106,8 @@ there is naming it for all of them:
 | Command | What it does with the name |
 | --- | --- |
 | `iris infer` | Runs the pipeline directly: each inference in turn, then the result |
-| `iris claim build` | Builds the pipeline's chain and records the name in the frozen run and, for `single`, the submission |
-| `iris claim check` | Requires the submission to be of the spec's pipeline, and the claim's last stage to run that pipeline's result program. `single` only |
+| `iris claim build` | Builds the pipeline's chain and records the name in the frozen run and the submission |
+| `iris claim check` | Requires the submission to be of the spec's pipeline and to hold what a claim of it does, each inference to be of the model the spec names for it, and the claim's last stage to run that pipeline's result program |
 | `iris challenge build` | Refuses a run spec that names another pipeline than the claim's, then rebuilds the claim's arrangement from what the claim froze: the text, the source inputs, the forms and each inference's claimed ids |
 
 ## The consensus pipeline
@@ -169,20 +169,25 @@ claim's last checkpoint must run that pipeline's result program
 approved set. A claim built as one pipeline and labelled as another ends in the
 wrong program.
 
+### What a contract checks of a consensus claim
+
+The submission holds both inferences' plaintexts, records and results, and the
+agreement. A contract pins one model per inference and holds each statement to
+its own model over the one input hash the submission names, so the two
+inferences cannot be swapped and both ran the same input. It reads both
+plaintexts by its own forms and refuses a claim whose codes or agreement are not
+what that gives. When a challenge arrives it holds each record to the check the
+result stage read for that inference. See [the contract](contract.md).
+
+The parity gate's [consensus leg](../workflows/test-parity.md#consensus-leg)
+runs one consensus claim over the gate's own model and the other family's.
+
 ## What is not built
 
 For `consensus`:
 
-- **A submission.** `claim build` writes the checkpoints, the trace and the
-  claim bundle, and no `claim_submission.json`.
-- **Contract pins and checks.** An import's `contract_pins.json` is of one
-  model and the `single` pipeline's stage programs. `iris claim check` refuses
-  a `consensus` run spec.
-- **A parity gate case.** The checks so far were run by hand on the gate's two
-  small models and on Gemma 4 E2B with Ministral 3B: direct inference and the
-  native claim state the same results, every stage gives the same bytes through
-  Raster and natively, the result stage commits and audits, and a challenger
-  finds a false checkpoint in either inference.
+- **A file of contract pins.** `iris claim check` makes a consensus contract's
+  pins from the run spec's imports when it runs.
 - **The backend.** iris-backend runs `single` only.
 
 ## Adding a pipeline

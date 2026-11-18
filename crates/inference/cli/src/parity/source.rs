@@ -63,7 +63,7 @@ fn key(steps: &[&str]) -> Vec<PathStep> {
 
 /// Two documents and a recipe that takes values from both, through an array
 /// and a key with a dot in it. The event is padded so it spans several chunks.
-fn honest_source() -> Result<LoadedSource> {
+pub(super) fn honest_source() -> Result<LoadedSource> {
     let event = serde_json::to_vec(&json!({
         "type": "Feature",
         "properties": {
@@ -134,8 +134,9 @@ fn honest_source() -> Result<LoadedSource> {
     })
 }
 
-/// Writes a source as the files a run spec names, and the spec.
-fn write_run(dir: &Path, source: &LoadedSource, model_path: &Path) -> Result<std::path::PathBuf> {
+/// Writes a source as the files a run spec names, and returns the spec's
+/// `[source]` table.
+pub(super) fn write_source(dir: &Path, source: &LoadedSource) -> Result<String> {
     fs::create_dir_all(dir)?;
     inference_artifacts::write_json(&dir.join("recipe.json"), &source.recipe)?;
     inference_artifacts::write_json(&dir.join("signer.json"), &source.signer)?;
@@ -150,11 +151,19 @@ fn write_run(dir: &Path, source: &LoadedSource, model_path: &Path) -> Result<std
             "  {{ document = \"document_{index}.bin\", attestation = \"document_{index}.json\" }},\n"
         ));
     }
+    Ok(format!(
+        "[source]\nrecipe = \"recipe.json\"\nsigner = \"signer.json\"\ndocuments = [\n{documents}]\n"
+    ))
+}
+
+/// Writes a source as the files a run spec names, and the spec.
+fn write_run(dir: &Path, source: &LoadedSource, model_path: &Path) -> Result<std::path::PathBuf> {
+    let table = write_source(dir, source)?;
     let spec = dir.join("inference.toml");
     fs::write(
         &spec,
         format!(
-            "model_manifest = {}\ntokens = 4\n\n[source]\nrecipe = \"recipe.json\"\nsigner = \"signer.json\"\ndocuments = [\n{documents}]\n",
+            "model_manifest = {}\ntokens = 4\n\n{table}",
             serde_json::to_string(model_path)?
         ),
     )?;

@@ -66,7 +66,7 @@ contract takes the comparison with the forms on the submitted text itself
 (`check_origin`, see [the contract](../internals/contract.md)). A false `result`
 checkpoint is found by a challenger's recomputation and cannot be replayed. The
 result stage of a consensus chain, `consensus-result`, is short the same way, and
-no contract check of its result is built yet. The
+a contract takes its comparison on the two submitted texts as well. The
 `source` stage of a run with small documents is short too: 63 steps on the parity
 gate's two documents, 158 on the three documents of a real impact claim.
 

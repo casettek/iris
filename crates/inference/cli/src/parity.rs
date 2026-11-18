@@ -2,6 +2,7 @@
 //! checked against direct generation position by position. Every worker owns its
 //! runtime state.
 mod challenge;
+mod consensus;
 mod source;
 pub(crate) mod compare;
 
@@ -162,6 +163,10 @@ fn outcomes(report: &Value) -> Value {
                 .as_array()
                 .map_or(0, |faults| faults.len().saturating_sub(1)),
         },
+        "two_models_agree": {
+            "checkpoints": report["consensus"]["checkpoints"],
+            "replayed": report["consensus"]["replayed"],
+        },
         "cheating_is_caught": caught,
     })
 }
@@ -198,6 +203,14 @@ fn outcome_lines(outcomes: &Value) -> Vec<String> {
         lines.push(format!(
             "a source is held: 1 claim with a source, {} checkpoints the same through Raster and natively and its record the same as direct inference; {} bad sources finish through both and record the fault",
             source["checkpoints"], source["bad_sources"]
+        ));
+    }
+    let consensus = &outcomes["two_models_agree"];
+    if consensus["checkpoints"].is_u64() {
+        lines.push(format!(
+            "two models agree: 1 consensus claim with this model and the other family's, {} checkpoints the same through Raster and natively and its results the same as direct inference; a false checkpoint in the second inference found and replayed ({})",
+            consensus["checkpoints"],
+            consensus["replayed"].as_str().unwrap_or_default()
         ));
     }
     let caught = &outcomes["cheating_is_caught"];
@@ -416,6 +429,17 @@ fn run_suite(
     println!("Running the source leg...");
     report["source"] = source::run_source_leg(root, run_dir, &exe, &raster, &model_path, &model)
         .context("source leg")?;
+    write_json(&run_dir.join("report.json"), report)?;
+    // Its challenger replays a stage through authenticated Raster, as the
+    // challenge leg does.
+    if skip_challenges {
+        report["consensus"] = json!("skipped");
+    } else {
+        println!("Running the consensus leg...");
+        report["consensus"] =
+            consensus::run_consensus_leg(root, run_dir, &exe, &raster, &model_path, &model)
+                .context("consensus leg")?;
+    }
     write_json(&run_dir.join("report.json"), report)?;
     let mut selected = BTreeSet::new();
     let mut logit_vectors = BTreeSet::new();

@@ -62,6 +62,15 @@ impl Pipeline {
         }
     }
 
+    /// The inputs of the result stage that are an inference's last check, in
+    /// the order of the inferences.
+    pub fn result_inputs(self) -> &'static [&'static str] {
+        match self {
+            Self::Single => &["check"],
+            Self::Consensus => &["first", "second"],
+        }
+    }
+
     pub fn is_default(&self) -> bool {
         *self == Self::default()
     }
@@ -100,14 +109,12 @@ impl Pipeline {
         let labels: Vec<String> = (0..parts.len()).map(|n| self.label(n)).collect();
         let stages_dir = stage_projects_dir(parts[0])?;
         // What the result stage reads of each inference: its last check.
-        let checks = match self {
-            Self::Single => format!("inputs.check = {{ from = \"{}\" }}\n", last_check(&labels[0])),
-            Self::Consensus => format!(
-                "inputs.first = {{ from = \"{}\" }}\ninputs.second = {{ from = \"{}\" }}\n",
-                last_check(&labels[0]),
-                last_check(&labels[1]),
-            ),
-        };
+        let checks: String = self
+            .result_inputs()
+            .iter()
+            .zip(&labels)
+            .map(|(input, label)| format!("inputs.{input} = {{ from = \"{}\" }}\n", last_check(label)))
+            .collect();
         let result = format!(
             "\n[[chain.stage]]\nname = \"{RESULT_STAGE}\"\n{}{checks}{}",
             project_line(&stages_dir, self.result_program()),

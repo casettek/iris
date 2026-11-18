@@ -56,8 +56,7 @@ pub struct ClaimBuildResult {
     pub checkpoint_hashes_path: PathBuf,
     pub claim_bundle_path: PathBuf,
     /// What a claimer would submit to a contract. Absent when the chain
-    /// published no final record to submit, and for a pipeline of several
-    /// inferences, whose submission is not built.
+    /// published no final record to submit.
     pub claim_submission_path: Option<PathBuf>,
     /// The first inference's result: the whole result of a pipeline of one.
     pub final_result: Option<InferenceResult>,
@@ -239,24 +238,34 @@ fn write_claim_result(
             manifest_path,
             prepared_run_path.as_deref(),
         )?;
-    // The submission is stated over the checkpoint list written just above.
-    // That of a pipeline of several inferences is not built.
-    let claim_submission_path = checkpointed
+    // The submission is stated over the checkpoint list written just above:
+    // each inference's result, and what a consensus states of them.
+    let results: Vec<&InferenceResult> = checkpointed
         .final_result
-        .as_ref()
-        .filter(|_| prepared_run.pipeline.inferences() == 1)
-        .map(|result| -> Result<PathBuf> {
-            let submission = ClaimSubmission::from_run(
-                prepared_run.pipeline,
-                result,
-                prepared_run.first()?.prompt.source.as_ref(),
-                &checkpointed.chain_dir,
-            )?;
-            let path = checkpointed.chain_dir.join(CLAIM_SUBMISSION_JSON);
-            inference_artifacts::write_json(&path, &submission)?;
-            Ok(path)
-        })
-        .transpose()?;
+        .iter()
+        .chain(checkpointed.consensus.iter().map(|consensus| &consensus.second))
+        .collect();
+    let consensus = checkpointed.consensus.as_ref().map(|consensus| {
+        inference_artifacts::contract::SubmittedConsensus {
+            same_input: consensus.same_input,
+            agree: consensus.agree,
+            code: consensus.code,
+        }
+    });
+    let claim_submission_path = if results.len() == prepared_run.pipeline.inferences() {
+        let submission = ClaimSubmission::from_run(
+            prepared_run.pipeline,
+            &results,
+            consensus,
+            prepared_run.first()?.prompt.source.as_ref(),
+            &checkpointed.chain_dir,
+        )?;
+        let path = checkpointed.chain_dir.join(CLAIM_SUBMISSION_JSON);
+        inference_artifacts::write_json(&path, &submission)?;
+        Some(path)
+    } else {
+        None
+    };
     Ok(ClaimBuildResult {
         pipeline: prepared_run.pipeline,
         chain_dir: checkpointed.chain_dir,

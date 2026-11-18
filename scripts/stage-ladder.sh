@@ -35,6 +35,7 @@ samples() {
     sequence-check) echo "check_c0 check_c1" ;;
     prompt-source) echo "source" ;;
     claim-result) echo "result" ;;
+    consensus-result) echo "result" ;;
     esac
 }
 # Where a program's sampled stages ran. The source stage is only in the claim
@@ -43,6 +44,7 @@ samples() {
 inputs_of() {
     case $1 in
     prompt-source | claim-result) echo "$run/source/honest/raster" ;;
+    consensus-result) echo "$run/consensus/claim/raster" ;;
     *) echo "$run/over-window/raster" ;;
     esac
 }
@@ -50,7 +52,7 @@ inputs_of() {
 # but for the result stage, which is a step per form and three more.
 window_of() {
     case $1 in
-    claim-result) echo 2 ;;
+    claim-result | consensus-result) echo 2 ;;
     *) echo "${IRIS_LADDER_WINDOW:-32}" ;;
     esac
 }
@@ -107,10 +109,10 @@ ladder() (
 # The run's report names its bundle, and the bundle's family has its own layer
 # program and may have no stage for per-layer inputs.
 tag=""
-family_programs=(prompt-source prompt-bind prompt-check input-embedding prefill-prepare-aux prefill-range sequence-check claim-result)
+family_programs=(prompt-source prompt-bind prompt-check input-embedding prefill-prepare-aux prefill-range sequence-check claim-result consensus-result)
 if grep -q '"bundle": *"parity-mistral"' "$run/report.json" 2>/dev/null; then
     tag="-mistral"
-    family_programs=(prompt-source prompt-bind prompt-check input-embedding layer-mistral sequence-check claim-result)
+    family_programs=(prompt-source prompt-bind prompt-check input-embedding layer-mistral sequence-check claim-result consensus-result)
 fi
 programs=("$@")
 [ ${#programs[@]} -eq 0 ] && programs=("${family_programs[@]}")

@@ -52,7 +52,7 @@ pub const CONTRACT_PINS_JSON: &str = "contract_pins.json";
 /// Written beside a claim's `claim_bundle.json`.
 pub const CLAIM_SUBMISSION_JSON: &str = "claim_submission.json";
 pub const CONTRACT_PINS_VERSION: u32 = 2;
-pub const CLAIM_SUBMISSION_VERSION: u32 = 4;
+pub const CLAIM_SUBMISSION_VERSION: u32 = 5;
 
 /// What a contract pins before any claim arrives, as two entries it opts
 /// into: a pipeline and a model. The model import writes both.
@@ -164,6 +164,51 @@ impl RequiredOrigin {
             forms_sha256: source_core::forms_id(&matched),
         }
     }
+
+    /// What the consensus result step states of two outputs read by these
+    /// forms, when both claim records are valid and name one input. A
+    /// contract has held the submission to both before it asks.
+    pub fn consensus_of(&self, first_output: &str, second_output: &str) -> SubmittedConsensus {
+        let valid = || source_core::Claimed {
+            statement: &[],
+            output_text_sha256: &[],
+            valid: true,
+        };
+        let record = source_core::close_consensus(
+            source_core::run_consensus(&self.forms, first_output, second_output, true),
+            valid(),
+            valid(),
+        );
+        SubmittedConsensus {
+            same_input: record.same_input,
+            agree: record.agree,
+            code: record.code,
+        }
+    }
+}
+
+/// What one inference of a claim submits: its plaintext, its claim record,
+/// and what the result stage made of the plaintext.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SubmittedInference {
+    /// The output plaintext: what the contract acts on.
+    pub output_text: String,
+    pub record: SubmittedRecord,
+    #[serde(default)]
+    pub result: SubmittedResult,
+}
+
+/// What a consensus claim's result stage states of its two inferences, as
+/// submitted: see `ConsensusRecord` in the `consensus-result` stage.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SubmittedConsensus {
+    /// The two inferences name the same input text and source.
+    pub same_input: bool,
+    /// Both records are valid, they name the same input, and the outputs
+    /// agree.
+    pub agree: bool,
+    /// The code both outputs have, when they agree and the run names forms.
+    pub code: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -190,17 +235,17 @@ pub fn source_record_id(record: &source_core::SourceRecord) -> String {
     })
 }
 
-/// What a claimer submits: the plaintext, the record, the result, and the
-/// commitment to its checkpoints, which a contract stores without reading.
+/// What a claimer submits: the input it ran, what each inference claims, the
+/// pipeline's own result, and the commitment to its checkpoints, which a
+/// contract stores without reading.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ClaimSubmission {
     pub version: u32,
     /// The pipeline the claim is of. A contract accepts claims of one.
     pub pipeline: Pipeline,
-    /// The output plaintext: what the contract acts on.
-    pub output_text: String,
     /// The claimer's commitment to the input it ran. Today the SHA-256 of the
-    /// prompt text. The contract takes it as given.
+    /// prompt text. The contract takes it as given. Every inference's
+    /// statement is recomputed over it, so all of them ran this input.
     pub input_text_sha256: String,
     /// The digest of the source record the claimer says the text was built
     /// from, or 64 zeros. The statement names it, so a record that is valid
@@ -211,10 +256,13 @@ pub struct ClaimSubmission {
     /// source. A contract reads the signer and the recipe from it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source: Option<source_core::SourceRecord>,
-    pub record: SubmittedRecord,
-    /// What the result stage made of the output.
-    #[serde(default)]
-    pub result: SubmittedResult,
+    /// What each inference claims, in the order the pipeline runs them: one
+    /// for the `single` pipeline, two for `consensus`.
+    pub inferences: Vec<SubmittedInference>,
+    /// What a consensus claim states of its two inferences. Absent for a
+    /// pipeline of one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub consensus: Option<SubmittedConsensus>,
     /// SHA-256 of the claim's `checkpoints.txt`: one checkpoint hash per
     /// stage, in order. This is the claim's commitment to every stage
     /// boundary.
@@ -252,6 +300,19 @@ pub enum SubmissionRejection {
     AnotherPipeline {
         expected: Pipeline,
         submitted: Pipeline,
+    },
+    /// The claim does not hold what a claim of its pipeline does: another
+    /// number of inferences, or a consensus where there is none to state.
+    AnotherShape {
+        pipeline: Pipeline,
+        inferences: usize,
+        consensus: bool,
+    },
+    /// The submitted agreement is not what the contract's forms give the two
+    /// submitted outputs.
+    AnotherConsensus {
+        expected: SubmittedConsensus,
+        submitted: SubmittedConsensus,
     },
     /// The output was compared with other forms than the contract's.
     AnotherForms { expected: String, submitted: String },
@@ -321,6 +382,26 @@ impl std::fmt::Display for SubmissionRejection {
             } => write!(
                 f,
                 "the claim is of the `{submitted}` pipeline, but the contract accepts `{expected}`"
+            ),
+            Self::AnotherShape {
+                pipeline,
+                inferences,
+                consensus,
+            } => write!(
+                f,
+                "a claim of the `{pipeline}` pipeline holds {} inference(s){}, and this one holds {inferences}{}",
+                pipeline.inferences(),
+                if pipeline.inferences() > 1 { " and what they agree on" } else { "" },
+                if *consensus { " and an agreement" } else { "" },
+            ),
+            Self::AnotherConsensus {
+                expected,
+                submitted,
+            } => write!(
+                f,
+                "the claim states agreement {} with code {}, but the contract's forms give the \
+                 submitted outputs agreement {} with code {}",
+                submitted.agree, submitted.code, expected.agree, expected.code
             ),
             Self::AnotherForms {
                 expected,
@@ -521,10 +602,17 @@ pub enum RecordBinding {
     AnotherStage { expected: &'static str },
 }
 
-/// What the result stage's output holds, as a contract compares it: the claim
-/// record it was given, and the result.
+/// What a result stage's output states, as the caller decoded it: for each
+/// inference the claim record it was given and what it made of the output,
+/// and for a consensus the agreement.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResultInOutput {
+    pub inferences: Vec<StatedInference>,
+    pub consensus: Option<SubmittedConsensus>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StatedInference {
     pub record: SubmittedRecord,
     pub result: SubmittedResult,
 }
@@ -538,28 +626,22 @@ impl ContractPins {
     /// The pins of an import: its model, and the pipeline its chain template
     /// describes, with the program id each stage project has locked.
     pub fn from_import(manifest: &ModelManifest, template: &str) -> Result<Self> {
-        let stage_programs = pipeline_wiring(template)?
-            .into_iter()
-            .map(|(project, chained_inputs)| {
-                Ok(StageProgram {
-                    stage: project_name(&project)?,
-                    program_commitment: locked_program_commitment(&project)?,
-                    chained_inputs,
-                })
-            })
-            .collect::<Result<Vec<_>>>()?;
         Ok(Self {
             version: CONTRACT_PINS_VERSION,
-            pipeline: PipelinePins {
-                family: manifest.family.clone(),
-                stage_programs,
-            },
-            model: ModelPins {
-                model_id: manifest.model_id.clone(),
-                model_commitments: manifest.model_commitments.clone(),
-                range_size: manifest.range_size,
-            },
+            pipeline: PipelinePins::from_template(manifest.family.clone(), template)?,
+            model: ModelPins::of(manifest),
         })
+    }
+}
+
+impl ModelPins {
+    /// What a contract pins of an imported model.
+    pub fn of(manifest: &ModelManifest) -> Self {
+        Self {
+            model_id: manifest.model_id.clone(),
+            model_commitments: manifest.model_commitments.clone(),
+            range_size: manifest.range_size,
+        }
     }
 }
 
@@ -571,6 +653,33 @@ impl ModelPins {
 }
 
 impl PipelinePins {
+    /// The stage programs a chain template names, with the program id each
+    /// stage project has locked and the inputs each takes from earlier
+    /// stages. `family` names the model families whose programs these are.
+    pub fn from_template(family: String, template: &str) -> Result<Self> {
+        let stage_programs = pipeline_wiring(template)?
+            .into_iter()
+            .map(|(project, chained_inputs)| {
+                Ok(StageProgram {
+                    stage: project_name(&project)?,
+                    program_commitment: locked_program_commitment(&project)?,
+                    chained_inputs,
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        Ok(Self {
+            family,
+            stage_programs,
+        })
+    }
+
+    /// Whether this checkpoint names the approved program of this stage
+    /// project.
+    fn runs(&self, checkpoint: &Checkpoint, stage: &str) -> bool {
+        self.program(&checkpoint.program_commitment)
+            .is_some_and(|program| program.stage == stage)
+    }
+
     /// The approved program with this id, in lowercase hex.
     pub fn program(&self, program_commitment: &str) -> Option<&StageProgram> {
         self.stage_programs
@@ -598,9 +707,14 @@ fn project_name(project: &Path) -> Result<String> {
 }
 
 /// A stage name with its indexes blanked, so `range_p3_l{l-1}` and
-/// `range_p{j}_l{l}` name the same kind of stage.
+/// `range_p{j}_l{l}` name the same kind of stage. The label of the inference
+/// a stage belongs to is kept as it is: two inferences of one chain may run
+/// different programs for stages of one name.
 fn stage_shape(name: &str) -> String {
-    let mut shape = String::new();
+    let (mut shape, name) = match crate::pipeline::labelled_name(name) {
+        Some((inference, name)) => (crate::pipeline::inference_label(inference), name),
+        None => (String::new(), name),
+    };
     let mut chars = name.chars().peekable();
     while let Some(c) = chars.next() {
         let close = match c {
@@ -752,36 +866,61 @@ pub fn locked_program_commitment(stage_project: &Path) -> Result<String> {
 }
 
 impl ClaimSubmission {
-    /// What a claimer submits for a finished run: the last check's record and
-    /// text, the result stage's code, the source record when the run has one,
-    /// and the commitment to the checkpoint list in the run directory.
+    /// What a claimer submits for a finished run: each inference's last
+    /// check's record and text with the result stage's code, what a consensus
+    /// states of them, the source record when the run has one, and the
+    /// commitment to the checkpoint list in the run directory.
     pub fn from_run(
         pipeline: Pipeline,
-        result: &InferenceResult,
+        results: &[&InferenceResult],
+        consensus: Option<SubmittedConsensus>,
         source: Option<&source_core::SourceRecord>,
         chain_dir: &Path,
     ) -> Result<Self> {
+        let first = results.first().context("a claim holds an inference")?;
         let checkpoints_path = chain_dir.join(crate::checkpoint::CHECKPOINTS_TXT);
         let checkpoints = fs::read(&checkpoints_path)
             .with_context(|| format!("failed to read {}", checkpoints_path.display()))?;
         Ok(Self {
             version: CLAIM_SUBMISSION_VERSION,
             pipeline,
-            output_text: result.generated_text.clone(),
-            input_text_sha256: result.input_text_sha256.clone(),
-            source_sha256: result.source_sha256.clone(),
+            input_text_sha256: first.input_text_sha256.clone(),
+            source_sha256: first.source_sha256.clone(),
             source: source.cloned(),
-            record: SubmittedRecord {
-                statement_sha256: result.statement_sha256.clone(),
-                output_text_sha256: result.output_text_sha256.clone(),
-                valid: result.valid,
-            },
-            result: SubmittedResult {
-                code: result.result_code,
-                forms_sha256: result.result_forms_sha256.clone(),
-            },
+            inferences: results
+                .iter()
+                .map(|result| SubmittedInference {
+                    output_text: result.generated_text.clone(),
+                    record: SubmittedRecord {
+                        statement_sha256: result.statement_sha256.clone(),
+                        output_text_sha256: result.output_text_sha256.clone(),
+                        valid: result.valid,
+                    },
+                    result: SubmittedResult {
+                        code: result.result_code,
+                        forms_sha256: result.result_forms_sha256.clone(),
+                    },
+                })
+                .collect(),
+            consensus,
             checkpoints_sha256: hex::encode(Sha256::digest(checkpoints)),
         })
+    }
+
+    /// What the result stage's output must state for this submission to be
+    /// its claim's.
+    pub fn stated(&self) -> ResultInOutput {
+        ResultInOutput {
+            inferences: self
+                .inferences
+                .iter()
+                .map(|inference| StatedInference {
+                    record: inference.record.clone(),
+                    result: inference.result.clone(),
+                })
+                .collect(),
+            consensus: self.consensus,
+        }
     }
 }
 
@@ -821,42 +960,69 @@ pub fn check_pipeline(
             submitted: submission.pipeline,
         });
     }
+    // A claim of a pipeline holds one entry per inference it makes, and an
+    // agreement exactly when the pipeline states one.
+    let states_consensus = required == Pipeline::Consensus;
+    if submission.inferences.len() != required.inferences()
+        || submission.consensus.is_some() != states_consensus
+    {
+        return Err(SubmissionRejection::AnotherShape {
+            pipeline: required,
+            inferences: submission.inferences.len(),
+            consensus: submission.consensus.is_some(),
+        });
+    }
     Ok(())
 }
 
-/// The checks a contract makes on submission, before it opens a challenge
-/// window. One equality covers the model and every parameter; the other two
-/// cover the output.
+/// The checks a contract makes on submission of one inference, before it
+/// opens a challenge window: `model` is the model the contract pins for that
+/// inference. One equality covers the model and every parameter; the other
+/// two cover the output.
+///
+/// Every inference's statement is recomputed over the submission's one input
+/// hash and source digest, so a claim of several inferences that passes this
+/// for each ran them all on one input.
 pub fn check_submission(
-    pins: &ContractPins,
+    model: &ModelPins,
     required: RequiredParameters,
     submission: &ClaimSubmission,
+    inference: usize,
 ) -> std::result::Result<(), SubmissionRejection> {
-    if !pins.model.is_consistent() {
+    if !model.is_consistent() {
         return Err(SubmissionRejection::InconsistentPins);
     }
+    let claimed =
+        submission
+            .inferences
+            .get(inference)
+            .ok_or(SubmissionRejection::AnotherShape {
+                pipeline: submission.pipeline,
+                inferences: submission.inferences.len(),
+                consensus: submission.consensus.is_some(),
+            })?;
     let expected = expected_statement(
-        &pins.model,
+        model,
         required,
         &submission.input_text_sha256,
         &submission.source_sha256,
     )
-        .ok_or(SubmissionRejection::MalformedInputCommitment)?;
+    .ok_or(SubmissionRejection::MalformedInputCommitment)?;
     let expected = hex::encode(expected);
-    if submission.record.statement_sha256 != expected {
+    if claimed.record.statement_sha256 != expected {
         return Err(SubmissionRejection::StatementMismatch {
             expected,
-            submitted: submission.record.statement_sha256.clone(),
+            submitted: claimed.record.statement_sha256.clone(),
         });
     }
-    let output = hex::encode(Sha256::digest(submission.output_text.as_bytes()));
-    if submission.record.output_text_sha256 != output {
+    let output = hex::encode(Sha256::digest(claimed.output_text.as_bytes()));
+    if claimed.record.output_text_sha256 != output {
         return Err(SubmissionRejection::OutputMismatch {
             expected: output,
-            submitted: submission.record.output_text_sha256.clone(),
+            submitted: claimed.record.output_text_sha256.clone(),
         });
     }
-    if !submission.record.valid {
+    if !claimed.record.valid {
         return Err(SubmissionRejection::NotValid);
     }
     Ok(())
@@ -908,20 +1074,36 @@ pub fn check_origin(
             }
         }
     }
-    // The output text is held to the record by `check_submission`, so the
+    // Each output text is held to its record by `check_submission`, so the
     // result taken on it here is the one the claim's own output has.
-    let expected = required.result_of(&submission.output_text);
-    if submission.result.forms_sha256 != expected.forms_sha256 {
-        return Err(SubmissionRejection::AnotherForms {
-            expected: expected.forms_sha256,
-            submitted: submission.result.forms_sha256.clone(),
-        });
+    for claimed in &submission.inferences {
+        let expected = required.result_of(&claimed.output_text);
+        if claimed.result.forms_sha256 != expected.forms_sha256 {
+            return Err(SubmissionRejection::AnotherForms {
+                expected: expected.forms_sha256,
+                submitted: claimed.result.forms_sha256.clone(),
+            });
+        }
+        if claimed.result.code != expected.code {
+            return Err(SubmissionRejection::AnotherResult {
+                expected: expected.code,
+                submitted: claimed.result.code,
+            });
+        }
     }
-    if submission.result.code != expected.code {
-        return Err(SubmissionRejection::AnotherResult {
-            expected: expected.code,
-            submitted: submission.result.code,
-        });
+    // And the agreement a consensus states of them is the one these forms
+    // give the two outputs. `check_submission` held both records to be valid
+    // and of one input.
+    if let (Some(submitted), [first, second]) =
+        (submission.consensus, submission.inferences.as_slice())
+    {
+        let expected = required.consensus_of(&first.output_text, &second.output_text);
+        if submitted != expected {
+            return Err(SubmissionRejection::AnotherConsensus {
+                expected,
+                submitted,
+            });
+        }
     }
     Ok(())
 }
@@ -1023,13 +1205,13 @@ impl CheckpointList {
     /// approved set. The challenger states no program.
     pub fn admit_stage_challenge(
         &self,
-        pins: &ContractPins,
+        pins: &PipelinePins,
         challenged_stage: u32,
         checkpoint: &Checkpoint,
     ) -> std::result::Result<StageAdmission, ChallengeRefusal> {
         let checkpoint = self.opened(challenged_stage, checkpoint)?;
         let program_commitment = checkpoint.program_commitment.clone();
-        Ok(if pins.pipeline.approves(&program_commitment) {
+        Ok(if pins.approves(&program_commitment) {
             StageAdmission::Disputed { program_commitment }
         } else {
             StageAdmission::UnapprovedProgram { program_commitment }
@@ -1049,7 +1231,7 @@ impl CheckpointList {
     /// of the right kind, or an empty value.
     pub fn check_link(
         &self,
-        pins: &ContractPins,
+        pins: &PipelinePins,
         stage: u32,
         checkpoint: &Checkpoint,
         input_manifest: &[u8],
@@ -1066,7 +1248,6 @@ impl CheckpointList {
             });
         }
         let chained = pins
-            .pipeline
             .program(&checkpoint.program_commitment)
             .ok_or(ChallengeRefusal::UnapprovedStage { stage })?
             .chained_input(input)
@@ -1101,7 +1282,6 @@ impl CheckpointList {
             })?,
         )?;
         let of_right_kind = pins
-            .pipeline
             .program(&producer.program_commitment)
             .is_some_and(|program| chained.producers.contains(&program.stage));
         if !of_right_kind {
@@ -1120,113 +1300,132 @@ impl CheckpointList {
         Ok(LinkCheck::Linked)
     }
 
-    /// Holds a presented checkpoint, `from_end` places before the end of the
-    /// list, to the list, to the program that states a record there, and to
-    /// the output presented with it.
-    fn opened_record<'a>(
+    /// Holds the claim's last checkpoint to the list and to the result
+    /// program of the claim's pipeline. `Err` with how the claim is unbound
+    /// when the last stage is another program.
+    fn opened_result<'a>(
         &self,
-        pins: &ContractPins,
-        from_end: usize,
-        stage: &'static str,
-        checkpoint: &'a Checkpoint,
-        output: &[u8],
-    ) -> std::result::Result<Option<RecordBinding>, ChallengeRefusal> {
+        pins: &PipelinePins,
+        submission: &ClaimSubmission,
+        last_checkpoint: &'a Checkpoint,
+    ) -> std::result::Result<std::result::Result<&'a Checkpoint, RecordBinding>, ChallengeRefusal>
+    {
         let index = self
             .hashes
             .len()
-            .checked_sub(from_end + 1)
+            .checked_sub(1)
             .ok_or(ChallengeRefusal::UnknownStage {
                 challenged: 0,
-                stages: self.hashes.len(),
+                stages: 0,
             })?;
-        let checkpoint = self.opened(index as u32, checkpoint)?;
-        let is_stage = pins
-            .pipeline
-            .program(&checkpoint.program_commitment)
-            .is_some_and(|program| program.stage == stage);
-        if !is_stage {
-            return Ok(Some(RecordBinding::AnotherStage { expected: stage }));
-        }
-        let presented = hex::encode(Sha256::digest(output));
-        if checkpoint.output_sha256 != presented {
-            return Ok(Some(RecordBinding::NotTheLastOutput {
-                committed: checkpoint.output_sha256.clone(),
-                presented,
-            }));
-        }
-        Ok(None)
+        let last = self.opened(index as u32, last_checkpoint)?;
+        let expected = submission.pipeline.result_program();
+        Ok(if pins.runs(last, expected) {
+            Ok(last)
+        } else {
+            Err(RecordBinding::AnotherStage { expected })
+        })
     }
 
-    /// Whether the submitted record is the last check's: `check_checkpoint` is
-    /// the claim's checkpoint before its last, `check_output` that stage's
-    /// `output.bin`, and `record_in_output` the claim record decoded from it
-    /// by the caller.
+    /// Whether the record submitted for one inference is that inference's
+    /// last check's. `last_checkpoint` is the claim's last checkpoint, the
+    /// result stage's, which names the check it read for each inference.
+    /// `check_checkpoint` is the checkpoint it names for this one,
+    /// `check_output` that stage's `output.bin`, and `record_in_output` the
+    /// claim record decoded from it by the caller.
     ///
     /// The record is held to the check and not to the result stage after it,
     /// so the verdict a contract accepts rests on the stage that scored the
-    /// output.
+    /// output. That the result stage read that check's output and no other
+    /// value is the link comparison's to hold.
+    #[allow(clippy::too_many_arguments)]
     pub fn check_record_binding(
         &self,
-        pins: &ContractPins,
+        pins: &PipelinePins,
         submission: &ClaimSubmission,
+        inference: usize,
+        last_checkpoint: &Checkpoint,
         check_checkpoint: &Checkpoint,
         check_output: &[u8],
         record_in_output: &SubmittedRecord,
     ) -> std::result::Result<RecordBinding, ChallengeRefusal> {
-        if let Some(unbound) =
-            self.opened_record(pins, 1, RECORD_STAGE, check_checkpoint, check_output)?
-        {
-            return Ok(unbound);
+        let last = match self.opened_result(pins, submission, last_checkpoint)? {
+            Ok(last) => last,
+            Err(unbound) => return Ok(unbound),
+        };
+        // The check the result stage read for this inference.
+        let producer = submission
+            .pipeline
+            .result_inputs()
+            .get(inference)
+            .and_then(|input| last.input_sources.get(*input));
+        let (Some(&producer), Some(claimed)) = (producer, submission.inferences.get(inference))
+        else {
+            return Ok(RecordBinding::AnotherStage {
+                expected: RECORD_STAGE,
+            });
+        };
+        let check = self.opened(producer, check_checkpoint)?;
+        if !pins.runs(check, RECORD_STAGE) {
+            return Ok(RecordBinding::AnotherStage {
+                expected: RECORD_STAGE,
+            });
         }
-        Ok(if *record_in_output == submission.record {
+        let presented = hex::encode(Sha256::digest(check_output));
+        if check.output_sha256 != presented {
+            return Ok(RecordBinding::NotTheLastOutput {
+                committed: check.output_sha256.clone(),
+                presented,
+            });
+        }
+        Ok(if *record_in_output == claimed.record {
             RecordBinding::Bound
         } else {
             RecordBinding::AnotherRecord
         })
     }
 
-    /// Whether the submitted result is the last stage's: `last_checkpoint` is
-    /// the claim's last checkpoint, `last_output` that stage's `output.bin`,
-    /// and `in_output` what the caller decoded from it. The result stage
-    /// states the claim record it was given beside its code, and both must
-    /// be the ones submitted. The stage must run the result program of the
-    /// claim's pipeline, which `check_pipeline` held to the contract's.
+    /// Whether the submitted results are the last stage's: `last_checkpoint`
+    /// is the claim's last checkpoint, `last_output` that stage's
+    /// `output.bin`, and `in_output` what the caller decoded from it. The
+    /// result stage states each claim record it was given beside what it
+    /// made of the output, and all of it must be what was submitted. The
+    /// stage must run the result program of the claim's pipeline, which
+    /// `check_pipeline` held to the contract's.
     pub fn check_result_binding(
         &self,
-        pins: &ContractPins,
+        pins: &PipelinePins,
         submission: &ClaimSubmission,
         last_checkpoint: &Checkpoint,
         last_output: &[u8],
         in_output: &ResultInOutput,
     ) -> std::result::Result<RecordBinding, ChallengeRefusal> {
-        if let Some(unbound) =
-            self.opened_record(
-                pins,
-                0,
-                submission.pipeline.result_program(),
-                last_checkpoint,
-                last_output,
-            )?
-        {
-            return Ok(unbound);
+        let last = match self.opened_result(pins, submission, last_checkpoint)? {
+            Ok(last) => last,
+            Err(unbound) => return Ok(unbound),
+        };
+        let presented = hex::encode(Sha256::digest(last_output));
+        if last.output_sha256 != presented {
+            return Ok(RecordBinding::NotTheLastOutput {
+                committed: last.output_sha256.clone(),
+                presented,
+            });
         }
-        Ok(
-            if in_output.record == submission.record && in_output.result == submission.result {
-                RecordBinding::Bound
-            } else {
-                RecordBinding::AnotherRecord
-            },
-        )
+        Ok(if *in_output == submission.stated() {
+            RecordBinding::Bound
+        } else {
+            RecordBinding::AnotherRecord
+        })
     }
 }
 
 /// The first stage of a claim that names a program outside the approved set,
 /// which is the stage a challenger would point a contract at.
-pub fn first_unapproved_stage(pins: &ContractPins, trace: &CheckpointTrace) -> Option<u32> {
+pub fn first_unapproved_stage(pins: &PipelinePins, trace: &CheckpointTrace) -> Option<u32> {
     trace
         .checkpoints
         .iter()
-        .position(|checkpoint| !pins.pipeline.approves(&checkpoint.program_commitment))
+        .position(|checkpoint| !pins.approves(&checkpoint.program_commitment))
         .map(|index| index as u32)
 }
 
@@ -1546,6 +1745,22 @@ mod tests {
         }
     }
 
+    /// What an inference on this model submits for this output of the
+    /// fixture's input.
+    fn inference(model: &ModelPins, input: &str, output: &str) -> SubmittedInference {
+        SubmittedInference {
+            output_text: output.to_string(),
+            record: SubmittedRecord {
+                statement_sha256: hex::encode(
+                    expected_statement(model, REQUIRED, input, &"00".repeat(32)).unwrap(),
+                ),
+                output_text_sha256: hex::encode(Sha256::digest(output.as_bytes())),
+                valid: true,
+            },
+            result: no_source(forms()).result_of(output),
+        }
+    }
+
     /// A stage's input list as the chain writes it.
     fn manifest(inputs: &[(&str, &str)]) -> Vec<u8> {
         let entries = inputs
@@ -1610,19 +1825,11 @@ mod tests {
             let submission = ClaimSubmission {
                 version: CLAIM_SUBMISSION_VERSION,
                 pipeline: Pipeline::Single,
-                output_text: String::from("ZK"),
-                record: SubmittedRecord {
-                    statement_sha256: hex::encode(
-                        expected_statement(&pins.model, REQUIRED, &input, &"00".repeat(32))
-                            .unwrap(),
-                    ),
-                    output_text_sha256: hex::encode(Sha256::digest(b"ZK")),
-                    valid: true,
-                },
+                inferences: vec![inference(&pins.model, &input, "ZK")],
+                consensus: None,
                 input_text_sha256: input,
                 source_sha256: "00".repeat(32),
                 source: None,
-                result: no_source(forms()).result_of("ZK"),
                 checkpoints_sha256: hex::encode(Sha256::digest(&list)),
             };
             Self {
@@ -1685,7 +1892,7 @@ mod tests {
                 .get(input)
                 .and_then(|index| self.trace.checkpoints.get(*index as usize));
             self.opened().check_link(
-                &pins(),
+                &pins().pipeline,
                 stage,
                 checkpoint,
                 &self.manifests[stage as usize],
@@ -1699,7 +1906,7 @@ mod tests {
     fn an_honest_submission_opens_a_window() {
         let claim = Claim::honest();
         assert_eq!(
-            check_submission(&pins(), REQUIRED, &claim.submission),
+            check_submission(&pins().model, REQUIRED, &claim.submission, 0),
             Ok(())
         );
     }
@@ -1709,7 +1916,7 @@ mod tests {
         let submission = Claim::honest().submission;
         let mismatch = |pins: &ContractPins, required: RequiredParameters| {
             matches!(
-                check_submission(pins, required, &submission),
+                check_submission(&pins.model, required, &submission, 0),
                 Err(SubmissionRejection::StatementMismatch { .. })
             )
         };
@@ -1743,7 +1950,7 @@ mod tests {
         let mut other_input = submission.clone();
         other_input.input_text_sha256 = hex::encode([6; 32]);
         assert!(matches!(
-            check_submission(&pins(), REQUIRED, &other_input),
+            check_submission(&pins().model, REQUIRED, &other_input, 0),
             Err(SubmissionRejection::StatementMismatch { .. })
         ));
     }
@@ -1753,23 +1960,23 @@ mod tests {
         let submission = Claim::honest().submission;
 
         let mut other_text = submission.clone();
-        other_text.output_text = String::from("ZK!");
+        other_text.inferences[0].output_text = String::from("ZK!");
         assert!(matches!(
-            check_submission(&pins(), REQUIRED, &other_text),
+            check_submission(&pins().model, REQUIRED, &other_text, 0),
             Err(SubmissionRejection::OutputMismatch { .. })
         ));
 
         let mut faulted = submission.clone();
-        faulted.record.valid = false;
+        faulted.inferences[0].record.valid = false;
         assert_eq!(
-            check_submission(&pins(), REQUIRED, &faulted),
+            check_submission(&pins().model, REQUIRED, &faulted, 0),
             Err(SubmissionRejection::NotValid)
         );
 
         let mut malformed = submission;
         malformed.input_text_sha256 = String::from("prompt");
         assert_eq!(
-            check_submission(&pins(), REQUIRED, &malformed),
+            check_submission(&pins().model, REQUIRED, &malformed, 0),
             Err(SubmissionRejection::MalformedInputCommitment)
         );
     }
@@ -1780,7 +1987,7 @@ mod tests {
         let mut pins = pins();
         pins.model.model_commitments[0].commitment = hex::encode([8; 32]);
         assert_eq!(
-            check_submission(&pins, REQUIRED, &submission),
+            check_submission(&pins.model, REQUIRED, &submission, 0),
             Err(SubmissionRejection::InconsistentPins)
         );
     }
@@ -1791,12 +1998,12 @@ mod tests {
         assert_eq!(
             claim
                 .opened()
-                .admit_stage_challenge(&pins(), 2, &claim.trace.checkpoints[2]),
+                .admit_stage_challenge(&pins().pipeline, 2, &claim.trace.checkpoints[2]),
             Ok(StageAdmission::Disputed {
                 program_commitment: hex::encode(CHECK)
             })
         );
-        assert_eq!(first_unapproved_stage(&pins(), &claim.trace), None);
+        assert_eq!(first_unapproved_stage(&pins().pipeline, &claim.trace), None);
 
         // A claimer that swapped a program in the middle of its chain, or
         // named none, and committed to that.
@@ -1807,17 +2014,17 @@ mod tests {
             assert_eq!(
                 swapped
                     .opened()
-                    .admit_stage_challenge(&pins(), 1, &swapped.trace.checkpoints[1]),
+                    .admit_stage_challenge(&pins().pipeline, 1, &swapped.trace.checkpoints[1]),
                 Ok(StageAdmission::UnapprovedProgram {
                     program_commitment: program
                 })
             );
-            assert_eq!(first_unapproved_stage(&pins(), &swapped.trace), Some(1));
+            assert_eq!(first_unapproved_stage(&pins().pipeline, &swapped.trace), Some(1));
             // The stages around it are still ordinary disputes.
             assert!(matches!(
                 swapped
                     .opened()
-                    .admit_stage_challenge(&pins(), 2, &swapped.trace.checkpoints[2]),
+                    .admit_stage_challenge(&pins().pipeline, 2, &swapped.trace.checkpoints[2]),
                 Ok(StageAdmission::Disputed { .. })
             ));
             // Its inputs are not defined, so a link challenge is refused: the
@@ -1843,7 +2050,7 @@ mod tests {
         let opened = claim.opened();
         assert_eq!(opened.len(), 4);
         assert_eq!(
-            opened.admit_stage_challenge(&pins(), 4, &claim.trace.checkpoints[2]),
+            opened.admit_stage_challenge(&pins().pipeline, 4, &claim.trace.checkpoints[2]),
             Err(ChallengeRefusal::UnknownStage {
                 challenged: 4,
                 stages: 4
@@ -1854,7 +2061,7 @@ mod tests {
         let mut forged = claim.trace.checkpoints[1].clone();
         forged.program_commitment = hex::encode([3; 32]);
         assert!(matches!(
-            opened.admit_stage_challenge(&pins(), 1, &forged),
+            opened.admit_stage_challenge(&pins().pipeline, 1, &forged),
             Err(ChallengeRefusal::NotTheCheckpoint { stage: 1, .. })
         ));
 
@@ -2024,7 +2231,7 @@ mod tests {
         // Another stage's input list.
         assert!(matches!(
             opened.check_link(
-                &pins(),
+                &pins().pipeline,
                 2,
                 check,
                 &claim.manifests[1],
@@ -2035,7 +2242,7 @@ mod tests {
         ));
         // The named producer withheld, or another checkpoint in its place.
         assert_eq!(
-            opened.check_link(&pins(), 2, check, &claim.manifests[2], "activations", None),
+            opened.check_link(&pins().pipeline, 2, check, &claim.manifests[2], "activations", None),
             Err(ChallengeRefusal::ProducerNotPresented {
                 stage: 2,
                 producer: 1
@@ -2043,7 +2250,7 @@ mod tests {
         );
         assert!(matches!(
             opened.check_link(
-                &pins(),
+                &pins().pipeline,
                 2,
                 check,
                 &claim.manifests[2],
@@ -2058,97 +2265,442 @@ mod tests {
     fn the_record_is_held_to_the_last_check_and_the_result_to_the_last_stage() {
         let claim = Claim::honest();
         let opened = claim.opened();
+        let programs = pins().pipeline;
         let check = &claim.trace.checkpoints[2];
         let last = &claim.trace.checkpoints[3];
-        let record = &claim.submission.record;
-        assert_eq!(
-            opened.check_record_binding(&pins(), &claim.submission, check, b"last", record),
-            Ok(RecordBinding::Bound)
-        );
+        let record = &claim.submission.inferences[0].record;
+        let bind_record = |check: &Checkpoint, output: &[u8], in_output: &SubmittedRecord| {
+            opened.check_record_binding(
+                &programs,
+                &claim.submission,
+                0,
+                last,
+                check,
+                output,
+                in_output,
+            )
+        };
+        assert_eq!(bind_record(check, b"last", record), Ok(RecordBinding::Bound));
 
         // The check committed a record the claimer did not submit.
         let mut in_output = record.clone();
         in_output.valid = false;
         assert_eq!(
-            opened.check_record_binding(&pins(), &claim.submission, check, b"last", &in_output),
+            bind_record(check, b"last", &in_output),
             Ok(RecordBinding::AnotherRecord)
         );
         // Bytes that are not the check's output prove nothing either way.
         assert!(matches!(
-            opened.check_record_binding(&pins(), &claim.submission, check, b"bound", record),
+            bind_record(check, b"bound", record),
             Ok(RecordBinding::NotTheLastOutput { .. })
         ));
-        // Nor does the result stage's checkpoint stand for the check's.
+        // The check is the one the result stage names as what it read: no
+        // other checkpoint stands for it, the result stage's own included.
         assert!(matches!(
-            opened.check_record_binding(&pins(), &claim.submission, last, b"result", record),
+            bind_record(last, b"result", record),
             Err(ChallengeRefusal::NotTheCheckpoint { stage: 2, .. })
         ));
+        assert!(matches!(
+            bind_record(&claim.trace.checkpoints[1], b"layered", record),
+            Err(ChallengeRefusal::NotTheCheckpoint { stage: 2, .. })
+        ));
+        // And the result stage's checkpoint is the claim's last.
+        assert!(matches!(
+            opened.check_record_binding(
+                &programs,
+                &claim.submission,
+                0,
+                check,
+                check,
+                b"last",
+                record
+            ),
+            Err(ChallengeRefusal::NotTheCheckpoint { stage: 3, .. })
+        ));
+        // A single claim has one inference.
+        assert_eq!(
+            opened.check_record_binding(
+                &programs,
+                &claim.submission,
+                1,
+                last,
+                check,
+                b"last",
+                record
+            ),
+            Ok(RecordBinding::AnotherStage {
+                expected: RECORD_STAGE
+            })
+        );
 
-        let in_output = ResultInOutput {
-            record: record.clone(),
-            result: claim.submission.result.clone(),
-        };
+        let in_output = claim.submission.stated();
         let bind = |in_output: &ResultInOutput, output: &[u8]| {
-            opened.check_result_binding(&pins(), &claim.submission, last, output, in_output)
+            opened.check_result_binding(&programs, &claim.submission, last, output, in_output)
         };
         assert_eq!(bind(&in_output, b"result"), Ok(RecordBinding::Bound));
         // The result stage committed another code, other forms, or a claim
         // record that is not the one submitted.
         let mut other = in_output.clone();
-        other.result.code += 1;
+        other.inferences[0].result.code += 1;
         assert_eq!(bind(&other, b"result"), Ok(RecordBinding::AnotherRecord));
         let mut other = in_output.clone();
-        other.result.forms_sha256 = hex::encode([9; 32]);
+        other.inferences[0].result.forms_sha256 = hex::encode([9; 32]);
         assert_eq!(bind(&other, b"result"), Ok(RecordBinding::AnotherRecord));
         let mut other = in_output.clone();
-        other.record.valid = false;
+        other.inferences[0].record.valid = false;
         assert_eq!(bind(&other, b"result"), Ok(RecordBinding::AnotherRecord));
         assert!(matches!(
             bind(&in_output, b"last"),
             Ok(RecordBinding::NotTheLastOutput { .. })
         ));
         assert!(matches!(
-            opened.check_result_binding(&pins(), &claim.submission, check, b"last", &in_output),
+            opened.check_result_binding(&programs, &claim.submission, check, b"last", &in_output),
             Err(ChallengeRefusal::NotTheCheckpoint { stage: 3, .. })
         ));
     }
 
     #[test]
-    fn a_claim_that_does_not_end_in_the_check_and_the_result_is_void() {
+    fn a_claim_that_does_not_end_in_the_result_stage_is_void() {
         // A claim that stops at the check: its last stage states no result,
-        // and the stage before it no record.
+        // so no record is bound through it either.
         let honest = Claim::honest();
         let mut checkpoints = honest.trace.checkpoints.clone();
         checkpoints.pop();
         let claim = Claim::of(checkpoints, honest.manifests[..3].to_vec());
         let opened = claim.opened();
-        let record = &claim.submission.record;
-        let in_output = ResultInOutput {
-            record: record.clone(),
-            result: claim.submission.result.clone(),
-        };
+        let programs = pins().pipeline;
+        let last = &claim.trace.checkpoints[2];
+        let void = Ok(RecordBinding::AnotherStage {
+            expected: Pipeline::Single.result_program(),
+        });
         assert_eq!(
             opened.check_result_binding(
-                &pins(),
+                &programs,
                 &claim.submission,
-                &claim.trace.checkpoints[2],
+                last,
                 b"last",
-                &in_output
+                &claim.submission.stated()
             ),
-            Ok(RecordBinding::AnotherStage {
-                expected: Pipeline::Single.result_program()
-            })
+            void
         );
         assert_eq!(
             opened.check_record_binding(
-                &pins(),
+                &programs,
                 &claim.submission,
+                0,
+                last,
                 &claim.trace.checkpoints[1],
                 b"layered",
-                record
+                &claim.submission.inferences[0].record
+            ),
+            void
+        );
+
+        // A result stage that read something that is no check.
+        let mut checkpoints = honest.trace.checkpoints.clone();
+        checkpoints[3] = checkpoint(
+            "result",
+            RESULT,
+            &honest.manifests[3],
+            &[("check", 1)],
+            b"result",
+        );
+        let claim = Claim::of(checkpoints, honest.manifests.clone());
+        assert_eq!(
+            claim.opened().check_record_binding(
+                &programs,
+                &claim.submission,
+                0,
+                &claim.trace.checkpoints[3],
+                &claim.trace.checkpoints[1],
+                b"layered",
+                &claim.submission.inferences[0].record
             ),
             Ok(RecordBinding::AnotherStage {
                 expected: RECORD_STAGE
+            })
+        );
+    }
+
+    const OTHER_CHECK_OUTPUT: &[u8] = b"second last";
+    const CONSENSUS: [u8; 32] = [0x2e; 32];
+
+    /// The second model of a consensus contract, and the programs of the
+    /// consensus pipeline: the single one's without its result program, and
+    /// the consensus result, which takes `first` and `second` from a check.
+    fn consensus_pins() -> (PipelinePins, [ModelPins; 2]) {
+        let single = pins();
+        let model_commitments = vec![ModelCommitment {
+            role: String::from("tokenizer"),
+            commitment: hex::encode([0x17; 32]),
+        }];
+        let second = ModelPins {
+            model_id: model_id_of(&model_commitments),
+            model_commitments,
+            range_size: 512,
+        };
+        let mut programs = single.pipeline;
+        programs.stage_programs.retain(|program| program.stage != "claim-result");
+        let check = |name: &str| ChainedInput {
+            name: name.to_string(),
+            producers: vec![String::from("sequence-check")],
+            empty_values: Vec::new(),
+        };
+        programs.stage_programs.push(StageProgram {
+            stage: String::from("consensus-result"),
+            program_commitment: hex::encode(CONSENSUS),
+            chained_inputs: vec![check("first"), check("second")],
+        });
+        (programs, [single.model, second])
+    }
+
+    /// An honest consensus claim: the single fixture's three stages for each
+    /// of two models, then the consensus result reading both checks. The
+    /// first inference answers `ZK` and the second ` ZK`, the same form.
+    fn consensus_claim(second_output: &str) -> Claim {
+        let (_, models) = consensus_pins();
+        let single = Claim::honest();
+        let mut manifests = single.manifests[..3].to_vec();
+        manifests.extend(single.manifests[..3].iter().cloned());
+        manifests.push(manifest(&[
+            ("first", &output_commitment(b"last")),
+            ("second", &output_commitment(OTHER_CHECK_OUTPUT)),
+            ("forms", &hex::encode([6; 32])),
+        ]));
+        let mut checkpoints = single.trace.checkpoints[..3].to_vec();
+        for (stage, name) in ["prompt_bind_p0", "range_p0_l0", "check_c0"].iter().enumerate() {
+            checkpoints[stage].stage = format!("m0_{name}");
+        }
+        checkpoints.extend([
+            checkpoint("m1_prompt_bind_p0", BIND, &manifests[3], &[], b"bound"),
+            checkpoint(
+                "m1_range_p0_l0",
+                LAYER,
+                &manifests[4],
+                &[("activations", 3)],
+                b"layered",
+            ),
+            checkpoint(
+                "m1_check_c0",
+                CHECK,
+                &manifests[5],
+                &[("activations", 4)],
+                OTHER_CHECK_OUTPUT,
+            ),
+            checkpoint(
+                "result",
+                CONSENSUS,
+                &manifests[6],
+                &[("first", 2), ("second", 5)],
+                b"agreed",
+            ),
+        ]);
+        let mut claim = Claim::of(checkpoints, manifests);
+        let input = claim.submission.input_text_sha256.clone();
+        claim.submission.pipeline = Pipeline::Consensus;
+        claim
+            .submission
+            .inferences
+            .push(inference(&models[1], &input, second_output));
+        claim.submission.consensus =
+            Some(no_source(forms()).consensus_of("ZK", second_output));
+        claim
+    }
+
+    #[test]
+    fn a_consensus_submission_is_two_inferences_of_one_input_and_their_agreement() {
+        let (_, models) = consensus_pins();
+        let claim = consensus_claim(" ZK\n");
+        let submission = &claim.submission;
+        let origin = no_source(forms());
+        assert_eq!(check_pipeline(Pipeline::Consensus, submission), Ok(()));
+        for (inference, model) in models.iter().enumerate() {
+            assert_eq!(
+                check_submission(model, REQUIRED, submission, inference),
+                Ok(())
+            );
+        }
+        assert_eq!(check_origin(&origin, submission), Ok(()));
+        assert_eq!(
+            submission.consensus,
+            Some(SubmittedConsensus {
+                same_input: true,
+                agree: true,
+                code: 1
+            })
+        );
+
+        // Each inference is held to its own model: the two cannot be swapped,
+        // and one model cannot stand for both.
+        assert!(matches!(
+            check_submission(&models[0], REQUIRED, submission, 1),
+            Err(SubmissionRejection::StatementMismatch { .. })
+        ));
+        assert!(matches!(
+            check_submission(&models[1], REQUIRED, submission, 0),
+            Err(SubmissionRejection::StatementMismatch { .. })
+        ));
+        // Both statements are over the one input the submission names.
+        let mut other_input = submission.clone();
+        other_input.input_text_sha256 = hex::encode([6; 32]);
+        for (inference, model) in models.iter().enumerate() {
+            assert!(matches!(
+                check_submission(model, REQUIRED, &other_input, inference),
+                Err(SubmissionRejection::StatementMismatch { .. })
+            ));
+        }
+        // An invalid record in either inference is no claim.
+        let mut faulted = submission.clone();
+        faulted.inferences[1].record.valid = false;
+        assert_eq!(check_submission(&models[0], REQUIRED, &faulted, 0), Ok(()));
+        assert_eq!(
+            check_submission(&models[1], REQUIRED, &faulted, 1),
+            Err(SubmissionRejection::NotValid)
+        );
+
+        // The agreement is what the contract's forms give the two outputs.
+        let mut overstated = submission.clone();
+        overstated.consensus.as_mut().unwrap().code = 2;
+        assert!(matches!(
+            check_origin(&origin, &overstated),
+            Err(SubmissionRejection::AnotherConsensus { .. })
+        ));
+        let mut denied = submission.clone();
+        denied.consensus.as_mut().unwrap().agree = false;
+        assert!(matches!(
+            check_origin(&origin, &denied),
+            Err(SubmissionRejection::AnotherConsensus { .. })
+        ));
+        let mut miscoded = submission.clone();
+        miscoded.inferences[1].result.code = 2;
+        assert_eq!(
+            check_origin(&origin, &miscoded),
+            Err(SubmissionRejection::AnotherResult {
+                expected: 1,
+                submitted: 2
+            })
+        );
+
+        // Two models that disagree are still a claim, and it says so.
+        let disagreeing = consensus_claim("no").submission;
+        assert_eq!(check_origin(&origin, &disagreeing), Ok(()));
+        assert_eq!(
+            disagreeing.consensus,
+            Some(SubmittedConsensus {
+                same_input: true,
+                agree: false,
+                code: 0
+            })
+        );
+        let mut claimed_agreement = disagreeing.clone();
+        claimed_agreement.consensus = submission.consensus;
+        assert!(matches!(
+            check_origin(&origin, &claimed_agreement),
+            Err(SubmissionRejection::AnotherConsensus { .. })
+        ));
+
+        // A claim holds what a claim of its pipeline does.
+        let shape = |submission: &ClaimSubmission, pipeline| {
+            matches!(
+                check_pipeline(pipeline, submission),
+                Err(SubmissionRejection::AnotherShape { .. })
+            )
+        };
+        let mut one = submission.clone();
+        one.inferences.pop();
+        assert!(shape(&one, Pipeline::Consensus));
+        let mut unstated = submission.clone();
+        unstated.consensus = None;
+        assert!(shape(&unstated, Pipeline::Consensus));
+        let mut single = Claim::honest().submission;
+        assert_eq!(check_pipeline(Pipeline::Single, &single), Ok(()));
+        single.consensus = submission.consensus;
+        assert!(shape(&single, Pipeline::Single));
+        assert_eq!(
+            check_pipeline(Pipeline::Single, submission),
+            Err(SubmissionRejection::AnotherPipeline {
+                expected: Pipeline::Single,
+                submitted: Pipeline::Consensus
+            })
+        );
+    }
+
+    #[test]
+    fn a_consensus_claim_binds_each_record_to_its_own_last_check() {
+        let (programs, _) = consensus_pins();
+        let claim = consensus_claim(" ZK\n");
+        let submission = &claim.submission;
+        let opened = claim.opened();
+        let last = &claim.trace.checkpoints[6];
+        let checks = [
+            (&claim.trace.checkpoints[2], b"last".as_slice()),
+            (&claim.trace.checkpoints[5], OTHER_CHECK_OUTPUT),
+        ];
+        let bind = |inference: usize, check: (&Checkpoint, &[u8]), record: &SubmittedRecord| {
+            opened.check_record_binding(
+                &programs, submission, inference, last, check.0, check.1, record,
+            )
+        };
+        for (inference, check) in checks.into_iter().enumerate() {
+            let record = &submission.inferences[inference].record;
+            assert_eq!(bind(inference, check, record), Ok(RecordBinding::Bound));
+            // The other inference's record is not this check's.
+            let other = &submission.inferences[1 - inference].record;
+            assert_eq!(bind(inference, check, other), Ok(RecordBinding::AnotherRecord));
+        }
+        // Nor is the other inference's check the one the result stage read
+        // for this inference.
+        assert!(matches!(
+            bind(0, checks[1], &submission.inferences[0].record),
+            Err(ChallengeRefusal::NotTheCheckpoint { stage: 2, .. })
+        ));
+        assert!(matches!(
+            bind(1, checks[0], &submission.inferences[1].record),
+            Err(ChallengeRefusal::NotTheCheckpoint { stage: 5, .. })
+        ));
+
+        // The result stage states both records, both results and the
+        // agreement, and all of it is what was submitted.
+        let stated = submission.stated();
+        let result = |in_output: &ResultInOutput| {
+            opened.check_result_binding(&programs, submission, last, b"agreed", in_output)
+        };
+        assert_eq!(result(&stated), Ok(RecordBinding::Bound));
+        let mut other = stated.clone();
+        other.consensus.as_mut().unwrap().agree = false;
+        assert_eq!(result(&other), Ok(RecordBinding::AnotherRecord));
+        let mut other = stated.clone();
+        other.inferences.swap(0, 1);
+        assert_eq!(result(&other), Ok(RecordBinding::AnotherRecord));
+        let mut other = stated.clone();
+        other.consensus = None;
+        assert_eq!(result(&other), Ok(RecordBinding::AnotherRecord));
+
+        // Every stage names an approved program, and the result stage's two
+        // checks are earlier checks' outputs.
+        assert_eq!(first_unapproved_stage(&programs, &claim.trace), None);
+        for (input, producer) in [("first", 2), ("second", 5)] {
+            assert_eq!(
+                opened.check_link(
+                    &programs,
+                    6,
+                    last,
+                    &claim.manifests[6],
+                    input,
+                    Some(&claim.trace.checkpoints[producer]),
+                ),
+                Ok(LinkCheck::Linked)
+            );
+        }
+        // A consensus claim that ends in the single pipeline's result program
+        // is not one: that program is not in a consensus contract's set.
+        assert!(!programs.approves(&hex::encode(RESULT)));
+        // And a single contract's programs do not make this claim's last
+        // stage a result stage.
+        assert_eq!(
+            opened.check_result_binding(&pins().pipeline, submission, last, b"agreed", &stated),
+            Ok(RecordBinding::AnotherStage {
+                expected: Pipeline::Consensus.result_program()
             })
         );
     }
@@ -2177,7 +2729,7 @@ mod tests {
         assert_eq!(check_pipeline(Pipeline::Single, &submission), Ok(()));
         let written = serde_json::to_value(&submission).unwrap();
         assert_eq!(written["pipeline"], "single");
-        assert_eq!(written["version"], 4);
+        assert_eq!(written["version"], 5);
 
         // A submission that names no pipeline, or one that does not exist, is
         // not a submission.
@@ -2196,22 +2748,23 @@ mod tests {
                 submitted: Pipeline::Single,
             })
         );
+        // The label alone does not make a claim another pipeline's: it holds
+        // one inference, and its last stage runs the single pipeline's result
+        // program.
         let mut relabelled = submission.clone();
         relabelled.pipeline = Pipeline::Consensus;
-        assert_eq!(check_pipeline(Pipeline::Consensus, &relabelled), Ok(()));
-        // The label alone does not make a claim another pipeline's: its last
-        // stage runs the single pipeline's result program.
+        assert!(matches!(
+            check_pipeline(Pipeline::Consensus, &relabelled),
+            Err(SubmissionRejection::AnotherShape { .. })
+        ));
         let claim = Claim::honest();
         assert_eq!(
             claim.opened().check_result_binding(
-                &pins(),
+                &pins().pipeline,
                 &relabelled,
                 &claim.trace.checkpoints[3],
                 b"result",
-                &ResultInOutput {
-                    record: relabelled.record.clone(),
-                    result: relabelled.result.clone(),
-                },
+                &relabelled.stated(),
             ),
             Ok(RecordBinding::AnotherStage {
                 expected: Pipeline::Consensus.result_program()
@@ -2222,7 +2775,7 @@ mod tests {
     #[test]
     fn the_source_and_the_forms_are_held_to_what_the_contract_requires() {
         let plain = Claim::honest().submission;
-        assert_eq!(plain.result.code, 1);
+        assert_eq!(plain.inferences[0].result.code, 1);
         let none = no_source(forms());
         assert_eq!(check_origin(&none, &plain), Ok(()));
         // Other forms, or the same in another order.
@@ -2245,7 +2798,7 @@ mod tests {
         // The right forms and a code they do not give this output. No stage
         // has to be replayed to refuse it.
         let mut miscoded = plain.clone();
-        miscoded.result.code = 2;
+        miscoded.inferences[0].result.code = 2;
         assert_eq!(
             check_origin(&none, &miscoded),
             Err(SubmissionRejection::AnotherResult {
@@ -2254,7 +2807,7 @@ mod tests {
             })
         );
         let mut unread = plain.clone();
-        unread.result.code = 0;
+        unread.inferences[0].result.code = 0;
         assert_eq!(
             check_origin(&none, &unread),
             Err(SubmissionRejection::AnotherResult {
@@ -2473,6 +3026,73 @@ inputs.layer = { input = "transformer_layer_{l}" }
         );
 
         assert!(pipeline_wiring("[chain]\n[[chain.stage]]\nname = \"a\"\nproject = \"p\"\ninputs.x = { from = \"nowhere\" }\n").is_err());
+    }
+
+    #[test]
+    fn two_inferences_of_one_chain_are_wired_to_their_own_programs() {
+        // Two inferences whose layer stages have one name and different
+        // programs: each takes its layers' outputs from its own.
+        let part = |label: &str, layer: &str| {
+            format!(
+                r#"
+[[chain.stage]]
+name = "{label}prompt_bind_p0"
+project = "/repo/raster-stages/prompt-bind"
+inputs.previous = {{ external = {{ path = "e", commitment = "e0" }} }}
+
+[[chain.repeat]]
+name = "{label}layers"
+index = "l"
+count = 2
+
+  [[chain.repeat.stage]]
+name = "{label}range_p0_l{{l}}"
+project = "/repo/raster-stages/{layer}"
+inputs.activations = {{ from = "{label}range_p0_l{{l-1}}", first = "{label}prompt_bind_p0" }}
+
+[[chain.stage]]
+name = "{label}check_c0"
+project = "/repo/raster-stages/sequence-check"
+inputs.activations = {{ from = "{label}range_p0_l1" }}
+"#
+            )
+        };
+        let result = r#"
+[[chain.stage]]
+name = "result"
+project = "/repo/raster-stages/consensus-result"
+inputs.first = { from = "m0_check_c@m0_LAST_CLAIMED_RANGE@" }
+inputs.second = { from = "m1_check_c@m1_LAST_CLAIMED_RANGE@" }
+"#;
+        let template = format!(
+            "[chain]\nname = \"iris\"\n{}{}{result}",
+            part("m0_", "prefill-range"),
+            part("m1_", "layer-mistral")
+        );
+        let wiring = pipeline_wiring(&template).unwrap();
+        let producers = |project: &str, input: &str| -> Vec<String> {
+            wiring
+                .iter()
+                .find(|(path, _)| path.ends_with(project))
+                .and_then(|(_, inputs)| inputs.iter().find(|chained| chained.name == input))
+                .map(|chained| chained.producers.iter().cloned().collect())
+                .unwrap_or_default()
+        };
+        assert_eq!(
+            producers("prefill-range", "activations"),
+            ["prefill-range", "prompt-bind"]
+        );
+        assert_eq!(
+            producers("layer-mistral", "activations"),
+            ["layer-mistral", "prompt-bind"]
+        );
+        // The check is one program for both, fed by either family's layers.
+        assert_eq!(
+            producers("sequence-check", "activations"),
+            ["layer-mistral", "prefill-range"]
+        );
+        assert_eq!(producers("consensus-result", "first"), ["sequence-check"]);
+        assert_eq!(producers("consensus-result", "second"), ["sequence-check"]);
     }
 
     const TRANSITION_ID: [u8; 32] = [0x7a; 32];
