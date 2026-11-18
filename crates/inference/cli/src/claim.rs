@@ -152,8 +152,27 @@ pub fn build_claim(options: ClaimBuildOptions) -> Result<ClaimBuildResult> {
     // recomputed from the pinned model and this run's parameters, every
     // checkpoint names an approved program, and the record is the last
     // stage's.
+    //
+    // The claim names its configuration and posts its data first: the new
+    // information its run was given and its checkpoints, each blob with its
+    // availability proof.
+    // Without pins there is no configuration to name, and nothing is posted.
     if let Some(path) = result.claim_submission_path.as_ref() {
-        if let Some(reason) = crate::contract::claim_rejection(&prepared.prepared_run, path)? {
+        let Some(configuration) = crate::contract::run_configuration(&prepared.prepared_run)?
+        else {
+            return Ok(result);
+        };
+        let da_dir = crate::availability::da_dir();
+        let mut submission: ClaimSubmission = inference_artifacts::read_json(path)?;
+        submission.configuration = configuration.id();
+        submission.availability = crate::availability::post_claim(
+            &crate::availability::StubLayer::open(&da_dir),
+            &result.chain_dir,
+            Some(crate::availability::new_information(&prepared.prepared_run)?),
+        )
+        .context("posting the claim's data")?;
+        inference_artifacts::write_json(path, &submission)?;
+        if let Some(reason) = crate::contract::claim_rejection(&configuration, path, &da_dir)? {
             if options.claimed_token_ids.is_none() {
                 anyhow::bail!("a contract would not accept this claim: {reason}");
             }
@@ -253,8 +272,11 @@ fn write_claim_result(
         }
     });
     let claim_submission_path = if results.len() == prepared_run.pipeline.inferences() {
+        // The configuration and what was posted are filled in by
+        // `build_claim`, which knows the contract.
         let submission = ClaimSubmission::from_run(
             prepared_run.pipeline,
+            String::new(),
             &results,
             consensus,
             prepared_run.first()?.prompt.source.as_ref(),

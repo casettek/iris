@@ -136,6 +136,7 @@ pub(super) fn run_challenge_leg(leg: &Leg) -> Result<Value> {
             outcome["settled_by"] == "replay" && outcome["raster_admits"] == true,
             "`{name}`: a claim that states another output was not settled by a replay Raster admits"
         );
+        let outcome = contract_challenge(leg, &name, &spec, &honest, &lying, stage, outcome)?;
         replays.push(outcome);
     }
 
@@ -708,6 +709,84 @@ fn dispute_tie(
         "`{name}`: Raster admitted a challenge that disputes nothing"
     );
     outcome["raster_admits"] = json!(true);
+    Ok(outcome)
+}
+
+/// The challenge of a lying checkpoint as a contract receives it: the
+/// challenger posts its trace body and submits the Raster stage challenge
+/// about the claimer's checkpoint, against a claim whose list holds that
+/// checkpoint. A contract admits it; one whose body was not posted, or is
+/// gone before a defender's window ends, it refuses.
+fn contract_challenge(
+    leg: &Leg,
+    name: &str,
+    spec: &Path,
+    honest: &ClaimBuildResult,
+    lying: &CheckpointTrace,
+    stage: &str,
+    mut outcome: Value,
+) -> Result<Value> {
+    use inference_artifacts::contract::{ClaimSubmission, CLAIM_SUBMISSION_JSON};
+
+    let dir = leg.dir.join(name).join("contract");
+    fs::create_dir_all(&dir)?;
+    let list_path = dir.join(inference_artifacts::CHECKPOINTS_TXT);
+    write_checkpoint_hashes(&list_path, &checkpoint_hashes(lying)?)?;
+    inference_artifacts::write_json(&dir.join(inference_artifacts::CHECKPOINT_TRACE_JSON), lying)?;
+    let mut claim: ClaimSubmission = read_json(
+        honest
+            .claim_submission_path
+            .as_ref()
+            .context("the honest claim wrote no submission")?,
+    )?;
+    claim.checkpoints_sha256 = file_sha256(&list_path)?;
+    let claim_path = dir.join(CLAIM_SUBMISSION_JSON);
+    inference_artifacts::write_json(&claim_path, &claim)?;
+
+    let index = lying
+        .checkpoints
+        .iter()
+        .position(|checkpoint| checkpoint.stage == stage)
+        .with_context(|| format!("the lying claim has no `{stage}`"))?;
+    let replay = replay_stage_dir(leg, name, stage)?;
+    let layer = crate::availability::StubLayer::open(crate::availability::da_dir());
+    let submission = crate::contract::challenge_submission(
+        &claim.checkpoints_sha256,
+        index as u32,
+        &lying.checkpoints[index],
+        &replay.join("commit.bin"),
+        &file_sha256(&replay.join("output.bin"))?,
+        &layer,
+    )?;
+    inference_artifacts::write_json(
+        &dir.join(inference_artifacts::contract::CHALLENGE_SUBMISSION_JSON),
+        &submission,
+    )?;
+    let configuration = crate::contract::spec_configuration(spec, None)?;
+    let now = crate::availability::now()?;
+    let check = |submission: &inference_artifacts::contract::ChallengeSubmission, at: u64| {
+        crate::contract::check_challenge(&configuration, &claim_path, submission, &layer, at)
+            .map(|report| report.rejection())
+    };
+    if let Some(rejection) = check(&submission, now)? {
+        anyhow::bail!("`{name}`: a contract refuses the challenge: {rejection}");
+    }
+    let mut unposted = submission.clone();
+    unposted.availability.clear();
+    let late = now + inference_artifacts::availability::DEFAULT_RETENTION_SECS;
+    for (case, rejection) in [
+        ("unposted", check(&unposted, now)?),
+        ("late", check(&submission, late)?),
+    ] {
+        ensure!(
+            rejection
+                .as_deref()
+                .is_some_and(|rejection| rejection.starts_with("challenge: trace body posted")),
+            "`{name}`: a contract does not refuse the {case} challenge for its body: {rejection:?}"
+        );
+    }
+    outcome["contract_admits"] = json!(true);
+    outcome["trace_body_bytes"] = json!(submission.availability[0].length);
     Ok(outcome)
 }
 

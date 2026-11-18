@@ -6,6 +6,7 @@ use std::process::{Command as ProcessCommand, ExitCode, ExitStatus};
 use anyhow::{bail, Context, Result};
 use clap::{Args, Parser, Subcommand};
 
+mod availability;
 mod challenge;
 mod challenge_profile;
 mod claim;
@@ -124,6 +125,11 @@ enum Commands {
     Challenge {
         #[command(subcommand)]
         command: ChallengeCommand,
+    },
+    /// The registry of configurations claims are made of.
+    Registry {
+        #[command(subcommand)]
+        command: RegistryCommand,
     },
     /// Fault proof workflows reserved for the proof path.
     Fault {
@@ -252,6 +258,75 @@ struct ClaimCheckArgs {
     /// pipeline over several models are made from the imports now.
     #[arg(long)]
     pins: Option<PathBuf>,
+
+    /// The registry of configurations, as `iris registry add` writes it. The
+    /// claim is judged by the configuration it names there. Without it, by
+    /// the one the run spec and the pins describe.
+    #[arg(long)]
+    registry: Option<PathBuf>,
+
+    /// The stand-in data-availability layer's directory. Default:
+    /// `IRIS_DA_DIR`, or `~/.cache/iris/stub-celestia`.
+    #[arg(long = "da-dir")]
+    da_dir: Option<PathBuf>,
+
+    /// When the claim is taken to be submitted, in Unix seconds. Default: now.
+    #[arg(long = "submitted-at")]
+    submitted_at: Option<u64>,
+}
+
+#[derive(Debug, Subcommand)]
+enum RegistryCommand {
+    /// Register the configuration a run spec describes: its pipeline's
+    /// programs, its models, its parameters and what it requires of the
+    /// source and the result. Prints its id.
+    Add(RegistryAddArgs),
+}
+
+#[derive(Debug, Args)]
+struct RegistryAddArgs {
+    /// Run spec naming the pipeline, its models and the parameters.
+    #[arg(long, default_value = inference_artifacts::INFERENCE_RUN_SPEC_TOML)]
+    run: PathBuf,
+
+    /// The pins of the pipeline's programs and models, as `iris claim pins`
+    /// wrote them. Without it, as `iris claim check` finds them.
+    #[arg(long)]
+    pins: Option<PathBuf>,
+
+    /// The registry file to add to. Made when it does not exist.
+    #[arg(long)]
+    registry: PathBuf,
+}
+
+#[derive(Debug, Args)]
+struct ChallengePostArgs {
+    /// The `challenge_bundle.json` that `challenge build` wrote.
+    #[arg(long)]
+    challenge: PathBuf,
+
+    /// The claim's `claim_submission.json`. The claim's checkpoints are read
+    /// from the directory it is in.
+    #[arg(long)]
+    submission: PathBuf,
+
+    /// Run spec naming the pipeline and models of the contract.
+    #[arg(long, default_value = inference_artifacts::INFERENCE_RUN_SPEC_TOML)]
+    run: PathBuf,
+
+    /// The pins the contract holds. As for `iris claim check`.
+    #[arg(long)]
+    pins: Option<PathBuf>,
+
+    /// The stand-in data-availability layer's directory. As for `iris claim
+    /// check`.
+    #[arg(long = "da-dir")]
+    da_dir: Option<PathBuf>,
+
+    /// When the challenge is taken to be submitted, in Unix seconds. Default:
+    /// now.
+    #[arg(long = "submitted-at")]
+    submitted_at: Option<u64>,
 }
 
 #[derive(Debug, Args)]
@@ -321,6 +396,10 @@ enum ChallengeCommand {
     Corrupt(fault::CorruptArgs),
     /// Measure guest cycles and select a heavy fault window from a completed challenge.
     Profile(challenge_profile::ProfileArgs),
+    /// Post a challenge's trace body to the data-availability layer, write
+    /// the challenge submission, and make the checks a contract would make
+    /// on it.
+    Post(ChallengePostArgs),
 }
 
 #[derive(Debug, Subcommand)]
@@ -471,6 +550,9 @@ fn execute(cli: Cli) -> Result<ExitCode> {
                 submission_path: args.submission,
                 raster_run: args.raster_run,
                 pins_path: args.pins,
+                registry_path: args.registry,
+                da_dir: args.da_dir,
+                submitted_at: args.submitted_at,
             })?;
             for line in &report.lines {
                 match &line.rejection {
@@ -597,7 +679,48 @@ fn execute(cli: Cli) -> Result<ExitCode> {
                 print_challenge_result(&result);
                 Ok(ExitCode::SUCCESS)
             }
+            ChallengeCommand::Post(args) => {
+                let base_dir =
+                    std::env::current_dir().context("failed to resolve current directory")?;
+                let posted = contract::post_challenge(contract::ChallengePostOptions {
+                    run_spec_path: absolute(&base_dir, &args.run),
+                    pins_path: args.pins.map(|path| absolute(&base_dir, &path)),
+                    challenge_bundle_path: absolute(&base_dir, &args.challenge),
+                    submission_path: absolute(&base_dir, &args.submission),
+                    da_dir: args.da_dir.map(|path| absolute(&base_dir, &path)),
+                    submitted_at: args.submitted_at,
+                })?;
+                for line in &posted.report.lines {
+                    match &line.rejection {
+                        None => println!("ok        {}", line.check),
+                        Some(reason) => println!("REJECTED  {}: {reason}", line.check),
+                    }
+                }
+                println!("challenge submission: {}", posted.submission_path.display());
+                Ok(if posted.report.accepted() {
+                    ExitCode::SUCCESS
+                } else {
+                    ExitCode::FAILURE
+                })
+            }
         },
+        Some(Commands::Registry {
+            command: RegistryCommand::Add(args),
+        }) => {
+            let base_dir =
+                std::env::current_dir().context("failed to resolve current directory")?;
+            let configuration = contract::spec_configuration(
+                &absolute(&base_dir, &args.run),
+                args.pins.map(|path| absolute(&base_dir, &path)).as_deref(),
+            )?;
+            let registry_path = absolute(&base_dir, &args.registry);
+            let mut registry = inference_artifacts::registry::Registry::read(&registry_path)?;
+            let id = registry.register(configuration);
+            registry.write(&registry_path)?;
+            println!("configuration: {id}");
+            println!("registry: {}", registry_path.display());
+            Ok(ExitCode::SUCCESS)
+        }
         Some(Commands::Fault { command }) => match command {
             FaultCommand::Check { raster_manifest } => {
                 fault::check_runtime()?;

@@ -1,5 +1,5 @@
 {
-  "version": 3,
+  "version": 4,
   "pipeline": "single",
   "programs": {
     "family": "gemma-dense",
@@ -7,7 +7,12 @@
       {
         "stage": "prompt-source",
         "program_commitment": "da372b9dd85f2adf59809a3e5a32928ec6f99fd0c83ca1cf10255b6b805392fa",
-        "chained_inputs": []
+        "chained_inputs": [],
+        "run_inputs": [
+          "documents",
+          "recipe",
+          "signer"
+        ]
       },
       {
         "stage": "prompt-bind",
@@ -31,6 +36,12 @@
               "03fb66a51c44fd0df71a12e9fa3d2e5aadfd3789612658d4fdc4caac5051c954"
             ]
           }
+        ],
+        "run_inputs": [
+          "claim",
+          "config",
+          "schedule",
+          "text"
         ]
       },
       {
@@ -53,6 +64,9 @@
               "4dd645d5528856d2f2cc73d99a9e514c7046baee4923e4c69c1248045ed1372e"
             ]
           }
+        ],
+        "run_inputs": [
+          "marks"
         ]
       },
       {
@@ -77,6 +91,9 @@
               "4dd645d5528856d2f2cc73d99a9e514c7046baee4923e4c69c1248045ed1372e"
             ]
           }
+        ],
+        "run_inputs": [
+          "claimed"
         ]
       },
       {
@@ -113,7 +130,8 @@
             ],
             "empty_values": []
           }
-        ]
+        ],
+        "run_inputs": []
       },
       {
         "stage": "claim-result",
@@ -126,6 +144,9 @@
             ],
             "empty_values": []
           }
+        ],
+        "run_inputs": [
+          "forms"
         ]
       },
       {
@@ -139,7 +160,8 @@
             ],
             "empty_values": []
           }
-        ]
+        ],
+        "run_inputs": []
       },
       {
         "stage": "prefill-range",
@@ -187,7 +209,8 @@
               "d97f5a8b57bac05ed741197bcd4007c27b2eab1d3e14455df1b011ab778df6fc"
             ]
           }
-        ]
+        ],
+        "run_inputs": []
       }
     ]
   },

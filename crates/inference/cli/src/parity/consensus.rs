@@ -221,6 +221,9 @@ pub(super) fn run_consensus_leg(
             submission_path: submission.to_path_buf(),
             raster_run,
             pins_path: Some(pins_path.clone()),
+            registry_path: None,
+            da_dir: None,
+            submitted_at: None,
         })
         .context("contract checks")
     };
@@ -234,7 +237,7 @@ pub(super) fn run_consensus_leg(
         );
     }
     ensure!(
-        contract.lines.len() == 10,
+        contract.lines.len() == 12,
         "the contract checks of a consensus claim did not reach the Raster run"
     );
     // A claim that states another agreement than its outputs have is refused

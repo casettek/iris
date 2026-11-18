@@ -51,6 +51,11 @@ pub fn run(skip_challenges: bool, bundle: &str) -> Result<()> {
     ));
     fs::create_dir_all(&run_dir)?;
     println!("Three-path parity artifacts: {}", run_dir.display());
+    // Claims and challenges post to a stand-in layer of the gate's own, which
+    // every command it starts inherits.
+    if std::env::var_os("IRIS_DA_DIR").is_none() {
+        std::env::set_var("IRIS_DA_DIR", run_dir.join("stub-celestia"));
+    }
     let started = Instant::now();
     let mut report = json!({"version": 1, "mode": "host_no_auth", "passed": false, "cases": []});
     report["challenge_leg"] = json!(if skip_challenges { "skipped" } else { "run" });
@@ -705,6 +710,9 @@ fn run_case(
         submission_path: native_dir.join(inference_artifacts::contract::CLAIM_SUBMISSION_JSON),
         raster_run: Some(raster_dir.clone()),
         pins_path: None,
+        registry_path: None,
+        da_dir: None,
+        submitted_at: None,
     })
     .context("contract checks")?;
     for line in &contract.lines {
@@ -716,10 +724,16 @@ fn run_case(
         );
     }
     ensure!(
-        contract.lines.len() == 8,
+        contract.lines.len() == 10,
         "the contract checks did not reach the Raster run"
     );
     comparison["contract_checks"] = json!(contract.lines.len());
+    comparison["availability_cases"] = run_availability_cases(
+        dir,
+        &spec,
+        &native_dir.join(inference_artifacts::contract::CLAIM_SUBMISSION_JSON),
+    )
+    .context("availability cases")?;
     ensure!(
         native_info["result"] == *record,
         "the result artifact is not the chain's final record"
@@ -1939,6 +1953,116 @@ fn validate_model_bundle(
         );
     }
     Ok(())
+}
+
+/// What a contract refuses of an honest claim's submission when its data is
+/// not all there: nothing posted, another configuration named, blobs gone
+/// before the challenge period ends, a configuration nobody registered, only
+/// the checkpoints posted and not the prompt the statement names, and another
+/// prompt posted in its place.
+fn run_availability_cases(dir: &Path, spec: &Path, submission_path: &Path) -> Result<Value> {
+    use crate::contract::{check_claim, ClaimCheckOptions};
+    use inference_artifacts::contract::ClaimSubmission;
+
+    let claim_dir = submission_path
+        .parent()
+        .context("the submission has no directory")?;
+    let honest: ClaimSubmission = read_json(submission_path)?;
+    let configuration = crate::contract::spec_configuration(spec, None)?;
+    let registry_path = dir.join("registry.json");
+    let mut registry = inference_artifacts::registry::Registry::default();
+    ensure!(
+        registry.register(configuration.clone()) == honest.configuration,
+        "the claim does not name its run's configuration"
+    );
+    registry.write(&registry_path)?;
+    let empty_registry = dir.join("empty-registry.json");
+    inference_artifacts::registry::Registry::default().write(&empty_registry)?;
+
+    let check = |name: &str,
+                 submission: &ClaimSubmission,
+                 registry: Option<&Path>,
+                 submitted_at: Option<u64>|
+     -> Result<Option<String>> {
+        let path = claim_dir.join(format!("{name}.claim_submission.json"));
+        write_json(&path, submission)?;
+        let report = check_claim(ClaimCheckOptions {
+            base_dir: dir.to_path_buf(),
+            run_spec_path: spec.to_path_buf(),
+            submission_path: path,
+            raster_run: None,
+            pins_path: None,
+            registry_path: registry.map(Path::to_path_buf),
+            da_dir: None,
+            submitted_at,
+        })?;
+        Ok(report.rejection())
+    };
+    let refused_at = |name: &str, rejection: Option<String>, check: &str| -> Result<Value> {
+        let rejection =
+            rejection.with_context(|| format!("a contract accepts the `{name}` submission"))?;
+        ensure!(
+            rejection.starts_with(check),
+            "the `{name}` submission is refused elsewhere than at `{check}`: {rejection}"
+        );
+        Ok(json!({"case": name, "refused": rejection}))
+    };
+
+    let mut cases = Vec::new();
+    ensure!(
+        check("registered", &honest, Some(&registry_path), None)?.is_none(),
+        "a contract refuses an honest claim of a registered configuration"
+    );
+    cases.push(refused_at(
+        "unregistered",
+        check("unregistered", &honest, Some(&empty_registry), None)?,
+        "submission: configuration",
+    )?);
+    let mut other = honest.clone();
+    other.configuration = "00".repeat(32);
+    cases.push(refused_at(
+        "other-configuration",
+        check("other-configuration", &other, None, None)?,
+        "submission: configuration",
+    )?);
+    let mut unposted = honest.clone();
+    unposted.availability.clear();
+    cases.push(refused_at(
+        "nothing-posted",
+        check("nothing-posted", &unposted, None, None)?,
+        "submission: data posted",
+    )?);
+    // Submitted so late that the blobs are gone before the period ends.
+    let late = crate::availability::now()? + inference_artifacts::availability::DEFAULT_RETENTION_SECS;
+    cases.push(refused_at(
+        "expires",
+        check("expires", &honest, None, Some(late))?,
+        "submission: data posted",
+    )?);
+    // The checkpoints posted with their proof, and no prompt text; then
+    // another prompt text in its place.
+    let layer = crate::availability::StubLayer::open(crate::availability::da_dir());
+    let mut unavailable = honest.clone();
+    unavailable.availability = crate::availability::post_claim(&layer, claim_dir, None)?;
+    cases.push(refused_at(
+        "prompt-not-posted",
+        check("prompt-not-posted", &unavailable, None, None)?,
+        "submission: data posted",
+    )?);
+    let mut other_prompt = honest.clone();
+    other_prompt.availability = crate::availability::post_claim(
+        &layer,
+        claim_dir,
+        Some(inference_artifacts::availability::BlobEntry::PromptText {
+            text: String::from("another prompt"),
+        }),
+    )?;
+    cases.push(refused_at(
+        "other-prompt-posted",
+        check("other-prompt-posted", &other_prompt, None, None)?,
+        "submission: data posted",
+    )?);
+    Ok(json!(cases))
 }
 
 pub fn worker(spec: &Path, output: &Path, direct: bool) -> Result<()> {

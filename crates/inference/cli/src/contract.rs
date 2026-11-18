@@ -11,13 +11,17 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{ensure, Context, Result};
+use inference_artifacts::availability::{
+    check_claim_availability, AvailabilityParameters, RequiredPosting,
+};
 use inference_artifacts::contract::{
     check_origin, check_pipeline, check_submission, first_unapproved_stage,
     raster_boundary_mismatch, ChallengeRefusal, CheckpointList, ClaimSubmission, ContractPins,
-    LinkCheck, ModelPins, PipelinePins, RecordBinding, RequiredOrigin, RequiredParameters,
-    RequiredSource, ResultInOutput, StageAdmission, StatedInference, SubmittedConsensus,
+    LinkCheck, RecordBinding, RequiredOrigin, RequiredParameters, RequiredSource,
+    ResultInOutput, StageAdmission, StatedInference, SubmittedConsensus,
     SubmittedRecord, SubmittedResult, CONTRACT_PINS_JSON,
 };
+use inference_artifacts::registry::{Configuration, Registry};
 use inference_artifacts::{
     read_checkpoint_trace, read_json, read_run_spec, Checkpoint, CheckpointTrace, InferenceRunSpec,
     ModelManifest, Pipeline, PreparedRun, CHECKPOINTS_TXT, CHECKPOINT_TRACE_JSON,
@@ -39,6 +43,16 @@ pub struct ClaimCheckOptions {
     /// it a `single` contract's are the model import's, and those of a
     /// pipeline over several models are made from the imports now.
     pub pins_path: Option<PathBuf>,
+    /// The registry the claim's configuration is looked up in, as `iris
+    /// registry add` writes it. Without it the contract's configuration is
+    /// the one the run spec and the pins describe.
+    pub registry_path: Option<PathBuf>,
+    /// The stand-in data-availability layer's directory. Without it, the
+    /// default one (`crate::availability::da_dir`).
+    pub da_dir: Option<PathBuf>,
+    /// When the claim is taken to be submitted, in Unix seconds. Without it,
+    /// now.
+    pub submitted_at: Option<u64>,
 }
 
 /// One check a contract would make, and how it came out.
@@ -149,21 +163,13 @@ fn required_origin(run_spec_path: &Path, run_spec: &InferenceRunSpec) -> Result<
     Ok(RequiredOrigin {
         source: Some(RequiredSource {
             signer: terms.signer,
-            recipe_sha256: terms.recipe_sha256,
+            // The base prompt and the documents' domains are not pinned yet:
+            // a configuration accepts any recipe, and the claim's statement
+            // names the one it used.
+            recipe_sha256: None,
         }),
         forms: terms.forms,
     })
-}
-
-/// What a contract over a run would pin and require: the pipeline it
-/// accepts claims of, that pipeline's approved stage programs, the model of
-/// each inference, and its own parameters.
-struct Contract {
-    pipeline: Pipeline,
-    programs: PipelinePins,
-    models: Vec<ModelPins>,
-    required: RequiredParameters,
-    origin: RequiredOrigin,
 }
 
 /// The contract a run spec describes. `Ok(None)` when no pins file is given
@@ -177,7 +183,7 @@ fn contract_of(
     run_spec_path: &Path,
     run_spec: &InferenceRunSpec,
     pins_path: Option<&Path>,
-) -> Result<Option<Contract>> {
+) -> Result<Option<Configuration>> {
     let pipeline = run_spec.pipeline;
     let imports = run_imports(run_spec_path, run_spec)?;
     let manifests: Vec<&ModelManifest> = imports.iter().map(|(_, manifest, _)| manifest).collect();
@@ -204,30 +210,47 @@ fn contract_of(
             }
         }
     };
-    Ok(Some(Contract {
-        pipeline,
-        programs: pins.programs,
-        models: pins.models,
-        required: RequiredParameters {
+    Ok(Some(Configuration::of(
+        pins,
+        RequiredParameters {
             raw_prompt: run_spec.raw_prompt,
             max_new_tokens: run_spec.tokens,
         },
-        origin: required_origin(run_spec_path, run_spec)?,
-    }))
+        required_origin(run_spec_path, run_spec)?,
+    )))
+}
+
+/// The configuration a claim of this prepared run is of: what a contract
+/// registers for its pipeline, models and parameters. `Ok(None)` when an
+/// import has no pins: it was made where the stage projects are not locked.
+pub(crate) fn run_configuration(prepared: &PreparedRun) -> Result<Option<Configuration>> {
+    let run_spec = read_run_spec(&prepared.run_spec_path)?;
+    contract_of(&prepared.run_spec_path, &run_spec, None)
+}
+
+/// Where a contract's checks read posted data from, and when the claim is
+/// taken to be submitted.
+struct Availability<'a> {
+    layer: &'a crate::availability::StubLayer,
+    parameters: AvailabilityParameters,
+    submitted_at: u64,
 }
 
 /// The checks as a claimer applies them to its own claim before posting it:
-/// the first one a contract would reject it at. `Ok(None)` when it would be
-/// accepted, or when an import has no pins to check against.
+/// the first one a contract would reject it at, against `configuration`.
+/// `Ok(None)` when it would be accepted.
 pub(crate) fn claim_rejection(
-    prepared: &PreparedRun,
+    configuration: &Configuration,
     submission_path: &Path,
+    da_dir: &Path,
 ) -> Result<Option<String>> {
-    let run_spec = read_run_spec(&prepared.run_spec_path)?;
-    let Some(contract) = contract_of(&prepared.run_spec_path, &run_spec, None)? else {
-        return Ok(None);
+    let layer = crate::availability::StubLayer::open(da_dir);
+    let availability = Availability {
+        layer: &layer,
+        parameters: AvailabilityParameters::default(),
+        submitted_at: crate::availability::now()?,
     };
-    Ok(check_claim_dir(&contract, submission_path)?.rejection())
+    Ok(check_claim_dir(configuration, None, submission_path, &availability)?.rejection())
 }
 
 pub fn check_claim(options: ClaimCheckOptions) -> Result<ClaimCheckReport> {
@@ -245,7 +268,40 @@ pub fn check_claim(options: ClaimCheckOptions) -> Result<ClaimCheckReport> {
         )
     })?;
     let submission_path = absolute(&options.base_dir, &options.submission_path);
-    let mut report = check_claim_dir(&contract, &submission_path)?;
+    // With a registry, the configuration is the one the claim names there.
+    let mut unregistered = None;
+    let contract = match &options.registry_path {
+        None => contract,
+        Some(path) => {
+            let registry = Registry::read(&absolute(&options.base_dir, path))?;
+            let submission: ClaimSubmission = read_json(&submission_path)?;
+            match registry.get(&submission.configuration) {
+                Some(registered) => registered.clone(),
+                None => {
+                    unregistered = Some(format!(
+                        "the claim names configuration {}, which is not registered",
+                        submission.configuration
+                    ));
+                    contract
+                }
+            }
+        }
+    };
+    let da_dir = options
+        .da_dir
+        .as_ref()
+        .map(|dir| absolute(&options.base_dir, dir))
+        .unwrap_or_else(crate::availability::da_dir);
+    let layer = crate::availability::StubLayer::open(da_dir);
+    let availability = Availability {
+        layer: &layer,
+        parameters: AvailabilityParameters::default(),
+        submitted_at: match options.submitted_at {
+            Some(at) => at,
+            None => crate::availability::now()?,
+        },
+    };
+    let mut report = check_claim_dir(&contract, unregistered, &submission_path, &availability)?;
 
     if let Some(raster_run) = options.raster_run {
         let commitment_path = absolute(&options.base_dir, &raster_run).join("chain-commitment");
@@ -274,17 +330,38 @@ fn claim_trace(submission_path: &Path) -> Result<CheckpointTrace> {
 /// The submission checks, then the comparisons a contract makes against the
 /// claimer's checkpoint list when a challenge arrives, on the files in the
 /// claim's directory.
-fn check_claim_dir(contract: &Contract, submission_path: &Path) -> Result<ClaimCheckReport> {
+fn check_claim_dir(
+    contract: &Configuration,
+    unregistered: Option<String>,
+    submission_path: &Path,
+    availability: &Availability,
+) -> Result<ClaimCheckReport> {
     let submission: ClaimSubmission = read_json(submission_path)?;
     let dir = claim_dir(submission_path)?;
     let pins = &contract.programs;
     let several = contract.models.len() > 1;
-    let mut lines = vec![CheckLine {
-        check: "submission: pipeline",
-        rejection: check_pipeline(contract.pipeline, &submission)
-            .err()
-            .map(|rejection| rejection.to_string()),
-    }];
+    let required = contract.required();
+    let origin = contract.origin();
+    let mut lines = vec![
+        CheckLine {
+            check: "submission: configuration",
+            rejection: unregistered.or_else(|| {
+                let id = contract.id();
+                (submission.configuration != id).then(|| {
+                    format!(
+                        "the claim names configuration {}, and the contract's is {id}",
+                        submission.configuration
+                    )
+                })
+            }),
+        },
+        CheckLine {
+            check: "submission: pipeline",
+            rejection: check_pipeline(contract.pipeline, &submission)
+                .err()
+                .map(|rejection| rejection.to_string()),
+        },
+    ];
     // Each inference against the model the contract pins for it.
     for (inference, model) in contract.models.iter().enumerate() {
         lines.push(CheckLine {
@@ -293,7 +370,7 @@ fn check_claim_dir(contract: &Contract, submission_path: &Path) -> Result<ClaimC
                 (true, 0) => "submission: the first inference's statement, output and valid flag",
                 (true, _) => "submission: the second inference's statement, output and valid flag",
             },
-            rejection: check_submission(model, contract.required, &submission, inference)
+            rejection: check_submission(model, required, &submission, inference)
                 .err()
                 .map(|rejection| rejection.to_string()),
         });
@@ -304,9 +381,23 @@ fn check_claim_dir(contract: &Contract, submission_path: &Path) -> Result<ClaimC
         } else {
             "submission: source record, forms and result code"
         },
-        rejection: check_origin(&contract.origin, &submission)
+        rejection: check_origin(&origin, &submission)
             .err()
             .map(|rejection| rejection.to_string()),
+    });
+    // What the claim posted: the new information its statement names and its
+    // checkpoints, each proven and retrievable through the challenge period.
+    lines.push(CheckLine {
+        check: "submission: data posted, proven and retrievable through the challenge period",
+        rejection: check_claim_availability(
+            availability.layer,
+            availability.parameters,
+            &submission.availability,
+            &RequiredPosting::of(&submission),
+            availability.submitted_at,
+        )
+        .err()
+        .map(|rejection| rejection.to_string()),
     });
 
     let list_path = dir.join(CHECKPOINTS_TXT);
@@ -527,6 +618,202 @@ fn check_claim_dir(contract: &Contract, submission_path: &Path) -> Result<ClaimC
     lines.push(CheckLine {
         check: "challenge admission: the result is the last stage's",
         rejection: unbound(binding, last, &output_path),
+    });
+    Ok(ClaimCheckReport { lines })
+}
+
+/// The configuration a run spec describes, with the pins of this file or,
+/// without one, as `iris claim check` finds them.
+pub fn spec_configuration(run_spec_path: &Path, pins_path: Option<&Path>) -> Result<Configuration> {
+    let run_spec = read_run_spec(run_spec_path)?;
+    contract_of(run_spec_path, &run_spec, pins_path)?.with_context(|| {
+        format!(
+            "a model {} names has no {CONTRACT_PINS_JSON}: import it again from the iris root, \
+             where the stage projects and their Raster.lock files are",
+            run_spec_path.display()
+        )
+    })
+}
+
+#[derive(Debug, Clone)]
+pub struct ChallengePostOptions {
+    pub run_spec_path: PathBuf,
+    pub pins_path: Option<PathBuf>,
+    /// The `challenge_bundle.json` that `challenge build` wrote.
+    pub challenge_bundle_path: PathBuf,
+    /// The disputed claim's `claim_submission.json`, in its claim directory.
+    pub submission_path: PathBuf,
+    pub da_dir: Option<PathBuf>,
+    pub submitted_at: Option<u64>,
+}
+
+pub struct ChallengePosted {
+    pub report: ClaimCheckReport,
+    pub submission_path: PathBuf,
+}
+
+/// Post a challenge's trace body, write its submission beside the bundle,
+/// and make the checks a contract would make when it arrives.
+pub fn post_challenge(options: ChallengePostOptions) -> Result<ChallengePosted> {
+    let configuration =
+        spec_configuration(&options.run_spec_path, options.pins_path.as_deref())?;
+    let claim: ClaimSubmission = read_json(&options.submission_path)?;
+    let trace = claim_trace(&options.submission_path)?;
+    let bundle = inference_artifacts::read_challenge_bundle(&options.challenge_bundle_path)?;
+    let replay: inference_artifacts::ChallengeTrace = read_json(&bundle.challenge_trace_path)?;
+    let stage = trace
+        .checkpoints
+        .iter()
+        .position(|checkpoint| checkpoint.stage == bundle.stage)
+        .with_context(|| format!("the claim has no stage `{}`", bundle.stage))?;
+    let layer = crate::availability::StubLayer::open(
+        options
+            .da_dir
+            .clone()
+            .unwrap_or_else(crate::availability::da_dir),
+    );
+    let submission = challenge_submission(
+        &claim.checkpoints_sha256,
+        stage as u32,
+        &trace.checkpoints[stage],
+        &bundle.raster_commit_path,
+        &replay.raster_output_sha256,
+        &layer,
+    )?;
+    let submission_path = options
+        .challenge_bundle_path
+        .with_file_name(inference_artifacts::contract::CHALLENGE_SUBMISSION_JSON);
+    inference_artifacts::write_json(&submission_path, &submission)?;
+    let submitted_at = match options.submitted_at {
+        Some(at) => at,
+        None => crate::availability::now()?,
+    };
+    let report = check_challenge(
+        &configuration,
+        &options.submission_path,
+        &submission,
+        &layer,
+        submitted_at,
+    )?;
+    Ok(ChallengePosted {
+        report,
+        submission_path,
+    })
+}
+
+/// A challenge of the checkpoint at `stage` of the claim whose list hashes
+/// to `checkpoints_sha256`: the Raster stage challenge built from that
+/// checkpoint and the challenger's own run of the stage (its trace commitment
+/// at `commit_path`, the output it ends in), with the trace body posted.
+pub(crate) fn challenge_submission(
+    checkpoints_sha256: &str,
+    stage: u32,
+    checkpoint: &Checkpoint,
+    commit_path: &Path,
+    output_sha256: &str,
+    layer: &crate::availability::StubLayer,
+) -> Result<inference_artifacts::contract::ChallengeSubmission> {
+    let commitment = raster_prover::commitment_file::CommitmentFile::read_memory(commit_path)
+        .with_context(|| format!("{} is not a Raster trace commitment", commit_path.display()))?;
+    let challenge = inference_artifacts::contract::stage_challenge(
+        checkpoint,
+        commitment.header(),
+        output_sha256,
+    )
+    .context("the claim's checkpoint is not one a dispute can be built from")?;
+    // The body a defender reads: the commitment in the encoding Raster's
+    // admission decodes.
+    let body = postcard::to_allocvec(&commitment.into_memory())
+        .context("the trace commitment does not encode")?;
+    Ok(inference_artifacts::contract::ChallengeSubmission {
+        version: inference_artifacts::contract::CHALLENGE_SUBMISSION_VERSION,
+        checkpoints_sha256: checkpoints_sha256.to_string(),
+        stage,
+        challenge,
+        availability: crate::availability::post_trace_body(layer, body)
+            .context("posting the trace body")?,
+    })
+}
+
+/// The checks a contract makes when a challenge arrives, before any replay:
+/// it is about a checkpoint the claim lists, at a stage that names an
+/// approved program, Raster admits it, and its trace body is posted for the
+/// whole time a defender has to answer.
+pub fn check_challenge(
+    configuration: &Configuration,
+    claim_submission_path: &Path,
+    submission: &inference_artifacts::contract::ChallengeSubmission,
+    layer: &crate::availability::StubLayer,
+    submitted_at: u64,
+) -> Result<ClaimCheckReport> {
+    let claim: ClaimSubmission = read_json(claim_submission_path)?;
+    let dir = claim_dir(claim_submission_path)?;
+    let trace = claim_trace(claim_submission_path)?;
+    let list_path = dir.join(CHECKPOINTS_TXT);
+    let list_bytes =
+        fs::read(&list_path).with_context(|| format!("failed to read {}", list_path.display()))?;
+    let mut lines = Vec::new();
+
+    let list = (submission.checkpoints_sha256 == claim.checkpoints_sha256)
+        .then(|| CheckpointList::open(&claim, &list_bytes).ok())
+        .flatten();
+    lines.push(CheckLine {
+        check: "challenge: of the claim's checkpoint list",
+        rejection: list.is_none().then(|| {
+            format!(
+                "the challenge names checkpoint list {}, the claim stored {}",
+                submission.checkpoints_sha256, claim.checkpoints_sha256
+            )
+        }),
+    });
+    let checkpoint = trace.checkpoints.get(submission.stage as usize);
+    let admission = match (&list, checkpoint) {
+        (Some(list), Some(checkpoint)) => Some(list.admit_stage_challenge(
+            &configuration.programs,
+            submission.stage,
+            checkpoint,
+        )),
+        _ => None,
+    };
+    lines.push(CheckLine {
+        check: "challenge admission: the stage names an approved program, so a replay settles it",
+        rejection: match admission {
+            Some(Ok(StageAdmission::Disputed { .. })) => None,
+            Some(Ok(StageAdmission::UnapprovedProgram { program_commitment })) => Some(format!(
+                "the stage names program {program_commitment}, which is not approved: the claim \
+                 is void with no replay"
+            )),
+            Some(Err(refusal)) => Some(refusal.to_string()),
+            None => Some(format!(
+                "the claim has no checkpoint {} to dispute",
+                submission.stage
+            )),
+        },
+    });
+    lines.push(CheckLine {
+        check: "challenge: about the claim's checkpoint at that stage",
+        rejection: (!checkpoint.is_some_and(|checkpoint| {
+            inference_artifacts::contract::challenge_is_about(checkpoint, &submission.challenge)
+        }))
+        .then(|| String::from("the challenge's chain commitment is not this checkpoint's")),
+    });
+    lines.push(CheckLine {
+        check: "challenge: Raster admits it",
+        rejection: raster_prover::challenge::verify_challenge(&submission.challenge)
+            .err()
+            .map(|refusal| format!("{refusal:?}")),
+    });
+    lines.push(CheckLine {
+        check: "challenge: trace body posted, proven and retrievable through the fault-proof window",
+        rejection: inference_artifacts::availability::check_challenge_availability(
+            layer,
+            AvailabilityParameters::default(),
+            &submission.availability,
+            &submission.trace_header_digest(),
+            submitted_at,
+        )
+        .err()
+        .map(|rejection| rejection.to_string()),
     });
     Ok(ClaimCheckReport { lines })
 }

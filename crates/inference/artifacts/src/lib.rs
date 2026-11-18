@@ -1,3 +1,4 @@
+pub mod availability;
 pub mod challenge;
 pub mod checkpoint;
 pub mod claim;
@@ -8,6 +9,7 @@ pub mod io;
 pub mod manifest;
 pub mod model_identity;
 pub mod pipeline;
+pub mod registry;
 pub mod replay_profile;
 pub mod run;
 

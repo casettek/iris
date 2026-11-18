@@ -81,12 +81,25 @@ the chain then checks it.
   check's output, and the submitted result is the one in the last stage's. Every
   checkpoint of the native claim is also the boundary the
   Raster run committed: the same program id, input manifest commitment, producers
-  and output commitments at every stage.
+  and output commitments at every stage. The submission names its run's
+  configuration and lists the blobs `claim build` posted to the gate's own
+  stand-in data-availability layer (`stub-celestia` under the run directory).
+- The [availability cases](../internals/availability.md) on the same claim: it
+  is accepted when judged by a registry holding its configuration, and refused
+  at the configuration check when the registry does not hold it or the
+  submission names another one, and at the availability check when nothing
+  is posted, the blobs expire before the challenge period ends, only the
+  checkpoints are posted, or another prompt is posted in place of the one the
+  statement names.
 - For each falsified claim whose stage replays: which rule settles the
   difference between the claimed checkpoint and the honest one. Where that is a
   replay, the Raster stage challenge built from the claimer's checkpoint and the
   challenger's trace is one Raster's own admission accepts, about that
   checkpoint, and the same trace against the honest checkpoint is refused.
+  The same challenge as a contract receives it (challenge leg only): its trace
+  body posted, it is admitted against a claim whose list holds the claimer's
+  checkpoint, and refused when its body is not posted or expires before the
+  fault-proof window ends.
 - Over wrong token marks, on the templated case: the prompt stages finish through
   both Raster and native-staged, agree byte for byte, and record the expected fault.
   This includes marks past the end of the prompt, a range with no marks, a token

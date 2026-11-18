@@ -19,10 +19,11 @@ result code. See [the authenticated prompt](../proposals/authenticated-prompt.md
 
 ## What the contract pins
 
-A contract pins the [pipeline](pipelines.md) it accepts claims of, that
-pipeline's stage programs, and one model per inference the pipeline makes. It
-chooses its parameters itself. The pins are a file, `contract_pins.json`
-(version 3):
+A contract judges a claim by the registered configuration the claim names
+(`Configuration`, see [data availability and the registry](availability.md)):
+the [pipeline](pipelines.md), that pipeline's stage programs, one model per
+inference the pipeline makes, and the contract's own parameters. The first
+three are the pins, a file, `contract_pins.json` (version 4):
 
 | Field | Meaning |
 | --- | --- |
@@ -44,6 +45,7 @@ Two models of one family under one pipeline have the same one.
 | Each program's chained inputs | The chain template: an input is chained when any stage of the program takes it `from` another stage |
 | For each chained input, the programs that may produce it | The chain template |
 | For each chained input, the empty values it may hold | The fixed externals the chain's first stages are given in its place |
+| Each program's run inputs | The chain template: an input bound `{ run = ... }`, or to a file under the run placeholder directory. Not checked yet: kept for the step in which a claimer posts a run input on request ([availability](availability.md#open)) |
 
 **A model entry** is true of one model.
 
@@ -58,7 +60,7 @@ and what it requires of the claim's origin (`RequiredOrigin`):
 
 | Value | Meaning |
 | --- | --- |
-| The source, or none | The signer's key and the recipe's hash. With none, the claim must name no source |
+| The source, or none | The signer's key, and optionally the recipe's hash. With none, the claim must name no source. A configuration made from a run spec does not pin the recipe: the base prompt and the documents' domains are not pinned yet |
 | The forms | The texts the output is read by and the code of each, in order. May be empty |
 
 `iris claim check` reads all of them from the run spec: the signer and the
@@ -116,6 +118,7 @@ them.
 | Field | Meaning |
 | --- | --- |
 | `pipeline` | The [pipeline](pipelines.md) the claim is of |
+| `configuration` | The id of the registered configuration the claim is of |
 | `input_text_sha256` | The claimer's commitment to the input it ran. The contract takes it as given. Every inference's statement is recomputed over it |
 | `source_sha256` | The digest of the source record the text was built from, or 64 zeros. The statement names it |
 | `source` | The source record itself, for a claim that has one: the text's hash and length, the recipe's hash, the count and chained hash of the documents' attested facts, the signer's key, and the fault, which must be zero |
@@ -128,6 +131,7 @@ them.
 | `result.forms_sha256` | A hash chained over the forms the plaintext was compared with |
 | `consensus` | For a `consensus` claim: `same_input`, `agree` and `code`, as its result stage states them. Absent for `single` |
 | `checkpoints_sha256` | SHA-256 of the claim's `checkpoints.txt` |
+| `availability` | The blobs the claimer posted: the new information its statement names (the source, or the prompt text of a run with none), and the checkpoint list with every checkpoint, each with where it is, what it holds and its availability proof ([availability](availability.md)) |
 
 The three `record` values are the claim record an inference's last check states
 in its output (`ClaimRecord` in `raster-stages/sequence-check/src/input.rs`). The
@@ -149,10 +153,11 @@ in the prompt context, from where it reaches the statement.
 
 ## On submission
 
-A contract accepts claims of one pipeline. It first requires the submission to
-name it and to hold what a claim of it does (`check_pipeline`): one inference
-for `single`, and two with their agreement for `consensus`. Checks 1 and 2 are
-then made of each inference, against the model the contract pins for it
+A contract first finds the configuration the claim names, and judges the claim
+by it. It then requires the submission to name that configuration's pipeline
+and to hold what a claim of it does (`check_pipeline`): one inference for
+`single`, and two with their agreement for `consensus`. Checks 1 and 2 are then
+made of each inference, against the model the configuration pins for it
 (`check_submission`).
 
 1. **Statement matches.** Recompute the statement digest from the pinned model id,
@@ -178,6 +183,12 @@ then made of each inference, against the model the contract pins for it
    consensus result stage does, and rejects a claim that states another
    agreement or another code. A claim in which the models disagree is accepted
    as that: the contract acts on the answer `agree: false`.
+6. **Data posted** (`check_claim_availability`). Every blob the claim lists is
+   included in a data root Blobstream has attested to, its availability proof
+   holds, and it stays retrievable past the end of the challenge period. The
+   blobs hold the new information the statement names, a source whose record
+   has the statement's source digest or a prompt text with its input hash, and
+   the claim's checkpoint list.
 
 The record's fields other than the signer and the recipe are not the contract's
 to judge. Which documents were fetched, and that the text is what the recipe
@@ -223,6 +234,12 @@ The second comparison reads the stage's `input_manifest.json`, held to the
 checkpoint's `input_commitment`. It must be exactly the canonical encoding of
 what it holds: a repeated name, an extra field or other spacing voids the claim,
 so that no two readers can take one input list for different inputs.
+
+The claimer does not post its manifests. Where the stage's input commitment is
+the challenger's own, the challenger presents its own manifest, which is the
+same bytes. Where it is not, only the claimer has the manifest: that case waits
+for the step in which a claimer posts on request
+([availability](availability.md#open)).
 
 Which earlier stage is the right producer is not the contract's to judge. Every
 output says which step produced it, and the consuming stage checks that against
@@ -297,12 +314,18 @@ cargo run --release -p iris-cli -- claim check \
 
 The command reads the checkpoint files, every stage's input list and the
 outputs of each inference's last check and of the result stage from the
-directory the submission is in. It makes the pipeline check, the submission
-checks and the challenge-time comparisons, the link comparison for every chained
-input of every stage. It prints seven lines for a `single` claim and nine for a
-`consensus` one, which has a statement line and a record line per inference.
-`claim build` makes the same checks on its own claim before it reports success,
-when the imports have pins.
+directory the submission is in, and the posted blobs from the stand-in
+data-availability layer (`--da-dir`, default `IRIS_DA_DIR` or
+`~/.cache/iris/stub-celestia`). It makes the configuration and pipeline checks,
+the submission checks, the availability check and the challenge-time
+comparisons, the link comparison for every chained input of every stage. It
+prints nine lines for a `single` claim and eleven for a `consensus` one, which
+has a statement line and a record line per inference. `--registry <file>` judges the claim by the
+configuration it names in that registry; without it, by the one the run spec
+and the pins describe. `--submitted-at <seconds>` sets when the claim is taken
+to be submitted.
+`claim build` names its configuration, posts its data, and makes the same
+checks on its own claim before it reports success, when the imports have pins.
 
 Add `--raster-run <dir>` with a Raster chain run of the same claim to hold every
 checkpoint to the boundary that run committed: the same stages in the same order,
@@ -362,8 +385,9 @@ These are open. None is closed by anything on this page.
 
 ## Not here
 
-- Data availability, bonds, the challenge window, and verifying a defence. These
-  are the contract's and the settlement layer's.
+- Bonds, the clock that runs the challenge window, and verifying a defence.
+  These are the contract's and the settlement layer's. What is posted, and for
+  how long it must stay retrievable, is in [availability](availability.md).
 - Any check of the input beyond its hash and the source it names. What a
   source record stands for is in `docs/proposals/authenticated-prompt.md`.
 - A way to open one checkpoint without presenting the whole list.

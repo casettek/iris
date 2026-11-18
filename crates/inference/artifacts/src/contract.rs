@@ -42,6 +42,7 @@ use raster_core::transition::{TraceCommitmentHeader, TransitionJournal};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+use crate::availability::PostedBlob;
 use crate::checkpoint::{checkpoint_hash, Checkpoint, CheckpointTrace};
 use crate::direct::{model_id_of, ModelCommitment, ModelManifest};
 use crate::inference::InferenceResult;
@@ -51,8 +52,8 @@ use crate::pipeline::Pipeline;
 pub const CONTRACT_PINS_JSON: &str = "contract_pins.json";
 /// Written beside a claim's `claim_bundle.json`.
 pub const CLAIM_SUBMISSION_JSON: &str = "claim_submission.json";
-pub const CONTRACT_PINS_VERSION: u32 = 3;
-pub const CLAIM_SUBMISSION_VERSION: u32 = 5;
+pub const CONTRACT_PINS_VERSION: u32 = 4;
+pub const CLAIM_SUBMISSION_VERSION: u32 = 6;
 
 /// What a contract pins before any claim arrives: the pipeline it accepts
 /// claims of, that pipeline's stage programs, and the model of each inference
@@ -94,6 +95,14 @@ pub struct StageProgram {
     /// The inputs this program takes from earlier stages. Every other input
     /// is model data or a run input, which the program checks itself.
     pub chained_inputs: Vec<ChainedInput>,
+    /// The inputs a run gives this program: the prompt, the claimed tokens,
+    /// the run's configuration and schedule, the source and the forms. Each
+    /// is made from the run's new information, the configuration and the
+    /// model, so a challenger makes its own. One a challenger cannot make the
+    /// same is a matter for a later step, in which the claimer posts it on
+    /// request.
+    #[serde(default)]
+    pub run_inputs: Vec<String>,
 }
 
 /// One input a stage program takes from an earlier stage.
@@ -218,12 +227,16 @@ pub struct SubmittedConsensus {
     pub code: u32,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RequiredSource {
     /// The key every attestation must be signed by.
     pub signer: String,
-    /// The hash over the recipe the prompt must be built with.
-    pub recipe_sha256: String,
+    /// The hash over the recipe the prompt must be built with: its base
+    /// prompt, its documents' servers and paths, and its fields. `None`
+    /// accepts any recipe. The claim's statement still names the recipe it
+    /// used, through the source record.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recipe_sha256: Option<String>,
 }
 
 /// The digest a statement names for a source record: see `source_id` in the
@@ -250,6 +263,10 @@ pub struct ClaimSubmission {
     pub version: u32,
     /// The pipeline the claim is of. A contract accepts claims of one.
     pub pipeline: Pipeline,
+    /// The id of the registered configuration the claim is of: its
+    /// pipeline's programs, its models, its parameters and what it requires
+    /// of the source and the result (`crate::registry`).
+    pub configuration: String,
     /// The claimer's commitment to the input it ran. Today the SHA-256 of the
     /// prompt text. The contract takes it as given. Every inference's
     /// statement is recomputed over it, so all of them ran this input.
@@ -274,6 +291,13 @@ pub struct ClaimSubmission {
     /// stage, in order. This is the claim's commitment to every stage
     /// boundary.
     pub checkpoints_sha256: String,
+    /// What the claimer posted to the data-availability layer: the new
+    /// information its statement names (a source, or a prompt text) and its
+    /// checkpoint list with every checkpoint and input manifest, each blob
+    /// with its availability proof. Empty until posted; a contract accepts no
+    /// claim without it (`crate::availability`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub availability: Vec<PostedBlob>,
 }
 
 /// Why a contract would not open a challenge window for a submission.
@@ -705,6 +729,7 @@ impl PipelinePins {
     /// stage project has locked and the inputs each takes from earlier
     /// stages. `family` names the model families whose programs these are.
     pub fn from_template(family: String, template: &str) -> Result<Self> {
+        let mut run_inputs = pipeline_run_inputs(template)?;
         let stage_programs = pipeline_wiring(template)?
             .into_iter()
             .map(|(project, chained_inputs)| {
@@ -712,6 +737,11 @@ impl PipelinePins {
                     stage: project_name(&project)?,
                     program_commitment: locked_program_commitment(&project)?,
                     chained_inputs,
+                    run_inputs: run_inputs
+                        .remove(&project)
+                        .unwrap_or_default()
+                        .into_iter()
+                        .collect(),
                 })
             })
             .collect::<Result<Vec<_>>>()?;
@@ -894,6 +924,83 @@ pub fn pipeline_wiring(template: &str) -> Result<Vec<(PathBuf, Vec<ChainedInput>
         .collect())
 }
 
+/// Where a model import's chain template points the files a run writes:
+/// a run's chain points them at the run's own.
+pub const RUN_PLACEHOLDER_DIR: &str = "run-prompt-placeholder/";
+
+/// The inputs a run gives each stage project a chain template names: those
+/// bound `{ run = ... }`, and those bound to an external or a chain input whose
+/// file is a run's placeholder (see [`RUN_PLACEHOLDER_DIR`]). Everything else
+/// a stage loads is an earlier output or model data.
+pub fn pipeline_run_inputs(template: &str) -> Result<BTreeMap<PathBuf, BTreeSet<String>>> {
+    let document: toml::Value =
+        toml::from_str(template).context("the chain template is not valid TOML")?;
+    let chain = document
+        .get("chain")
+        .context("the chain template has no [chain] table")?;
+    let placeholder = |value: Option<&toml::Value>| {
+        value
+            .and_then(toml::Value::as_str)
+            .is_some_and(|path| path.contains(RUN_PLACEHOLDER_DIR))
+    };
+    // The chain inputs whose files a run writes, by name.
+    let run_chain_inputs: Vec<&String> = chain
+        .get("input")
+        .and_then(toml::Value::as_table)
+        .into_iter()
+        .flatten()
+        .filter(|(_, input)| placeholder(input.get("path")))
+        .map(|(name, _)| name)
+        .collect();
+    let stages_of = |table: &toml::Value| -> Vec<toml::Value> {
+        ["stage", "stages"]
+            .iter()
+            .filter_map(|key| table.get(*key).and_then(toml::Value::as_array))
+            .flatten()
+            .cloned()
+            .collect()
+    };
+    let mut stages = stages_of(chain);
+    for repeat in chain
+        .get("repeat")
+        .and_then(toml::Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        stages.extend(stages_of(repeat));
+    }
+    let mut run_inputs: BTreeMap<PathBuf, BTreeSet<String>> = BTreeMap::new();
+    for stage in &stages {
+        let project = PathBuf::from(
+            stage
+                .get("project")
+                .and_then(toml::Value::as_str)
+                .context("a chain stage has no `project`")?,
+        );
+        let inputs = stage.get("inputs").and_then(toml::Value::as_table);
+        for (param, binding) in inputs.into_iter().flatten() {
+            let from_run = binding.get("run").is_some()
+                || placeholder(binding.get("external").and_then(|external| external.get("path")))
+                || binding
+                    .get("input")
+                    .and_then(toml::Value::as_str)
+                    .is_some_and(|name| {
+                        run_chain_inputs.iter().any(|input| {
+                            name.strip_prefix(input.as_str())
+                                .is_some_and(|rest| rest.is_empty() || rest.starts_with('_'))
+                        })
+                    });
+            if from_run {
+                run_inputs
+                    .entry(project.clone())
+                    .or_default()
+                    .insert(param.clone());
+            }
+        }
+    }
+    Ok(run_inputs)
+}
+
 /// The program identity a stage project's `Raster.lock` records.
 pub fn locked_program_commitment(stage_project: &Path) -> Result<String> {
     #[derive(Deserialize)]
@@ -920,6 +1027,7 @@ impl ClaimSubmission {
     /// commitment to the checkpoint list in the run directory.
     pub fn from_run(
         pipeline: Pipeline,
+        configuration: String,
         results: &[&InferenceResult],
         consensus: Option<SubmittedConsensus>,
         source: Option<&source_core::SourceRecord>,
@@ -932,6 +1040,7 @@ impl ClaimSubmission {
         Ok(Self {
             version: CLAIM_SUBMISSION_VERSION,
             pipeline,
+            configuration,
             input_text_sha256: first.input_text_sha256.clone(),
             source_sha256: first.source_sha256.clone(),
             source: source.cloned(),
@@ -952,6 +1061,7 @@ impl ClaimSubmission {
                 .collect(),
             consensus,
             checkpoints_sha256: hex::encode(Sha256::digest(checkpoints)),
+            availability: Vec::new(),
         })
     }
 
@@ -1114,11 +1224,13 @@ pub fn check_origin(
                     submitted: record.signer.clone(),
                 });
             }
-            if record.recipe_sha256 != required.recipe_sha256 {
-                return Err(SubmissionRejection::AnotherRecipe {
-                    expected: required.recipe_sha256.clone(),
-                    submitted: record.recipe_sha256.clone(),
-                });
+            if let Some(recipe) = &required.recipe_sha256 {
+                if record.recipe_sha256 != *recipe {
+                    return Err(SubmissionRejection::AnotherRecipe {
+                        expected: recipe.clone(),
+                        submitted: record.recipe_sha256.clone(),
+                    });
+                }
             }
         }
     }
@@ -1608,6 +1720,45 @@ pub fn stage_challenge(
     })
 }
 
+/// Written beside a challenge's `challenge_bundle.json`.
+pub const CHALLENGE_SUBMISSION_JSON: &str = "challenge_submission.json";
+pub const CHALLENGE_SUBMISSION_VERSION: u32 = 1;
+
+/// What a challenger submits: the claim and the stage it disputes, the
+/// Raster stage challenge about that stage's checkpoint, and where the body
+/// of its trace commitment is posted, so a defender can read it.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ChallengeSubmission {
+    pub version: u32,
+    /// The disputed claim's checkpoint list, as its submission stored it.
+    pub checkpoints_sha256: String,
+    /// The position of the disputed checkpoint in that list.
+    pub stage: u32,
+    /// The one-stage chain commitment built from the claimer's checkpoint,
+    /// the header of the challenger's own trace commitment of the stage, and
+    /// the output its run ends in ([`stage_challenge`]).
+    pub challenge: StageChallenge,
+    /// The posted trace body, with its availability proof.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub availability: Vec<PostedBlob>,
+}
+
+impl ChallengeSubmission {
+    /// The digest of the challenger's trace commitment header: what the
+    /// posted body must be the body of.
+    pub fn trace_header_digest(&self) -> String {
+        hex::encode(self.challenge.trace_commitment_header.digest())
+    }
+}
+
+/// Whether a stage challenge is about this checkpoint: the one-stage chain
+/// commitment it carries is the checkpoint's own.
+pub fn challenge_is_about(checkpoint: &Checkpoint, challenge: &StageChallenge) -> bool {
+    challenge.challenged_stage == 0
+        && dispute_commitment(checkpoint)
+            .is_some_and(|commitment| commitment == challenge.chain_commitment_bytes)
+}
+
 /// Why a proven window does not dismiss a challenge to a checkpoint.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DefenceRejection {
@@ -1749,6 +1900,7 @@ mod tests {
             stage: stage.to_string(),
             program_commitment: hex::encode(id),
             chained_inputs,
+            run_inputs: vec![String::from("text")],
         };
         let input = |name: &str, producers: &[&str], empty_values: Vec<String>| ChainedInput {
             name: name.to_string(),
@@ -1874,12 +2026,14 @@ mod tests {
             let submission = ClaimSubmission {
                 version: CLAIM_SUBMISSION_VERSION,
                 pipeline: Pipeline::Single,
+                configuration: String::new(),
                 inferences: vec![inference(&pins.models[0], &input, "ZK")],
                 consensus: None,
                 input_text_sha256: input,
                 source_sha256: "00".repeat(32),
                 source: None,
                 checkpoints_sha256: hex::encode(Sha256::digest(&list)),
+                availability: Vec::new(),
             };
             Self {
                 submission,
@@ -2499,6 +2653,7 @@ mod tests {
             stage: String::from("consensus-result"),
             program_commitment: hex::encode(CONSENSUS),
             chained_inputs: vec![check("first"), check("second")],
+            run_inputs: vec![String::from("forms")],
         });
         (programs, [single.models[0].clone(), second])
     }
@@ -2804,7 +2959,7 @@ mod tests {
         assert_eq!(single.mismatch(Pipeline::Single, &[&first]), None);
         // The file says which pipeline it is of and which models, in order.
         let written = serde_json::to_value(&single).unwrap();
-        assert_eq!(written["version"], 3);
+        assert_eq!(written["version"], 4);
         assert_eq!(written["pipeline"], "single");
         assert_eq!(written["models"].as_array().unwrap().len(), 1);
         assert!(written["programs"]["stage_programs"].is_array());
@@ -2844,8 +2999,58 @@ mod tests {
         other_range.range_size = 256;
         assert!(single.mismatch(Pipeline::Single, &[&other_range]).is_some());
         let mut old = single.clone();
-        old.version = 2;
+        old.version = 3;
         assert!(old.mismatch(Pipeline::Single, &[&first]).is_some());
+    }
+
+    #[test]
+    fn a_templates_run_inputs_are_what_a_run_writes() {
+        let template = r#"[chain]
+name = "iris"
+
+[chain.input.prompt_text]
+index = "j"
+path = "/repo/target/iris/run-prompt-placeholder/text_{j}.rastered"
+commitments = []
+
+[chain.input.transformer_layer]
+index = "l"
+path = "/repo/model/layer_{l}.rastered"
+commitments = []
+
+[[chain.stage]]
+name = "source"
+project = "raster-stages/prompt-source"
+inputs.recipe = { run = "source_recipe" }
+
+[[chain.stage]]
+name = "prompt_bind_p0"
+project = "raster-stages/prompt-bind"
+inputs.text = { input = "prompt_text_0" }
+inputs.config = { external = { path = "/repo/target/iris/run-prompt-placeholder/config.rastered", index_path = "x", commitment = "0" } }
+inputs.tokenizer = { external = { path = "/repo/model/tokenizer.rastered", index_path = "x", commitment = "t" } }
+inputs.source = { from = "source" }
+
+[[chain.repeat]]
+name = "layers"
+index = "l"
+start = 0
+count = 2
+
+  [[chain.repeat.stage]]
+name = "range_p0_l{l}"
+project = "raster-stages/prefill-range"
+inputs.layer = { input = "transformer_layer_{l}" }
+"#;
+        let run_inputs = pipeline_run_inputs(template).unwrap();
+        let of = |project: &str| {
+            run_inputs
+                .get(Path::new(project))
+                .map(|names| names.iter().map(String::as_str).collect::<Vec<_>>())
+        };
+        assert_eq!(of("raster-stages/prompt-source"), Some(vec!["recipe"]));
+        assert_eq!(of("raster-stages/prompt-bind"), Some(vec!["config", "text"]));
+        assert_eq!(of("raster-stages/prefill-range"), None);
     }
 
     #[test]
@@ -2854,7 +3059,7 @@ mod tests {
         assert_eq!(check_pipeline(Pipeline::Single, &submission), Ok(()));
         let written = serde_json::to_value(&submission).unwrap();
         assert_eq!(written["pipeline"], "single");
-        assert_eq!(written["version"], 5);
+        assert_eq!(written["version"], 6);
 
         // A submission that names no pipeline, or one that does not exist, is
         // not a submission.
@@ -2959,7 +3164,7 @@ mod tests {
         let required = RequiredOrigin {
             source: Some(RequiredSource {
                 signer: String::from("02ab"),
-                recipe_sha256: hex::encode([10; 32]),
+                recipe_sha256: Some(hex::encode([10; 32])),
             }),
             forms: forms(),
         };

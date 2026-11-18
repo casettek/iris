@@ -294,6 +294,9 @@ fn run_honest(
         submission_path: native_dir.join(inference_artifacts::contract::CLAIM_SUBMISSION_JSON),
         raster_run: Some(raster_dir),
         pins_path: None,
+        registry_path: None,
+        da_dir: None,
+        submitted_at: None,
     })
     .context("contract checks")?;
     for line in &contract.lines {

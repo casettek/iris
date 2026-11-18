@@ -16,3 +16,6 @@ prompt-core = { path = "../../prompt-core" }
 toml = "0.8"
 
 model-identity = { path = "../../model/identity" }
+
+[dev-dependencies]
+source-core = { path = "../../source-core", features = ["sign"] }
