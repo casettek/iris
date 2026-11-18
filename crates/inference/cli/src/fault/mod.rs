@@ -207,11 +207,13 @@ pub fn prove(args: ProveArgs) -> Result<()> {
             .context("missing manifest hash")?,
         "frozen run",
     )?;
-    inference_artifacts::verify_file_sha256(
-        &prepared.model_manifest_path,
-        &prepared.model_manifest_sha256,
-        "frozen model",
-    )?;
+    for inference in &prepared.inferences {
+        inference_artifacts::verify_file_sha256(
+            &inference.model_manifest_path,
+            &inference.model_manifest_sha256,
+            "frozen model",
+        )?;
+    }
     let claim_trace: CheckpointTrace =
         read_json(&reference(&claim_path, &claim.checkpoint_trace_path))?;
     ensure!(

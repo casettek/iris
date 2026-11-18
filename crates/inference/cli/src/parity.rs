@@ -763,7 +763,7 @@ fn run_chain_fault_leg(
     prepared: &crate::claim::PreparedClaimRun,
     claimed: &[u32],
 ) -> Result<Value> {
-    let prompt = &prepared.prepared_run.prompt;
+    let prompt = &prepared.prepared_run.first()?.prompt;
     let range_size = model.range_size;
     let model_dir = model_path
         .parent()
@@ -1032,7 +1032,7 @@ fn run_prompt_fault_leg(
         RunFile, FAULT_CUT_BEYOND_TEXT, FAULT_EMPTY_RANGE, FAULT_NONE, FAULT_NOT_THE_MERGE,
         FAULT_TEXT_CLAIM,
     };
-    let pieces = &prepared.prepared_run.prompt.initial_pieces;
+    let pieces = &prepared.prepared_run.first()?.prompt.initial_pieces;
     let tokenizer: Value = read_json(
         &model_path
             .parent()
@@ -1129,7 +1129,7 @@ fn run_prompt_fault_leg(
 
     let template = fs::read_to_string(&prepared.manifest_path)?;
     let prompt_tokenizer = run_prep::prompt_tokenizer(&tokenizer)?;
-    let text = &prepared.prepared_run.prompt.resolved_prompt;
+    let text = &prepared.prepared_run.first()?.prompt.resolved_prompt;
     let raw_prompt = prepared.prepared_run.raw_prompt;
     let mut report = Vec::new();
     for (name, marks, fault, complete) in cases {
@@ -1922,6 +1922,7 @@ pub fn worker(spec: &Path, output: &Path, direct: bool) -> Result<()> {
         let config = DirectInferenceConfig {
             base_dir: std::env::current_dir()?,
             run_spec_path: spec.to_path_buf(),
+            inference: 0,
         };
         let diagnostic = DirectInferenceExecutor.run_with_diagnostics(config.clone())?;
         let names = diagnostic

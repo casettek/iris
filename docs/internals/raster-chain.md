@@ -41,6 +41,7 @@ The chain verifies a *known* output with one pass over `prompt ‖ claimed_outpu
 | `prefill-range` | `range_p{j}_l{l}`, `range_c{k}_l{l}` | Run one transformer layer over one range |
 | `sequence-check` | `check_c{k}` | Re-derive the greedy selections and compare them with the claimed ids |
 | `claim-result` | `result` | Compare the output text with the run's forms and state the first one's code beside the claim record |
+| `consensus-result` | `result` | In a [consensus](pipelines.md) chain: read both inferences' outputs by the run's forms and state whether they agree |
 
 Autoregressive generation is not a chain. It lives in `direct-infer`, which discovers the output a claim then verifies.
 

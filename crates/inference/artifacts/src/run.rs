@@ -8,14 +8,20 @@ use crate::pipeline::Pipeline;
 
 pub const INFERENCE_RUN_SPEC_TOML: &str = "inference.toml";
 pub const PREPARED_RUN_JSON: &str = "prepared_run.json";
-pub const PREPARED_RUN_VERSION: u32 = 19;
+pub const PREPARED_RUN_VERSION: u32 = 20;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct InferenceRunSpec {
     /// Which pipeline the run is of. `single` when the spec does not say.
     #[serde(default, skip_serializing_if = "Pipeline::is_default")]
     pub pipeline: Pipeline,
-    pub model_manifest: PathBuf,
+    /// The model of a pipeline that makes one inference.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_manifest: Option<PathBuf>,
+    /// The models of a pipeline that makes several, in the order it runs
+    /// them: one `[[model]]` table each.
+    #[serde(default, rename = "model", skip_serializing_if = "Vec::is_empty")]
+    pub models: Vec<ModelSpec>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prompt: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -28,6 +34,14 @@ pub struct InferenceRunSpec {
     pub raw_prompt: bool,
     #[serde(default = "default_tokens")]
     pub tokens: u32,
+}
+
+/// One model of a run that names several. The path is relative to the run
+/// spec.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ModelSpec {
+    pub manifest: PathBuf,
 }
 
 /// The files of a run with a source. Paths are relative to the run spec.
@@ -51,17 +65,26 @@ pub struct SourceDocumentSpec {
     pub attestation: PathBuf,
 }
 
+/// One inference of a prepared run: its model, and the prompt as that model's
+/// tokenizer prepares it.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PreparedInference {
+    pub model_manifest_path: PathBuf,
+    pub model_manifest_sha256: String,
+    /// The identifier of the model the inference names.
+    pub model_id: String,
+    pub prompt: PreparedPrompt,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PreparedRun {
     pub version: u32,
     /// The pipeline the claim is of. A challenger's run spec must name it.
     pub pipeline: Pipeline,
     pub run_spec_path: PathBuf,
-    pub model_manifest_path: PathBuf,
-    pub model_manifest_sha256: String,
-    /// The identifier of the model the run names.
-    pub model_id: String,
-    pub prompt: PreparedPrompt,
+    /// The pipeline's inferences, in the order it runs them. Each holds the
+    /// run's text, source record and forms, which are the same in all.
+    pub inferences: Vec<PreparedInference>,
     pub raw_prompt: bool,
     pub tokens: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -140,8 +163,54 @@ fn reject_removed_chain(text: &str, path: &Path) -> Result<()> {
     }
 }
 
+impl PreparedRun {
+    /// The first inference: the only one of a pipeline that makes one, and
+    /// where the run's text, source record and forms are read from.
+    pub fn first(&self) -> Result<&PreparedInference> {
+        self.inferences
+            .first()
+            .context("the prepared run holds no inference")
+    }
+}
+
 impl InferenceRunSpec {
+    /// The model manifest of each inference, in the order the pipeline runs
+    /// them, as the spec writes the paths.
+    pub fn model_manifests(&self) -> Vec<&Path> {
+        self.model_manifest
+            .iter()
+            .map(PathBuf::as_path)
+            .chain(self.models.iter().map(|model| model.manifest.as_path()))
+            .collect()
+    }
+
+    /// The model manifest of one inference.
+    pub fn model_manifest_of(&self, inference: usize) -> Result<&Path> {
+        self.model_manifests().get(inference).copied().with_context(|| {
+            format!(
+                "the `{}` pipeline has no inference {inference}",
+                self.pipeline
+            )
+        })
+    }
+
     pub fn validate(&self) -> Result<()> {
+        let inferences = self.pipeline.inferences();
+        if inferences == 1 {
+            anyhow::ensure!(
+                self.model_manifest.is_some() && self.models.is_empty(),
+                "a run of the `{}` pipeline names its model as `model_manifest`",
+                self.pipeline
+            );
+        } else {
+            anyhow::ensure!(
+                self.model_manifest.is_none() && self.models.len() == inferences,
+                "a run of the `{}` pipeline names its {inferences} models as `[[model]]` \
+                 tables, each with a `manifest`, and no `model_manifest`; found {}",
+                self.pipeline,
+                self.models.len()
+            );
+        }
         if self.source.is_some() {
             anyhow::ensure!(
                 self.prompt.is_none() && self.prompt_file.is_none(),

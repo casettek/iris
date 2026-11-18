@@ -415,8 +415,19 @@ fn execute(cli: Cli) -> Result<ExitCode> {
             let run_spec_path = args.run.clone();
             let result = build_claim(args.into_options()?)?;
             println!("pipeline: {}", result.pipeline);
-            if let Some(final_result) = result.final_result.as_ref() {
-                print_infer_result(final_result, Some(&run_spec_path));
+            match (result.final_result.as_ref(), result.consensus.as_ref()) {
+                (Some(first), Some(consensus)) => {
+                    print_consensus(first, consensus);
+                    for (inference, result) in [first, &consensus.second].into_iter().enumerate()
+                    {
+                        println!("inference: {inference}");
+                        print_infer_result(result, Some(&run_spec_path), inference);
+                    }
+                }
+                (Some(final_result), None) => {
+                    print_infer_result(final_result, Some(&run_spec_path), 0)
+                }
+                (None, _) => {}
             }
             println!(
                 "checkpoint trace: {}",
@@ -475,20 +486,37 @@ fn execute(cli: Cli) -> Result<ExitCode> {
         Some(Commands::Infer(args)) => {
             warn_if_debug_build("infer");
             let run_spec_path = args.run.clone();
-            let report = run_infer(args.run)?;
-            println!(
-                "pipeline: {}",
-                inference_artifacts::read_run_spec(&run_spec_path)?.pipeline
-            );
-            if let Some(count) = report.input_token_count {
-                println!("input token count: {count}");
+            let run = run_infer(args.run)?;
+            println!("pipeline: {}", run.pipeline);
+            let source = source::run_source_of(&run_spec_path)?;
+            match (run.reports.as_slice(), run.consensus.as_ref()) {
+                ([report], None) => {
+                    if let Some(count) = report.input_token_count {
+                        println!("input token count: {count}");
+                    }
+                    // Before the result: its last lines are the generated text.
+                    if let Some(source) = &source {
+                        source::print_source_lines(source);
+                    }
+                    print_infer_result(&report.result, Some(&run_spec_path), 0);
+                    print_infer_timing_summary(&report.timings);
+                }
+                ([first, second], Some(consensus)) => {
+                    if let Some(source) = &source {
+                        source::print_source_lines(source);
+                    }
+                    print_consensus(&first.result, consensus);
+                    for (inference, report) in [first, second].into_iter().enumerate() {
+                        println!("inference: {inference}");
+                        if let Some(count) = report.input_token_count {
+                            println!("input token count: {count}");
+                        }
+                        print_infer_result(&report.result, Some(&run_spec_path), inference);
+                        print_infer_timing_summary(&report.timings);
+                    }
+                }
+                _ => anyhow::bail!("the `{}` pipeline gave no result to print", run.pipeline),
             }
-            // Before the result: its last lines are the generated text.
-            if let Some(source) = source::run_source_of(&run_spec_path)? {
-                source::print_source_lines(&source);
-            }
-            print_infer_result(&report.result, Some(&run_spec_path));
-            print_infer_timing_summary(&report.timings);
             Ok(ExitCode::SUCCESS)
         }
         Some(Commands::Attest { command }) => {
@@ -664,7 +692,24 @@ fn print_challenge_result(result: &ChallengeBuildResult) {
     }
 }
 
-fn print_infer_result(result: &staged_infer::InferenceResult, run_spec_path: Option<&Path>) {
+/// What a consensus states of its two inferences. Printed before either
+/// inference's result, whose last lines are its generated text.
+fn print_consensus(
+    first: &staged_infer::InferenceResult,
+    consensus: &inference_artifacts::ConsensusOutcome,
+) {
+    println!("consensus: {}", consensus.description(first));
+    println!("consensus code: {}", consensus.code);
+    println!("same input: {}", consensus.same_input);
+}
+
+/// One inference's result. `inference` is which of the run's models made it,
+/// whose tokenizer the ids decode by.
+fn print_infer_result(
+    result: &staged_infer::InferenceResult,
+    run_spec_path: Option<&Path>,
+    inference: usize,
+) {
     println!("generated token count: {}", result.generated_token_count);
     println!("generated token ids: {:?}", result.generated_token_ids);
     println!(
@@ -672,7 +717,7 @@ fn print_infer_result(result: &staged_infer::InferenceResult, run_spec_path: Opt
         result.generated_token_ids_sha256
     );
     if let Some(run_spec_path) = run_spec_path {
-        match render_token_trace_for_run(result, run_spec_path) {
+        match render_token_trace_for_run(result, run_spec_path, inference) {
             Ok(trace) => print!("{trace}"),
             Err(error) => eprintln!("generated token trace unavailable: {error:#}"),
         }
@@ -703,6 +748,7 @@ fn print_infer_result(result: &staged_infer::InferenceResult, run_spec_path: Opt
 fn render_token_trace_for_run(
     result: &staged_infer::InferenceResult,
     run_spec_path: &Path,
+    inference: usize,
 ) -> Result<String> {
     let base_dir = std::env::current_dir().context("failed to read current directory")?;
     let run_spec_path = absolute(&base_dir, run_spec_path);
@@ -710,7 +756,8 @@ fn render_token_trace_for_run(
     let run_spec_dir = run_spec_path
         .parent()
         .ok_or_else(|| anyhow::anyhow!("run spec has no parent directory"))?;
-    let model_manifest_path = absolute(run_spec_dir, &run_spec.model_manifest);
+    // The ids are of this one of the run's models, and decode by its tokenizer.
+    let model_manifest_path = absolute(run_spec_dir, run_spec.model_manifest_of(inference)?);
     let model_manifest: inference_artifacts::ModelManifest =
         inference_artifacts::read_json(&model_manifest_path)?;
     let model_manifest_dir = model_manifest_path

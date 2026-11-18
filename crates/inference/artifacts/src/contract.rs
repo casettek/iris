@@ -2185,8 +2185,38 @@ mod tests {
         unnamed.as_object_mut().unwrap().remove("pipeline");
         assert!(serde_json::from_value::<ClaimSubmission>(unnamed).is_err());
         let mut unknown = written;
-        unknown["pipeline"] = serde_json::json!("consensus");
+        unknown["pipeline"] = serde_json::json!("committee");
         assert!(serde_json::from_value::<ClaimSubmission>(unknown).is_err());
+
+        // A contract accepts claims of one pipeline.
+        assert_eq!(
+            check_pipeline(Pipeline::Consensus, &submission),
+            Err(SubmissionRejection::AnotherPipeline {
+                expected: Pipeline::Consensus,
+                submitted: Pipeline::Single,
+            })
+        );
+        let mut relabelled = submission.clone();
+        relabelled.pipeline = Pipeline::Consensus;
+        assert_eq!(check_pipeline(Pipeline::Consensus, &relabelled), Ok(()));
+        // The label alone does not make a claim another pipeline's: its last
+        // stage runs the single pipeline's result program.
+        let claim = Claim::honest();
+        assert_eq!(
+            claim.opened().check_result_binding(
+                &pins(),
+                &relabelled,
+                &claim.trace.checkpoints[3],
+                b"result",
+                &ResultInOutput {
+                    record: relabelled.record.clone(),
+                    result: relabelled.result.clone(),
+                },
+            ),
+            Ok(RecordBinding::AnotherStage {
+                expected: Pipeline::Consensus.result_program()
+            })
+        );
     }
 
     #[test]

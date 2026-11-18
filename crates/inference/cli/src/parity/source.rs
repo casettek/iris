@@ -409,7 +409,7 @@ pub(super) fn run_source_leg(
 
     // The honest run's own chain, cut down to the source stage and the binds.
     let template = fs::read_to_string(&prepared.manifest_path)?;
-    let prompt = &prepared.prepared_run.prompt;
+    let prompt = &prepared.prepared_run.first()?.prompt;
     let raw_prompt = prepared.prepared_run.raw_prompt;
     let range_size = model.range_size as usize;
     let tokenizer: Value = inference_artifacts::read_json(

@@ -123,14 +123,14 @@ pub(crate) fn claim_rejection(
     prepared: &PreparedRun,
     submission_path: &Path,
 ) -> Result<Option<String>> {
-    if !prepared
-        .model_manifest_path
+    let model_manifest_path = &prepared.first()?.model_manifest_path;
+    if !model_manifest_path
         .with_file_name(CONTRACT_PINS_JSON)
         .exists()
     {
         return Ok(None);
     }
-    let pins = load_pins(&prepared.model_manifest_path)?;
+    let pins = load_pins(model_manifest_path)?;
     let required = RequiredParameters {
         raw_prompt: prepared.raw_prompt,
         max_new_tokens: prepared.tokens,
@@ -149,7 +149,14 @@ pub fn check_claim(options: ClaimCheckOptions) -> Result<ClaimCheckReport> {
     let run_spec_dir = run_spec_path
         .parent()
         .context("run spec has no parent directory")?;
-    let pins = load_pins(&absolute(run_spec_dir, &run_spec.model_manifest))?;
+    // A contract's pins are of one model and the `single` pipeline's stage
+    // programs. Those of a pipeline over several models are not built.
+    ensure!(
+        run_spec.pipeline.inferences() == 1,
+        "the contract's checks are not built for the `{}` pipeline yet",
+        run_spec.pipeline
+    );
+    let pins = load_pins(&absolute(run_spec_dir, run_spec.model_manifest_of(0)?))?;
     let required = RequiredParameters {
         raw_prompt: run_spec.raw_prompt,
         max_new_tokens: run_spec.tokens,

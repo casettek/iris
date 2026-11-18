@@ -59,10 +59,12 @@ impl DirectInferenceExecutor {
         let run_spec_dir = run_spec_path
             .parent()
             .ok_or_else(|| anyhow::anyhow!("run spec has no parent directory"))?;
-        let model_manifest_path = if run_spec.model_manifest.is_absolute() {
-            run_spec.model_manifest.clone()
+        // One inference of the run: the same text, on this one of its models.
+        let model_manifest = run_spec.model_manifest_of(config.inference)?;
+        let model_manifest_path = if model_manifest.is_absolute() {
+            model_manifest.to_path_buf()
         } else {
-            run_spec_dir.join(&run_spec.model_manifest)
+            run_spec_dir.join(model_manifest)
         };
 
         let load_started = Instant::now();

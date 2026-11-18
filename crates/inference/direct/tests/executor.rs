@@ -41,6 +41,7 @@ fn direct_executor_reports_missing_direct_manifest_message() {
         .run(DirectInferenceConfig {
             base_dir: dir.clone(),
             run_spec_path: dir.join(INFERENCE_RUN_SPEC_TOML),
+            inference: 0,
         })
         .expect_err("missing manifest should fail");
 
@@ -358,6 +359,7 @@ fn current_say_ciao_direct_first_token_matches_claim_reference() {
         .run(DirectInferenceConfig {
             base_dir: repo.clone(),
             run_spec_path: repo.join(INFERENCE_RUN_SPEC_TOML),
+            inference: 0,
         })
         .unwrap();
 
@@ -458,6 +460,7 @@ fn direct_executor_runs_from_direct_manifest_without_raster_toml() {
         .run(DirectInferenceConfig {
             base_dir: dir.clone(),
             run_spec_path: dir.join(INFERENCE_RUN_SPEC_TOML),
+            inference: 0,
         })
         .unwrap();
 
@@ -488,6 +491,7 @@ fn direct_executor_stops_at_eos_and_reports_only_selected_tokens() {
             .run_with_diagnostics(DirectInferenceConfig {
                 base_dir: dir.clone(),
                 run_spec_path,
+                inference: 0,
             })
             .unwrap();
         // The tiny model selects 2 first, then 0 after embedding token 2.
@@ -536,6 +540,7 @@ fn direct_executor_keeps_a_maximum_budget_when_no_eos_is_selected() {
         .run_with_report(DirectInferenceConfig {
             base_dir: dir.clone(),
             run_spec_path,
+            inference: 0,
         })
         .unwrap();
     assert_eq!(report.input_token_count, Some(4));
@@ -570,6 +575,7 @@ fn direct_executor_rejects_changed_bundle_before_inference() {
             .run(DirectInferenceConfig {
                 base_dir: dir.clone(),
                 run_spec_path: run_spec_path.clone(),
+                inference: 0,
             })
             .unwrap_err();
         assert!(
@@ -723,7 +729,8 @@ fn write_run_spec(dir: &Path, manifest_path: &Path, prompt: &str, tokens: u32) -
     let path = dir.join(INFERENCE_RUN_SPEC_TOML);
     let spec = InferenceRunSpec {
         pipeline: Default::default(),
-        model_manifest: manifest_path.strip_prefix(dir).unwrap().to_path_buf(),
+        model_manifest: Some(manifest_path.strip_prefix(dir).unwrap().to_path_buf()),
+        models: Vec::new(),
         prompt: Some(prompt.to_string()),
         prompt_file: None,
         source: None,
@@ -734,7 +741,7 @@ fn write_run_spec(dir: &Path, manifest_path: &Path, prompt: &str, tokens: u32) -
         &path,
         format!(
             "model_manifest = {:?}\nprompt = {:?}\nraw_prompt = true\ntokens = {}\n",
-            spec.model_manifest.to_string_lossy(),
+            spec.model_manifest.as_ref().unwrap().to_string_lossy(),
             prompt,
             spec.tokens
         ),

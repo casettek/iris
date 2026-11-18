@@ -61,6 +61,66 @@ pub struct InferenceResult {
     pub result_forms_sha256: String,
 }
 
+/// What a consensus run states besides its first inference's result.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ConsensusOutcome {
+    /// The second inference's result.
+    pub second: InferenceResult,
+    /// The two inferences name the same input text and source.
+    pub same_input: bool,
+    /// Both records are valid, they name the same input, and the outputs
+    /// agree.
+    pub agree: bool,
+    /// The code both outputs have, when they agree and the run names forms.
+    pub code: u32,
+}
+
+impl ConsensusOutcome {
+    /// What the consensus result step states of two inferences' results, as
+    /// direct inference computes it: the same functions the chain's result
+    /// stage runs, over the same values.
+    pub fn of(forms: &[source_core::Form], first: &InferenceResult, second: InferenceResult) -> Self {
+        let matched = source_core::run_consensus(
+            forms,
+            &first.generated_text,
+            &second.generated_text,
+            source_core::same_input(
+                &first.input_text_sha256,
+                &first.source_sha256,
+                &second.input_text_sha256,
+                &second.source_sha256,
+            ),
+        );
+        // The step restates each claim record, which is no part of this
+        // outcome: only the verdicts enter the answer.
+        let claimed = |result: &InferenceResult| source_core::Claimed {
+            statement: &[],
+            output_text_sha256: &[],
+            valid: result.valid,
+        };
+        let record = source_core::close_consensus(matched, claimed(first), claimed(&second));
+        Self {
+            second,
+            same_input: record.same_input,
+            agree: record.agree,
+            code: record.code,
+        }
+    }
+
+    /// The answer in words, given the first inference's result.
+    pub fn description(&self, first: &InferenceResult) -> &'static str {
+        if self.agree {
+            "agree"
+        } else if !first.valid || !self.second.valid {
+            "no consensus: a claim record is not valid"
+        } else if !self.same_input {
+            "no consensus: the inferences name different inputs"
+        } else {
+            "disagree"
+        }
+    }
+}
+
 /// The source digest of a run whose text is taken as given.
 pub fn no_source_id() -> String {
     "00".repeat(32)

@@ -33,13 +33,14 @@ pub use direct::{
     MODEL_ARTIFACTS_DIR, MODEL_MANIFEST_JSON, MODEL_MANIFEST_VERSION,
 };
 pub use inference::{
-    InferAuxWaveTiming, InferStageTiming, InferenceResult, InferenceRunReport, InferenceTimings,
+    ConsensusOutcome, InferAuxWaveTiming, InferStageTiming, InferenceResult, InferenceRunReport, InferenceTimings,
 };
 pub use io::{read_json, write_json};
 pub use manifest::resolve_raster_manifest_paths;
 pub use pipeline::Pipeline;
 pub use run::{
-    read_run_spec, InferenceRunSpec, PreparedPiece, PreparedPrompt, PreparedRun,
+    read_run_spec, InferenceRunSpec, ModelSpec, PreparedInference, PreparedPiece, PreparedPrompt,
+    PreparedRun,
     PreparedSourceInputs, RunFileRef,
     SourceDocumentSpec, SourceSpec,
     INFERENCE_RUN_SPEC_TOML, PREPARED_RUN_JSON, PREPARED_RUN_VERSION,
@@ -401,7 +402,8 @@ mod tests {
     fn run_spec_requires_exactly_one_prompt_source() {
         let both = InferenceRunSpec {
             pipeline: Default::default(),
-            model_manifest: PathBuf::from("model-artifacts/manifest.json"),
+            model_manifest: Some(PathBuf::from("model-artifacts/manifest.json")),
+            models: Vec::new(),
             prompt: Some(String::from("hello")),
             prompt_file: Some(PathBuf::from("prompt.txt")),
             source: None,
@@ -416,7 +418,8 @@ mod tests {
 
         let neither = InferenceRunSpec {
             pipeline: Default::default(),
-            model_manifest: PathBuf::from("model-artifacts/manifest.json"),
+            model_manifest: Some(PathBuf::from("model-artifacts/manifest.json")),
+            models: Vec::new(),
             prompt: None,
             prompt_file: None,
             source: None,
@@ -460,12 +463,58 @@ mod tests {
         fs::write(&path, format!("pipeline = \"single\"\n{spec}")).unwrap();
         assert_eq!(read_run_spec(&path).unwrap().pipeline, Pipeline::Single);
         // A name that is no pipeline must not silently run the single one.
-        fs::write(&path, format!("pipeline = \"consensus\"\n{spec}")).unwrap();
+        fs::write(&path, format!("pipeline = \"committee\"\n{spec}")).unwrap();
         let error = format!("{:#}", read_run_spec(&path).unwrap_err());
         assert!(
-            error.contains("consensus") && error.contains("single"),
+            error.contains("committee") && error.contains("single") && error.contains("consensus"),
             "{error}"
         );
+        fs::remove_dir_all(base).unwrap();
+    }
+
+    #[test]
+    fn a_consensus_run_names_two_models() {
+        let base = temp_dir("run-spec-consensus");
+        fs::create_dir_all(&base).unwrap();
+        let path = base.join("inference.toml");
+        let models = "[[model]]\nmanifest = \"a/manifest.json\"\n[[model]]\nmanifest = \"b/manifest.json\"\n";
+        fs::write(
+            &path,
+            format!("pipeline = \"consensus\"\nprompt = \"hi\"\ntokens = 4\n{models}"),
+        )
+        .unwrap();
+        let spec = read_run_spec(&path).unwrap();
+        assert_eq!(spec.pipeline, Pipeline::Consensus);
+        assert_eq!(
+            spec.model_manifests(),
+            [Path::new("a/manifest.json"), Path::new("b/manifest.json")]
+        );
+        assert_eq!(spec.model_manifest_of(1).unwrap(), Path::new("b/manifest.json"));
+        assert!(spec.model_manifest_of(2).is_err());
+
+        // One model, three models, or a model named the single way: each is
+        // refused, and the refusal says how the models are named.
+        let one = "[[model]]\nmanifest = \"a/manifest.json\"\n";
+        for body in [
+            format!("prompt = \"hi\"\n{one}"),
+            format!("prompt = \"hi\"\n{models}{one}"),
+            String::from("model_manifest = \"a/manifest.json\"\nprompt = \"hi\"\n"),
+            format!("model_manifest = \"a/manifest.json\"\nprompt = \"hi\"\n{models}"),
+        ] {
+            fs::write(&path, format!("pipeline = \"consensus\"\n{body}")).unwrap();
+            let error = format!("{:#}", read_run_spec(&path).unwrap_err());
+            assert!(error.contains("[[model]]"), "{error}");
+        }
+        // And a single run takes no `[[model]]`.
+        fs::write(&path, format!("prompt = \"hi\"\n{one}")).unwrap();
+        let error = format!("{:#}", read_run_spec(&path).unwrap_err());
+        assert!(error.contains("model_manifest"), "{error}");
+        fs::write(
+            &path,
+            format!("model_manifest = \"a/manifest.json\"\nprompt = \"hi\"\n{one}"),
+        )
+        .unwrap();
+        assert!(read_run_spec(&path).is_err());
         fs::remove_dir_all(base).unwrap();
     }
 
@@ -522,21 +571,23 @@ mod tests {
             version: PREPARED_RUN_VERSION,
             pipeline: Pipeline::Single,
             run_spec_path: PathBuf::from("inference.toml"),
-            model_manifest_path: PathBuf::from("model-artifacts/manifest.json"),
-            model_manifest_sha256: String::from("model-sha"),
-            model_id: String::from("model-id"),
+            inferences: vec![PreparedInference {
+                model_manifest_path: PathBuf::from("model-artifacts/manifest.json"),
+                model_manifest_sha256: String::from("model-sha"),
+                model_id: String::from("model-id"),
+                prompt: PreparedPrompt {
+                    resolved_prompt: String::from("hello"),
+                    rendered_prompt: String::from("hello"),
+                    initial_pieces: vec![PreparedPiece {
+                        text: String::from("hello"),
+                        segment: 0,
+                    }],
+                    eos_token_ids: vec![1, 2],
+                    source: None,
+                    forms: Vec::new(),
+                },
+            }],
             raw_prompt: false,
-            prompt: PreparedPrompt {
-                resolved_prompt: String::from("hello"),
-                rendered_prompt: String::from("hello"),
-                initial_pieces: vec![PreparedPiece {
-                    text: String::from("hello"),
-                    segment: 0,
-                }],
-                eos_token_ids: vec![1, 2],
-                source: None,
-                forms: Vec::new(),
-            },
             tokens: 2,
             run_manifest_path: Some(PathBuf::from("target/runs/run/Raster.toml")),
             run_manifest_sha256: Some(String::from("run-sha")),

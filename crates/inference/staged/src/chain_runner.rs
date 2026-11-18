@@ -27,9 +27,9 @@ pub struct HybridRun {
     pub chain_dir: PathBuf,
     pub selected_stage_dir: Option<PathBuf>,
     pub final_output: Option<CachedStageValue>,
-    /// The output of the last check the run reached, when it is not the
-    /// run's last stage: the result stage follows it.
-    pub final_check: Option<CachedStageValue>,
+    /// The output of the last check the run reached of each inference, in
+    /// the order the chain runs them. The result stage follows them.
+    pub final_checks: Vec<CachedStageValue>,
 }
 
 /// A native prefix ending at one exact expanded chain stage.
@@ -252,7 +252,8 @@ struct ChainRunState {
     output_cache: StageOutputCache,
     selected_stage_dir: Option<PathBuf>,
     last_output: Option<CachedStageValue>,
-    last_check: Option<CachedStageValue>,
+    /// The last check reached of each inference, by the inference's index.
+    last_checks: std::collections::BTreeMap<usize, CachedStageValue>,
     checkpoint_verifier: Option<CheckpointVerifierState>,
 }
 
@@ -568,7 +569,7 @@ fn run_inner(
         output_cache: StageOutputCache::default(),
         selected_stage_dir: None,
         last_output: None,
-        last_check: None,
+        last_checks: std::collections::BTreeMap::new(),
         checkpoint_verifier: checkpoint_verifier.map(CheckpointVerifierState::new),
     };
     let recomputed_trace_path = chain_dir.join(CHECKPOINT_TRACE_JSON);
@@ -678,7 +679,7 @@ fn run_inner(
             chain_dir,
             selected_stage_dir: state.selected_stage_dir,
             final_output: state.last_output,
-            final_check: state.last_check,
+            final_checks: state.last_checks.into_values().collect(),
         },
         recomputed_trace,
         divergence,
@@ -1127,7 +1128,10 @@ fn finish_stage(
     let output = collect_output(&stage_dir)?;
     if let Some(value) = stage_run.output {
         if matches!(value, CachedStageValue::DecodeEdge(_)) {
-            state.last_check = Some(value.clone());
+            // A check of a chain of several inferences is named for its own.
+            let inference = inference_artifacts::pipeline::labelled_name(&stage.name)
+                .map_or(0, |(inference, _)| inference);
+            state.last_checks.insert(inference, value.clone());
         }
         state.last_output = Some(value.clone());
         output_cache_insert(

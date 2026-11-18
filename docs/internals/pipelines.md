@@ -1,8 +1,13 @@
 # Pipelines
 
-A pipeline is a named arrangement of the parts a claim is made of. One exists
-today, `single`. The name is in place so that others can be added beside it
-without each command growing its own switch.
+A pipeline is a named arrangement of the parts a claim is made of. Two exist:
+`single`, one inference on one model, and `consensus`, the same inference on
+two models and whether they agree. Others can be added beside them without
+each command growing its own switch.
+
+`consensus` runs directly, builds a claim and can be challenged. What a claimer
+would submit for it, what a contract would pin and check, and a parity gate
+case are not built: see [What is not built](#what-is-not-built).
 
 ## What a pipeline arranges
 
@@ -15,6 +20,7 @@ without each command growing its own switch.
 | Pipeline | Inferences | Result program | Its result |
 | --- | --- | --- | --- |
 | `single` | 1 | `claim-result` | The code of the first form the output is, or zero |
+| `consensus` | 2, one after the other | `consensus-result` | Each output's code, and whether the two agree |
 
 See [Raster chain](raster-chain.md) for the stages and
 [the contract](contract.md) for what is checked.
@@ -56,27 +62,103 @@ and the marks a run replaces with its range counts. `source` and the result
 stage have no label. The native runner reads a stage's kind through the label
 (`unlabelled`).
 
-Labels are applied when the template is made and tested there. No pipeline uses
-them yet, and filling in a labelled template for a run is not built.
+Run preparation fills in each inference's part of the template from that
+inference's run files, which are in a directory of their own under the run's
+`prompt/` directory: `prompt/m0/`, `prompt/m1/`. A pipeline of one inference
+keeps its files in `prompt/`.
 
 ## Where the name is
 
 | Place | Field | Notes |
 | --- | --- | --- |
-| Run spec | `pipeline = "single"` | Optional. A spec that names none runs `single`. A name that is no pipeline is an error |
-| `prepared_run.json` | `pipeline` | The claim's frozen run, which its claim bundle points at. Required, version 19 |
-| `claim_submission.json` | `pipeline` | Required, version 4 |
+| Run spec | `pipeline = "consensus"` | Optional. A spec that names none runs `single`. A name that is no pipeline is an error |
+| `prepared_run.json` | `pipeline` | The claim's frozen run, which its claim bundle points at. Required, version 20 |
+| `claim_submission.json` | `pipeline` | Required, version 4. Written for `single` only |
 | `iris infer`, `iris claim build` | a `pipeline:` line | Printed before the result |
+
+A `single` run names its model as `model_manifest`. A run of several
+inferences names its models as `[[model]]` tables, in the order the pipeline
+runs them, and no `model_manifest`:
+
+```toml
+pipeline = "consensus"
+tokens = 16
+
+[[model]]
+manifest = "runtime/model-artifacts/gemma-4-E2B-q8/manifest.json"
+[[model]]
+manifest = "runtime/model-artifacts/ministral-3b-q8/manifest.json"
+
+[source]
+recipe = "recipe.json"
+signer = "signer.json"
+documents = [{ document = "event.bin", attestation = "event.attestation.json" }]
+```
+
+The prompt, the source, `raw_prompt` and `tokens` are the run's, and the same
+for every inference. Each model tokenizes the text with its own tokenizer and
+chat template, so the inferences have different prompt tokens, range counts and
+statements. Both statements name the same input text hash and source digest.
 
 Every command that acts on a run takes the run spec, so naming the pipeline
 there is naming it for all of them:
 
 | Command | What it does with the name |
 | --- | --- |
-| `iris infer` | Runs the pipeline directly |
-| `iris claim build` | Builds the pipeline's chain and records the name in the frozen run and the submission |
-| `iris claim check` | Requires the submission to be of the spec's pipeline, and the claim's last stage to run that pipeline's result program |
-| `iris challenge build` | Refuses a run spec that names another pipeline than the claim's, then rebuilds the claim's arrangement |
+| `iris infer` | Runs the pipeline directly: each inference in turn, then the result |
+| `iris claim build` | Builds the pipeline's chain and records the name in the frozen run and, for `single`, the submission |
+| `iris claim check` | Requires the submission to be of the spec's pipeline, and the claim's last stage to run that pipeline's result program. `single` only |
+| `iris challenge build` | Refuses a run spec that names another pipeline than the claim's, then rebuilds the claim's arrangement from what the claim froze: the text, the source inputs, the forms and each inference's claimed ids |
+
+## The consensus pipeline
+
+The chain is `source`, the first model's stages (`m0_...`), the second model's
+(`m1_...`), then `result`. One checkpoint list covers all of it, so a challenger
+recomputes it, finds the first checkpoint that differs and replays that stage,
+as for any chain. Each inference is a whole claim of its own model: it has its
+own statement and its last check states its own claim record.
+
+`result` runs `consensus-result`. It reads both last checks and the run's forms
+(`crates/source-core/src/consensus.rs`) and states a `ConsensusRecord`:
+
+| Field | Meaning |
+| --- | --- |
+| `first`, `second` | For each inference, what the single result stage states: its claim record's three values, the code of the first form its output is, and the hash of the forms |
+| `same_input` | Both checks' records name the same input text hash and the same source digest |
+| `agree` | Both claim records are valid, `same_input`, and the outputs agree |
+| `code` | The code both outputs have, when they agree and the run names forms. Zero otherwise |
+
+The outputs agree when both are the same form: each is compared with the forms
+as the single result stage compares one, without the whitespace around it, and
+the two must have the same code, which is not zero. A run that names no forms
+has nothing to read an output by, and there the outputs agree when they are the
+same text without the whitespace around each. Two outputs that say the same
+thing in different text do not agree: a model that wraps its answer in a code
+fence matches no form.
+
+A run in which the models disagree is still a claim. What makes it not one is
+an invalid claim record in either inference: `claim build` refuses to write
+such a claim, and a challenger rejects it on that record.
+
+`iris infer` and `iris claim build` print the answer first, then each
+inference's result under an `inference:` line:
+
+```text
+pipeline: consensus
+consensus: agree            # or: disagree, or why there is no consensus
+consensus code: 1
+same input: true
+inference: 0
+...                         # the lines a single run prints
+generated text:
+{"verdict":"confirmed"}
+inference: 1
+...
+```
+
+Like the single result stage, `consensus-result` is a few steps and one per
+form, so its checkpoint cannot be replayed at the challenge window
+([short stages](../issues/short-stage-fraud-window.md)).
 
 ## What holds a claim to its pipeline
 
@@ -87,11 +169,27 @@ claim's last checkpoint must run that pipeline's result program
 approved set. A claim built as one pipeline and labelled as another ends in the
 wrong program.
 
+## What is not built
+
+For `consensus`:
+
+- **A submission.** `claim build` writes the checkpoints, the trace and the
+  claim bundle, and no `claim_submission.json`.
+- **Contract pins and checks.** An import's `contract_pins.json` is of one
+  model and the `single` pipeline's stage programs. `iris claim check` refuses
+  a `consensus` run spec.
+- **A parity gate case.** The checks so far were run by hand on the gate's two
+  small models and on Gemma 4 E2B with Ministral 3B: direct inference and the
+  native claim state the same results, every stage gives the same bytes through
+  Raster and natively, the result stage commits and audits, and a challenger
+  finds a false checkpoint in either inference.
+- **The backend.** iris-backend runs `single` only.
+
 ## Adding a pipeline
 
 In code a pipeline is a variant of `Pipeline`
 (`crates/inference/artifacts/src/pipeline.rs`) with its name, how many
-inferences it makes, its result program and its result stage's bindings. The
-rest is not built: a run spec that names more than one model, run preparation
-and direct inference for more than one model, filling in a labelled template,
-contract pins for more than one model, and the result program itself.
+inferences it makes, its result program and its result stage's bindings. It
+also needs its result program (a stage project, a native routine and the
+function direct inference calls), what `iris infer` and `iris claim build`
+print for it, and how a claim of it is judged when every checkpoint matches.

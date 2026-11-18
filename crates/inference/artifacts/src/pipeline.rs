@@ -36,16 +36,20 @@ pub enum Pipeline {
     /// What a run spec that names no pipeline runs.
     #[default]
     Single,
+    /// The same inference on two models, one after the other, and whether
+    /// their outputs agree.
+    Consensus,
 }
 
 impl Pipeline {
     /// Every pipeline, in the order they are listed to a user.
-    pub const ALL: &'static [Pipeline] = &[Pipeline::Single];
+    pub const ALL: &'static [Pipeline] = &[Pipeline::Single, Pipeline::Consensus];
 
     /// The name a run spec, a prepared run and a submission use.
     pub fn name(self) -> &'static str {
         match self {
             Self::Single => "single",
+            Self::Consensus => "consensus",
         }
     }
 
@@ -54,6 +58,7 @@ impl Pipeline {
     pub fn result_program(self) -> &'static str {
         match self {
             Self::Single => "claim-result",
+            Self::Consensus => "consensus-result",
         }
     }
 
@@ -65,6 +70,7 @@ impl Pipeline {
     pub fn inferences(self) -> usize {
         match self {
             Self::Single => 1,
+            Self::Consensus => 2,
         }
     }
 
@@ -93,14 +99,20 @@ impl Pipeline {
         );
         let labels: Vec<String> = (0..parts.len()).map(|n| self.label(n)).collect();
         let stages_dir = stage_projects_dir(parts[0])?;
-        let result = match self {
-            Self::Single => format!(
-                "\n[[chain.stage]]\nname = \"{RESULT_STAGE}\"\n{}inputs.check = {{ from = \"{}\" }}\n{}",
-                project_line(&stages_dir, self.result_program()),
+        // What the result stage reads of each inference: its last check.
+        let checks = match self {
+            Self::Single => format!("inputs.check = {{ from = \"{}\" }}\n", last_check(&labels[0])),
+            Self::Consensus => format!(
+                "inputs.first = {{ from = \"{}\" }}\ninputs.second = {{ from = \"{}\" }}\n",
                 last_check(&labels[0]),
-                run_input("forms", "result_forms"),
+                last_check(&labels[1]),
             ),
         };
+        let result = format!(
+            "\n[[chain.stage]]\nname = \"{RESULT_STAGE}\"\n{}{checks}{}",
+            project_line(&stages_dir, self.result_program()),
+            run_input("forms", "result_forms"),
+        );
         let source = format!(
             "\n[[chain.stage]]\nname = \"{SOURCE_STAGE}\"\n{}{}{}{}",
             project_line(&stages_dir, "prompt-source"),
@@ -120,14 +132,16 @@ pub fn inference_label(inference: usize) -> String {
 /// A stage name without the label of the inference it belongs to, so
 /// `m1_check_c0` and `check_c0` name the same kind of stage.
 pub fn unlabelled(stage: &str) -> &str {
-    let Some(rest) = stage.strip_prefix('m') else {
-        return stage;
-    };
+    labelled_name(stage).map_or(stage, |(_, name)| name)
+}
+
+/// The inference a labelled name belongs to, and the name without its label.
+/// `None` for a name with no label.
+pub fn labelled_name(name: &str) -> Option<(usize, &str)> {
+    let rest = name.strip_prefix('m')?;
     let digits = rest.bytes().take_while(u8::is_ascii_digit).count();
-    match rest[digits..].strip_prefix('_') {
-        Some(name) if digits > 0 => name,
-        _ => stage,
-    }
+    let inference = rest[..digits].parse().ok()?;
+    Some((inference, rest[digits..].strip_prefix('_')?))
 }
 
 /// The last check of the inference with this label, as a template names it
@@ -220,12 +234,9 @@ fn assemble(parts: &[&str], labels: &[String], source: &str, result: &str) -> Re
         let (head, body) = part.split_at(cut);
         let at = head.find("\n[chain.input.").unwrap_or(head.len());
         let (table, part_inputs) = head.split_at(at);
-        match &chain {
-            None => chain = Some(table.to_string()),
-            Some(first) => ensure!(
-                first == table,
-                "the model imports of one pipeline were written as different chains"
-            ),
+        // The chain is named as the first import names it.
+        if chain.is_none() {
+            chain = Some(table.to_string());
         }
         inputs.push_str(part_inputs);
 
@@ -423,6 +434,8 @@ inputs.prompt = { from = "prompt_bind_p@LAST_PROMPT_RANGE@" }
             assert_eq!(unlabelled(stage), name);
         }
         assert_eq!(unlabelled(&format!("{}result", inference_label(3))), "result");
+        assert_eq!(labelled_name("m12_range_p3_l0"), Some((12, "range_p3_l0")));
+        assert_eq!(labelled_name("range_p3_l0"), None);
     }
 
     #[test]
@@ -439,7 +452,56 @@ inputs.prompt = { from = "prompt_bind_p@LAST_PROMPT_RANGE@" }
         assert_eq!(Pipeline::default(), Pipeline::Single);
         // A name that is no pipeline is refused where it is read, and the
         // refusal says which names are.
-        let error = serde_json::from_str::<Pipeline>("\"consensus\"").unwrap_err();
-        assert!(error.to_string().contains("single"), "{error}");
+        let error = serde_json::from_str::<Pipeline>("\"committee\"").unwrap_err();
+        assert!(
+            error.to_string().contains("single") && error.to_string().contains("consensus"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn the_consensus_pipeline_runs_two_inferences_into_one_result() {
+        assert_eq!(Pipeline::Consensus.inferences(), 2);
+        assert_eq!(
+            [Pipeline::Consensus.label(0), Pipeline::Consensus.label(1)],
+            ["m0_", "m1_"]
+        );
+        let template = Pipeline::Consensus.chain_template(&[PART, PART]).unwrap();
+        let chain: toml::Value = toml::from_str(&template).unwrap();
+        let stages = chain["chain"]["stage"].as_array().unwrap();
+        let names: Vec<&str> = stages
+            .iter()
+            .map(|stage| stage["name"].as_str().unwrap())
+            .collect();
+        assert_eq!(
+            names,
+            [
+                "source",
+                "m0_prompt_bind_p0",
+                "m0_check_c0",
+                "m1_prompt_bind_p0",
+                "m1_check_c0",
+                "result"
+            ]
+        );
+        let result = stages.last().unwrap();
+        assert_eq!(
+            result["project"].as_str(),
+            Some("raster-stages/consensus-result")
+        );
+        assert_eq!(
+            result["inputs"]["first"]["from"].as_str(),
+            Some("m0_check_c@m0_LAST_CLAIMED_RANGE@")
+        );
+        assert_eq!(
+            result["inputs"]["second"]["from"].as_str(),
+            Some("m1_check_c@m1_LAST_CLAIMED_RANGE@")
+        );
+        assert_eq!(result["inputs"]["forms"]["run"].as_str(), Some("result_forms"));
+        // Both inferences are held to the one source.
+        for bind in [&stages[1], &stages[3]] {
+            assert_eq!(bind["inputs"]["source"]["from"].as_str(), Some("source"));
+        }
+        assert!(Pipeline::Consensus.chain_template(&[PART]).is_err());
     }
 }

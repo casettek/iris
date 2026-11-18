@@ -40,7 +40,8 @@ pub struct ClaimBuildOptions {
 pub(crate) struct PreparedClaimRun {
     pub(crate) prepared_run: PreparedRun,
     pub(crate) manifest_path: PathBuf,
-    /// The ids written into the run's `claimed_ids` externals. Kept for the
+    /// The ids written into the run's `claimed_ids` externals: the first
+    /// inference's, which are all of them in a pipeline of one. Kept for the
     /// claimer's own tooling only: the claim posts no copy of them, because its
     /// output is the chain's final record.
     pub(crate) claimed_token_ids: Vec<u32>,
@@ -55,9 +56,13 @@ pub struct ClaimBuildResult {
     pub checkpoint_hashes_path: PathBuf,
     pub claim_bundle_path: PathBuf,
     /// What a claimer would submit to a contract. Absent when the chain
-    /// published no final record to submit.
+    /// published no final record to submit, and for a pipeline of several
+    /// inferences, whose submission is not built.
     pub claim_submission_path: Option<PathBuf>,
+    /// The first inference's result: the whole result of a pipeline of one.
     pub final_result: Option<InferenceResult>,
+    /// What a consensus chain states besides.
+    pub consensus: Option<inference_artifacts::ConsensusOutcome>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -111,10 +116,20 @@ pub fn build_claim(options: ClaimBuildOptions) -> Result<ClaimBuildResult> {
         parity_policy: ParityPolicy::Skip,
     })?;
     // A claimer applies the rule a challenger will: the claim is judged by
-    // its own final record.
-    if let Some(reason) =
-        crate::challenge::claimed_output_rejection(checkpointed.final_result.as_ref())?
-    {
+    // its own final record, and a claim of several inferences by each one's.
+    let pipeline = prepared.prepared_run.pipeline;
+    let mut rejection = crate::challenge::claimed_output_rejection(
+        checkpointed.final_result.as_ref(),
+    )?;
+    if pipeline.inferences() > 1 && rejection.is_none() {
+        let consensus = checkpointed
+            .consensus
+            .as_ref()
+            .with_context(|| format!("the `{pipeline}` chain stated no result"))?;
+        rejection = crate::challenge::claimed_output_rejection(Some(&consensus.second))?
+            .map(|reason| format!("the second inference: {reason}"));
+    }
+    if let Some(reason) = rejection {
         if options.claimed_token_ids.is_none() {
             if options.direct_output_ids.is_some() {
                 anyhow::bail!(
@@ -225,14 +240,16 @@ fn write_claim_result(
             prepared_run_path.as_deref(),
         )?;
     // The submission is stated over the checkpoint list written just above.
+    // That of a pipeline of several inferences is not built.
     let claim_submission_path = checkpointed
         .final_result
         .as_ref()
+        .filter(|_| prepared_run.pipeline.inferences() == 1)
         .map(|result| -> Result<PathBuf> {
             let submission = ClaimSubmission::from_run(
                 prepared_run.pipeline,
                 result,
-                prepared_run.prompt.source.as_ref(),
+                prepared_run.first()?.prompt.source.as_ref(),
                 &checkpointed.chain_dir,
             )?;
             let path = checkpointed.chain_dir.join(CLAIM_SUBMISSION_JSON);
@@ -248,6 +265,7 @@ fn write_claim_result(
         claim_bundle_path,
         claim_submission_path,
         final_result: checkpointed.final_result,
+        consensus: checkpointed.consensus,
     })
 }
 
@@ -272,7 +290,7 @@ impl ClaimBuildOptions {
 pub(crate) fn prepare_claim_run(options: &ClaimBuildOptions) -> Result<PreparedClaimRun> {
     let run_spec_path = absolute(&options.base_dir, &options.run_spec_path);
     let run_spec = read_run_spec(&run_spec_path)?;
-    prepare_run(options, run_spec_path, &run_spec, None, None, true)
+    prepare_run(options, run_spec_path, &run_spec, None, true)
 }
 
 /// Prepares a run from a spec a claim already fixed, as a challenger does.
@@ -280,17 +298,25 @@ pub(crate) fn prepare_claim_run(options: &ClaimBuildOptions) -> Result<PreparedC
 /// The ids are not held to the run's token budget here. A claim that breaks the
 /// budget still has a chain to recompute, and is rejected on its final record.
 ///
-/// `source` is the claim's source record with the source stage's inputs, and
-/// `forms` the forms its result stage compared the output with. A challenger
-/// reruns both stages on what the claim committed to.
+/// `source` is the claim's source record with the source stage's inputs,
+/// `forms` the forms its result stage compared the output with, and `ids` the
+/// ids each of its inferences claimed, in order. A challenger reruns every
+/// stage on what the claim committed to.
 pub(crate) fn prepare_challenge_run(
     options: &ClaimBuildOptions,
     run_spec: &InferenceRunSpec,
     source: Option<FrozenSource<'_>>,
     forms: &[run_prep::source::Form],
+    ids: &[Vec<u32>],
 ) -> Result<PreparedClaimRun> {
     let run_spec_path = absolute(&options.base_dir, &options.run_spec_path);
-    prepare_run(options, run_spec_path, run_spec, source, Some(forms), false)
+    prepare_run(
+        options,
+        run_spec_path,
+        run_spec,
+        Some(Frozen { source, forms, ids }),
+        false,
+    )
 }
 
 /// A claim's source as a challenger is given it: the record, and the files
@@ -300,35 +326,96 @@ pub(crate) type FrozenSource<'a> = (
     &'a inference_artifacts::PreparedSourceInputs,
 );
 
+/// What a claim fixed of its run, for a challenger to rebuild it under.
+struct Frozen<'a> {
+    source: Option<FrozenSource<'a>>,
+    forms: &'a [run_prep::source::Form],
+    ids: &'a [Vec<u32>],
+}
+
+/// One inference of a run being prepared: its model, and the prompt as that
+/// model's tokenizer prepares it.
+struct RunModel {
+    manifest_path: PathBuf,
+    manifest: ModelManifest,
+    template_path: PathBuf,
+    /// The model's part of a chain, as its import wrote it.
+    part: String,
+    tokenizer: serde_json::Value,
+    prompt: inference_artifacts::PreparedPrompt,
+}
+
+/// The files written for one inference of a run.
+struct WrittenInference {
+    label: String,
+    text: Vec<run_prep::RunFile>,
+    config: run_prep::RunFile,
+    schedule: run_prep::RunFile,
+    claim: run_prep::RunFile,
+    marks: Vec<run_prep::RunFile>,
+    claimed: Vec<run_prep::RunFile>,
+}
+
 fn prepare_run(
     options: &ClaimBuildOptions,
     run_spec_path: PathBuf,
     run_spec: &InferenceRunSpec,
-    frozen_source: Option<FrozenSource<'_>>,
-    frozen_forms: Option<&[run_prep::source::Form]>,
+    frozen: Option<Frozen<'_>>,
     check_claimed_length: bool,
 ) -> Result<PreparedClaimRun> {
     let run_spec_dir = run_spec_path
         .parent()
         .ok_or_else(|| anyhow::anyhow!("run spec has no parent directory"))?;
-    let model_manifest_path = absolute(run_spec_dir, &run_spec.model_manifest);
-    let model_manifest = ModelManifest::load_verified(&model_manifest_path)?;
-    // The import wrote the model's part of a chain. The pipeline makes the
-    // chain's template from it.
-    let (template_path, part) = model_manifest.verified_raster_template(&model_manifest_path)?;
-    let template = run_spec.pipeline.chain_template(&[&part])?;
-    let model_manifest_dir = model_manifest_path
-        .parent()
-        .ok_or_else(|| anyhow::anyhow!("model manifest has no parent directory"))?;
-    let tokenizer_path = absolute(model_manifest_dir, &model_manifest.bundle.tokenizer_path);
-    let tokenizer: serde_json::Value = read_json(&tokenizer_path)?;
-    let mut prompt = run_prep::prepare_prompt(&tokenizer, run_spec_dir, run_spec, &model_manifest)?;
-    if let Some((record, _)) = frozen_source {
-        prompt.source = Some(record.clone());
+    let pipeline = run_spec.pipeline;
+    // Ids given on the command line are one inference's.
+    let given_ids = options
+        .claimed_token_ids
+        .as_ref()
+        .or(options.direct_output_ids.as_ref());
+    anyhow::ensure!(
+        given_ids.is_none() || pipeline.inferences() == 1,
+        "output ids can be given for a pipeline of one inference, and the `{pipeline}` pipeline \
+         makes {}",
+        pipeline.inferences()
+    );
+    if let Some(frozen) = &frozen {
+        anyhow::ensure!(
+            frozen.ids.len() == pipeline.inferences(),
+            "the claim holds the ids of {} inference(s), and the `{pipeline}` pipeline makes {}",
+            frozen.ids.len(),
+            pipeline.inferences()
+        );
     }
-    if let Some(forms) = frozen_forms {
-        prompt.forms = forms.to_vec();
+
+    // Each inference's model, and the run's prompt as its tokenizer prepares
+    // it. The text, the source record and the forms are the same in all.
+    let mut models = Vec::new();
+    for manifest in run_spec.model_manifests() {
+        let manifest_path = absolute(run_spec_dir, manifest);
+        let manifest = ModelManifest::load_verified(&manifest_path)?;
+        let (template_path, part) = manifest.verified_raster_template(&manifest_path)?;
+        let model_manifest_dir = manifest_path
+            .parent()
+            .ok_or_else(|| anyhow::anyhow!("model manifest has no parent directory"))?;
+        let tokenizer_path = absolute(model_manifest_dir, &manifest.bundle.tokenizer_path);
+        let tokenizer: serde_json::Value = read_json(&tokenizer_path)?;
+        let mut prompt = run_prep::prepare_prompt(&tokenizer, run_spec_dir, run_spec, &manifest)?;
+        if let Some(frozen) = &frozen {
+            if let Some((record, _)) = frozen.source {
+                prompt.source = Some(record.clone());
+            }
+            prompt.forms = frozen.forms.to_vec();
+        }
+        models.push(RunModel {
+            manifest_path,
+            manifest,
+            template_path,
+            part,
+            tokenizer,
+            prompt,
+        });
     }
+    let first = models.first().context("the run names no model")?;
 
     let run_dir = options
         .base_dir
@@ -337,12 +424,13 @@ fn prepare_run(
         .join("runs")
         .join(run_id(
             &run_spec_path,
-            &prompt.rendered_prompt,
+            &first.prompt.rendered_prompt,
             run_spec.tokens,
         ));
     let prompt_dir = run_dir.join("prompt");
     // The source stage's inputs: written from the run's own source, or the
     // claim's for a challenger. A run without a source has no such stage.
+    let frozen_source = frozen.as_ref().and_then(|frozen| frozen.source);
     let source_inputs = match (run_spec.source.as_ref(), frozen_source) {
         (Some(source), _) => Some(run_prep::write_source_inputs(
             &run_prep::source::load_source(run_spec_dir, source)?,
@@ -351,63 +439,97 @@ fn prepare_run(
         (None, Some((_, inputs))) => Some(inputs.clone()),
         (None, None) => None,
     };
-    let ids = match options
-        .claimed_token_ids
-        .as_ref()
-        .or(options.direct_output_ids.as_ref())
-    {
-        Some(ids) => ids.clone(),
-        // Discovery is the only autoregression left: the claim posts what
-        // direct decode produced and the chain checks it.
-        None => {
-            DirectInferenceExecutor
-                .run(DirectInferenceConfig {
-                    base_dir: options.base_dir.clone(),
-                    run_spec_path: run_spec_path.clone(),
-                })
-                .context("direct inference to discover the claimed output failed")?
-                .generated_token_ids
-        }
-    };
-    if check_claimed_length {
-        run_prep::validate_claimed_length(&ids, run_spec.tokens, &prompt.eos_token_ids)?;
-    }
-    let range_size = model_manifest.range_size;
-    let bound = run_prep::bound_ranges(
-        &prompt.resolved_prompt,
-        run_spec.raw_prompt,
-        range_size as usize,
-        &run_prep::prompt_tokenizer(&tokenizer)?,
-    )?;
-    let template_dir = template_path
+    // The imports wrote each model's part of a chain. The pipeline makes the
+    // chain's template from them.
+    let parts: Vec<&str> = models.iter().map(|model| model.part.as_str()).collect();
+    let template = pipeline.chain_template(&parts)?;
+    let template_dir = first
+        .template_path
         .parent()
         .ok_or_else(|| anyhow::anyhow!("manifest template has no parent directory"))?;
-    let marks: Vec<Vec<u32>> = bound
-        .ranges
+    let forms = run_prep::write_result_forms(&first.prompt.forms, &prompt_dir)?;
+
+    let mut written = Vec::new();
+    let mut claimed_ids = Vec::new();
+    for (inference, model) in models.iter().enumerate() {
+        let label = pipeline.label(inference);
+        // A pipeline of one inference keeps its run files where they have
+        // always been. Each inference of several has a directory of its own.
+        let dir = if label.is_empty() {
+            prompt_dir.clone()
+        } else {
+            prompt_dir.join(label.trim_end_matches('_'))
+        };
+        let ids = match (&frozen, given_ids) {
+            (Some(frozen), _) => frozen.ids[inference].clone(),
+            (None, Some(ids)) => ids.clone(),
+            // Discovery is the only autoregression left: the claim posts what
+            // direct decode produced and the chain checks it.
+            (None, None) => {
+                DirectInferenceExecutor
+                    .run(DirectInferenceConfig {
+                        base_dir: options.base_dir.clone(),
+                        run_spec_path: run_spec_path.clone(),
+                        inference,
+                    })
+                    .context("direct inference to discover the claimed output failed")?
+                    .generated_token_ids
+            }
+        };
+        if check_claimed_length {
+            run_prep::validate_claimed_length(&ids, run_spec.tokens, &model.prompt.eos_token_ids)?;
+        }
+        let range_size = model.manifest.range_size;
+        let bound = run_prep::bound_ranges(
+            &model.prompt.resolved_prompt,
+            run_spec.raw_prompt,
+            range_size as usize,
+            &run_prep::prompt_tokenizer(&model.tokenizer)?,
+        )?;
+        let marks: Vec<Vec<u32>> = bound
+            .ranges
+            .iter()
+            .map(|range| range.marks.clone())
+            .collect();
+        let marks = run_prep::write_marks(&marks, &dir)?;
+        let claimed = run_prep::write_claimed_ranges(&ids, range_size as usize, &dir)?;
+        written.push(WrittenInference {
+            text: run_prep::write_bound_text(&bound.ranges, &dir)?,
+            config: run_prep::write_run_config(
+                &run_prep::RunConfig {
+                    model_id: model.manifest.model_id.clone(),
+                    raw_prompt: run_spec.raw_prompt,
+                    max_new_tokens: run_spec.tokens,
+                    range_size,
+                },
+                &dir,
+            )?,
+            schedule: run_prep::write_run_schedule(marks.len(), claimed.len(), &dir)?,
+            claim: run_prep::write_text_claim(&bound.claim, &dir)?,
+            marks,
+            claimed,
+            label,
+        });
+        claimed_ids.push(ids);
+    }
+    let inferences: Vec<InferenceFiles<'_>> = written
         .iter()
-        .map(|range| range.marks.clone())
+        .map(|written| InferenceFiles {
+            label: &written.label,
+            text: &written.text,
+            config: &written.config,
+            schedule: &written.schedule,
+            claim: &written.claim,
+            marks: &written.marks,
+            claimed: &written.claimed,
+        })
         .collect();
-    let mark_files = run_prep::write_marks(&marks, &prompt_dir)?;
-    let claimed_files = run_prep::write_claimed_ranges(&ids, range_size as usize, &prompt_dir)?;
-    let run_manifest = render_ranged_manifest(
+    let run_manifest = render_chain(
         &template,
         template_dir,
-        &run_prep::write_bound_text(&bound.ranges, &prompt_dir)?,
-        &run_prep::write_run_config(
-            &run_prep::RunConfig {
-                model_id: model_manifest.model_id.clone(),
-                raw_prompt: run_spec.raw_prompt,
-                max_new_tokens: run_spec.tokens,
-                range_size,
-            },
-            &prompt_dir,
-        )?,
-        &run_prep::write_run_schedule(mark_files.len(), claimed_files.len(), &prompt_dir)?,
-        &run_prep::write_text_claim(&bound.claim, &prompt_dir)?,
+        &inferences,
         source_inputs.as_ref(),
-        &run_prep::write_result_forms(&prompt.forms, &prompt_dir)?,
-        &mark_files,
-        &claimed_files,
+        &forms,
     )?;
     let manifest_path = run_dir.join("Raster.toml");
     fs::create_dir_all(&run_dir)
@@ -417,12 +539,19 @@ fn prepare_run(
     let run_manifest_sha256 = format!("{:x}", Sha256::digest(run_manifest.as_bytes()));
     let prepared_run = PreparedRun {
         version: inference_artifacts::PREPARED_RUN_VERSION,
-        pipeline: run_spec.pipeline,
+        pipeline,
         run_spec_path,
-        model_manifest_path: model_manifest_path.clone(),
-        model_manifest_sha256: sha256_file(&model_manifest_path)?,
-        model_id: model_manifest.model_id.clone(),
-        prompt,
+        inferences: models
+            .into_iter()
+            .map(|model| {
+                Ok(inference_artifacts::PreparedInference {
+                    model_manifest_sha256: sha256_file(&model.manifest_path)?,
+                    model_manifest_path: model.manifest_path,
+                    model_id: model.manifest.model_id,
+                    prompt: model.prompt,
+                })
+            })
+            .collect::<Result<Vec<_>>>()?,
         raw_prompt: run_spec.raw_prompt,
         tokens: run_spec.tokens,
         run_manifest_path: Some(manifest_path.clone()),
@@ -434,11 +563,10 @@ fn prepare_run(
     Ok(PreparedClaimRun {
         prepared_run,
         manifest_path,
-        claimed_token_ids: ids,
+        claimed_token_ids: claimed_ids.into_iter().next().unwrap_or_default(),
     })
 }
 
-/// Where model templates point run-specific externals until a run fills them.
 const RUN_PLACEHOLDER_DIR: &str = "target/iris/run-prompt-placeholder/";
 
 /// Marks where the template names the last prompt range.
@@ -448,49 +576,90 @@ const LAST_PROMPT_RANGE: &str = "@LAST_PROMPT_RANGE@";
 const LAST_CLAIMED_RANGE: &str = "@LAST_CLAIMED_RANGE@";
 
 /// The chain of a run whose text is taken as given: the template without its
-/// source stage, and the first bind given the constant the later binds are.
+/// source stage, and each inference's first bind given the constant its later
+/// binds are.
 pub(crate) fn without_source_stage(template: &str) -> Result<String> {
-    let constant = template
-        .lines()
-        .map(str::trim_start)
-        .find(|line| line.starts_with("inputs.source = { external"))
-        .context("chain template gives no bind a constant source")?
-        .to_string();
+    let lines: Vec<&str> = template.lines().collect();
+    let takes_record = |line: &str| line.trim() == "inputs.source = { from = \"source\" }";
     let mut out = Vec::new();
-    let mut lines = template.lines().peekable();
     let (mut dropped, mut rebound) = (0, 0);
-    while let Some(line) = lines.next() {
+    let mut index = 0;
+    while index < lines.len() {
+        let line = lines[index];
         let is_source_stage = line.trim() == "[[chain.stage]]"
             && lines
-                .peek()
+                .get(index + 1)
                 .is_some_and(|next| next.trim() == "name = \"source\"");
         if is_source_stage {
+            index += 1;
             while lines
-                .peek()
+                .get(index)
                 .is_some_and(|next| !next.trim_start().starts_with('['))
             {
-                lines.next();
+                index += 1;
             }
             dropped += 1;
-        } else if line.trim() == "inputs.source = { from = \"source\" }" {
-            out.push(constant.clone());
+            continue;
+        }
+        if takes_record(line) {
+            // The constant is the one the same inference's later binds are
+            // given: theirs is the next bind stage in the template.
+            let constant = lines[index..]
+                .iter()
+                .map(|line| line.trim_start())
+                .find(|line| line.starts_with("inputs.source = { external"))
+                .context("chain template gives no later bind a constant source")?;
+            out.push(constant.to_string());
             rebound += 1;
         } else {
             out.push(line.to_string());
         }
+        index += 1;
     }
     anyhow::ensure!(
-        dropped == 1 && rebound == 1,
-        "incompatible chain template: expected one source stage and one bind that takes its record; found {dropped} and {rebound}"
+        dropped == 1 && rebound >= 1,
+        "incompatible chain template: expected one source stage and a first bind that takes its record; found {dropped} and {rebound}"
     );
     out.push(String::new());
     Ok(out.join("\n"))
 }
 
-/// Fills the template for one run: the configuration, the stage schedule and
-/// the text claim, the range counts, the last prompt range's index, each
-/// range's committed text, marks or claimed ids, and the source stage's
-/// inputs. A run without a source gets a chain without the source stage.
+/// The run files of one inference, and the label its names carry in the
+/// template: empty in a chain of one inference.
+pub(crate) struct InferenceFiles<'a> {
+    pub(crate) label: &'a str,
+    /// One slice of the text per prompt range.
+    pub(crate) text: &'a [run_prep::RunFile],
+    pub(crate) config: &'a run_prep::RunFile,
+    pub(crate) schedule: &'a run_prep::RunFile,
+    pub(crate) claim: &'a run_prep::RunFile,
+    /// One set of token marks per prompt range.
+    pub(crate) marks: &'a [run_prep::RunFile],
+    /// One set of claimed ids per claimed range.
+    pub(crate) claimed: &'a [run_prep::RunFile],
+}
+
+/// The inference a stage, a repeat or a chain input belongs to, and its name
+/// without the label. In a chain of one inference every name is that one's.
+fn inference_name<'n>(
+    name: &'n str,
+    inferences: &[InferenceFiles<'_>],
+) -> Option<(usize, &'n str)> {
+    if let [only] = inferences {
+        if only.label.is_empty() {
+            return Some((0, name));
+        }
+    }
+    inferences.iter().enumerate().find_map(|(index, files)| {
+        name.strip_prefix(files.label)
+            .filter(|_| !files.label.is_empty())
+            .map(|rest| (index, rest))
+    })
+}
+
+/// Fills the template of a chain of one inference for one run. See
+/// [`render_chain`].
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn render_ranged_manifest(
     template: &str,
     template_dir: &Path,
@@ -503,21 +672,51 @@ pub(crate) fn render_ranged_manifest(
     prompt: &[run_prep::RunFile],
     claimed: &[run_prep::RunFile],
 ) -> Result<String> {
-    anyhow::ensure!(
-        !prompt.is_empty() && !claimed.is_empty(),
-        "a run needs at least one prompt range and one claimed range"
-    );
-    anyhow::ensure!(
-        text.len() == prompt.len(),
-        "a run needs one slice of text for each prompt range"
-    );
+    render_chain(
+        template,
+        template_dir,
+        &[InferenceFiles {
+            label: "",
+            text,
+            config,
+            schedule,
+            claim,
+            marks: prompt,
+            claimed,
+        }],
+        source,
+        forms,
+    )
+}
+
+/// Fills a chain template for one run. For each inference: the configuration,
+/// the stage schedule and the text claim, the range counts, the last prompt
+/// and claimed ranges' indexes, and each range's committed text, marks or
+/// claimed ids. For the run: the source stage's inputs and the result stage's
+/// forms. A run without a source gets a chain without the source stage.
+pub(crate) fn render_chain(
+    template: &str,
+    template_dir: &Path,
+    inferences: &[InferenceFiles<'_>],
+    source: Option<&inference_artifacts::PreparedSourceInputs>,
+    forms: &run_prep::RunFile,
+) -> Result<String> {
+    anyhow::ensure!(!inferences.is_empty(), "a run needs at least one inference");
+    for files in inferences {
+        anyhow::ensure!(
+            !files.marks.is_empty() && !files.claimed.is_empty(),
+            "a run needs at least one prompt range and one claimed range"
+        );
+        anyhow::ensure!(
+            files.text.len() == files.marks.len(),
+            "a run needs one slice of text for each prompt range"
+        );
+    }
     let template = inference_artifacts::resolve_raster_manifest_paths(template, template_dir)?;
     let template = match source {
         Some(_) => template,
         None => without_source_stage(&template)?,
     };
-    let last_prompt = (prompt.len() - 1).to_string();
-    let last_claimed = (claimed.len() - 1).to_string();
     let mut table = String::new();
     let mut name = String::new();
     let mut fan_index = String::new();
@@ -525,11 +724,13 @@ pub(crate) fn render_ranged_manifest(
     // of the checks is written out as plain stages, so those repeats and the
     // prompt ranges' layer fans start at 1 and run one time fewer.
     let mut start = 0_usize;
-    // Prompt repeats, claimed repeats, prompt externals, claimed externals,
-    // per-layer prompt fans, per-layer claimed fans, text externals,
-    // configuration bindings, schedule bindings, text claim bindings, the
-    // source stage's inputs, the result stage's forms.
-    let mut replaced = [0_usize; 12];
+    // For each inference: prompt repeats, claimed repeats, prompt externals,
+    // claimed externals, per-layer prompt fans, per-layer claimed fans, text
+    // externals, configuration bindings, schedule bindings, text claim
+    // bindings.
+    let mut replaced = vec![[0_usize; 10]; inferences.len()];
+    // For the run: the source stage's inputs, the result stage's forms.
+    let (mut source_inputs, mut result_forms) = (0_usize, 0_usize);
     let mut out = Vec::new();
     for line in template.lines() {
         let trimmed = line.trim();
@@ -560,27 +761,34 @@ pub(crate) fn render_ranged_manifest(
                 .context("invalid repeat index")?
                 .to_string();
         }
-        // Every bind stage is given the run's three statements: range 0's,
-        // and the template of the ranges after it.
-        if matches!(
-            (table.as_str(), name.as_str()),
-            ("[[chain.stage]]", "prompt_bind_p0") | ("[[chain.repeat.stage]]", "prompt_bind_p{j}")
-        ) {
-            let binding = if trimmed.starts_with("inputs.config =") {
-                Some(("config", config, 7))
-            } else if trimmed.starts_with("inputs.schedule =") {
-                Some(("schedule", schedule, 8))
-            } else if trimmed.starts_with("inputs.claim =") {
-                Some(("claim", claim, 9))
-            } else {
-                None
-            };
-            if let Some((param, file, slot)) = binding {
-                replaced[slot] += 1;
-                out.push(
-                    RunExternal::new(&file.path, &file.index_path, &file.commitment).binding(param),
-                );
-                continue;
+        // The inference the stage or repeat being read belongs to.
+        let named = inference_name(&name, inferences);
+        // Every bind stage is given its inference's three statements: range
+        // 0's, and the template of the ranges after it.
+        if let Some((inference, base)) = named {
+            if matches!(
+                (table.as_str(), base),
+                ("[[chain.stage]]", "prompt_bind_p0")
+                    | ("[[chain.repeat.stage]]", "prompt_bind_p{j}")
+            ) {
+                let files = &inferences[inference];
+                let binding = if trimmed.starts_with("inputs.config =") {
+                    Some(("config", files.config, 7))
+                } else if trimmed.starts_with("inputs.schedule =") {
+                    Some(("schedule", files.schedule, 8))
+                } else if trimmed.starts_with("inputs.claim =") {
+                    Some(("claim", files.claim, 9))
+                } else {
+                    None
+                };
+                if let Some((param, file, slot)) = binding {
+                    replaced[inference][slot] += 1;
+                    out.push(
+                        RunExternal::new(&file.path, &file.index_path, &file.commitment)
+                            .binding(param),
+                    );
+                    continue;
+                }
             }
         }
         if let (("[[chain.stage]]", "source"), Some(source)) =
@@ -594,7 +802,7 @@ pub(crate) fn render_ranged_manifest(
             .into_iter()
             .find(|(param, _)| trimmed.starts_with(&format!("inputs.{param} =")));
             if let Some((param, file)) = binding {
-                replaced[10] += 1;
+                source_inputs += 1;
                 out.push(
                     RunExternal::new(&file.path, &file.index_path, &file.commitment).binding(param),
                 );
@@ -604,20 +812,28 @@ pub(crate) fn render_ranged_manifest(
         if (table.as_str(), name.as_str()) == ("[[chain.stage]]", "result")
             && trimmed.starts_with("inputs.forms =")
         {
-            replaced[11] += 1;
+            result_forms += 1;
             out.push(
                 RunExternal::new(&forms.path, &forms.index_path, &forms.commitment)
                     .binding("forms"),
             );
             continue;
         }
-        let files = match table.as_str() {
-            "[chain.input.prompt_text]" => Some((text, 6)),
-            "[chain.input.prompt_marks]" => Some((prompt, 2)),
-            "[chain.input.claimed_ids]" => Some((claimed, 3)),
-            _ => None,
-        };
-        if let Some((files, slot)) = files {
+        // A chain input's table is named for the inference it belongs to.
+        let input = table
+            .strip_prefix("[chain.input.")
+            .and_then(|input| input.strip_suffix(']'))
+            .and_then(|input| inference_name(input, inferences));
+        let files = input.and_then(|(inference, base)| {
+            let files = &inferences[inference];
+            match base {
+                "prompt_text" => Some((inference, files.text, 6)),
+                "prompt_marks" => Some((inference, files.marks, 2)),
+                "claimed_ids" => Some((inference, files.claimed, 3)),
+                _ => None,
+            }
+        });
+        if let Some((inference, files, slot)) = files {
             if let Some(key) = ["index_path", "path"]
                 .into_iter()
                 .find(|key| trimmed.starts_with(&format!("{key} =")))
@@ -641,7 +857,7 @@ pub(crate) fn render_ranged_manifest(
                 continue;
             }
             if trimmed.starts_with("commitments =") {
-                replaced[slot] += 1;
+                replaced[inference][slot] += 1;
                 out.push(String::from("commitments = ["));
                 out.extend(
                     files
@@ -654,45 +870,63 @@ pub(crate) fn render_ranged_manifest(
             }
         }
         if table == "[[chain.repeat]]" && trimmed.starts_with("count =") {
-            let range_count = match name.as_str() {
-                "prompt" => Some((0, prompt.len())),
-                "claimed_embed" | "claimed" => Some((1, claimed.len())),
+            let (inference, base) = named
+                .with_context(|| format!("unexpected repeat `{name}` in chain template"))?;
+            let files = &inferences[inference];
+            let range_count = match base {
+                "prompt" => Some((0, files.marks.len())),
+                "claimed_embed" | "claimed" => Some((1, files.claimed.len())),
                 // Layer blocks keep their model-fixed counts.
                 "layers" | "shared_layers" => None,
-                other => anyhow::bail!("unexpected repeat `{other}` in chain template"),
+                _ => anyhow::bail!("unexpected repeat `{name}` in chain template"),
             };
             if let Some((slot, count)) = range_count {
-                replaced[slot] += 1;
+                replaced[inference][slot] += 1;
                 out.push(format!("count = {}", iterations(count, start)?));
                 continue;
             }
         }
         // A layer block's inner fans run once per prompt or claimed range.
         if table == "[[chain.repeat.stage]]" && trimmed.starts_with("count =") {
-            let range_count = match fan_index.as_str() {
-                "j" => Some((4, prompt.len())),
-                "k" => Some((5, claimed.len())),
-                _ => None,
-            };
-            if let Some((slot, count)) = range_count {
-                replaced[slot] += 1;
-                out.push(format!("count = {}", iterations(count, start)?));
-                continue;
+            if let Some((inference, _)) = named {
+                let files = &inferences[inference];
+                let range_count = match fan_index.as_str() {
+                    "j" => Some((4, files.marks.len())),
+                    "k" => Some((5, files.claimed.len())),
+                    _ => None,
+                };
+                if let Some((slot, count)) = range_count {
+                    replaced[inference][slot] += 1;
+                    out.push(format!("count = {}", iterations(count, start)?));
+                    continue;
+                }
             }
         }
-        out.push(
-            line.replace(LAST_PROMPT_RANGE, &last_prompt)
-                .replace(LAST_CLAIMED_RANGE, &last_claimed),
-        );
+        // Where the template names an inference's last prompt or claimed
+        // range, by that inference's label.
+        let mut line = line.to_string();
+        for files in inferences {
+            let label = files.label;
+            line = line
+                .replace(
+                    &format!("@{label}{}@", LAST_PROMPT_RANGE.trim_matches('@')),
+                    &(files.marks.len() - 1).to_string(),
+                )
+                .replace(
+                    &format!("@{label}{}@", LAST_CLAIMED_RANGE.trim_matches('@')),
+                    &(files.claimed.len() - 1).to_string(),
+                );
+        }
+        out.push(line);
     }
-    if replaced[..4] != [1, 2, 1, 1]
-        || replaced[4] == 0
-        || replaced[4] != replaced[5]
-        || replaced[6..10] != [1, 2, 2, 2]
-        || replaced[10] != if source.is_some() { 3 } else { 0 }
-        || replaced[11] != 1
-    {
-        anyhow::bail!("incompatible chain template: expected [prompt repeats, claimed repeats, prompt commitments, claimed commitments] = [1, 2, 1, 1], matching per-layer range fans, one set of text commitments, a configuration, a schedule and a text claim binding for range 0's bind and for the later ranges', three inputs for the source stage of a run that has a source, and the result stage's forms; found {replaced:?}");
+    let filled = replaced.iter().all(|replaced| {
+        replaced[..4] == [1, 2, 1, 1]
+            && replaced[4] != 0
+            && replaced[4] == replaced[5]
+            && replaced[6..10] == [1, 2, 2, 2]
+    });
+    if !filled || source_inputs != if source.is_some() { 3 } else { 0 } || result_forms != 1 {
+        anyhow::bail!("incompatible chain template: expected of each inference [prompt repeats, claimed repeats, prompt commitments, claimed commitments] = [1, 2, 1, 1], matching per-layer range fans, one set of text commitments, and a configuration, a schedule and a text claim binding for range 0's bind and for the later ranges'; and of the run three inputs for the source stage when it has a source, and the result stage's forms; found {replaced:?}, {source_inputs} and {result_forms}");
     }
     out.push(String::new());
     Ok(out.join("\n"))
@@ -897,7 +1131,7 @@ mod tests {
         );
         assert!(prepare_claim_run(&given(&[0])).is_err());
         assert_eq!(
-            fs::canonicalize(&prepared.prepared_run.model_manifest_path).unwrap(),
+            fs::canonicalize(&prepared.prepared_run.inferences[0].model_manifest_path).unwrap(),
             fs::canonicalize(&model_path).unwrap()
         );
 
@@ -948,27 +1182,30 @@ mod tests {
                 chain_dir: base.clone(),
                 selected_stage_dir: None,
                 final_result: None,
+                consensus: None,
             },
             &manifest_path,
             &PreparedRun {
                 version: inference_artifacts::PREPARED_RUN_VERSION,
                 pipeline: inference_artifacts::Pipeline::Single,
                 run_spec_path: base.join("inference.toml"),
-                model_manifest_path: base.join("model-artifacts/manifest.json"),
-                model_manifest_sha256: String::from("model-sha"),
-                model_id: String::from("model-id"),
+                inferences: vec![inference_artifacts::PreparedInference {
+                    model_manifest_path: base.join("model-artifacts/manifest.json"),
+                    model_manifest_sha256: String::from("model-sha"),
+                    model_id: String::from("model-id"),
+                    prompt: inference_artifacts::PreparedPrompt {
+                        resolved_prompt: String::from("hello"),
+                        rendered_prompt: String::from("hello"),
+                        initial_pieces: vec![inference_artifacts::PreparedPiece {
+                            text: String::from("hello"),
+                            segment: 0,
+                        }],
+                        eos_token_ids: Vec::new(),
+                        source: None,
+                        forms: Vec::new(),
+                    },
+                }],
                 raw_prompt: false,
-                prompt: inference_artifacts::PreparedPrompt {
-                    resolved_prompt: String::from("hello"),
-                    rendered_prompt: String::from("hello"),
-                    initial_pieces: vec![inference_artifacts::PreparedPiece {
-                        text: String::from("hello"),
-                        segment: 0,
-                    }],
-                    eos_token_ids: Vec::new(),
-                    source: None,
-                    forms: Vec::new(),
-                },
                 tokens: 1,
                 run_manifest_path: Some(manifest_path.clone()),
                 run_manifest_sha256: Some(String::from("run-sha")),
@@ -1069,6 +1306,120 @@ mod tests {
         assert_eq!(result.checkpoint_number, 2);
         assert_eq!(result.stage, Some(String::from("stage_b")));
 
+        fs::remove_dir_all(base).unwrap();
+    }
+
+    #[test]
+    fn a_consensus_run_is_one_chain_of_two_inferences() {
+        let base = temp_dir("claim-consensus");
+        crate::test_support::model_fixture(&base, "alpha");
+        crate::test_support::model_fixture(&base, "beta");
+        let dir = base.join("specs");
+        fs::create_dir_all(&dir).unwrap();
+        let spec = dir.join("inference.toml");
+        fs::write(
+            &spec,
+            "pipeline = \"consensus\"\nprompt = \"h\"\nraw_prompt = true\ntokens = 3\n\
+             [[model]]\nmanifest = \"../models/alpha/manifest.json\"\n\
+             [[model]]\nmanifest = \"../models/beta/manifest.json\"\n",
+        )
+        .unwrap();
+        let options = |ids: Option<Vec<u32>>| ClaimBuildOptions {
+            base_dir: base.clone(),
+            run_spec_path: spec.clone(),
+            current_exe: PathBuf::from("unused"),
+            staged_backend: StagedExecutionBackend::InProcess,
+            claimed_token_ids: ids,
+            direct_output_ids: None,
+        };
+        let run_spec = read_run_spec(&spec).unwrap();
+        // The fixture's ranges hold four tokens: the first inference claims
+        // one range and the second two.
+        let ids = [vec![0, 0, 0], vec![0, 0, 0, 0, 0]];
+        let prepared = prepare_challenge_run(&options(None), &run_spec, None, &[], &ids).unwrap();
+
+        let run = &prepared.prepared_run;
+        assert_eq!(run.pipeline, inference_artifacts::Pipeline::Consensus);
+        assert_eq!(run.inferences.len(), 2);
+        assert_ne!(run.inferences[0].model_id, run.inferences[1].model_id);
+        assert_eq!(
+            run.inferences[0].prompt.resolved_prompt,
+            run.inferences[1].prompt.resolved_prompt
+        );
+        assert_eq!(prepared.claimed_token_ids, ids[0]);
+
+        let manifest: toml::Value =
+            toml::from_str(&fs::read_to_string(&prepared.manifest_path).unwrap()).unwrap();
+        let chain = &manifest["chain"];
+        // Each inference has its own run files, in a directory of its own.
+        for (label, claimed_ranges) in [("m0", 1), ("m1", 2)] {
+            let claimed = &chain["input"][format!("{label}_claimed_ids").as_str()];
+            assert_eq!(claimed["commitments"].as_array().unwrap().len(), claimed_ranges);
+            let path = claimed["path"].as_str().unwrap();
+            assert!(path.ends_with(&format!("prompt/{label}/claimed_{{k}}.rastered")), "{path}");
+            for input in ["prompt_text", "prompt_marks"] {
+                let input = &chain["input"][format!("{label}_{input}").as_str()];
+                assert_eq!(input["commitments"].as_array().unwrap().len(), 1);
+            }
+        }
+        let stages = chain["stage"].as_array().unwrap();
+        let stage = |name: &str| {
+            stages
+                .iter()
+                .find(|stage| stage["name"].as_str() == Some(name))
+                .unwrap_or_else(|| panic!("the chain has no stage `{name}`"))
+        };
+        // A text taken as given: no source stage, and each first bind is given
+        // the constant of its own model.
+        assert!(stages.iter().all(|stage| stage["name"].as_str() != Some("source")));
+        let config = |label: &str| {
+            stage(&format!("{label}_prompt_bind_p0"))["inputs"]["config"]["external"]["commitment"]
+                .as_str()
+                .unwrap()
+                .to_string()
+        };
+        for label in ["m0", "m1"] {
+            let bind = stage(&format!("{label}_prompt_bind_p0"));
+            assert_eq!(
+                bind["inputs"]["source"]["external"]["commitment"].as_str(),
+                Some("n0")
+            );
+            assert_eq!(
+                bind["inputs"]["text"]["input"].as_str(),
+                Some(format!("{label}_prompt_text_0").as_str())
+            );
+        }
+        // Each bind is given its own model's configuration.
+        assert_ne!(config("m0"), config("m1"));
+        // The result stage reads each inference's last check.
+        let result = stage("result");
+        assert!(result["project"]
+            .as_str()
+            .unwrap()
+            .ends_with("raster-stages/consensus-result"));
+        assert_eq!(result["inputs"]["first"]["from"].as_str(), Some("m0_check_c0"));
+        assert_eq!(result["inputs"]["second"]["from"].as_str(), Some("m1_check_c1"));
+        assert!(result["inputs"]["forms"]["external"]["commitment"].is_str());
+        // The repeat of the checks after the first runs for the second
+        // inference only.
+        let repeats = chain["repeat"].as_array().unwrap();
+        let count = |name: &str| {
+            repeats
+                .iter()
+                .find(|repeat| repeat["name"].as_str() == Some(name))
+                .and_then(|repeat| repeat["count"].as_integer())
+        };
+        assert_eq!(count("m0_claimed"), Some(0));
+        assert_eq!(count("m1_claimed"), Some(1));
+        assert!(!fs::read_to_string(&prepared.manifest_path).unwrap().contains('@'));
+
+        // Ids given on the command line are one inference's, and a claim
+        // holds the ids of each.
+        let error = prepare_challenge_run(&options(Some(vec![0])), &run_spec, None, &[], &ids)
+            .err()
+            .unwrap();
+        assert!(format!("{error:#}").contains("one inference"), "{error:#}");
+        assert!(prepare_challenge_run(&options(None), &run_spec, None, &[], &ids[..1]).is_err());
         fs::remove_dir_all(base).unwrap();
     }
 

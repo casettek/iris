@@ -26,6 +26,7 @@ pub enum CachedStageValue {
     DecodeEdge(check_input::DecodeEdge),
     SourceRecord(source_core::SourceRecord),
     ResultRecord(claim_result::forms::ResultRecord),
+    ConsensusRecord(consensus_result::consensus::ConsensusRecord),
 }
 
 #[derive(Clone, Debug)]

@@ -1,6 +1,6 @@
 # Infer Workflow
 
-`infer` is the fast deterministic path. It uses `direct-infer`, reads a run spec such as `inference.toml`, loads the referenced `runtime/model-artifacts/<model-id>/manifest.json`, and does not write staged checkpoint artifacts.
+`infer` is the fast deterministic path. For a run of the `consensus` [pipeline](../internals/pipelines.md) it makes each model's inference in turn and then states whether they agree. It uses `direct-infer`, reads a run spec such as `inference.toml`, loads the referenced `runtime/model-artifacts/<model-id>/manifest.json`, and does not write staged checkpoint artifacts.
 
 ```bash
 cargo run --release -p iris-cli -- infer --run inference.toml

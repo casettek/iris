@@ -27,6 +27,7 @@ prefill-prepare-aux = { path = "../../../raster-stages/prefill-prepare-aux" }
 prompt-check = { path = "../../../raster-stages/prompt-check" }
 sequence-check = { path = "../../../raster-stages/sequence-check" }
 claim-result = { path = "../../../raster-stages/claim-result" }
+consensus-result = { path = "../../../raster-stages/consensus-result" }
 source-core = { path = "../../source-core" }
 raster = { path = "../../../../raster/crates/raster" }
 raster-core = { path = "../../../../raster/crates/raster-core" }

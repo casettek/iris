@@ -714,7 +714,7 @@ fn dispute_tie(
 /// What the honest claim binds: the same text, configuration, cuts and ids a
 /// claim's preparation wrote.
 fn honest_inputs(leg: &Leg) -> Result<RunInputs> {
-    let prompt = &leg.prepared.prepared_run.prompt;
+    let prompt = &leg.prepared.prepared_run.first()?.prompt;
     let range_size = leg.model.range_size;
     let model_dir = leg
         .model_path

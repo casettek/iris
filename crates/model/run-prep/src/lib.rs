@@ -1454,7 +1454,8 @@ mod tests {
     fn run_spec(prompt: &str, raw_prompt: bool) -> InferenceRunSpec {
         InferenceRunSpec {
             pipeline: Default::default(),
-            model_manifest: PathBuf::from("model-artifacts/manifest.json"),
+            model_manifest: Some(PathBuf::from("model-artifacts/manifest.json")),
+            models: Vec::new(),
             prompt: Some(prompt.to_string()),
             prompt_file: None,
             source: None,

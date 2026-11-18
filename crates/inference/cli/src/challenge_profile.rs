@@ -237,11 +237,13 @@ pub fn run(args: ProfileArgs) -> Result<PathBuf> {
             .context("missing run hash")?,
         "frozen run",
     )?;
-    inference_artifacts::verify_file_sha256(
-        &prepared.model_manifest_path,
-        &prepared.model_manifest_sha256,
-        "frozen model",
-    )?;
+    for inference in &prepared.inferences {
+        inference_artifacts::verify_file_sha256(
+            &inference.model_manifest_path,
+            &inference.model_manifest_sha256,
+            "frozen model",
+        )?;
+    }
     let package: ReplayPackage =
         read_json(&reference(&challenge_path, &bundle.replay_package_path))?;
     ensure!(

@@ -76,9 +76,8 @@ pub fn build_challenge(options: ChallengeBuildOptions) -> Result<ChallengeBuildR
     let claimed_input = load_claimed_input(&options.input)?;
     let (manifest_path, prepared_run) = challenge_run(&options, &claimed_input)?;
     let executor = CheckpointedInferenceExecutor;
-    let (recomputed_chain_dir, recomputed_trace, divergence, final_result) = match &claimed_input
-        .checkpoints
-    {
+    let (recomputed_chain_dir, recomputed_trace, divergence, final_result, consensus) =
+        match &claimed_input.checkpoints {
         ClaimedCheckpoints::Hashes { path, hashes } => {
             let recomputed = executor.run_until_hash_divergence(CheckpointHashChallengeConfig {
                 base_dir: options.base_dir.clone(),
@@ -93,6 +92,7 @@ pub fn build_challenge(options: ChallengeBuildOptions) -> Result<ChallengeBuildR
                 recomputed.recomputed_trace,
                 recomputed.divergence,
                 recomputed.final_result,
+                recomputed.consensus,
             )
         }
         ClaimedCheckpoints::Trace { .. } => {
@@ -114,6 +114,7 @@ pub fn build_challenge(options: ChallengeBuildOptions) -> Result<ChallengeBuildR
                 recomputed_trace,
                 divergence,
                 recomputed.final_result,
+                recomputed.consensus,
             )
         }
     };
@@ -125,8 +126,17 @@ pub fn build_challenge(options: ChallengeBuildOptions) -> Result<ChallengeBuildR
         // Every checkpoint agrees, so there is no stage to dispute. A claim can
         // still be refuted by its own final record: honest execution over
         // non-greedy ids commits a non-zero verdict. A bare trace claims nothing.
-        if prepared_run.is_some() {
-            if let Some(reason) = claimed_output_rejection(final_result.as_ref())? {
+        if let Some(prepared_run) = &prepared_run {
+            // A claim of several inferences is refuted by any one's record.
+            let mut rejection = claimed_output_rejection(final_result.as_ref())?;
+            if prepared_run.pipeline.inferences() > 1 && rejection.is_none() {
+                let consensus = consensus
+                    .as_ref()
+                    .context("recomputation produced no result to check the claim against")?;
+                rejection = claimed_output_rejection(Some(&consensus.second))?
+                    .map(|reason| format!("the second inference: {reason}"));
+            }
+            if let Some(reason) = rejection {
                 return Ok(ChallengeBuildResult {
                     outcome: ChallengeBuildOutcome::ClaimedOutputRejected {
                         reason,
@@ -289,49 +299,61 @@ fn rebuild_teacher_forced_run(
         .run_manifest_path
         .as_ref()
         .context("prepared run has no run_manifest_path")?;
+    // The run's text, source record and forms are the same in every
+    // inference, so the first holds them.
+    let claimed = frozen.first()?;
     let run_spec = InferenceRunSpec {
         pipeline: frozen.pipeline,
         model_manifest: selected.model_manifest,
-        prompt: Some(frozen.prompt.resolved_prompt.clone()),
+        models: selected.models,
+        prompt: Some(claimed.prompt.resolved_prompt.clone()),
         prompt_file: None,
         source: None,
         raw_prompt: frozen.raw_prompt,
         tokens: frozen.tokens,
     };
+    let ids = (0..frozen.inferences.len())
+        .map(|inference| frozen_claimed_ids(frozen_manifest, &frozen.pipeline.label(inference)))
+        .collect::<Result<Vec<_>>>()?;
     let rebuilt = crate::claim::prepare_challenge_run(
         &crate::claim::ClaimBuildOptions {
             base_dir: options.base_dir.clone(),
             run_spec_path,
             current_exe: options.current_exe.clone(),
             staged_backend: options.staged_backend,
-            claimed_token_ids: Some(frozen_claimed_ids(frozen_manifest)?),
+            claimed_token_ids: None,
             direct_output_ids: None,
         },
         &run_spec,
-        frozen
+        claimed
             .prompt
             .source
             .as_ref()
             .zip(frozen.source_inputs.as_ref()),
-        &frozen.prompt.forms,
+        &claimed.prompt.forms,
+        &ids,
     )?;
-    if rebuilt.prepared_run.model_id != frozen.model_id {
-        eprintln!(
-            "warning: the claim names model {}, but --run selects model {}; a divergence here means the claim did not run the selected model",
-            frozen.model_id, rebuilt.prepared_run.model_id
-        );
+    for (claimed, rebuilt) in frozen.inferences.iter().zip(&rebuilt.prepared_run.inferences) {
+        if rebuilt.model_id != claimed.model_id {
+            eprintln!(
+                "warning: the claim names model {}, but --run selects model {}; a divergence here means the claim did not run the selected model",
+                claimed.model_id, rebuilt.model_id
+            );
+        }
     }
     Ok(rebuilt)
 }
 
-/// The claimed ids a frozen run manifest binds, checked against its commitments.
-fn frozen_claimed_ids(manifest_path: &Path) -> Result<Vec<u32>> {
+/// The claimed ids a frozen run manifest binds for the inference with this
+/// label, checked against its commitments.
+fn frozen_claimed_ids(manifest_path: &Path, label: &str) -> Result<Vec<u32>> {
+    let input_name = format!("{label}claimed_ids");
     let manifest: toml::Value = toml::from_str(
         &fs::read_to_string(manifest_path)
             .with_context(|| format!("failed to read {}", manifest_path.display()))?,
     )
     .with_context(|| format!("failed to parse {}", manifest_path.display()))?;
-    let input = &manifest["chain"]["input"]["claimed_ids"];
+    let input = &manifest["chain"]["input"][input_name.as_str()];
     let path_of = |key: &str, index: usize| -> Result<PathBuf> {
         let pattern = input
             .get(key)
@@ -340,7 +362,7 @@ fn frozen_claimed_ids(manifest_path: &Path) -> Result<Vec<u32>> {
         Ok(PathBuf::from(pattern.replace("{k}", &index.to_string())))
     };
     let mut ids = Vec::new();
-    for (index, commitment) in bound_commitments(manifest_path, "claimed_ids")?
+    for (index, commitment) in bound_commitments(manifest_path, &input_name)?
         .iter()
         .enumerate()
     {
@@ -1131,21 +1153,23 @@ mod tests {
             version: inference_artifacts::PREPARED_RUN_VERSION,
             pipeline: inference_artifacts::Pipeline::Single,
             run_spec_path: base.join("inference.toml"),
-            model_manifest_path: model_manifest.clone(),
-            model_manifest_sha256: format!("{:x}", sha2::Sha256::digest(b"model")),
-            model_id: String::from("model-id"),
+            inferences: vec![inference_artifacts::PreparedInference {
+                model_manifest_path: model_manifest.clone(),
+                model_manifest_sha256: format!("{:x}", sha2::Sha256::digest(b"model")),
+                model_id: String::from("model-id"),
+                prompt: inference_artifacts::PreparedPrompt {
+                    resolved_prompt: String::from("hello"),
+                    rendered_prompt: String::from("hello"),
+                    initial_pieces: vec![inference_artifacts::PreparedPiece {
+                        text: String::from("hello"),
+                        segment: 0,
+                    }],
+                    eos_token_ids: Vec::new(),
+                    source: None,
+                    forms: Vec::new(),
+                },
+            }],
             raw_prompt: false,
-            prompt: inference_artifacts::PreparedPrompt {
-                resolved_prompt: String::from("hello"),
-                rendered_prompt: String::from("hello"),
-                initial_pieces: vec![inference_artifacts::PreparedPiece {
-                    text: String::from("hello"),
-                    segment: 0,
-                }],
-                eos_token_ids: Vec::new(),
-                source: None,
-                forms: Vec::new(),
-            },
             tokens: 1,
             run_manifest_path: Some(run_manifest),
             run_manifest_sha256: Some(String::from("wrong")),
@@ -1311,10 +1335,10 @@ mod tests {
             .unwrap()
             .contains("name = \"challengers-model\""));
         assert_eq!(
-            fs::canonicalize(&rebuilt.model_manifest_path).unwrap(),
+            fs::canonicalize(&rebuilt.inferences[0].model_manifest_path).unwrap(),
             fs::canonicalize(&selected).unwrap()
         );
-        assert_ne!(rebuilt.model_id, frozen.model_id);
+        assert_ne!(rebuilt.inferences[0].model_id, frozen.inferences[0].model_id);
 
         // Same text, so every range's text and the text claim agree; the
         // configuration names a different model, so the bind's committed
@@ -1333,8 +1357,8 @@ mod tests {
         );
         // The claim's ids and its prompt carried over.
         assert_eq!(
-            rebuilt.prompt.resolved_prompt,
-            frozen.prompt.resolved_prompt
+            rebuilt.inferences[0].prompt.resolved_prompt,
+            frozen.inferences[0].prompt.resolved_prompt
         );
         assert_eq!(rebuilt.tokens, frozen.tokens);
         assert_eq!(
@@ -1395,7 +1419,7 @@ mod tests {
         crate::test_support::model_fixture(&base, "model");
         let frozen = teacher_forced_claim(&base, "model", vec![0, 0, 0]);
         let manifest = frozen.run_manifest_path.unwrap();
-        assert_eq!(frozen_claimed_ids(&manifest).unwrap(), [0, 0, 0]);
+        assert_eq!(frozen_claimed_ids(&manifest, "").unwrap(), [0, 0, 0]);
         let claimed = manifest.parent().unwrap().join("prompt/claimed_0.rastered");
         let other = manifest.parent().unwrap().join("other");
         let file = run_prep::write_claimed_ranges(&[0, 0, 1], 4, &other)
@@ -1403,7 +1427,7 @@ mod tests {
             .remove(0);
         fs::copy(&file.path, &claimed).unwrap();
         fs::copy(&file.index_path, claimed.with_extension("rindex")).unwrap();
-        assert!(frozen_claimed_ids(&manifest)
+        assert!(frozen_claimed_ids(&manifest, "")
             .unwrap_err()
             .to_string()
             .contains("is not the claimed range"));

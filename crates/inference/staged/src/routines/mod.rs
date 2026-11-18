@@ -9,6 +9,7 @@ use crate::artifact_io::{encode_output, write_output, EncodedArtifact};
 use crate::cache::{CachedInputs, CachedStageValue, MaterializationCache};
 
 pub mod claim_result;
+pub mod consensus_result;
 pub mod input_embedding;
 pub mod layer_mistral;
 pub mod prefill_prepare_aux;
@@ -31,8 +32,12 @@ pub enum StageKind {
     /// `PrefillRange`'s are: the project tells the two apart.
     LayerMistral { layer: usize },
     SequenceCheck,
-    /// What the claim's output stands for: the chain's last stage.
+    /// What the claim's output stands for: the last stage of a chain of one
+    /// inference.
     ClaimResult,
+    /// Whether two inferences agree: the last stage of a consensus chain. It
+    /// is named as `ClaimResult`'s is: the project tells the two apart.
+    ConsensusResult,
 }
 
 #[derive(Debug)]
@@ -92,6 +97,7 @@ impl StageKind {
                 Ok(Self::SequenceCheck)
             }
             "claim-result" if name == "result" => Ok(Self::ClaimResult),
+            "consensus-result" if name == "result" => Ok(Self::ConsensusResult),
             _ => bail!("stage `{name}` with project `{project}` is not supported by staged-infer"),
         }
     }
@@ -102,6 +108,16 @@ impl StageKind {
             .and_then(|name| name.to_str())
             .ok_or_else(|| anyhow::anyhow!("selected stage has no valid UTF-8 directory name"))?;
         let kind = Self::from_stage_name(name)?;
+        // Nor does a result stage's name say which pipeline's it is. Its
+        // inputs do: only a consensus takes two checks.
+        if kind == Self::ClaimResult {
+            let inputs = std::fs::read(stage_dir.join("input.json"))
+                .ok()
+                .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok());
+            if inputs.is_some_and(|inputs| inputs.get("second").is_some()) {
+                return Ok(Self::ConsensusResult);
+            }
+        }
         // A layer stage's name does not say which family's program it runs.
         // Its inputs do: only `prefill-range` takes a per-layer input.
         if let Self::PrefillRange { layer } = kind {
@@ -150,6 +166,7 @@ impl StageKind {
             Self::LayerMistral { .. } => "layer-mistral",
             Self::SequenceCheck => "sequence-check",
             Self::ClaimResult => "claim-result",
+            Self::ConsensusResult => "consensus-result",
         }
     }
 
@@ -164,6 +181,7 @@ impl StageKind {
             Self::LayerMistral { .. } => "layer_mistral",
             Self::SequenceCheck => "sequence_check",
             Self::ClaimResult => "claim_result",
+            Self::ConsensusResult => "consensus_result",
         }
     }
 
@@ -177,7 +195,8 @@ impl StageKind {
             | Self::PromptCheck
             | Self::InputEmbedding
             | Self::SequenceCheck
-            | Self::ClaimResult => None,
+            | Self::ClaimResult
+            | Self::ConsensusResult => None,
         }
     }
 }
@@ -228,6 +247,11 @@ pub fn run_for_compare(kind: &StageKind) -> Result<DirectCompareOutput> {
             claim_result::load_inputs_from_args,
             claim_result::run_direct,
             "claim_result",
+        ),
+        StageKind::ConsensusResult => compare(
+            consensus_result::load_inputs_from_args,
+            consensus_result::run_direct,
+            "consensus_result",
         ),
     }
 }
@@ -287,6 +311,12 @@ pub fn run_and_publish(kind: &StageKind) -> Result<DirectPublishOutput> {
             claim_result::run_direct,
             "claim_result",
             CachedStageValue::ResultRecord,
+        ),
+        StageKind::ConsensusResult => publish(
+            consensus_result::load_inputs_from_args,
+            consensus_result::run_direct,
+            "consensus_result",
+            CachedStageValue::ConsensusRecord,
         ),
     }
 }
@@ -433,6 +463,19 @@ pub fn run_and_publish_from_paths_with_caches(
             "claim_result",
             CachedStageValue::ResultRecord,
         ),
+        StageKind::ConsensusResult => publish(
+            || {
+                consensus_result::load_inputs_from_paths_with_cache(
+                    input_path,
+                    input_manifest_path,
+                    cached_inputs,
+                    caches.materializations,
+                )
+            },
+            consensus_result::run_direct,
+            "consensus_result",
+            CachedStageValue::ConsensusRecord,
+        ),
     }
 }
 
@@ -562,6 +605,19 @@ pub fn run_cached_from_paths_with_caches(
             claim_result::run_direct,
             "claim_result",
             CachedStageValue::ResultRecord,
+        ),
+        StageKind::ConsensusResult => cache(
+            || {
+                consensus_result::load_inputs_from_paths_with_cache(
+                    input_path,
+                    input_manifest_path,
+                    cached_inputs,
+                    caches.materializations,
+                )
+            },
+            consensus_result::run_direct,
+            "consensus_result",
+            CachedStageValue::ConsensusRecord,
         ),
     }
 }
