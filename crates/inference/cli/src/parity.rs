@@ -527,6 +527,7 @@ fn run_case(
         staged_backend: StagedExecutionBackend::InProcess,
         claimed_token_ids: None,
         direct_output_ids: None,
+        claimer: None,
     })?;
     let claimed = prepared.claimed_token_ids.clone();
     let raster_dir = dir.join("raster");
@@ -724,7 +725,7 @@ fn run_case(
         );
     }
     ensure!(
-        contract.lines.len() == 10,
+        contract.lines.len() == 9,
         "the contract checks did not reach the Raster run"
     );
     comparison["contract_checks"] = json!(contract.lines.len());
@@ -2043,7 +2044,8 @@ fn run_availability_cases(dir: &Path, spec: &Path, submission_path: &Path) -> Re
     // another prompt text in its place.
     let layer = crate::availability::StubLayer::open(crate::availability::da_dir());
     let mut unavailable = honest.clone();
-    unavailable.availability = crate::availability::post_claim(&layer, claim_dir, None)?;
+    unavailable.availability =
+        crate::availability::post_claim(&layer, claim_dir, &honest.claimer, None)?;
     cases.push(refused_at(
         "prompt-not-posted",
         check("prompt-not-posted", &unavailable, None, None)?,
@@ -2053,6 +2055,7 @@ fn run_availability_cases(dir: &Path, spec: &Path, submission_path: &Path) -> Re
     other_prompt.availability = crate::availability::post_claim(
         &layer,
         claim_dir,
+        &honest.claimer,
         Some(inference_artifacts::availability::BlobEntry::PromptText {
             text: String::from("another prompt"),
         }),
@@ -2060,6 +2063,26 @@ fn run_availability_cases(dir: &Path, spec: &Path, submission_path: &Path) -> Re
     cases.push(refused_at(
         "other-prompt-posted",
         check("other-prompt-posted", &other_prompt, None, None)?,
+        "submission: data posted",
+    )?);
+    // A proof that states no records: the blobs hold the claim's data, and
+    // nothing says what its checkpoints commit to.
+    let mut unstated = honest.clone();
+    for blob in &mut unstated.availability {
+        blob.contents.records.clear();
+        blob.proof = inference_artifacts::availability::AvailabilityProof::host_checked();
+    }
+    cases.push(refused_at(
+        "records-not-stated",
+        check("records-not-stated", &unstated, None, None)?,
+        "submission: records and results",
+    )?);
+    // The same blobs under another address: a copied claim.
+    let mut copied = honest.clone();
+    copied.claimer = String::from("0x00000000000000000000000000000000000c0b1e");
+    cases.push(refused_at(
+        "copied",
+        check("copied", &copied, None, None)?,
         "submission: data posted",
     )?);
     Ok(json!(cases))
@@ -2104,6 +2127,7 @@ pub fn worker(spec: &Path, output: &Path, direct: bool) -> Result<()> {
             staged_backend: StagedExecutionBackend::InProcess,
             claimed_token_ids: None,
             direct_output_ids: None,
+            claimer: None,
         })?;
         write_json(
             &output.join("result.json"),

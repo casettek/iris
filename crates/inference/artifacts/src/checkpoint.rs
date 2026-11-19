@@ -7,6 +7,7 @@ use raster_core::chain::ChainCommitment;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+use crate::encoding::{parse_hash, root_from_path, tree_path, tree_root, Encoder};
 use crate::io::{read_json, write_json};
 
 pub const CHECKPOINT_TRACE_JSON: &str = "checkpoint_trace.json";
@@ -133,10 +134,84 @@ pub fn checkpoint_hashes(trace: &CheckpointTrace) -> Result<Vec<String>> {
     trace.checkpoints.iter().map(checkpoint_hash).collect()
 }
 
+/// A checkpoint's hash: its fields in order, in the encoding a contract
+/// recomputes (`crate::encoding`). The producers are in name order.
 pub fn checkpoint_hash(checkpoint: &Checkpoint) -> Result<String> {
-    let encoded =
-        serde_json::to_vec(checkpoint).context("failed to encode checkpoint for hashing")?;
-    Ok(format!("{:x}", Sha256::digest(encoded)))
+    let mut encoder = Encoder::new(b"iris/checkpoint/v1\0");
+    encoder
+        .text(&checkpoint.stage)
+        .hash(&checkpoint.program_commitment)
+        .hash(&checkpoint.input_commitment)
+        .count(checkpoint.input_sources.len());
+    for (input, producer) in &checkpoint.input_sources {
+        encoder.text(input).number(*producer);
+    }
+    encoder
+        .hash(&checkpoint.output_commitment)
+        .hash(&checkpoint.output_sha256);
+    Ok(hex::encode(encoder.finish()))
+}
+
+fn list_values(hashes: &[String]) -> Result<Vec<[u8; 32]>> {
+    hashes
+        .iter()
+        .enumerate()
+        .map(|(index, hash)| {
+            parse_hash(hash)
+                .with_context(|| format!("checkpoint hash {index} is not 32 bytes of hex: {hash}"))
+        })
+        .collect()
+}
+
+fn list_commitment(count: u32, tree_root: &[u8; 32]) -> String {
+    let mut encoder = Encoder::new(b"iris/checkpoints/v1\0");
+    encoder.number(count).hash(&hex::encode(tree_root));
+    hex::encode(encoder.finish())
+}
+
+/// A claim's commitment to its checkpoint list: how many checkpoints it has
+/// and the root of the tree over their hashes, in order. `hashes` are the
+/// lines of `checkpoints.txt`.
+pub fn checkpoints_root(hashes: &[String]) -> Result<String> {
+    let values = list_values(hashes)?;
+    let root = tree_root(&values).context("a claim has more checkpoints than its tree holds")?;
+    Ok(list_commitment(values.len() as u32, &root))
+}
+
+/// The path that opens the checkpoint at `index` against
+/// [`checkpoints_root`], in lowercase hex.
+pub fn checkpoint_opening(hashes: &[String], index: usize) -> Result<Vec<String>> {
+    let values = list_values(hashes)?;
+    Ok(tree_path(&values, index)
+        .with_context(|| format!("the list has no checkpoint {index}"))?
+        .iter()
+        .map(hex::encode)
+        .collect())
+}
+
+/// Whether `checkpoint` is the one at `index` of the list of `count`
+/// checkpoints that `root` commits to. This is what a contract computes to
+/// open one checkpoint: its hash, and one hash per level of the tree.
+pub fn verify_checkpoint_opening(
+    root: &str,
+    count: u32,
+    index: u32,
+    checkpoint: &Checkpoint,
+    path: &[String],
+) -> bool {
+    let opened = || {
+        if index >= count {
+            return None;
+        }
+        let value = parse_hash(&checkpoint_hash(checkpoint).ok()?)?;
+        let path = path
+            .iter()
+            .map(|sibling| parse_hash(sibling))
+            .collect::<Option<Vec<_>>>()?;
+        let tree_root = root_from_path(&value, index, &path)?;
+        Some(list_commitment(count, &tree_root) == root)
+    };
+    opened().unwrap_or(false)
 }
 
 fn validate_checkpoint_hash(hash: &str, line_number: usize) -> Result<String> {

@@ -131,6 +131,7 @@ pub(super) fn run_consensus_leg(
         staged_backend: StagedExecutionBackend::InProcess,
         claimed_token_ids: None,
         direct_output_ids: None,
+        claimer: None,
     })
     .context("the consensus claim")?;
     ensure!(
@@ -237,7 +238,7 @@ pub(super) fn run_consensus_leg(
         );
     }
     ensure!(
-        contract.lines.len() == 12,
+        contract.lines.len() == 10,
         "the contract checks of a consensus claim did not reach the Raster run"
     );
     // A claim that states another agreement than its outputs have is refused

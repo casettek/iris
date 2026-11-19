@@ -42,8 +42,8 @@ use raster_core::transition::{TraceCommitmentHeader, TransitionJournal};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::availability::PostedBlob;
-use crate::checkpoint::{checkpoint_hash, Checkpoint, CheckpointTrace};
+use crate::availability::{BlobContents, PostedBlob};
+use crate::checkpoint::{checkpoint_hash, checkpoints_root, Checkpoint, CheckpointTrace};
 use crate::direct::{model_id_of, ModelCommitment, ModelManifest};
 use crate::inference::InferenceResult;
 use crate::pipeline::Pipeline;
@@ -53,7 +53,7 @@ pub const CONTRACT_PINS_JSON: &str = "contract_pins.json";
 /// Written beside a claim's `claim_bundle.json`.
 pub const CLAIM_SUBMISSION_JSON: &str = "claim_submission.json";
 pub const CONTRACT_PINS_VERSION: u32 = 4;
-pub const CLAIM_SUBMISSION_VERSION: u32 = 6;
+pub const CLAIM_SUBMISSION_VERSION: u32 = 7;
 
 /// What a contract pins before any claim arrives: the pipeline it accepts
 /// claims of, that pipeline's stage programs, and the model of each inference
@@ -267,6 +267,10 @@ pub struct ClaimSubmission {
     /// pipeline's programs, its models, its parameters and what it requires
     /// of the source and the result (`crate::registry`).
     pub configuration: String,
+    /// The address the claim is attributed to: `0x` and 40 hex digits. The
+    /// claimer's choice. Every blob the claim posted names it, so nobody can
+    /// submit this claim's blobs under another address.
+    pub claimer: String,
     /// The claimer's commitment to the input it ran. Today the SHA-256 of the
     /// prompt text. The contract takes it as given. Every inference's
     /// statement is recomputed over it, so all of them ran this input.
@@ -287,10 +291,13 @@ pub struct ClaimSubmission {
     /// pipeline of one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub consensus: Option<SubmittedConsensus>,
-    /// SHA-256 of the claim's `checkpoints.txt`: one checkpoint hash per
-    /// stage, in order. This is the claim's commitment to every stage
-    /// boundary.
-    pub checkpoints_sha256: String,
+    /// How many checkpoints the claim has: one per stage.
+    pub checkpoint_count: u32,
+    /// The claim's commitment to every stage boundary: the count and the
+    /// root of the tree over its checkpoint hashes, in order
+    /// ([`crate::checkpoint::checkpoints_root`]). One checkpoint opens
+    /// against it with a path.
+    pub checkpoints_root: String,
     /// What the claimer posted to the data-availability layer: the new
     /// information its statement names (a source, or a prompt text) and its
     /// checkpoint list with every checkpoint and input manifest, each blob
@@ -298,6 +305,20 @@ pub struct ClaimSubmission {
     /// claim without it (`crate::availability`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub availability: Vec<PostedBlob>,
+}
+
+/// The address of a submission nobody is named for.
+pub const NO_ADDRESS: &str = "0x0000000000000000000000000000000000000000";
+
+/// Whether text is an address as a submission states one: `0x` and 40
+/// lowercase hex digits.
+pub fn is_address(text: &str) -> bool {
+    text.strip_prefix("0x").is_some_and(|digits| {
+        digits.len() == 40
+            && digits
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    })
 }
 
 /// Why a contract would not open a challenge window for a submission.
@@ -350,6 +371,20 @@ pub enum SubmissionRejection {
     /// The submitted code is not the one the contract's forms give the
     /// submitted output.
     AnotherResult { expected: u32, submitted: u32 },
+    /// The claim's proof states no records for its checkpoint list.
+    RecordsNotStated,
+    /// The claim's last checkpoint does not run its pipeline's result
+    /// program.
+    NotTheResultStage { expected: &'static str },
+    /// What the claim's last stage states is not what was submitted.
+    AnotherStatedResult,
+    /// The last stage names no check for an inference, or the proof states
+    /// no record for the one it names.
+    NoCheck { inference: usize },
+    /// The stage the last one read as an inference's check is not one.
+    NotACheck { inference: usize },
+    /// The record in an inference's check is not the one submitted.
+    AnotherStatedRecord { inference: usize },
 }
 
 impl std::fmt::Display for SubmissionRejection {
@@ -449,6 +484,33 @@ impl std::fmt::Display for SubmissionRejection {
                 "the claim states result code {submitted}, but the contract's forms give the \
                  submitted output {expected}"
             ),
+            Self::RecordsNotStated => write!(
+                f,
+                "the claim's proof states no records for its checkpoint list"
+            ),
+            Self::NotTheResultStage { expected } => write!(
+                f,
+                "the claim's last stage does not run {expected}, so the claim does not end in \
+                 its pipeline's result stage"
+            ),
+            Self::AnotherStatedResult => write!(
+                f,
+                "the claim's last stage committed other results than the ones submitted"
+            ),
+            Self::NoCheck { inference } => write!(
+                f,
+                "the claim's last stage read no check for inference {inference} that its proof \
+                 states a record of"
+            ),
+            Self::NotACheck { inference } => write!(
+                f,
+                "the stage the claim's last stage read for inference {inference} does not run \
+                 {RECORD_STAGE}"
+            ),
+            Self::AnotherStatedRecord { inference } => write!(
+                f,
+                "inference {inference}'s check committed another record than the one submitted"
+            ),
         }
     }
 }
@@ -491,7 +553,7 @@ impl std::fmt::Display for ChallengeRefusal {
         match self {
             Self::AnotherCheckpointList { stored, presented } => write!(
                 f,
-                "the checkpoint list presented hashes to {presented}, the submission stored \
+                "the checkpoint list presented has root {presented}, the submission stored \
                  {stored}"
             ),
             Self::MalformedCheckpointList => {
@@ -618,31 +680,16 @@ impl std::fmt::Display for LinkFault {
     }
 }
 
-/// Whether what was submitted is what a stage of the claim committed: the
-/// record against the last check, the result against the last stage.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum RecordBinding {
-    Bound,
-    /// The output presented is not the one the checkpoint commits to. The
-    /// comparison proves nothing.
-    NotTheLastOutput { committed: String, presented: String },
-    /// The stage's output holds a different record: the claim is void.
-    AnotherRecord,
-    /// The checkpoint at that place names another program than the one that
-    /// states this record: the claim is void.
-    AnotherStage { expected: &'static str },
-}
-
-/// What a result stage's output states, as the caller decoded it: for each
-/// inference the claim record it was given and what it made of the output,
-/// and for a consensus the agreement.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// What a result stage's output states: for each inference the claim record
+/// it was given and what it made of the output, and for a consensus the
+/// agreement.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ResultInOutput {
     pub inferences: Vec<StatedInference>,
     pub consensus: Option<SubmittedConsensus>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct StatedInference {
     pub record: SubmittedRecord,
     pub result: SubmittedResult,
@@ -751,10 +798,10 @@ impl PipelinePins {
         })
     }
 
-    /// Whether this checkpoint names the approved program of this stage
+    /// Whether this program id is the approved program of this stage
     /// project.
-    fn runs(&self, checkpoint: &Checkpoint, stage: &str) -> bool {
-        self.program(&checkpoint.program_commitment)
+    fn runs(&self, program_commitment: &str, stage: &str) -> bool {
+        self.program(program_commitment)
             .is_some_and(|program| program.stage == stage)
     }
 
@@ -1034,13 +1081,13 @@ impl ClaimSubmission {
         chain_dir: &Path,
     ) -> Result<Self> {
         let first = results.first().context("a claim holds an inference")?;
-        let checkpoints_path = chain_dir.join(crate::checkpoint::CHECKPOINTS_TXT);
-        let checkpoints = fs::read(&checkpoints_path)
-            .with_context(|| format!("failed to read {}", checkpoints_path.display()))?;
+        let checkpoints =
+            crate::checkpoint::read_checkpoint_hashes(&chain_dir.join(crate::checkpoint::CHECKPOINTS_TXT))?;
         Ok(Self {
             version: CLAIM_SUBMISSION_VERSION,
             pipeline,
             configuration,
+            claimer: NO_ADDRESS.to_string(),
             input_text_sha256: first.input_text_sha256.clone(),
             source_sha256: first.source_sha256.clone(),
             source: source.cloned(),
@@ -1060,7 +1107,8 @@ impl ClaimSubmission {
                 })
                 .collect(),
             consensus,
-            checkpoints_sha256: hex::encode(Sha256::digest(checkpoints)),
+            checkpoint_count: checkpoints.len() as u32,
+            checkpoints_root: checkpoints_root(&checkpoints)?,
             availability: Vec::new(),
         })
     }
@@ -1268,6 +1316,56 @@ pub fn check_origin(
     Ok(())
 }
 
+/// Whether a submission states what its own checkpoints commit to: each
+/// inference's record is the one in the check its last stage read, and its
+/// results and agreement are what that last stage states.
+///
+/// `posted` is what the claim's blobs hold, as their proofs establish it. The
+/// proof read the records out of the stages' outputs, each held to the hash
+/// its checkpoint commits to, so nothing is decoded here and nothing is left
+/// for a challenger to show. The record is held to the check and not only to
+/// the result stage after it, so the verdict a contract accepts rests on the
+/// stage that scored the output. That the result stage read that check's
+/// output and no other value is the link comparison's to hold.
+pub fn check_stated_records(
+    pins: &PipelinePins,
+    submission: &ClaimSubmission,
+    posted: &BlobContents,
+) -> std::result::Result<(), SubmissionRejection> {
+    let stated = posted
+        .records
+        .iter()
+        .find(|stated| stated.checkpoints_root == submission.checkpoints_root)
+        .ok_or(SubmissionRejection::RecordsNotStated)?;
+    let expected = submission.pipeline.result_program();
+    if !pins.runs(&stated.result_program, expected) {
+        return Err(SubmissionRejection::NotTheResultStage { expected });
+    }
+    if stated.results != submission.stated() {
+        return Err(SubmissionRejection::AnotherStatedResult);
+    }
+    let inputs = submission.pipeline.result_inputs();
+    for (inference, claimed) in submission.inferences.iter().enumerate() {
+        let check = inputs
+            .get(inference)
+            .and_then(|input| stated.result_inputs.get(*input))
+            .and_then(|position| {
+                stated
+                    .checks
+                    .iter()
+                    .find(|check| check.checkpoint == *position)
+            })
+            .ok_or(SubmissionRejection::NoCheck { inference })?;
+        if !pins.runs(&check.program, RECORD_STAGE) {
+            return Err(SubmissionRejection::NotACheck { inference });
+        }
+        if check.record != claimed.record {
+            return Err(SubmissionRejection::AnotherStatedRecord { inference });
+        }
+    }
+    Ok(())
+}
+
 /// One entry of a stage's `input_manifest.json`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -1293,8 +1391,14 @@ fn read_input_manifest(bytes: &[u8]) -> Option<BTreeMap<String, String>> {
     })
 }
 
-/// A claim's checkpoint list, held to the digest its submission stored. Every
+/// A claim's checkpoint list, held to the root its submission stored. Every
 /// challenge-time comparison starts from one.
+///
+/// The host holds the whole list. A contract holds only the root and opens
+/// one checkpoint with a path
+/// ([`crate::checkpoint::verify_checkpoint_opening`]); every comparison
+/// here reads a checkpoint through [`CheckpointList::opened`], which is that
+/// opening with the list in hand.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CheckpointList {
     hashes: Vec<String>,
@@ -1307,13 +1411,6 @@ impl CheckpointList {
         submission: &ClaimSubmission,
         checkpoints_txt: &[u8],
     ) -> std::result::Result<Self, ChallengeRefusal> {
-        let presented = hex::encode(Sha256::digest(checkpoints_txt));
-        if submission.checkpoints_sha256 != presented {
-            return Err(ChallengeRefusal::AnotherCheckpointList {
-                stored: submission.checkpoints_sha256.clone(),
-                presented,
-            });
-        }
         let text = std::str::from_utf8(checkpoints_txt)
             .map_err(|_| ChallengeRefusal::MalformedCheckpointList)?;
         let hashes = text
@@ -1323,6 +1420,16 @@ impl CheckpointList {
             .ok_or(ChallengeRefusal::MalformedCheckpointList)?;
         if hashes.is_empty() {
             return Err(ChallengeRefusal::EmptyCheckpointList);
+        }
+        let presented =
+            checkpoints_root(&hashes).map_err(|_| ChallengeRefusal::MalformedCheckpointList)?;
+        if submission.checkpoints_root != presented
+            || submission.checkpoint_count as usize != hashes.len()
+        {
+            return Err(ChallengeRefusal::AnotherCheckpointList {
+                stored: submission.checkpoints_root.clone(),
+                presented,
+            });
         }
         Ok(Self { hashes })
     }
@@ -1460,123 +1567,6 @@ impl CheckpointList {
         Ok(LinkCheck::Linked)
     }
 
-    /// Holds the claim's last checkpoint to the list and to the result
-    /// program of the claim's pipeline. `Err` with how the claim is unbound
-    /// when the last stage is another program.
-    fn opened_result<'a>(
-        &self,
-        pins: &PipelinePins,
-        submission: &ClaimSubmission,
-        last_checkpoint: &'a Checkpoint,
-    ) -> std::result::Result<std::result::Result<&'a Checkpoint, RecordBinding>, ChallengeRefusal>
-    {
-        let index = self
-            .hashes
-            .len()
-            .checked_sub(1)
-            .ok_or(ChallengeRefusal::UnknownStage {
-                challenged: 0,
-                stages: 0,
-            })?;
-        let last = self.opened(index as u32, last_checkpoint)?;
-        let expected = submission.pipeline.result_program();
-        Ok(if pins.runs(last, expected) {
-            Ok(last)
-        } else {
-            Err(RecordBinding::AnotherStage { expected })
-        })
-    }
-
-    /// Whether the record submitted for one inference is that inference's
-    /// last check's. `last_checkpoint` is the claim's last checkpoint, the
-    /// result stage's, which names the check it read for each inference.
-    /// `check_checkpoint` is the checkpoint it names for this one,
-    /// `check_output` that stage's `output.bin`, and `record_in_output` the
-    /// claim record decoded from it by the caller.
-    ///
-    /// The record is held to the check and not to the result stage after it,
-    /// so the verdict a contract accepts rests on the stage that scored the
-    /// output. That the result stage read that check's output and no other
-    /// value is the link comparison's to hold.
-    #[allow(clippy::too_many_arguments)]
-    pub fn check_record_binding(
-        &self,
-        pins: &PipelinePins,
-        submission: &ClaimSubmission,
-        inference: usize,
-        last_checkpoint: &Checkpoint,
-        check_checkpoint: &Checkpoint,
-        check_output: &[u8],
-        record_in_output: &SubmittedRecord,
-    ) -> std::result::Result<RecordBinding, ChallengeRefusal> {
-        let last = match self.opened_result(pins, submission, last_checkpoint)? {
-            Ok(last) => last,
-            Err(unbound) => return Ok(unbound),
-        };
-        // The check the result stage read for this inference.
-        let producer = submission
-            .pipeline
-            .result_inputs()
-            .get(inference)
-            .and_then(|input| last.input_sources.get(*input));
-        let (Some(&producer), Some(claimed)) = (producer, submission.inferences.get(inference))
-        else {
-            return Ok(RecordBinding::AnotherStage {
-                expected: RECORD_STAGE,
-            });
-        };
-        let check = self.opened(producer, check_checkpoint)?;
-        if !pins.runs(check, RECORD_STAGE) {
-            return Ok(RecordBinding::AnotherStage {
-                expected: RECORD_STAGE,
-            });
-        }
-        let presented = hex::encode(Sha256::digest(check_output));
-        if check.output_sha256 != presented {
-            return Ok(RecordBinding::NotTheLastOutput {
-                committed: check.output_sha256.clone(),
-                presented,
-            });
-        }
-        Ok(if *record_in_output == claimed.record {
-            RecordBinding::Bound
-        } else {
-            RecordBinding::AnotherRecord
-        })
-    }
-
-    /// Whether the submitted results are the last stage's: `last_checkpoint`
-    /// is the claim's last checkpoint, `last_output` that stage's
-    /// `output.bin`, and `in_output` what the caller decoded from it. The
-    /// result stage states each claim record it was given beside what it
-    /// made of the output, and all of it must be what was submitted. The
-    /// stage must run the result program of the claim's pipeline, which
-    /// `check_pipeline` held to the contract's.
-    pub fn check_result_binding(
-        &self,
-        pins: &PipelinePins,
-        submission: &ClaimSubmission,
-        last_checkpoint: &Checkpoint,
-        last_output: &[u8],
-        in_output: &ResultInOutput,
-    ) -> std::result::Result<RecordBinding, ChallengeRefusal> {
-        let last = match self.opened_result(pins, submission, last_checkpoint)? {
-            Ok(last) => last,
-            Err(unbound) => return Ok(unbound),
-        };
-        let presented = hex::encode(Sha256::digest(last_output));
-        if last.output_sha256 != presented {
-            return Ok(RecordBinding::NotTheLastOutput {
-                committed: last.output_sha256.clone(),
-                presented,
-            });
-        }
-        Ok(if *in_output == submission.stated() {
-            RecordBinding::Bound
-        } else {
-            RecordBinding::AnotherRecord
-        })
-    }
 }
 
 /// The first stage of a claim that names a program outside the approved set,
@@ -1722,7 +1712,7 @@ pub fn stage_challenge(
 
 /// Written beside a challenge's `challenge_bundle.json`.
 pub const CHALLENGE_SUBMISSION_JSON: &str = "challenge_submission.json";
-pub const CHALLENGE_SUBMISSION_VERSION: u32 = 1;
+pub const CHALLENGE_SUBMISSION_VERSION: u32 = 2;
 
 /// What a challenger submits: the claim and the stage it disputes, the
 /// Raster stage challenge about that stage's checkpoint, and where the body
@@ -1730,8 +1720,11 @@ pub const CHALLENGE_SUBMISSION_VERSION: u32 = 1;
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ChallengeSubmission {
     pub version: u32,
+    /// The address the challenge is attributed to, as a claim names its
+    /// claimer. The posted trace body names it.
+    pub challenger: String,
     /// The disputed claim's checkpoint list, as its submission stored it.
-    pub checkpoints_sha256: String,
+    pub checkpoints_root: String,
     /// The position of the disputed checkpoint in that list.
     pub stage: u32,
     /// The one-stage chain commitment built from the claimer's checkpoint,
@@ -2027,12 +2020,17 @@ mod tests {
                 version: CLAIM_SUBMISSION_VERSION,
                 pipeline: Pipeline::Single,
                 configuration: String::new(),
+                claimer: NO_ADDRESS.to_string(),
                 inferences: vec![inference(&pins.models[0], &input, "ZK")],
                 consensus: None,
                 input_text_sha256: input,
                 source_sha256: "00".repeat(32),
                 source: None,
-                checkpoints_sha256: hex::encode(Sha256::digest(&list)),
+                checkpoint_count: trace.checkpoints.len() as u32,
+                checkpoints_root: checkpoints_root(
+                    &crate::checkpoint::checkpoint_hashes(&trace).unwrap(),
+                )
+                .unwrap(),
                 availability: Vec::new(),
             };
             Self {
@@ -2268,18 +2266,41 @@ mod tests {
             Err(ChallengeRefusal::NotTheCheckpoint { stage: 1, .. })
         ));
 
-        // A stored digest of something that is not a hash list.
-        let mut junk = claim.submission.clone();
-        junk.checkpoints_sha256 = hex::encode(Sha256::digest(b"not hashes\n"));
+        // Something that is not a hash list, and a list of nothing.
         assert_eq!(
-            CheckpointList::open(&junk, b"not hashes\n"),
+            CheckpointList::open(&claim.submission, b"not hashes\n"),
             Err(ChallengeRefusal::MalformedCheckpointList)
         );
-        junk.checkpoints_sha256 = hex::encode(Sha256::digest(b""));
         assert_eq!(
-            CheckpointList::open(&junk, b""),
+            CheckpointList::open(&claim.submission, b""),
             Err(ChallengeRefusal::EmptyCheckpointList)
         );
+        // The same root over another count is another list.
+        let mut miscounted = claim.submission.clone();
+        miscounted.checkpoint_count += 1;
+        assert!(matches!(
+            CheckpointList::open(&miscounted, &claim.list),
+            Err(ChallengeRefusal::AnotherCheckpointList { .. })
+        ));
+
+        // What a contract does with the root alone: open one checkpoint
+        // with its path.
+        let hashes = crate::checkpoint::checkpoint_hashes(&claim.trace).unwrap();
+        let root = &claim.submission.checkpoints_root;
+        let count = claim.submission.checkpoint_count;
+        for (index, checkpoint) in claim.trace.checkpoints.iter().enumerate() {
+            let path = crate::checkpoint::checkpoint_opening(&hashes, index).unwrap();
+            let opens = |index: u32, checkpoint: &Checkpoint, count: u32| {
+                crate::checkpoint::verify_checkpoint_opening(root, count, index, checkpoint, &path)
+            };
+            assert!(opens(index as u32, checkpoint, count));
+            assert!(!opens(index as u32, &forged, count));
+            assert!(!opens(index as u32 ^ 1, checkpoint, count));
+            assert!(!opens(index as u32, checkpoint, count + 1));
+        }
+        assert!(is_address(NO_ADDRESS));
+        assert!(!is_address("0xABCDEF0000000000000000000000000000000000"));
+        assert!(!is_address("0000000000000000000000000000000000000000"));
     }
 
     #[test]
@@ -2464,139 +2485,111 @@ mod tests {
         ));
     }
 
-    #[test]
-    fn the_record_is_held_to_the_last_check_and_the_result_to_the_last_stage() {
-        let claim = Claim::honest();
-        let opened = claim.opened();
-        let programs = pins().programs;
-        let check = &claim.trace.checkpoints[2];
-        let last = &claim.trace.checkpoints[3];
-        let record = &claim.submission.inferences[0].record;
-        let bind_record = |check: &Checkpoint, output: &[u8], in_output: &SubmittedRecord| {
-            opened.check_record_binding(
-                &programs,
-                &claim.submission,
-                0,
-                last,
-                check,
-                output,
-                in_output,
-            )
-        };
-        assert_eq!(bind_record(check, b"last", record), Ok(RecordBinding::Bound));
+    /// What a proof states of a claim: what its last stage states, taken to
+    /// be the submission's, and each record in the checks that stage names,
+    /// taken in the order of the pipeline's inferences.
+    fn stated_records(claim: &Claim) -> crate::availability::StatedRecords {
+        let last = claim.trace.checkpoints.last().unwrap();
+        let inputs = claim.submission.pipeline.result_inputs();
+        crate::availability::StatedRecords {
+            checkpoints_root: claim.submission.checkpoints_root.clone(),
+            result_program: last.program_commitment.clone(),
+            result_inputs: last.input_sources.clone(),
+            results: claim.submission.stated(),
+            checks: inputs
+                .iter()
+                .enumerate()
+                .filter_map(|(inference, input)| {
+                    let position = *last.input_sources.get(*input)?;
+                    Some(crate::availability::StatedCheck {
+                        checkpoint: position,
+                        program: claim.trace.checkpoints[position as usize]
+                            .program_commitment
+                            .clone(),
+                        record: claim.submission.inferences.get(inference)?.record.clone(),
+                    })
+                })
+                .collect(),
+        }
+    }
 
-        // The check committed a record the claimer did not submit.
-        let mut in_output = record.clone();
-        in_output.valid = false;
-        assert_eq!(
-            bind_record(check, b"last", &in_output),
-            Ok(RecordBinding::AnotherRecord)
-        );
-        // Bytes that are not the check's output prove nothing either way.
-        assert!(matches!(
-            bind_record(check, b"bound", record),
-            Ok(RecordBinding::NotTheLastOutput { .. })
-        ));
-        // The check is the one the result stage names as what it read: no
-        // other checkpoint stands for it, the result stage's own included.
-        assert!(matches!(
-            bind_record(last, b"result", record),
-            Err(ChallengeRefusal::NotTheCheckpoint { stage: 2, .. })
-        ));
-        assert!(matches!(
-            bind_record(&claim.trace.checkpoints[1], b"layered", record),
-            Err(ChallengeRefusal::NotTheCheckpoint { stage: 2, .. })
-        ));
-        // And the result stage's checkpoint is the claim's last.
-        assert!(matches!(
-            opened.check_record_binding(
-                &programs,
-                &claim.submission,
-                0,
-                check,
-                check,
-                b"last",
-                record
-            ),
-            Err(ChallengeRefusal::NotTheCheckpoint { stage: 3, .. })
-        ));
-        // A single claim has one inference.
-        assert_eq!(
-            opened.check_record_binding(
-                &programs,
-                &claim.submission,
-                1,
-                last,
-                check,
-                b"last",
-                record
-            ),
-            Ok(RecordBinding::AnotherStage {
-                expected: RECORD_STAGE
-            })
-        );
-
-        let in_output = claim.submission.stated();
-        let bind = |in_output: &ResultInOutput, output: &[u8]| {
-            opened.check_result_binding(&programs, &claim.submission, last, output, in_output)
-        };
-        assert_eq!(bind(&in_output, b"result"), Ok(RecordBinding::Bound));
-        // The result stage committed another code, other forms, or a claim
-        // record that is not the one submitted.
-        let mut other = in_output.clone();
-        other.inferences[0].result.code += 1;
-        assert_eq!(bind(&other, b"result"), Ok(RecordBinding::AnotherRecord));
-        let mut other = in_output.clone();
-        other.inferences[0].result.forms_sha256 = hex::encode([9; 32]);
-        assert_eq!(bind(&other, b"result"), Ok(RecordBinding::AnotherRecord));
-        let mut other = in_output.clone();
-        other.inferences[0].record.valid = false;
-        assert_eq!(bind(&other, b"result"), Ok(RecordBinding::AnotherRecord));
-        assert!(matches!(
-            bind(&in_output, b"last"),
-            Ok(RecordBinding::NotTheLastOutput { .. })
-        ));
-        assert!(matches!(
-            opened.check_result_binding(&programs, &claim.submission, check, b"last", &in_output),
-            Err(ChallengeRefusal::NotTheCheckpoint { stage: 3, .. })
-        ));
+    fn posted(records: crate::availability::StatedRecords) -> BlobContents {
+        BlobContents {
+            records: vec![records],
+            ..BlobContents::default()
+        }
     }
 
     #[test]
-    fn a_claim_that_does_not_end_in_the_result_stage_is_void() {
-        // A claim that stops at the check: its last stage states no result,
-        // so no record is bound through it either.
+    fn a_submission_states_what_its_own_checkpoints_commit_to() {
+        let claim = Claim::honest();
+        let programs = pins().programs;
+        let honest = stated_records(&claim);
+        let check = |records: &crate::availability::StatedRecords| {
+            check_stated_records(&programs, &claim.submission, &posted(records.clone()))
+        };
+        assert_eq!(check(&honest), Ok(()));
+
+        // A proof that states nothing of this list.
+        assert_eq!(
+            check_stated_records(&programs, &claim.submission, &BlobContents::default()),
+            Err(SubmissionRejection::RecordsNotStated)
+        );
+        let mut another_list = honest.clone();
+        another_list.checkpoints_root = hex::encode([9; 32]);
+        assert_eq!(check(&another_list), Err(SubmissionRejection::RecordsNotStated));
+
+        // The check committed a record the claimer did not submit.
+        let mut other = honest.clone();
+        other.checks[0].record.valid = false;
+        assert_eq!(
+            check(&other),
+            Err(SubmissionRejection::AnotherStatedRecord { inference: 0 })
+        );
+        // The last stage committed another code, other forms, or a claim
+        // record that is not the one submitted.
+        let mut other = honest.clone();
+        other.results.inferences[0].result.code += 1;
+        assert_eq!(check(&other), Err(SubmissionRejection::AnotherStatedResult));
+        let mut other = honest.clone();
+        other.results.inferences[0].result.forms_sha256 = hex::encode([9; 32]);
+        assert_eq!(check(&other), Err(SubmissionRejection::AnotherStatedResult));
+        let mut other = honest.clone();
+        other.results.inferences[0].record.valid = false;
+        assert_eq!(check(&other), Err(SubmissionRejection::AnotherStatedResult));
+
+        // The check is the one the last stage names as what it read: a
+        // record stated for another position does not stand for it.
+        let mut elsewhere = honest.clone();
+        elsewhere.checks[0].checkpoint = 1;
+        assert_eq!(
+            check(&elsewhere),
+            Err(SubmissionRejection::NoCheck { inference: 0 })
+        );
+        let mut unread = honest.clone();
+        unread.checks.clear();
+        assert_eq!(
+            check(&unread),
+            Err(SubmissionRejection::NoCheck { inference: 0 })
+        );
+    }
+
+    #[test]
+    fn a_claim_that_does_not_end_in_its_checks_and_the_result_stage_is_refused() {
         let honest = Claim::honest();
+        let programs = pins().programs;
+
+        // A claim that stops at the check: its last stage is no result stage.
         let mut checkpoints = honest.trace.checkpoints.clone();
         checkpoints.pop();
         let claim = Claim::of(checkpoints, honest.manifests[..3].to_vec());
-        let opened = claim.opened();
-        let programs = pins().programs;
-        let last = &claim.trace.checkpoints[2];
-        let void = Ok(RecordBinding::AnotherStage {
-            expected: Pipeline::Single.result_program(),
-        });
+        let mut stated = stated_records(&claim);
+        stated.results = claim.submission.stated();
         assert_eq!(
-            opened.check_result_binding(
-                &programs,
-                &claim.submission,
-                last,
-                b"last",
-                &claim.submission.stated()
-            ),
-            void
-        );
-        assert_eq!(
-            opened.check_record_binding(
-                &programs,
-                &claim.submission,
-                0,
-                last,
-                &claim.trace.checkpoints[1],
-                b"layered",
-                &claim.submission.inferences[0].record
-            ),
-            void
+            check_stated_records(&programs, &claim.submission, &posted(stated)),
+            Err(SubmissionRejection::NotTheResultStage {
+                expected: Pipeline::Single.result_program(),
+            })
         );
 
         // A result stage that read something that is no check.
@@ -2610,18 +2603,17 @@ mod tests {
         );
         let claim = Claim::of(checkpoints, honest.manifests.clone());
         assert_eq!(
-            claim.opened().check_record_binding(
-                &programs,
-                &claim.submission,
-                0,
-                &claim.trace.checkpoints[3],
-                &claim.trace.checkpoints[1],
-                b"layered",
-                &claim.submission.inferences[0].record
-            ),
-            Ok(RecordBinding::AnotherStage {
-                expected: RECORD_STAGE
-            })
+            check_stated_records(&programs, &claim.submission, &posted(stated_records(&claim))),
+            Err(SubmissionRejection::NotACheck { inference: 0 })
+        );
+
+        // A result stage that names no check at all.
+        let mut checkpoints = honest.trace.checkpoints.clone();
+        checkpoints[3] = checkpoint("result", RESULT, &honest.manifests[3], &[], b"result");
+        let claim = Claim::of(checkpoints, honest.manifests.clone());
+        assert_eq!(
+            check_stated_records(&programs, &claim.submission, &posted(stated_records(&claim))),
+            Err(SubmissionRejection::NoCheck { inference: 0 })
         );
     }
 
@@ -2830,55 +2822,52 @@ mod tests {
     }
 
     #[test]
-    fn a_consensus_claim_binds_each_record_to_its_own_last_check() {
+    fn a_consensus_claim_states_each_record_of_its_own_last_check() {
         let (programs, _) = consensus_pins();
         let claim = consensus_claim(" ZK\n");
         let submission = &claim.submission;
         let opened = claim.opened();
         let last = &claim.trace.checkpoints[6];
-        let checks = [
-            (&claim.trace.checkpoints[2], b"last".as_slice()),
-            (&claim.trace.checkpoints[5], OTHER_CHECK_OUTPUT),
-        ];
-        let bind = |inference: usize, check: (&Checkpoint, &[u8]), record: &SubmittedRecord| {
-            opened.check_record_binding(
-                &programs, submission, inference, last, check.0, check.1, record,
-            )
+        let honest = stated_records(&claim);
+        let check = |records: &crate::availability::StatedRecords| {
+            check_stated_records(&programs, submission, &posted(records.clone()))
         };
-        for (inference, check) in checks.into_iter().enumerate() {
-            let record = &submission.inferences[inference].record;
-            assert_eq!(bind(inference, check, record), Ok(RecordBinding::Bound));
-            // The other inference's record is not this check's.
-            let other = &submission.inferences[1 - inference].record;
-            assert_eq!(bind(inference, check, other), Ok(RecordBinding::AnotherRecord));
-        }
+        assert_eq!(check(&honest), Ok(()));
+        assert_eq!(
+            honest.checks.iter().map(|check| check.checkpoint).collect::<Vec<_>>(),
+            vec![2, 5]
+        );
+
+        // The other inference's record is not this check's.
+        let mut swapped = honest.clone();
+        let first = swapped.checks[0].record.clone();
+        swapped.checks[0].record = swapped.checks[1].record.clone();
+        swapped.checks[1].record = first;
+        assert_eq!(
+            check(&swapped),
+            Err(SubmissionRejection::AnotherStatedRecord { inference: 0 })
+        );
         // Nor is the other inference's check the one the result stage read
         // for this inference.
-        assert!(matches!(
-            bind(0, checks[1], &submission.inferences[0].record),
-            Err(ChallengeRefusal::NotTheCheckpoint { stage: 2, .. })
-        ));
-        assert!(matches!(
-            bind(1, checks[0], &submission.inferences[1].record),
-            Err(ChallengeRefusal::NotTheCheckpoint { stage: 5, .. })
-        ));
+        let mut crossed = honest.clone();
+        crossed.checks[0].checkpoint = 5;
+        crossed.checks[1].checkpoint = 2;
+        assert_eq!(
+            check(&crossed),
+            Err(SubmissionRejection::AnotherStatedRecord { inference: 0 })
+        );
 
         // The result stage states both records, both results and the
         // agreement, and all of it is what was submitted.
-        let stated = submission.stated();
-        let result = |in_output: &ResultInOutput| {
-            opened.check_result_binding(&programs, submission, last, b"agreed", in_output)
-        };
-        assert_eq!(result(&stated), Ok(RecordBinding::Bound));
-        let mut other = stated.clone();
-        other.consensus.as_mut().unwrap().agree = false;
-        assert_eq!(result(&other), Ok(RecordBinding::AnotherRecord));
-        let mut other = stated.clone();
-        other.inferences.swap(0, 1);
-        assert_eq!(result(&other), Ok(RecordBinding::AnotherRecord));
-        let mut other = stated.clone();
-        other.consensus = None;
-        assert_eq!(result(&other), Ok(RecordBinding::AnotherRecord));
+        let mut other = honest.clone();
+        other.results.consensus.as_mut().unwrap().agree = false;
+        assert_eq!(check(&other), Err(SubmissionRejection::AnotherStatedResult));
+        let mut other = honest.clone();
+        other.results.inferences.swap(0, 1);
+        assert_eq!(check(&other), Err(SubmissionRejection::AnotherStatedResult));
+        let mut other = honest.clone();
+        other.results.consensus = None;
+        assert_eq!(check(&other), Err(SubmissionRejection::AnotherStatedResult));
 
         // Every stage names an approved program, and the result stage's two
         // checks are earlier checks' outputs.
@@ -2902,8 +2891,8 @@ mod tests {
         // And a single contract's programs do not make this claim's last
         // stage a result stage.
         assert_eq!(
-            opened.check_result_binding(&pins().programs, submission, last, b"agreed", &stated),
-            Ok(RecordBinding::AnotherStage {
+            check_stated_records(&pins().programs, submission, &posted(honest)),
+            Err(SubmissionRejection::NotTheResultStage {
                 expected: Pipeline::Consensus.result_program()
             })
         );
@@ -3059,7 +3048,7 @@ inputs.layer = { input = "transformer_layer_{l}" }
         assert_eq!(check_pipeline(Pipeline::Single, &submission), Ok(()));
         let written = serde_json::to_value(&submission).unwrap();
         assert_eq!(written["pipeline"], "single");
-        assert_eq!(written["version"], 6);
+        assert_eq!(written["version"], 7);
 
         // A submission that names no pipeline, or one that does not exist, is
         // not a submission.
@@ -3088,15 +3077,11 @@ inputs.layer = { input = "transformer_layer_{l}" }
             Err(SubmissionRejection::AnotherShape { .. })
         ));
         let claim = Claim::honest();
+        let mut stated = stated_records(&claim);
+        stated.results = relabelled.stated();
         assert_eq!(
-            claim.opened().check_result_binding(
-                &pins().programs,
-                &relabelled,
-                &claim.trace.checkpoints[3],
-                b"result",
-                &relabelled.stated(),
-            ),
-            Ok(RecordBinding::AnotherStage {
+            check_stated_records(&pins().programs, &relabelled, &posted(stated)),
+            Err(SubmissionRejection::NotTheResultStage {
                 expected: Pipeline::Consensus.result_program()
             })
         );

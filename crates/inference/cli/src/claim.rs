@@ -35,6 +35,9 @@ pub struct ClaimBuildOptions {
     /// discovered output is: the chain re-derives each token, and a claim it
     /// rejects is not written.
     pub direct_output_ids: Option<Vec<u32>>,
+    /// The address the claim is attributed to, `0x` and 40 hex digits. With
+    /// none, the claim names the zero address.
+    pub claimer: Option<String>,
 }
 
 pub(crate) struct PreparedClaimRun {
@@ -165,9 +168,17 @@ pub fn build_claim(options: ClaimBuildOptions) -> Result<ClaimBuildResult> {
         let da_dir = crate::availability::da_dir();
         let mut submission: ClaimSubmission = inference_artifacts::read_json(path)?;
         submission.configuration = configuration.id();
+        if let Some(claimer) = options.claimer {
+            anyhow::ensure!(
+                inference_artifacts::contract::is_address(&claimer),
+                "`{claimer}` is not an address: give `0x` and 40 lowercase hex digits"
+            );
+            submission.claimer = claimer;
+        }
         submission.availability = crate::availability::post_claim(
             &crate::availability::StubLayer::open(&da_dir),
             &result.chain_dir,
+            &submission.claimer,
             Some(crate::availability::new_information(&prepared.prepared_run)?),
         )
         .context("posting the claim's data")?;
@@ -314,6 +325,7 @@ impl ClaimBuildOptions {
             staged_backend,
             claimed_token_ids: None,
             direct_output_ids: None,
+            claimer: None,
         })
     }
 }
@@ -1141,6 +1153,7 @@ mod tests {
             staged_backend: StagedExecutionBackend::InProcess,
             claimed_token_ids: Some(vec![0, 0, 0]),
             direct_output_ids: None,
+            claimer: None,
         };
         let prepared = prepare_claim_run(&options).unwrap();
         let rendered = fs::read_to_string(&prepared.manifest_path).unwrap();
@@ -1152,6 +1165,7 @@ mod tests {
         let given = |ids: &[u32]| ClaimBuildOptions {
             claimed_token_ids: None,
             direct_output_ids: Some(ids.to_vec()),
+            claimer: None,
             ..options.clone()
         };
         assert_eq!(
@@ -1362,6 +1376,7 @@ mod tests {
             staged_backend: StagedExecutionBackend::InProcess,
             claimed_token_ids: ids,
             direct_output_ids: None,
+            claimer: None,
         };
         let run_spec = read_run_spec(&spec).unwrap();
         // The fixture's ranges hold four tokens: the first inference claims

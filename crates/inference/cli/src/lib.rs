@@ -318,6 +318,11 @@ struct ChallengePostArgs {
     #[arg(long)]
     pins: Option<PathBuf>,
 
+    /// The address the challenge is attributed to, as `claim build
+    /// --claimer`. Default: `IRIS_CHALLENGER`, or the zero address.
+    #[arg(long)]
+    challenger: Option<String>,
+
     /// The stand-in data-availability layer's directory. As for `iris claim
     /// check`.
     #[arg(long = "da-dir")]
@@ -353,6 +358,12 @@ struct ClaimBuildArgs {
     /// Use the previous per-stage child-process staged-infer runner.
     #[arg(long = "staged-subprocess", alias = "direct-subprocess", hide = true)]
     staged_subprocess: bool,
+
+    /// The address the claim is attributed to: `0x` and 40 lowercase hex
+    /// digits. Every blob the claim posts names it. Default: `IRIS_CLAIMER`,
+    /// or the zero address.
+    #[arg(long)]
+    claimer: Option<String>,
 }
 
 #[derive(Debug, Args)]
@@ -687,6 +698,9 @@ fn execute(cli: Cli) -> Result<ExitCode> {
                     pins_path: args.pins.map(|path| absolute(&base_dir, &path)),
                     challenge_bundle_path: absolute(&base_dir, &args.challenge),
                     submission_path: absolute(&base_dir, &args.submission),
+                    challenger: args
+                        .challenger
+                        .or_else(|| std::env::var("IRIS_CHALLENGER").ok()),
                     da_dir: args.da_dir.map(|path| absolute(&base_dir, &path)),
                     submitted_at: args.submitted_at,
                 })?;
@@ -1343,6 +1357,9 @@ impl ClaimBuildArgs {
             ClaimBuildOptions::from_current_dir(current_exe, staged_backend, self.run)?;
         options.claimed_token_ids = self.claimed_ids;
         options.direct_output_ids = self.direct_output_ids;
+        options.claimer = self
+            .claimer
+            .or_else(|| std::env::var("IRIS_CLAIMER").ok());
         Ok(options)
     }
 }

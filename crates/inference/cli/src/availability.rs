@@ -21,9 +21,13 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use anyhow::{bail, Context, Result};
 use inference_artifacts::availability::{
     stub_blob_commitment, AvailabilityLayer, AvailabilityProof, Blob, BlobContents, BlobEntry,
-    BlobPointer, CheckpointPackage, PostedBlob, PostedDocument, PostedSource, NAMESPACE_BYTES,
+    BlobPointer, CheckpointPackage, OutputReader, PostedBlob, PostedDocument, PostedSource,
+    WitnessedOutput, NAMESPACE_BYTES,
 };
-use inference_artifacts::{read_run_spec, PreparedRun, CHECKPOINTS_TXT, CHECKPOINT_TRACE_JSON};
+use inference_artifacts::contract::{ResultInOutput, SubmittedRecord};
+use inference_artifacts::{
+    read_run_spec, CheckpointTrace, PreparedRun, CHECKPOINTS_TXT, CHECKPOINT_TRACE_JSON,
+};
 use raster::core::trace::TraceCommitment;
 use raster_prover::trace::TraceCommitmentExt;
 use serde::{Deserialize, Serialize};
@@ -244,10 +248,12 @@ impl AvailabilityLayer for StubLayer {
     }
 
     fn proves(&self, blob: &PostedBlob) -> bool {
-        match blob.proof {
-            AvailabilityProof::HostChecked => self
-                .included(&blob.pointer)
-                .is_some_and(|bytes| contents_of(&bytes).ok().as_ref() == Some(&blob.contents)),
+        match &blob.proof {
+            AvailabilityProof::HostChecked { outputs } => {
+                self.included(&blob.pointer).is_some_and(|bytes| {
+                    contents_of(&bytes, outputs).ok().as_ref() == Some(&blob.contents)
+                })
+            }
         }
     }
 }
@@ -255,11 +261,39 @@ impl AvailabilityLayer for StubLayer {
 /// What a blob holds, as the stand-in proof establishes it by reading the
 /// blob: the record the source step gives over each source, the hash of each
 /// prompt text, each checkpoint package whole, and each trace body a
-/// well-formed Raster trace commitment.
-pub fn contents_of(bytes: &[u8]) -> Result<BlobContents> {
+/// well-formed Raster trace commitment. With the stage outputs a claimer
+/// gives, also the records its checkpoints commit to.
+pub fn contents_of(bytes: &[u8], outputs: &[WitnessedOutput]) -> Result<BlobContents> {
     Blob::decode(bytes)
-        .and_then(|blob| blob.contents(trace_header_digest))
+        .and_then(|blob| blob.contents(&HostReader, outputs))
         .map_err(|fault| anyhow::anyhow!("{fault}"))
+}
+
+/// The host's reader of Raster formats: the code the stages' outputs are
+/// read with everywhere else in this crate.
+struct HostReader;
+
+impl OutputReader for HostReader {
+    fn trace_header(&self, body: &[u8]) -> Option<String> {
+        trace_header_digest(body)
+    }
+
+    fn check_record(&self, payload: &[u8], index: &[u8]) -> Option<SubmittedRecord> {
+        let edge = crate::contract::output_json(payload, index).ok()?;
+        crate::contract::claim_record(edge.get("claim")?).ok()
+    }
+
+    fn results(&self, payload: &[u8], index: &[u8]) -> Option<ResultInOutput> {
+        let stated = crate::contract::output_json(payload, index).ok()?;
+        // The two pipelines' result records have no field in common at the
+        // top, so an output reads as one of them or as neither.
+        [
+            inference_artifacts::Pipeline::Consensus,
+            inference_artifacts::Pipeline::Single,
+        ]
+        .into_iter()
+        .find_map(|pipeline| crate::contract::result_in_output(pipeline, &stated).ok())
+    }
 }
 
 /// The digest of the header of a Raster trace commitment body, as a stage
@@ -272,21 +306,18 @@ pub fn trace_header_digest(bytes: &[u8]) -> Option<String> {
 
 /// Pack entries into blobs of at most [`MAX_BLOB_BYTES`], keeping their
 /// order. An entry larger than that goes alone.
-fn pack(entries: Vec<BlobEntry>) -> Vec<Blob> {
-    let mut blobs = Vec::new();
-    let mut current = Blob {
-        entries: Vec::new(),
+fn pack(submitter: &str, entries: Vec<BlobEntry>) -> Vec<Blob> {
+    let blob = |entries| Blob {
+        submitter: submitter.to_string(),
+        entries,
     };
+    let mut blobs = Vec::new();
+    let mut current = blob(Vec::new());
     for entry in entries {
         let mut next = current.clone();
         next.entries.push(entry.clone());
         if !current.entries.is_empty() && next.encode().len() > MAX_BLOB_BYTES {
-            blobs.push(std::mem::replace(
-                &mut current,
-                Blob {
-                    entries: vec![entry],
-                },
-            ));
+            blobs.push(std::mem::replace(&mut current, blob(vec![entry])));
         } else {
             current = next;
         }
@@ -298,28 +329,49 @@ fn pack(entries: Vec<BlobEntry>) -> Vec<Blob> {
 }
 
 /// Post blobs and state each one as a claim or a challenge submits it.
+/// `outputs` are the stage outputs a claim's records are read from: they go
+/// with the proof of the blob that holds its checkpoints, and are not posted.
 fn post_blobs(
     layer: &StubLayer,
     namespace: &[u8; NAMESPACE_BYTES],
     blobs: Vec<Blob>,
+    outputs: &[WitnessedOutput],
 ) -> Result<Vec<PostedBlob>> {
     let encoded: Vec<Vec<u8>> = blobs.iter().map(Blob::encode).collect();
+    let given: Vec<&[WitnessedOutput]> = blobs
+        .iter()
+        .map(|blob| {
+            let holds_checkpoints = blob
+                .entries
+                .iter()
+                .any(|entry| matches!(entry, BlobEntry::Checkpoints(_)));
+            if holds_checkpoints {
+                outputs
+            } else {
+                &[]
+            }
+        })
+        .collect();
     // What each blob holds, before anything is posted: a blob that holds
     // nothing it can state is never posted.
     let contents = encoded
         .iter()
-        .map(|bytes| contents_of(bytes))
+        .zip(&given)
+        .map(|(bytes, outputs)| contents_of(bytes, outputs))
         .collect::<Result<Vec<_>>>()?;
     let pointers = layer.post(namespace, &encoded)?;
     Ok(pointers
         .into_iter()
         .zip(encoded)
         .zip(contents)
-        .map(|((pointer, bytes), contents)| PostedBlob {
+        .zip(given)
+        .map(|(((pointer, bytes), contents), outputs)| PostedBlob {
             contents,
             length: bytes.len() as u64,
             pointer,
-            proof: AvailabilityProof::HostChecked,
+            proof: AvailabilityProof::HostChecked {
+                outputs: outputs.to_vec(),
+            },
         })
         .collect())
 }
@@ -354,32 +406,82 @@ pub fn new_information(prepared: &PreparedRun) -> Result<BlobEntry> {
     }))
 }
 
-/// Post what a claim in `claim_dir` must make available: the new information
-/// its run was given, and its checkpoint list with every checkpoint. Nothing a
-/// challenger makes itself is posted: no file a stage loads, no index and no
-/// input manifest.
+/// Post what a claim in `claim_dir` must make available, for the address
+/// `claimer`: the new information its run was given, and its checkpoint list
+/// with every checkpoint and every input manifest. No file a stage loads is
+/// posted, and no index: a challenger makes those itself.
 pub fn post_claim(
     layer: &StubLayer,
     claim_dir: &Path,
+    claimer: &str,
     new_information: Option<BlobEntry>,
 ) -> Result<Vec<PostedBlob>> {
     let list = fs::read(claim_dir.join(CHECKPOINTS_TXT))
         .with_context(|| format!("{} has no {CHECKPOINTS_TXT}", claim_dir.display()))?;
-    let trace = fs::read(claim_dir.join(CHECKPOINT_TRACE_JSON))
+    let trace_bytes = fs::read(claim_dir.join(CHECKPOINT_TRACE_JSON))
         .with_context(|| format!("{} has no {CHECKPOINT_TRACE_JSON}", claim_dir.display()))?;
+    let trace: CheckpointTrace = serde_json::from_slice(&trace_bytes)?;
+
+    let mut manifests = Vec::new();
+    let mut manifest_hashes = BTreeSet::new();
+    for checkpoint in &trace.checkpoints {
+        let manifest_path = claim_dir
+            .join(&checkpoint.stage)
+            .join("input_manifest.json");
+        let manifest = fs::read(&manifest_path)
+            .with_context(|| format!("failed to read {}", manifest_path.display()))?;
+        if manifest_hashes.insert(hex::encode(Sha256::digest(&manifest))) {
+            manifests.push(manifest);
+        }
+    }
+    // The outputs the claim's records are read from: its last stage's, and
+    // those of the stages that one read.
+    let last = trace
+        .checkpoints
+        .last()
+        .context("the claim has no checkpoints")?;
+    let mut positions: BTreeSet<u32> = last.input_sources.values().copied().collect();
+    positions.insert(trace.checkpoints.len() as u32 - 1);
+    let outputs = positions
+        .into_iter()
+        .filter_map(|position| Some((position, trace.checkpoints.get(position as usize)?)))
+        .map(|(position, checkpoint)| {
+            let read = |file: &str| {
+                let path = claim_dir.join(&checkpoint.stage).join(file);
+                fs::read(&path).with_context(|| format!("failed to read {}", path.display()))
+            };
+            Ok(WitnessedOutput {
+                checkpoint: position,
+                payload: hex::encode(read("output.bin")?),
+                index: hex::encode(read("output.rindex")?),
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+
     let mut entries: Vec<BlobEntry> = new_information.into_iter().collect();
-    entries.push(BlobEntry::Checkpoints(CheckpointPackage { list, trace }));
-    post_blobs(layer, &CLAIM_NAMESPACE, pack(entries))
+    entries.push(BlobEntry::Checkpoints(CheckpointPackage {
+        list,
+        trace: trace_bytes,
+        input_manifests: manifests,
+    }));
+    post_blobs(layer, &CLAIM_NAMESPACE, pack(claimer, entries), &outputs)
 }
 
-/// Post a challenger's trace body (`commit.bin`).
-pub fn post_trace_body(layer: &StubLayer, body: Vec<u8>) -> Result<Vec<PostedBlob>> {
+/// Post a challenger's trace body (`commit.bin`), for the address
+/// `challenger`.
+pub fn post_trace_body(
+    layer: &StubLayer,
+    challenger: &str,
+    body: Vec<u8>,
+) -> Result<Vec<PostedBlob>> {
     post_blobs(
         layer,
         &CHALLENGE_NAMESPACE,
         vec![Blob {
+            submitter: challenger.to_string(),
             entries: vec![BlobEntry::TraceBody { bytes: body }],
         }],
+        &[],
     )
 }
 
@@ -403,12 +505,14 @@ mod tests {
     #[test]
     fn a_posted_prompt_is_included_proven_and_named_by_its_hash() {
         let layer = layer("prompt");
+        let alice = "0x00000000000000000000000000000000000a11ce";
         let blob = Blob {
+            submitter: alice.to_string(),
             entries: vec![BlobEntry::PromptText {
                 text: String::from("Which section was about a bakery?"),
             }],
         };
-        let posted = post_blobs(&layer, &CLAIM_NAMESPACE, vec![blob]).unwrap();
+        let posted = post_blobs(&layer, &CLAIM_NAMESPACE, vec![blob], &[]).unwrap();
         assert_eq!(
             posted[0].contents.prompt_texts,
             vec![hex::encode(Sha256::digest(
@@ -419,7 +523,17 @@ mod tests {
         assert!(layer
             .included_at(&posted[0].pointer, posted[0].length)
             .is_some());
-        assert!(check_posted(&layer, 1, &posted, 0).is_ok());
+        assert_eq!(posted[0].contents.submitter, alice);
+        assert!(check_posted(&layer, 1, &posted, alice, 0).is_ok());
+        // Posted for one address, it serves no other.
+        assert!(check_posted(
+            &layer,
+            1,
+            &posted,
+            "0x0000000000000000000000000000000000000b0b",
+            0
+        )
+        .is_err());
 
         // Another length, another commitment, or other stated contents: not
         // this blob.
@@ -435,7 +549,7 @@ mod tests {
         assert!(!layer.proves(&overstated));
 
         // A second post is a later block.
-        let later = post_trace_body(&layer, vec![1, 2, 3]);
+        let later = post_trace_body(&layer, alice, vec![1, 2, 3]);
         assert!(later.is_err(), "three bytes are no trace commitment");
     }
 
@@ -444,7 +558,10 @@ mod tests {
         let entry = |byte: u8| BlobEntry::TraceBody {
             bytes: vec![byte; MAX_BLOB_BYTES / 3],
         };
-        let blobs = pack((0..5).map(entry).collect());
+        let blobs = pack(
+            "0x00000000000000000000000000000000000a11ce",
+            (0..5).map(entry).collect(),
+        );
         assert_eq!(blobs.len(), 3);
         assert!(blobs
             .iter()

@@ -108,8 +108,9 @@ where it leaves what the claimer committed for the next. No chain-wide Raster
 commitment is involved.
 
 `checkpoint_trace.json` holds the checkpoints. `checkpoints.txt` holds one
-SHA-256 per checkpoint, and its own SHA-256 is the claim's commitment to all of
-them.
+hash per checkpoint. The claim's commitment to all of them is the root of a
+tree over those hashes, with their count: `checkpoints_root`. See
+[the encodings](#the-encodings-a-contract-recomputes).
 
 ## What a claimer submits
 
@@ -119,6 +120,7 @@ them.
 | --- | --- |
 | `pipeline` | The [pipeline](pipelines.md) the claim is of |
 | `configuration` | The id of the registered configuration the claim is of |
+| `claimer` | The address the claim is attributed to: `0x` and 40 hex digits, the claimer's choice (`claim build --claimer`). Every blob the claim posted names it |
 | `input_text_sha256` | The claimer's commitment to the input it ran. The contract takes it as given. Every inference's statement is recomputed over it |
 | `source_sha256` | The digest of the source record the text was built from, or 64 zeros. The statement names it |
 | `source` | The source record itself, for a claim that has one: the text's hash and length, the recipe's hash, the count and chained hash of the documents' attested facts, the signer's key, and the fault, which must be zero |
@@ -130,7 +132,8 @@ them.
 | `result.code` | The code of the first form the plaintext is, or zero |
 | `result.forms_sha256` | A hash chained over the forms the plaintext was compared with |
 | `consensus` | For a `consensus` claim: `same_input`, `agree` and `code`, as its result stage states them. Absent for `single` |
-| `checkpoints_sha256` | SHA-256 of the claim's `checkpoints.txt` |
+| `checkpoint_count` | How many checkpoints the claim has |
+| `checkpoints_root` | The claim's commitment to its checkpoint list: the count and the root of the tree over the checkpoint hashes |
 | `availability` | The blobs the claimer posted: the new information its statement names (the source, or the prompt text of a run with none), and the checkpoint list with every checkpoint, each with where it is, what it holds and its availability proof ([availability](availability.md)) |
 
 The three `record` values are the claim record an inference's last check states
@@ -189,6 +192,20 @@ made of each inference, against the model the configuration pins for it
    blobs hold the new information the statement names, a source whose record
    has the statement's source digest or a prompt text with its input hash, and
    the claim's checkpoint list.
+7. **Records are its checkpoints'** (`check_stated_records`). A claim ends in
+   its pipeline's result stage: its last checkpoint's program must be that
+   pipeline's result program. That checkpoint names, for each inference, the
+   earlier checkpoint whose output it read as that inference's check (`check`
+   in a `single` claim, `first` and `second` in a `consensus` one), whose
+   program must be the check. The record submitted for an inference must be
+   the one in that check's output, and what the last stage's output states,
+   every record with its result and the agreement, must be what was
+   submitted. The contract decodes none of it: the claim's availability proof
+   reads the records out of those outputs, each held to the hash its
+   checkpoint commits to, and states them
+   ([availability](availability.md#what-the-proof-states-of-a-claims-records)).
+   The record is held to the check and not only to the result stage after it,
+   so the verdict rests on the stage that scored the output.
 
 The record's fields other than the signer and the recipe are not the contract's
 to judge. Which documents were fetched, and that the text is what the recipe
@@ -199,9 +216,9 @@ checkpoint is false is disputed like any other stage.
 
 A challenge is about one stage. The challenger presents the claim's checkpoint
 list and the checkpoints it points at, and the contract holds each to what the
-claim committed: the list to `checkpoints_sha256`, a checkpoint to its line in
+claim committed: the list to `checkpoints_root`, a checkpoint to its place in
 the list. A challenger cannot state a program, a boundary or a producer of its
-own. Three comparisons follow, with no replay. They are the same for a claim
+own. Two comparisons follow, with no replay. They are the same for a claim
 with a source or forms: `source` and `result` are stages like the others, with
 approved programs and chained inputs, so a challenger disputes them the same
 way.
@@ -219,39 +236,50 @@ way.
   names as its producer, that checkpoint must be earlier in the list, and its
   program must be one that may produce the input. Or the input holds one of its
   pinned empty values. Otherwise the claim is void.
-- **Each record is its inference's last check's, and the results the last
-  stage's.** A claim ends in its pipeline's result stage: the last checkpoint's
-  program must be that pipeline's result program. That checkpoint names, for
-  each inference, the earlier checkpoint whose output it read as that
-  inference's check (`check` in a `single` claim, `first` and `second` in a
-  `consensus` one). The record submitted for an inference must be the one in
-  the output that checkpoint commits to, and its program must be the check.
-  What the last checkpoint's own output states, every record with its result
-  and the agreement, must be what was submitted. A claim that ends any other
-  way is void.
 
 The second comparison reads the stage's `input_manifest.json`, held to the
 checkpoint's `input_commitment`. It must be exactly the canonical encoding of
 what it holds: a repeated name, an extra field or other spacing voids the claim,
 so that no two readers can take one input list for different inputs.
 
-The claimer does not post its manifests. Where the stage's input commitment is
-the challenger's own, the challenger presents its own manifest, which is the
-same bytes. Where it is not, only the claimer has the manifest: that case waits
-for the step in which a claimer posts on request
-([availability](availability.md#open)).
-
 Which earlier stage is the right producer is not the contract's to judge. Every
 output says which step produced it, and the consuming stage checks that against
 the schedule. The contract holds only that the input is a real earlier output of
 the right kind.
 
-The checkpoint list is this repository's own format. Today opening one
-checkpoint means presenting the whole list of hashes.
+## The encodings a contract recomputes
+
+A contract has to hash a checkpoint it is shown, open one checkpoint of a
+list, and compute a configuration's id when one is registered. None of that is
+workable over JSON or a list of hex lines, so these three follow the scheme the
+stages' own digests use (`Statement::digest`, `source_id`): a tag ending in a
+zero byte, then the fields in order; numbers 32-bit little-endian; text and
+lists after a 32-bit count; a hash as a byte 1 and its 32 bytes, or a byte 0
+when the field is empty. Everything is SHA-256. The code is
+`inference_artifacts::encoding`.
+
+- **A checkpoint's hash** (`checkpoint_hash`): tag `iris/checkpoint/v1`, the
+  stage name, the program id, the input manifest hash, the producers in name
+  order (each a name and a position), and the two output commitments.
+- **The checkpoint list** (`checkpoints_root`): a tree of depth 20 over the
+  checkpoint hashes in order. A leaf is `SHA-256(0 || hash)`, a node
+  `SHA-256(1 || left || right)`, an empty position 32 zero bytes. The
+  commitment is the tag `iris/checkpoints/v1`, the count and the tree's root.
+  One checkpoint opens at its position with 20 hashes
+  (`verify_checkpoint_opening`); the host's `CheckpointList` makes the same
+  comparison with the whole list in hand.
+- **A configuration's id** (`Configuration::id`): tag `iris/configuration/v2`
+  and every field in the order it is declared.
+
+A stage's input manifest stays Raster's canonical JSON, which a contract
+cannot read. The link comparison over it is for a receipt, not for contract
+code ([the integration proposal](../proposals/blockchain-integration.md)).
+Records are read out of stage outputs by the claim's availability proof, and a
+contract only compares them.
 
 ## Disputing a stage's output
 
-The three comparisons above void a claim with no replay. What is left is a stage
+The two comparisons above void a claim with no replay. What is left is a stage
 whose checkpoint names an approved program and real inputs, and an output the
 challenger says that program does not produce from them. That is settled by
 Raster's stage challenge: the challenger posts the trace commitment of its own
@@ -319,8 +347,8 @@ data-availability layer (`--da-dir`, default `IRIS_DA_DIR` or
 `~/.cache/iris/stub-celestia`). It makes the configuration and pipeline checks,
 the submission checks, the availability check and the challenge-time
 comparisons, the link comparison for every chained input of every stage. It
-prints nine lines for a `single` claim and eleven for a `consensus` one, which
-has a statement line and a record line per inference. `--registry <file>` judges the claim by the
+prints eight lines for a `single` claim and nine for a `consensus` one, which
+has a statement line per inference. `--registry <file>` judges the claim by the
 configuration it names in that registry; without it, by the one the run spec
 and the pins describe. `--submitted-at <seconds>` sets when the claim is taken
 to be submitted.
@@ -390,4 +418,3 @@ These are open. None is closed by anything on this page.
   how long it must stay retrievable, is in [availability](availability.md).
 - Any check of the input beyond its hash and the source it names. What a
   source record stands for is in `docs/proposals/authenticated-prompt.md`.
-- A way to open one checkpoint without presenting the whole list.

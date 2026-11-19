@@ -33,21 +33,30 @@ way by anyone.
 | Every Raster file's index | Made with the file |
 
 The claimer also posts what only it can state: **its checkpoints**, the
-checkpoint list and every checkpoint in it. A challenger finds the first
-checkpoint it disagrees with by hash, and a challenge is built from the
-claimer's checkpoint at that position. That checkpoint fixes which step the
-position is: its stage, program, producers and the hash of its input manifest.
-Without it, a challenger could dispute a position with an honest run of
-another step. `aux_c0_l3` and `aux_c0_l5`, for instance, run one program on
-one chained input and differ only in which layer's weights they load, so a
-challenger's honest `aux_c0_l5` would differ from the claimer's honest
-`aux_c0_l3` with nothing for the claimer to refute.
+checkpoint list, every checkpoint in it, and every input manifest a checkpoint
+commits to. A challenger finds the first checkpoint it disagrees with by hash,
+and a challenge is built from the claimer's checkpoint at that position. That
+checkpoint fixes which step the position is: its stage, program, producers and
+the hash of its input manifest. Without it, a challenger could dispute a
+position with an honest run of another step. `aux_c0_l3` and `aux_c0_l5`, for
+instance, run one program on one chained input and differ only in which
+layer's weights they load, so a challenger's honest `aux_c0_l5` would differ
+from the claimer's honest `aux_c0_l3` with nothing for the claimer to refute.
 
-The input manifests are not posted. An honest claimer's are the ones a
-challenger makes, and a replay is about a checkpoint whose manifest hash is the
-challenger's own, so the challenger brings that manifest itself. Only a
-dispute about a stage's inputs needs the claimer's manifest at that stage,
-which joins the step set aside below ([Open](#open)).
+The manifests are posted because a lying claimer's cannot be made by anyone
+else. An honest claimer's are the ones a challenger makes. But a claimer could
+state a checkpoint over a manifest it never reveals, and then that stage could
+be neither replayed, since a replay runs on the inputs the manifest names, nor
+held to its producers, since the link comparison reads the manifest. One
+withheld manifest would put a claim beyond every dispute.
+
+Every blob names the **address it was posted for**: the claimer's, which the
+submission states (`claim build --claimer`, or `IRIS_CLAIMER`), or the
+challenger's (`challenge post --challenger`, or `IRIS_CHALLENGER`). A contract
+refuses a submission whose blobs name another address, so nobody can submit
+someone else's posted data as their own. Copying a claim or a challenge then
+means posting its data again under one's own address, with a proof of one's
+own, which the original submitter is ahead of.
 
 ## What a claim posts
 
@@ -57,19 +66,39 @@ which joins the step set aside below ([Open](#open)).
 | --- | --- |
 | The source: the signer's key, the recipe and the documents with their attestations | The digest of the record the source step gives over them (`source_core::run_source`): the one the claim's statement names. One equality covers the text, the recipe, every document and the signer |
 | Or, for a run with no source, the prompt text as given | Its SHA-256: the statement's input text hash |
-| The checkpoint list, with every checkpoint | The SHA-256 of the list, which is the submission's `checkpoints_sha256`, and that every listed checkpoint is there |
+| The checkpoint list, with every checkpoint and every input manifest a checkpoint commits to | The root of the list, which is the submission's `checkpoints_root`, and that every listed checkpoint and its manifest are there |
 
 The signer's key is the configuration's; it is posted only so that the source
 step can be run over the blob alone.
 
 Entries are packed in order into blobs of at most 1 MiB, a stand-in for the
-layer's own limit. A blob is `iris/blob/v1\n` followed by the postcard encoding
-of its entries; a reader refuses any other encoding of the same entries.
+layer's own limit. A blob is `iris/blob/v2\n` followed by the postcard encoding
+of the address it is posted for and its entries; a reader refuses any other
+encoding of the same blob.
 
 On the real-model check's E2B claim (a 1,209-token prompt with no source, 292
-checkpoints) the parts are about 6 KB of prompt text, a 19 KB list and 142 KB
-of checkpoints, measured on 2026-11-18. Earlier versions also posted the input
-manifests (205 KB) and every Raster run file with its index (754 KB).
+checkpoints) the parts are about 6 KB of prompt text, a 19 KB list, 142 KB of
+checkpoints and 205 KB of input manifests, measured on 2026-11-18. An earlier
+version also posted every Raster run file with its index (754 KB).
+
+### What the proof states of a claim's records
+
+The proof of the blob that holds a claim's checkpoints also states the records
+those checkpoints commit to (`StatedRecords`): what the last stage's output
+states, the program that checkpoint names and the checkpoints it names as its
+inputs' producers, and, for each of those producers that is a check, the claim
+record in its output and its program. The claimer gives the proof the outputs
+themselves, and the proof holds each to the hash its checkpoint commits to
+before it reads it. They are not posted, since a challenger makes its own.
+
+A contract compares the stated records with the submission when the claim
+arrives ([the contract page](contract.md#on-submission), check 7). So no
+contract and no challenger decodes a stage's output, and a claim whose
+submission is not what its own checkpoints commit to is never accepted.
+
+In the stand-in, the outputs travel with the proof in the open
+(`AvailabilityProof::HostChecked { outputs }`), so the host can read them
+again; a receipt takes them as private inputs.
 
 The submission's `availability` lists each blob: where it is (height,
 namespace, the layer's commitment), its length, what it holds (`contents`) and
@@ -97,16 +126,17 @@ On a claim, at submission:
 1. **Configuration.** The claim names a registered configuration; the contract
    judges it by that one.
 2. **Posted, proven, retrievable.** Each blob is included in a data root
-   Blobstream has attested to, its proof holds, and its block's time plus the
-   layer's retention reaches past the submission time plus the challenge
+   Blobstream has attested to, its proof holds, it was posted for the address
+   the claim names as its claimer, and its block's time plus the layer's
+   retention reaches past the submission time plus the challenge
    period. The blobs hold the new information the statement names (a source
    whose record has the statement's source digest, or a prompt text with the
    statement's input hash) and the claim's checkpoint list.
 
 On a challenge, at submission: it is about the checkpoint the claim lists at
 that stage, the stage names an approved program, Raster admits it, and the
-trace body is posted, proven and retrievable past the submission time plus the
-fault-proof window.
+trace body is posted for the challenger it names, proven and retrievable past
+the submission time plus the fault-proof window.
 
 The parameters (`AvailabilityParameters`): retention, 30 days by default (to be
 confirmed against the network a contract settles on); challenge period, 7 days;
@@ -144,18 +174,23 @@ claim states.
 - **A stage input a challenger cannot make the same.** A claimer can feed a
   stage a run input other than the one the new information makes, such as
   token marks that are not the tokenizer's, and state a false checkpoint for
-  that stage. The challenger finds another input at that stage and has no
-  replay to make, since a replay starts from the claimer's input. Set aside
-  for now by decision. The step planned for it: the challenger asks for that
-  input, and the claimer must post it, with a proof that it has the Raster
-  root the stage's input manifest names, within a window or the claim is void.
-  The same step covers a stage whose input commitment differs from the
-  challenger's for any reason, such as an input no earlier stage produced: the
-  link check needs the claimer's manifest at that stage, which only the
-  claimer has, so it posts it on request.
-  The contract pins already list which inputs of each program are run inputs.
+  that stage. The posted manifest shows the challenger which input differs,
+  but not its bytes, so it has no replay to make: a replay starts from the
+  claimer's input. Set aside for now by decision. The step planned for it: the
+  challenger asks for that input, and the claimer must post it, with a proof
+  that it has the Raster root the stage's input manifest names, within a
+  window or the claim is void. The contract pins already list which inputs of
+  each program are run inputs.
+- **Reading an output by its index.** The stand-in reads a record out of an
+  output with the output's index, given by the claimer, after checking that
+  the index and the payload have the same root. A proof program should not
+  rest on an index the prover chose: Raster's selection proofs
+  (`raster_core::input::verify_selection_proof`) tie a selected value to the
+  payload's own root, and the record can be compared by encoding the submitted
+  one, with no decoding at all.
 - **The proof program.** The stand-in proof runs host code (the source step,
-  the checkpoint package check, and `raster_prover`'s trace header). A receipt
+  the checkpoint package check, the reading of records, and `raster_prover`'s
+  trace header). A receipt
   needs that code in a guest-buildable crate, as Raster's settlement proposal
   plans for its body guest. The source step is already `no_std`, in
   `source-core`.

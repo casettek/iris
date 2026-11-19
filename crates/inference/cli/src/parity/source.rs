@@ -212,6 +212,7 @@ fn run_honest(
         staged_backend: StagedExecutionBackend::InProcess,
         claimed_token_ids: None,
         direct_output_ids: None,
+        claimer: None,
     })?;
     let raster_dir = dir.join("raster");
     fs::create_dir(&raster_dir)?;

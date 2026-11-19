@@ -77,8 +77,8 @@ the chain then checks it.
 - The [contract checks](../internals/contract.md): the native claim's submission
   passes the submission checks against the import's pins, every checkpoint names
   an approved program, every input a stage takes from an earlier stage is that
-  stage's committed output, the submitted claim record is the one in the last
-  check's output, and the submitted result is the one in the last stage's. Every
+  stage's committed output, and the submitted record and result are the ones
+  its proof read out of the last check's output and the last stage's. Every
   checkpoint of the native claim is also the boundary the
   Raster run committed: the same program id, input manifest commitment, producers
   and output commitments at every stage. The submission names its run's
@@ -89,8 +89,9 @@ the chain then checks it.
   at the configuration check when the registry does not hold it or the
   submission names another one, and at the availability check when nothing
   is posted, the blobs expire before the challenge period ends, only the
-  checkpoints are posted, or another prompt is posted in place of the one the
-  statement names.
+  checkpoints are posted, another prompt is posted in place of the one the
+  statement names, or the submission names another address than its blobs;
+  and at the records check when its proof states no records.
 - For each falsified claim whose stage replays: which rule settles the
   difference between the claimed checkpoint and the honest one. Where that is a
   replay, the Raster stage challenge built from the claimer's checkpoint and the
@@ -98,8 +99,8 @@ the chain then checks it.
   checkpoint, and the same trace against the honest checkpoint is refused.
   The same challenge as a contract receives it (challenge leg only): its trace
   body posted, it is admitted against a claim whose list holds the claimer's
-  checkpoint, and refused when its body is not posted or expires before the
-  fault-proof window ends.
+  checkpoint, and refused when its body is not posted, expires before the
+  fault-proof window ends, or was posted for another address.
 - Over wrong token marks, on the templated case: the prompt stages finish through
   both Raster and native-staged, agree byte for byte, and record the expected fault.
   This includes marks past the end of the prompt, a range with no marks, a token

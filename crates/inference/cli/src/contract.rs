@@ -15,9 +15,9 @@ use inference_artifacts::availability::{
     check_claim_availability, AvailabilityParameters, RequiredPosting,
 };
 use inference_artifacts::contract::{
-    check_origin, check_pipeline, check_submission, first_unapproved_stage,
+    check_origin, check_pipeline, check_stated_records, check_submission, first_unapproved_stage,
     raster_boundary_mismatch, ChallengeRefusal, CheckpointList, ClaimSubmission, ContractPins,
-    LinkCheck, RecordBinding, RequiredOrigin, RequiredParameters, RequiredSource,
+    LinkCheck, RequiredOrigin, RequiredParameters, RequiredSource,
     ResultInOutput, StageAdmission, StatedInference, SubmittedConsensus,
     SubmittedRecord, SubmittedResult, CONTRACT_PINS_JSON,
 };
@@ -387,17 +387,26 @@ fn check_claim_dir(
     });
     // What the claim posted: the new information its statement names and its
     // checkpoints, each proven and retrievable through the challenge period.
+    let posted = check_claim_availability(
+        availability.layer,
+        availability.parameters,
+        &submission.availability,
+        &RequiredPosting::of(&submission),
+        availability.submitted_at,
+    );
     lines.push(CheckLine {
         check: "submission: data posted, proven and retrievable through the challenge period",
-        rejection: check_claim_availability(
-            availability.layer,
-            availability.parameters,
-            &submission.availability,
-            &RequiredPosting::of(&submission),
-            availability.submitted_at,
-        )
-        .err()
-        .map(|rejection| rejection.to_string()),
+        rejection: posted.as_ref().err().map(ToString::to_string),
+    });
+    // What the claim's proof read out of its last stage's output and its
+    // checks': each record and the results are the ones submitted. A claim
+    // whose submission is not what its own checkpoints commit to is refused
+    // here, so no dispute is about a record.
+    lines.push(CheckLine {
+        check: "submission: records and results are the ones its checkpoints commit to",
+        rejection: check_stated_records(pins, &submission, &posted.unwrap_or_default())
+            .err()
+            .map(|rejection| rejection.to_string()),
     });
 
     let list_path = dir.join(CHECKPOINTS_TXT);
@@ -500,125 +509,6 @@ fn check_claim_dir(
         rejection,
     });
 
-    // A claim ends in its pipeline's result stage, which names the last check
-    // it read of each inference. Each record is held to its check, and the
-    // results to the last stage.
-    let last = trace
-        .checkpoints
-        .last()
-        .context("the claim has no checkpoints")?;
-    let unbound = |bound: RecordBinding, checkpoint: &Checkpoint, output_path: &Path| match bound
-    {
-        RecordBinding::Bound => None,
-        RecordBinding::AnotherRecord => Some(format!(
-            "stage {} committed another record than the one submitted",
-            checkpoint.stage
-        )),
-        RecordBinding::AnotherStage { expected } => Some(format!(
-            "stage {} does not run {expected}, so the claim does not end in its checks and \
-             the result stage",
-            checkpoint.stage
-        )),
-        RecordBinding::NotTheLastOutput {
-            committed,
-            presented,
-        } => Some(format!(
-            "{} hashes to {presented}, but the checkpoint of stage {} commits to {committed}",
-            output_path.display(),
-            checkpoint.stage
-        )),
-    };
-
-    for (inference, input) in contract.pipeline.result_inputs().iter().enumerate() {
-        let check_line = match (several, inference) {
-            (false, _) => "challenge admission: the record is the last check's",
-            (true, 0) => "challenge admission: the first inference's record is its last check's",
-            (true, _) => "challenge admission: the second inference's record is its last check's",
-        };
-        // The check the result stage's own checkpoint names for this input.
-        // A claim whose last stage names none, or one past its list, has no
-        // check to present.
-        let producer = last
-            .input_sources
-            .get(*input)
-            .map(|index| trace.checkpoints.get(*index as usize));
-        let rejection = match producer {
-            Some(Some(check)) => {
-                let check_dir = dir.join(&check.stage);
-                let output_path = check_dir.join("output.bin");
-                let output = fs::read(&output_path)
-                    .with_context(|| format!("failed to read {}", output_path.display()))?;
-                let edge = stage_output(&output_path, &check_dir.join("output.rindex"))?;
-                // A stage that is no check is reported by the binding check,
-                // so its record is only read when its output holds one.
-                let record = edge.get("claim").map(claim_record).transpose()?;
-                let in_output = record.clone().or_else(|| {
-                    submission
-                        .inferences
-                        .get(inference)
-                        .map(|claimed| claimed.record.clone())
-                });
-                match in_output {
-                    Some(in_output) => {
-                        let binding = list
-                            .check_record_binding(
-                                pins,
-                                &submission,
-                                inference,
-                                last,
-                                check,
-                                &output,
-                                &in_output,
-                            )
-                            .map_err(refusal)?;
-                        ensure!(
-                            binding != RecordBinding::Bound || record.is_some(),
-                            "{} holds no claim record",
-                            output_path.display()
-                        );
-                        unbound(binding, check, &output_path)
-                    }
-                    None => Some(String::from("the claim submits no such inference")),
-                }
-            }
-            Some(None) => Some(format!(
-                "the claim's last stage ({}) names a checkpoint past the list as its `{input}`",
-                last.stage
-            )),
-            None => Some(format!(
-                "the claim's last stage ({}) takes no `{input}` from an earlier stage, so the \
-                 claim does not end in its checks and the result stage",
-                last.stage
-            )),
-        };
-        lines.push(CheckLine {
-            check: check_line,
-            rejection,
-        });
-    }
-
-    let last_dir = dir.join(&last.stage);
-    let output_path = last_dir.join("output.bin");
-    let output = fs::read(&output_path)
-        .with_context(|| format!("failed to read {}", output_path.display()))?;
-    let stated = stage_output(&output_path, &last_dir.join("output.rindex"))?;
-    // A last stage that is not the result stage is reported by the binding
-    // check, so what its output holds is only read when it decodes.
-    let decoded = result_in_output(contract.pipeline, &stated);
-    let in_output = decoded
-        .as_ref()
-        .map_or_else(|_| submission.stated(), Clone::clone);
-    let binding = list
-        .check_result_binding(pins, &submission, last, &output, &in_output)
-        .map_err(refusal)?;
-    if binding == RecordBinding::Bound {
-        // Bound to a decoded record, never to the submission's own.
-        decoded.with_context(|| format!("{} holds no result record", output_path.display()))?;
-    }
-    lines.push(CheckLine {
-        check: "challenge admission: the result is the last stage's",
-        rejection: unbound(binding, last, &output_path),
-    });
     Ok(ClaimCheckReport { lines })
 }
 
@@ -643,6 +533,9 @@ pub struct ChallengePostOptions {
     pub challenge_bundle_path: PathBuf,
     /// The disputed claim's `claim_submission.json`, in its claim directory.
     pub submission_path: PathBuf,
+    /// The address the challenge is attributed to. With none, the zero
+    /// address.
+    pub challenger: Option<String>,
     pub da_dir: Option<PathBuf>,
     pub submitted_at: Option<u64>,
 }
@@ -672,12 +565,21 @@ pub fn post_challenge(options: ChallengePostOptions) -> Result<ChallengePosted> 
             .clone()
             .unwrap_or_else(crate::availability::da_dir),
     );
+    let challenger = options
+        .challenger
+        .clone()
+        .unwrap_or_else(|| inference_artifacts::contract::NO_ADDRESS.to_string());
+    ensure!(
+        inference_artifacts::contract::is_address(&challenger),
+        "`{challenger}` is not an address: give `0x` and 40 lowercase hex digits"
+    );
     let submission = challenge_submission(
-        &claim.checkpoints_sha256,
+        &claim.checkpoints_root,
         stage as u32,
         &trace.checkpoints[stage],
         &bundle.raster_commit_path,
         &replay.raster_output_sha256,
+        &challenger,
         &layer,
     )?;
     let submission_path = options
@@ -701,16 +603,18 @@ pub fn post_challenge(options: ChallengePostOptions) -> Result<ChallengePosted> 
     })
 }
 
-/// A challenge of the checkpoint at `stage` of the claim whose list hashes
-/// to `checkpoints_sha256`: the Raster stage challenge built from that
-/// checkpoint and the challenger's own run of the stage (its trace commitment
-/// at `commit_path`, the output it ends in), with the trace body posted.
+/// A challenge, attributed to `challenger`, of the checkpoint at `stage` of
+/// the claim whose list has the root `checkpoints_root`: the Raster stage
+/// challenge built from that checkpoint and the challenger's own run of the
+/// stage (its trace commitment at `commit_path`, the output it ends in), with
+/// the trace body posted.
 pub(crate) fn challenge_submission(
-    checkpoints_sha256: &str,
+    checkpoints_root: &str,
     stage: u32,
     checkpoint: &Checkpoint,
     commit_path: &Path,
     output_sha256: &str,
+    challenger: &str,
     layer: &crate::availability::StubLayer,
 ) -> Result<inference_artifacts::contract::ChallengeSubmission> {
     let commitment = raster_prover::commitment_file::CommitmentFile::read_memory(commit_path)
@@ -727,10 +631,11 @@ pub(crate) fn challenge_submission(
         .context("the trace commitment does not encode")?;
     Ok(inference_artifacts::contract::ChallengeSubmission {
         version: inference_artifacts::contract::CHALLENGE_SUBMISSION_VERSION,
-        checkpoints_sha256: checkpoints_sha256.to_string(),
+        challenger: challenger.to_string(),
+        checkpoints_root: checkpoints_root.to_string(),
         stage,
         challenge,
-        availability: crate::availability::post_trace_body(layer, body)
+        availability: crate::availability::post_trace_body(layer, challenger, body)
             .context("posting the trace body")?,
     })
 }
@@ -754,7 +659,7 @@ pub fn check_challenge(
         fs::read(&list_path).with_context(|| format!("failed to read {}", list_path.display()))?;
     let mut lines = Vec::new();
 
-    let list = (submission.checkpoints_sha256 == claim.checkpoints_sha256)
+    let list = (submission.checkpoints_root == claim.checkpoints_root)
         .then(|| CheckpointList::open(&claim, &list_bytes).ok())
         .flatten();
     lines.push(CheckLine {
@@ -762,7 +667,7 @@ pub fn check_challenge(
         rejection: list.is_none().then(|| {
             format!(
                 "the challenge names checkpoint list {}, the claim stored {}",
-                submission.checkpoints_sha256, claim.checkpoints_sha256
+                submission.checkpoints_root, claim.checkpoints_root
             )
         }),
     });
@@ -809,6 +714,7 @@ pub fn check_challenge(
             layer,
             AvailabilityParameters::default(),
             &submission.availability,
+            &submission.challenger,
             &submission.trace_header_digest(),
             submitted_at,
         )
@@ -818,16 +724,22 @@ pub fn check_challenge(
     Ok(ClaimCheckReport { lines })
 }
 
-/// A stage's `output.bin` as JSON.
-fn stage_output(data: &Path, index: &Path) -> Result<serde_json::Value> {
-    let value =
-        raster_runtime::read_raster_value(data, index, &raster_runtime::ReadLimits::unbounded())?;
-    crate::parity::compare::value_json(&value)
+/// A stage's output as JSON, read from its payload with its index. The
+/// index has to be of the same value as the payload.
+pub(crate) fn output_json(payload: &[u8], index: &[u8]) -> Result<serde_json::Value> {
+    let artifact = raster_runtime::read_raster_artifact_from_bytes(
+        payload,
+        index,
+        &raster_runtime::ReadLimits::unbounded(),
+    )?;
+    ensure!(
+        artifact.roots_agree(),
+        "the index is of another value than the payload"
+    );
+    crate::parity::compare::value_json(&artifact.value)
 }
 
-/// A claim record as a check commits it, or as the result stage restates it:
-/// both name the statement, the output hash and the valid flag the same way.
-fn claim_record(claim: &serde_json::Value) -> Result<SubmittedRecord> {
+pub(crate) fn claim_record(claim: &serde_json::Value) -> Result<SubmittedRecord> {
     let hash = |field: &str| -> Result<String> {
         let bytes = claim
             .get(field)
@@ -871,7 +783,10 @@ fn stated_inference(stated: &serde_json::Value) -> Result<StatedInference> {
 }
 
 /// What the result stage of this pipeline states in its output.
-fn result_in_output(pipeline: Pipeline, stated: &serde_json::Value) -> Result<ResultInOutput> {
+pub(crate) fn result_in_output(
+    pipeline: Pipeline,
+    stated: &serde_json::Value,
+) -> Result<ResultInOutput> {
     Ok(match pipeline {
         Pipeline::Single => ResultInOutput {
             inferences: vec![stated_inference(stated)?],

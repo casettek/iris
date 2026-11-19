@@ -4,6 +4,7 @@ pub mod checkpoint;
 pub mod claim;
 pub mod contract;
 pub mod direct;
+pub mod encoding;
 pub mod inference;
 pub mod io;
 pub mod manifest;
@@ -19,7 +20,8 @@ pub use challenge::{
     CHALLENGE_TRACE_JSON, DIVERGENCE_JSON, REPLAY_PACKAGE_JSON,
 };
 pub use checkpoint::{
-    build_checkpoint_trace, checkpoint_hash, checkpoint_hashes, read_checkpoint_from_stage_dir,
+    build_checkpoint_trace, checkpoint_hash, checkpoint_hashes, checkpoint_opening,
+    checkpoints_root, read_checkpoint_from_stage_dir, verify_checkpoint_opening,
     read_checkpoint_hashes, read_checkpoint_trace, read_stage_order, write_checkpoint_hashes,
     write_checkpoint_hashes_artifact, write_checkpoint_trace_artifact, write_stage_program,
     Checkpoint, CheckpointTrace, CHECKPOINTS_TXT, CHECKPOINT_HASHES_TXT, CHECKPOINT_TRACE_JSON,

@@ -18,15 +18,15 @@ use std::path::Path;
 
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 
 use crate::contract::{
     ContractPins, ModelPins, PipelinePins, RequiredOrigin, RequiredParameters, RequiredSource,
 };
+use crate::encoding::Encoder;
 use crate::pipeline::Pipeline;
 
-pub const CONFIGURATION_VERSION: u32 = 1;
-pub const REGISTRY_VERSION: u32 = 1;
+pub const CONFIGURATION_VERSION: u32 = 2;
+pub const REGISTRY_VERSION: u32 = 2;
 /// What `iris registry add` writes when given no other file.
 pub const REGISTRY_JSON: &str = "registry.json";
 
@@ -64,12 +64,67 @@ impl Configuration {
         }
     }
 
-    /// The configuration's id: a hash over all of it, in lowercase hex.
+    /// The configuration's id: a hash over all of it, in lowercase hex, in
+    /// the encoding a contract recomputes when one is registered
+    /// (`crate::encoding`). Every field is hashed in the order it is
+    /// declared, each list after its count.
     pub fn id(&self) -> String {
-        let mut hasher = Sha256::new();
-        hasher.update(b"iris/configuration/v1\0");
-        hasher.update(serde_json::to_vec(self).expect("a configuration encodes"));
-        hex::encode(hasher.finalize())
+        let mut encoder = Encoder::new(b"iris/configuration/v2\0");
+        encoder
+            .number(self.version)
+            .text(self.pipeline.name())
+            .text(&self.programs.family)
+            .count(self.programs.stage_programs.len());
+        for program in &self.programs.stage_programs {
+            encoder
+                .text(&program.stage)
+                .hash(&program.program_commitment)
+                .count(program.chained_inputs.len());
+            for input in &program.chained_inputs {
+                encoder.text(&input.name).count(input.producers.len());
+                for producer in &input.producers {
+                    encoder.text(producer);
+                }
+                encoder.count(input.empty_values.len());
+                for value in &input.empty_values {
+                    encoder.hash(value);
+                }
+            }
+            encoder.count(program.run_inputs.len());
+            for input in &program.run_inputs {
+                encoder.text(input);
+            }
+        }
+        encoder.count(self.models.len());
+        for model in &self.models {
+            encoder
+                .hash(&model.model_id)
+                .count(model.model_commitments.len());
+            for commitment in &model.model_commitments {
+                encoder.text(&commitment.role).hash(&commitment.commitment);
+            }
+            encoder.number(model.range_size);
+        }
+        encoder
+            .byte(u8::from(self.raw_prompt))
+            .number(self.max_new_tokens);
+        match &self.source {
+            None => {
+                encoder.byte(0);
+            }
+            Some(source) => {
+                encoder.byte(1).text(&source.signer);
+                match &source.recipe_sha256 {
+                    None => encoder.byte(0),
+                    Some(recipe) => encoder.byte(1).hash(recipe),
+                };
+            }
+        }
+        encoder.count(self.forms.len());
+        for form in &self.forms {
+            encoder.text(&form.text).number(form.code);
+        }
+        hex::encode(encoder.finish())
     }
 
     pub fn required(&self) -> RequiredParameters {

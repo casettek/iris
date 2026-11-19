@@ -6,21 +6,22 @@
 //! so a claim is only accepted with its data posted to the data-availability
 //! layer (Celestia), and a challenge only with its trace body posted.
 //!
-//! A claimer posts only what a challenger cannot make itself: the new
-//! information given to the pipeline, which no configuration or model fixes,
-//! and its own checkpoints. The new information is a source's documents with
-//! their attestations and its recipe, or, for a run with no source, the prompt
-//! text. Every file a stage loads is made from it, the configuration and the
-//! model, the same way by anyone, so a challenger reruns everything itself.
+//! A claimer posts what a challenger cannot make itself: the new information
+//! given to the pipeline, which no configuration or model fixes, and its own
+//! checkpoints with their input manifests. The new information is a source's
+//! documents with their attestations and its recipe, or, for a run with no
+//! source, the prompt text. Every file a stage loads is made from it, the
+//! configuration and the model, the same way by anyone, so a challenger
+//! reruns everything itself.
 //!
-//! Every posted blob carries an availability proof made by the party posting
-//! it: these bytes, which the layer commits to as the blob, hold data with
-//! these commitments, the ones the claim or the challenge names. For the new
-//! information that is the claim's statement itself: the source step run over
-//! the posted signer, recipe and documents gives the source record whose digest
-//! the statement names, and the posted prompt text hashes to the statement's
-//! input text. A contract checks the proof and the blob's inclusion
-//! (Blobstream) up front.
+//! Every posted blob names the address it was posted for and carries an
+//! availability proof made by the party posting it: these bytes, which the
+//! layer commits to as the blob, hold data with these commitments, the ones
+//! the claim or the challenge names. For the new information that is the
+//! claim's statement itself: the source step run over the posted signer,
+//! recipe and documents gives the source record whose digest the statement
+//! names, and the posted prompt text hashes to the statement's input text. A
+//! contract checks the proof and the blob's inclusion (Blobstream) up front.
 //!
 //! Here are the formats and the rules. The layer itself, Blobstream and the
 //! proof are behind [`AvailabilityLayer`]; today the host stands in for all
@@ -29,11 +30,13 @@
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::checkpoint::{checkpoint_hash, CheckpointTrace};
-use crate::contract::{source_record_id, ClaimSubmission};
+use crate::checkpoint::{checkpoint_hash, checkpoints_root, CheckpointTrace};
+use crate::contract::{
+    is_address, source_record_id, ClaimSubmission, ResultInOutput, SubmittedRecord,
+};
 
 /// The first bytes of every blob iris posts.
-pub const BLOB_MAGIC: &[u8] = b"iris/blob/v1\n";
+pub const BLOB_MAGIC: &[u8] = b"iris/blob/v2\n";
 /// A Celestia namespace: one version byte and 28 bytes of id.
 pub const NAMESPACE_BYTES: usize = 29;
 /// About how long Celestia keeps a blob retrievable after its block: the
@@ -55,10 +58,13 @@ pub struct BlobPointer {
     pub commitment: String,
 }
 
-/// What a blob holds, by the commitments a claim or a challenge uses for it.
-/// This is what an availability proof states.
+/// What a blob holds, by the commitments a claim or a challenge uses for it,
+/// and who it was posted for. This is what an availability proof states.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct BlobContents {
+    /// The address the blob names: the claimer or the challenger it was
+    /// posted for. A submission under another address cannot use the blob.
+    pub submitter: String,
     /// For each source in the blob, the digest of the record the source step
     /// gives over it: what a statement names a source by.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -67,14 +73,75 @@ pub struct BlobContents {
     /// its input text by.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub prompt_texts: Vec<String>,
-    /// The SHA-256 of each checkpoint list in the blob, posted with every
-    /// checkpoint it lists.
+    /// The root of each checkpoint list in the blob
+    /// ([`crate::checkpoint::checkpoints_root`]), posted with every
+    /// checkpoint it lists and every input manifest those commit to.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub checkpoint_lists: Vec<String>,
     /// The digest of the header of each Raster trace commitment body in the
     /// blob: what a stage challenge names the challenger's trace by.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub trace_bodies: Vec<String>,
+    /// For a checkpoint list in the blob, what the outputs of its last
+    /// stage and of the checks that stage read hold: the records a
+    /// submission of that claim must state.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub records: Vec<StatedRecords>,
+}
+
+/// What a claim's own checkpoints commit to, read out of two kinds of output
+/// by the proof: what its last stage states, and the claim record in each
+/// check that stage read. Each output is held to the hash its checkpoint
+/// commits to before it is read.
+///
+/// A contract compares these with the submission when a claim arrives
+/// ([`crate::contract::check_stated_records`]), so neither a contract nor a
+/// challenger ever decodes a stage's output.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct StatedRecords {
+    /// The list these are the records of.
+    pub checkpoints_root: String,
+    /// The program the list's last checkpoint names.
+    pub result_program: String,
+    /// The checkpoints the last one names as its inputs' producers, by input.
+    pub result_inputs: std::collections::BTreeMap<String, u32>,
+    /// What the last checkpoint's output states.
+    pub results: ResultInOutput,
+    /// The claim record in the output of each of those producers that holds
+    /// one, with the program its checkpoint names.
+    pub checks: Vec<StatedCheck>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct StatedCheck {
+    /// The check's position in the list.
+    pub checkpoint: u32,
+    pub program: String,
+    pub record: SubmittedRecord,
+}
+
+/// A stage's output as a claimer gives it to its proof: not posted, since a
+/// challenger makes its own, and held by the proof to the hash the claim's
+/// checkpoint at that position commits to.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WitnessedOutput {
+    pub checkpoint: u32,
+    /// The stage's `output.bin`, in lowercase hex.
+    pub payload: String,
+    /// The stage's `output.rindex`, in lowercase hex.
+    pub index: String,
+}
+
+/// What reads the Raster formats this crate does not link: a trace body's
+/// header, and the records in two kinds of stage output.
+pub trait OutputReader {
+    /// The digest of the header of a trace commitment body, or `None` when
+    /// the bytes are no well-formed one.
+    fn trace_header(&self, body: &[u8]) -> Option<String>;
+    /// The claim record in a check stage's output.
+    fn check_record(&self, payload: &[u8], index: &[u8]) -> Option<SubmittedRecord>;
+    /// What a result stage's output states, of either pipeline.
+    fn results(&self, payload: &[u8], index: &[u8]) -> Option<ResultInOutput>;
 }
 
 impl BlobContents {
@@ -84,6 +151,7 @@ impl BlobContents {
         self.checkpoint_lists
             .extend(other.checkpoint_lists.iter().cloned());
         self.trace_bodies.extend(other.trace_bodies.iter().cloned());
+        self.records.extend(other.records.iter().cloned());
     }
 }
 
@@ -100,7 +168,23 @@ pub enum AvailabilityProof {
     /// A stand-in: the host reads the blob and recomputes its contents. A
     /// real proof is a receipt of a program that does the same, which a
     /// contract verifies against the program's pinned image id.
-    HostChecked,
+    ///
+    /// `outputs` are the stage outputs the records were read from: a
+    /// receipt's private inputs, which the stand-in carries in the open so
+    /// that the host can read them again.
+    HostChecked {
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        outputs: Vec<WitnessedOutput>,
+    },
+}
+
+impl AvailabilityProof {
+    /// The stand-in proof of a blob no records were read for.
+    pub fn host_checked() -> Self {
+        Self::HostChecked {
+            outputs: Vec::new(),
+        }
+    }
 }
 
 /// One blob a claimer or a challenger posted, as it submits it.
@@ -116,6 +200,8 @@ pub struct PostedBlob {
 /// A blob's body: what [`BLOB_MAGIC`] is followed by, encoded with postcard.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Blob {
+    /// The address the blob is posted for: `0x` and 40 hex digits.
+    pub submitter: String,
     pub entries: Vec<BlobEntry>,
 }
 
@@ -168,20 +254,24 @@ impl PostedSource {
     }
 }
 
-/// A claim's checkpoint list with every checkpoint it lists.
+/// A claim's checkpoint list with what a challenger needs to open any
+/// checkpoint in it and rule on its inputs: the checkpoints, and every input
+/// manifest they commit to.
 ///
 /// The checkpoints fix which step each position in the list is: its stage,
 /// its program, its producers and the hash of its input manifest. A challenge
 /// is built from the claimer's checkpoint, so a challenger cannot dispute a
-/// position with an honest run of another step. The input manifests are not
-/// posted: an honest claimer's are the ones a challenger makes, and a
-/// replay is about a checkpoint whose manifest hash is the challenger's own.
+/// position with an honest run of another step. The manifests say what each
+/// stage loaded: without one, a stage whose inputs are not the challenger's
+/// could be neither replayed nor held to its producers.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CheckpointPackage {
     /// The claim's `checkpoints.txt`, exactly.
     pub list: Vec<u8>,
     /// The claim's `checkpoint_trace.json`, exactly.
     pub trace: Vec<u8>,
+    /// Each distinct `input_manifest.json` a checkpoint commits to, exactly.
+    pub input_manifests: Vec<Vec<u8>>,
 }
 
 /// Why a blob's bytes are not a blob of iris's, or do not hold what they
@@ -189,16 +279,26 @@ pub struct CheckpointPackage {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BlobFault {
     NotABlob,
-    /// A checkpoint package is not a list and the checkpoints it lists.
+    /// The blob names no address.
+    NoSubmitter,
+    /// A checkpoint package is not a list, the checkpoints it lists and their
+    /// input manifests.
     MalformedCheckpoints(String),
     /// A trace body is not a well-formed Raster trace commitment.
     MalformedTraceBody,
+    /// An output given to read records from is not the one the claim's
+    /// checkpoint at that position commits to, or does not hold what a last
+    /// stage's output does.
+    NotTheOutput {
+        checkpoint: u32,
+    },
 }
 
 impl std::fmt::Display for BlobFault {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::NotABlob => write!(f, "the bytes are not an iris blob"),
+            Self::NoSubmitter => write!(f, "the blob names no address it was posted for"),
             Self::MalformedCheckpoints(why) => write!(f, "the checkpoint package {why}"),
             Self::MalformedTraceBody => {
                 write!(
@@ -206,6 +306,11 @@ impl std::fmt::Display for BlobFault {
                     "a trace body is not a well-formed Raster trace commitment"
                 )
             }
+            Self::NotTheOutput { checkpoint } => write!(
+                f,
+                "the output given for checkpoint {checkpoint} is not the one it commits to, or \
+                 holds no records"
+            ),
         }
     }
 }
@@ -233,15 +338,21 @@ impl Blob {
     }
 
     /// What the blob holds, by the commitments a claim or a challenge names
-    /// it by, as far as this crate can compute them. A trace body is listed
-    /// by the header digest `trace_header` gives for its bytes, or refused
-    /// when it gives none: computing it is Raster's prover's, which this
-    /// crate does not link.
+    /// it by. `reader` reads the Raster formats this crate does not link.
+    /// `outputs` are the stage outputs a claimer gives to have its records
+    /// read: with none, the blob states no records.
     pub fn contents(
         &self,
-        trace_header: impl Fn(&[u8]) -> Option<String>,
+        reader: &dyn OutputReader,
+        outputs: &[WitnessedOutput],
     ) -> Result<BlobContents, BlobFault> {
-        let mut contents = BlobContents::default();
+        if !is_address(&self.submitter) {
+            return Err(BlobFault::NoSubmitter);
+        }
+        let mut contents = BlobContents {
+            submitter: self.submitter.clone(),
+            ..BlobContents::default()
+        };
         for entry in &self.entries {
             match entry {
                 BlobEntry::Source(source) => {
@@ -253,12 +364,20 @@ impl Blob {
                         .push(hex::encode(Sha256::digest(text.as_bytes())));
                 }
                 BlobEntry::Checkpoints(package) => {
-                    contents.checkpoint_lists.push(package.check()?);
+                    let root = package.check()?;
+                    if !outputs.is_empty() {
+                        contents
+                            .records
+                            .push(package.records(&root, reader, outputs)?);
+                    }
+                    contents.checkpoint_lists.push(root);
                 }
                 BlobEntry::TraceBody { bytes } => {
-                    contents
-                        .trace_bodies
-                        .push(trace_header(bytes).ok_or(BlobFault::MalformedTraceBody)?);
+                    contents.trace_bodies.push(
+                        reader
+                            .trace_header(bytes)
+                            .ok_or(BlobFault::MalformedTraceBody)?,
+                    );
                 }
             }
         }
@@ -267,25 +386,97 @@ impl Blob {
 }
 
 impl CheckpointPackage {
-    /// The SHA-256 of the list, when the package holds every checkpoint the
-    /// list names, in order.
+    /// What the outputs of this list's last stage and of the checks it read
+    /// hold. Every output given is held to the hash its checkpoint commits
+    /// to, and the last stage's must be among them.
+    fn records(
+        &self,
+        root: &str,
+        reader: &dyn OutputReader,
+        outputs: &[WitnessedOutput],
+    ) -> Result<StatedRecords, BlobFault> {
+        let trace: CheckpointTrace = serde_json::from_slice(&self.trace)
+            .map_err(|_| BlobFault::MalformedCheckpoints(String::from("trace is not JSON")))?;
+        // The bytes of the output given for a position, when they are the
+        // ones its checkpoint commits to.
+        let output = |position: u32| -> Result<Option<(Vec<u8>, Vec<u8>)>, BlobFault> {
+            let Some(given) = outputs.iter().find(|given| given.checkpoint == position) else {
+                return Ok(None);
+            };
+            let fault = BlobFault::NotTheOutput {
+                checkpoint: position,
+            };
+            let checkpoint = trace
+                .checkpoints
+                .get(position as usize)
+                .ok_or(fault.clone())?;
+            let payload = hex::decode(&given.payload).map_err(|_| fault.clone())?;
+            let index = hex::decode(&given.index).map_err(|_| fault.clone())?;
+            if hex::encode(Sha256::digest(&payload)) != checkpoint.output_sha256 {
+                return Err(fault);
+            }
+            Ok(Some((payload, index)))
+        };
+        let last = trace.checkpoints.len().saturating_sub(1) as u32;
+        let fault = BlobFault::NotTheOutput { checkpoint: last };
+        let last_checkpoint = trace.checkpoints.last().ok_or(fault.clone())?;
+        let (payload, index) = output(last)?.ok_or(fault.clone())?;
+        let results = reader.results(&payload, &index).ok_or(fault)?;
+        let mut checks = Vec::new();
+        for position in last_checkpoint.input_sources.values() {
+            let Some((payload, index)) = output(*position)? else {
+                continue;
+            };
+            // A producer that is no check holds no record, and states none.
+            if let Some(record) = reader.check_record(&payload, &index) {
+                checks.push(StatedCheck {
+                    checkpoint: *position,
+                    program: trace.checkpoints[*position as usize]
+                        .program_commitment
+                        .clone(),
+                    record,
+                });
+            }
+        }
+        Ok(StatedRecords {
+            checkpoints_root: root.to_string(),
+            result_program: last_checkpoint.program_commitment.clone(),
+            result_inputs: last_checkpoint.input_sources.clone(),
+            results,
+            checks,
+        })
+    }
+
+    /// The root of the list, when the package holds every checkpoint the
+    /// list names, in order, and an input manifest for each.
     pub fn check(&self) -> Result<String, BlobFault> {
         let fault = |why: &str| BlobFault::MalformedCheckpoints(why.to_string());
         let list = std::str::from_utf8(&self.list).map_err(|_| fault("list is not text"))?;
-        let lines: Vec<&str> = list.lines().collect();
+        let lines: Vec<String> = list.lines().map(String::from).collect();
         let trace: CheckpointTrace =
             serde_json::from_slice(&self.trace).map_err(|_| fault("trace is not JSON"))?;
         if lines.len() != trace.checkpoints.len() {
             return Err(fault("lists another number of checkpoints than it holds"));
         }
+        let manifests: Vec<String> = self
+            .input_manifests
+            .iter()
+            .map(|manifest| hex::encode(Sha256::digest(manifest)))
+            .collect();
         for (line, checkpoint) in lines.iter().zip(&trace.checkpoints) {
             let hash = checkpoint_hash(checkpoint)
                 .map_err(|_| fault("holds a checkpoint that does not encode"))?;
             if *line != hash {
                 return Err(fault("holds a checkpoint the list does not name"));
             }
+            if !manifests.contains(&checkpoint.input_commitment) {
+                return Err(fault(&format!(
+                    "holds no input manifest for stage `{}`",
+                    checkpoint.stage
+                )));
+            }
         }
-        Ok(hex::encode(Sha256::digest(&self.list)))
+        checkpoints_root(&lines).map_err(|_| fault("list is not checkpoint hashes"))
     }
 }
 
@@ -338,6 +529,10 @@ impl Default for AvailabilityParameters {
 /// Why a contract does not accept what was posted for a claim or a challenge.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AvailabilityRejection {
+    /// The submission names no well-formed address.
+    NoSubmitter {
+        named: String,
+    },
     NothingPosted,
     /// Blobstream has attested to no data root that includes the blob.
     NotIncluded {
@@ -353,9 +548,15 @@ pub enum AvailabilityRejection {
     NotProven {
         blob: usize,
     },
+    /// The blob was posted for another address than the submission names.
+    AnotherSubmitter {
+        blob: usize,
+        posted_for: String,
+        submitted_by: String,
+    },
     /// No posted blob holds the claim's checkpoint list.
     CheckpointsNotPosted {
-        checkpoints_sha256: String,
+        checkpoints_root: String,
     },
     /// No posted blob holds a source whose record is the one the statement
     /// names.
@@ -375,6 +576,9 @@ pub enum AvailabilityRejection {
 impl std::fmt::Display for AvailabilityRejection {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::NoSubmitter { named } => {
+                write!(f, "`{named}` is not an address a submission can name")
+            }
             Self::NothingPosted => write!(f, "nothing was posted to the data-availability layer"),
             Self::NotIncluded { blob } => write!(
                 f,
@@ -393,9 +597,17 @@ impl std::fmt::Display for AvailabilityRejection {
                 f,
                 "blob {blob}'s availability proof does not show it holds what it states"
             ),
-            Self::CheckpointsNotPosted { checkpoints_sha256 } => write!(
+            Self::AnotherSubmitter {
+                blob,
+                posted_for,
+                submitted_by,
+            } => write!(
                 f,
-                "no posted blob holds the checkpoint list {checkpoints_sha256}"
+                "blob {blob} was posted for {posted_for}, and the submission names {submitted_by}"
+            ),
+            Self::CheckpointsNotPosted { checkpoints_root } => write!(
+                f,
+                "no posted blob holds the checkpoint list {checkpoints_root}"
             ),
             Self::SourceNotPosted { source_sha256 } => write!(
                 f,
@@ -415,18 +627,28 @@ impl std::fmt::Display for AvailabilityRejection {
 }
 
 /// The checks every posting is held to: each blob is included in an attested
-/// data root, stays retrievable until `needed_until`, and its proof holds.
-/// Returns what the blobs hold together.
+/// data root, stays retrievable until `needed_until`, its proof holds, and it
+/// was posted for the address the submission names. Returns what the blobs
+/// hold together.
 pub fn check_posted(
     layer: &dyn AvailabilityLayer,
     retention_secs: u64,
     blobs: &[PostedBlob],
+    submitter: &str,
     needed_until: u64,
 ) -> Result<BlobContents, AvailabilityRejection> {
+    if !is_address(submitter) {
+        return Err(AvailabilityRejection::NoSubmitter {
+            named: submitter.to_string(),
+        });
+    }
     if blobs.is_empty() {
         return Err(AvailabilityRejection::NothingPosted);
     }
-    let mut contents = BlobContents::default();
+    let mut contents = BlobContents {
+        submitter: submitter.to_string(),
+        ..BlobContents::default()
+    };
     for (index, blob) in blobs.iter().enumerate() {
         let included = layer
             .included_at(&blob.pointer, blob.length)
@@ -442,17 +664,26 @@ pub fn check_posted(
         if !layer.proves(blob) {
             return Err(AvailabilityRejection::NotProven { blob: index });
         }
+        if blob.contents.submitter != submitter {
+            return Err(AvailabilityRejection::AnotherSubmitter {
+                blob: index,
+                posted_for: blob.contents.submitter.clone(),
+                submitted_by: submitter.to_string(),
+            });
+        }
         contents.extend(&blob.contents);
     }
     Ok(contents)
 }
 
-/// What a claim must have posted: its new information, as its statement
-/// names it, and its checkpoint list.
+/// What a claim must have posted, and for whom: its new information, as its
+/// statement names it, and its checkpoint list.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RequiredPosting {
+    /// The address the claim names as its claimer.
+    pub submitter: String,
     pub new_information: NewInformation,
-    pub checkpoints_sha256: String,
+    pub checkpoints_root: String,
 }
 
 /// The new information a statement names.
@@ -476,15 +707,17 @@ impl RequiredPosting {
             }
         };
         Self {
+            submitter: submission.claimer.clone(),
             new_information,
-            checkpoints_sha256: submission.checkpoints_sha256.clone(),
+            checkpoints_root: submission.checkpoints_root.clone(),
         }
     }
 }
 
 /// The availability check on a claim submitted at `submitted_at`: what it
-/// posted is retrievable for the whole challenge period, and holds the new
-/// information its statement names and its checkpoint list.
+/// posted was posted for its claimer, is retrievable for the whole challenge
+/// period, and holds the new information its statement names and its
+/// checkpoint list.
 pub fn check_claim_availability(
     layer: &dyn AvailabilityLayer,
     parameters: AvailabilityParameters,
@@ -496,6 +729,7 @@ pub fn check_claim_availability(
         layer,
         parameters.retention_secs,
         blobs,
+        &required.submitter,
         submitted_at.saturating_add(parameters.challenge_period_secs),
     )?;
     match &required.new_information {
@@ -514,21 +748,22 @@ pub fn check_claim_availability(
             }
         }
     }
-    if !holds(&contents.checkpoint_lists, &required.checkpoints_sha256) {
+    if !holds(&contents.checkpoint_lists, &required.checkpoints_root) {
         return Err(AvailabilityRejection::CheckpointsNotPosted {
-            checkpoints_sha256: required.checkpoints_sha256.clone(),
+            checkpoints_root: required.checkpoints_root.clone(),
         });
     }
     Ok(contents)
 }
 
 /// The availability check on a challenge submitted at `challenged_at`: the
-/// body of the trace commitment it names is retrievable for the whole time a
-/// defender has to answer.
+/// body of the trace commitment it names was posted for its challenger and is
+/// retrievable for the whole time a defender has to answer.
 pub fn check_challenge_availability(
     layer: &dyn AvailabilityLayer,
     parameters: AvailabilityParameters,
     blobs: &[PostedBlob],
+    challenger: &str,
     header_digest: &str,
     challenged_at: u64,
 ) -> Result<(), AvailabilityRejection> {
@@ -536,6 +771,7 @@ pub fn check_challenge_availability(
         layer,
         parameters.retention_secs,
         blobs,
+        challenger,
         challenged_at.saturating_add(parameters.fault_proof_window_secs),
     )?;
     if !holds(&contents.trace_bodies, header_digest) {
@@ -551,11 +787,31 @@ mod tests {
     use super::*;
     use crate::checkpoint::{checkpoint_hashes, Checkpoint};
 
+    const ALICE: &str = "0x00000000000000000000000000000000000a11ce";
+
+    /// A reader for outputs written as JSON, and trace bodies with the
+    /// header it is given.
+    struct Reader(Option<String>);
+
+    impl OutputReader for Reader {
+        fn trace_header(&self, _body: &[u8]) -> Option<String> {
+            self.0.clone()
+        }
+        fn check_record(&self, payload: &[u8], _index: &[u8]) -> Option<SubmittedRecord> {
+            serde_json::from_slice(payload).ok()
+        }
+        fn results(&self, payload: &[u8], _index: &[u8]) -> Option<ResultInOutput> {
+            serde_json::from_slice(payload).ok()
+        }
+    }
+    const BOB: &str = "0x0000000000000000000000000000000000000b0b";
+
     fn package() -> CheckpointPackage {
+        let manifest = b"{}".to_vec();
         let trace = CheckpointTrace {
             checkpoints: vec![Checkpoint {
                 stage: String::from("source"),
-                input_commitment: hex::encode(Sha256::digest(b"{}")),
+                input_commitment: hex::encode(Sha256::digest(&manifest)),
                 ..Checkpoint::default()
             }],
         };
@@ -563,19 +819,25 @@ mod tests {
         CheckpointPackage {
             list: list.into_bytes(),
             trace: serde_json::to_vec(&trace).unwrap(),
+            input_manifests: vec![manifest],
+        }
+    }
+
+    fn blob(entries: Vec<BlobEntry>) -> Blob {
+        Blob {
+            submitter: ALICE.to_string(),
+            entries,
         }
     }
 
     #[test]
     fn a_blob_reads_back_only_from_its_one_encoding() {
-        let blob = Blob {
-            entries: vec![
-                BlobEntry::Checkpoints(package()),
-                BlobEntry::TraceBody {
-                    bytes: vec![1, 2, 3],
-                },
-            ],
-        };
+        let blob = blob(vec![
+            BlobEntry::Checkpoints(package()),
+            BlobEntry::TraceBody {
+                bytes: vec![1, 2, 3],
+            },
+        ]);
         let bytes = blob.encode();
         assert_eq!(Blob::decode(&bytes), Ok(blob));
         let mut longer = bytes.clone();
@@ -585,37 +847,53 @@ mod tests {
     }
 
     #[test]
-    fn a_blob_states_the_commitments_it_holds() {
+    fn a_blob_states_the_commitments_it_holds_and_who_it_is_for() {
         let package = package();
-        let list_sha = hex::encode(Sha256::digest(&package.list));
-        let blob = Blob {
-            entries: vec![
-                BlobEntry::Checkpoints(package.clone()),
-                BlobEntry::TraceBody { bytes: vec![7] },
-            ],
-        };
-        let contents = blob.contents(|_| Some(String::from("aa"))).unwrap();
-        assert_eq!(contents.checkpoint_lists, vec![list_sha]);
+        let root = checkpoints_root(
+            &std::str::from_utf8(&package.list)
+                .unwrap()
+                .lines()
+                .map(String::from)
+                .collect::<Vec<_>>(),
+        )
+        .unwrap();
+        let posted = blob(vec![
+            BlobEntry::Checkpoints(package.clone()),
+            BlobEntry::TraceBody { bytes: vec![7] },
+        ]);
+        let contents = posted
+            .contents(&Reader(Some(String::from("aa"))), &[])
+            .unwrap();
+        assert_eq!(contents.submitter, ALICE);
+        assert_eq!(contents.checkpoint_lists, vec![root]);
         assert_eq!(contents.trace_bodies, vec![String::from("aa")]);
-        assert_eq!(blob.contents(|_| None), Err(BlobFault::MalformedTraceBody));
+        assert_eq!(
+            posted.contents(&Reader(None), &[]),
+            Err(BlobFault::MalformedTraceBody)
+        );
+        // A blob that names nobody states nothing.
+        let mut unnamed = posted;
+        unnamed.submitter = String::new();
+        assert_eq!(
+            unnamed.contents(&Reader(Some(String::new())), &[]),
+            Err(BlobFault::NoSubmitter)
+        );
 
-        // A package holding a checkpoint the list does not name, or missing
-        // one, holds no list.
-        let mut missing = package.clone();
-        missing.trace = b"[]".to_vec();
-        assert!(missing.check().is_err());
+        // A package missing a manifest, or holding a checkpoint the list does
+        // not name, holds no list.
+        let mut no_manifest = package.clone();
+        no_manifest.input_manifests.clear();
+        assert!(no_manifest.check().is_err());
         let mut other_list = package;
         other_list.list = format!("{}\n", "00".repeat(32)).into_bytes();
         assert!(other_list.check().is_err());
 
         // A prompt text is named by its SHA-256.
-        let prompt = Blob {
-            entries: vec![BlobEntry::PromptText {
-                text: String::from("hello"),
-            }],
-        };
+        let prompt = blob(vec![BlobEntry::PromptText {
+            text: String::from("hello"),
+        }]);
         assert_eq!(
-            prompt.contents(|_| None).unwrap().prompt_texts,
+            prompt.contents(&Reader(None), &[]).unwrap().prompt_texts,
             vec![hex::encode(Sha256::digest(b"hello"))]
         );
     }
@@ -662,18 +940,106 @@ mod tests {
         let source = source();
         let record = source.record();
         assert_eq!(record.fault, 0, "the test source is not a clean one");
-        let blob = Blob {
-            entries: vec![BlobEntry::Source(source.clone())],
-        };
-        assert_eq!(Blob::decode(&blob.encode()), Ok(blob.clone()));
+        let posted = blob(vec![BlobEntry::Source(source.clone())]);
+        assert_eq!(Blob::decode(&posted.encode()), Ok(posted.clone()));
         assert_eq!(
-            blob.contents(|_| None).unwrap().sources,
+            posted.contents(&Reader(None), &[]).unwrap().sources,
             vec![source_record_id(&record)]
         );
         // Another document is another record.
         let mut other = source;
         other.documents[0].body = br#"{"magnitude":"7.1"}"#.to_vec();
         assert_ne!(source_record_id(&other.record()), source_record_id(&record));
+    }
+
+    #[test]
+    fn a_proof_states_the_records_its_checkpoints_commit_to() {
+        use crate::contract::{StatedInference, SubmittedResult};
+
+        let record = |valid| SubmittedRecord {
+            statement_sha256: "aa".repeat(32),
+            output_text_sha256: "bb".repeat(32),
+            valid,
+        };
+        let results = ResultInOutput {
+            inferences: vec![StatedInference {
+                record: record(true),
+                result: SubmittedResult::default(),
+            }],
+            consensus: None,
+        };
+        let check_output = serde_json::to_vec(&record(true)).unwrap();
+        let last_output = serde_json::to_vec(&results).unwrap();
+        let manifest = b"{}".to_vec();
+        let checkpoint = |stage: &str, output: &[u8], sources: &[(&str, u32)]| Checkpoint {
+            stage: stage.to_string(),
+            program_commitment: hex::encode(Sha256::digest(stage.as_bytes())),
+            input_commitment: hex::encode(Sha256::digest(&manifest)),
+            input_sources: sources
+                .iter()
+                .map(|(name, index)| (name.to_string(), *index))
+                .collect(),
+            output_sha256: hex::encode(Sha256::digest(output)),
+            ..Checkpoint::default()
+        };
+        let trace = CheckpointTrace {
+            checkpoints: vec![
+                checkpoint("check_c0", &check_output, &[]),
+                checkpoint("result", &last_output, &[("check", 0)]),
+            ],
+        };
+        let list = checkpoint_hashes(&trace).unwrap().join("\n") + "\n";
+        let package = CheckpointPackage {
+            list: list.into_bytes(),
+            trace: serde_json::to_vec(&trace).unwrap(),
+            input_manifests: vec![manifest],
+        };
+        let posted = blob(vec![BlobEntry::Checkpoints(package)]);
+        let given = |checkpoint: u32, bytes: &[u8]| WitnessedOutput {
+            checkpoint,
+            payload: hex::encode(bytes),
+            index: String::new(),
+        };
+        let read = |outputs: &[WitnessedOutput]| posted.contents(&Reader(None), outputs);
+
+        // With no outputs, the blob holds the list and states no records.
+        let bare = read(&[]).unwrap();
+        assert!(bare.records.is_empty());
+        let stated = read(&[given(0, &check_output), given(1, &last_output)]).unwrap();
+        assert_eq!(
+            stated.records,
+            vec![StatedRecords {
+                checkpoints_root: bare.checkpoint_lists[0].clone(),
+                result_program: trace.checkpoints[1].program_commitment.clone(),
+                result_inputs: trace.checkpoints[1].input_sources.clone(),
+                results,
+                checks: vec![StatedCheck {
+                    checkpoint: 0,
+                    program: trace.checkpoints[0].program_commitment.clone(),
+                    record: record(true),
+                }],
+            }]
+        );
+        // An output that is not the one its checkpoint commits to states
+        // nothing, whichever stage it is given for, and the last stage's
+        // output has to be among those given.
+        let other = serde_json::to_vec(&record(false)).unwrap();
+        assert_eq!(
+            read(&[given(0, &other), given(1, &last_output)]),
+            Err(BlobFault::NotTheOutput { checkpoint: 0 })
+        );
+        assert_eq!(
+            read(&[given(0, &check_output), given(1, &check_output)]),
+            Err(BlobFault::NotTheOutput { checkpoint: 1 })
+        );
+        assert_eq!(
+            read(&[given(0, &check_output)]),
+            Err(BlobFault::NotTheOutput { checkpoint: 1 })
+        );
+        // Without the check's output, the check's record is not stated.
+        assert!(read(&[given(1, &last_output)]).unwrap().records[0]
+            .checks
+            .is_empty());
     }
 
     /// A layer where every blob was included at time 100, and a proof holds
@@ -698,8 +1064,11 @@ mod tests {
                 commitment: commitment.to_string(),
             },
             length: 1,
-            contents,
-            proof: AvailabilityProof::HostChecked,
+            contents: BlobContents {
+                submitter: ALICE.to_string(),
+                ..contents
+            },
+            proof: AvailabilityProof::host_checked(),
         }
     }
 
@@ -717,8 +1086,9 @@ mod tests {
         };
         let good = posted("ok", list.clone());
         let required = |new_information| RequiredPosting {
+            submitter: ALICE.to_string(),
             new_information,
-            checkpoints_sha256: String::from("cc"),
+            checkpoints_root: String::from("cc"),
         };
         let text = required(NewInformation::PromptText {
             input_text_sha256: String::from("tt"),
@@ -726,7 +1096,10 @@ mod tests {
         let check = |blobs: &[PostedBlob], at| {
             check_claim_availability(&Layer, parameters, blobs, &text, at)
         };
-        assert_eq!(check(std::slice::from_ref(&good), 600), Ok(list.clone()));
+        assert_eq!(
+            check(std::slice::from_ref(&good), 600),
+            Ok(good.contents.clone())
+        );
         // Blob at 100, kept until 1,100: a claim at 601 needs it until 1,101.
         assert_eq!(
             check(std::slice::from_ref(&good), 601),
@@ -742,7 +1115,7 @@ mod tests {
             Err(AvailabilityRejection::NotIncluded { blob: 1 })
         );
         assert_eq!(
-            check(&[posted("bad", list)], 0),
+            check(&[posted("bad", list.clone())], 0),
             Err(AvailabilityRejection::NotProven { blob: 0 })
         );
         let checkpoints_only = BlobContents {
@@ -762,7 +1135,7 @@ mod tests {
         assert_eq!(
             check(&[posted("ok", text_only)], 0),
             Err(AvailabilityRejection::CheckpointsNotPosted {
-                checkpoints_sha256: String::from("cc"),
+                checkpoints_root: String::from("cc"),
             })
         );
         // A claim with a source needs the source, not a text.
@@ -788,7 +1161,26 @@ mod tests {
         )
         .is_ok());
 
-        // A challenge's body must last through the defender's window.
+        // Another address cannot submit a claim over these blobs, and a
+        // submission has to name one.
+        let mut copied = text.clone();
+        copied.submitter = BOB.to_string();
+        assert_eq!(
+            check_claim_availability(&Layer, parameters, std::slice::from_ref(&good), &copied, 0),
+            Err(AvailabilityRejection::AnotherSubmitter {
+                blob: 0,
+                posted_for: ALICE.to_string(),
+                submitted_by: BOB.to_string(),
+            })
+        );
+        copied.submitter = String::from("bob");
+        assert!(matches!(
+            check_claim_availability(&Layer, parameters, std::slice::from_ref(&good), &copied, 0),
+            Err(AvailabilityRejection::NoSubmitter { .. })
+        ));
+
+        // A challenge's body must last through the defender's window, and be
+        // its challenger's.
         let body = posted(
             "ok",
             BlobContents {
@@ -796,19 +1188,30 @@ mod tests {
                 ..BlobContents::default()
             },
         );
-        let challenge = |at| {
-            check_challenge_availability(&Layer, parameters, std::slice::from_ref(&body), "hh", at)
+        let challenge = |by: &str, header: &str, at| {
+            check_challenge_availability(
+                &Layer,
+                parameters,
+                std::slice::from_ref(&body),
+                by,
+                header,
+                at,
+            )
         };
-        assert_eq!(challenge(900), Ok(()));
+        assert_eq!(challenge(ALICE, "hh", 900), Ok(()));
         assert!(matches!(
-            challenge(901),
+            challenge(ALICE, "hh", 901),
             Err(AvailabilityRejection::ExpiresTooSoon { .. })
         ));
         assert_eq!(
-            check_challenge_availability(&Layer, parameters, std::slice::from_ref(&body), "ii", 0),
+            challenge(ALICE, "ii", 0),
             Err(AvailabilityRejection::TraceBodyNotPosted {
                 header_digest: String::from("ii"),
             })
         );
+        assert!(matches!(
+            challenge(BOB, "hh", 0),
+            Err(AvailabilityRejection::AnotherSubmitter { .. })
+        ));
     }
 }

@@ -269,6 +269,7 @@ fn challenge_run(
         staged_backend: options.staged_backend,
         claimed_token_ids: None,
         direct_output_ids: None,
+        claimer: None,
     })?;
     Ok((prepared.manifest_path, None))
 }
@@ -323,6 +324,7 @@ fn rebuild_teacher_forced_run(
             staged_backend: options.staged_backend,
             claimed_token_ids: None,
             direct_output_ids: None,
+            claimer: None,
         },
         &run_spec,
         claimed
@@ -1265,6 +1267,7 @@ mod tests {
             staged_backend: StagedExecutionBackend::InProcess,
             claimed_token_ids: Some(ids),
             direct_output_ids: None,
+            claimer: None,
         })
         .unwrap();
         prepared.prepared_run

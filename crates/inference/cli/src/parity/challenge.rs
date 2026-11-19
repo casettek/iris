@@ -484,6 +484,7 @@ fn claim(leg: &Leg, name: &str, spec: &Path, ids: Option<Vec<u32>>) -> Result<Cl
         staged_backend: StagedExecutionBackend::InProcess,
         claimed_token_ids: ids,
         direct_output_ids: None,
+        claimer: None,
     })
     .with_context(|| format!("claim `{name}`"))
 }
@@ -739,7 +740,8 @@ fn contract_challenge(
             .as_ref()
             .context("the honest claim wrote no submission")?,
     )?;
-    claim.checkpoints_sha256 = file_sha256(&list_path)?;
+    claim.checkpoint_count = lying.checkpoints.len() as u32;
+    claim.checkpoints_root = inference_artifacts::checkpoints_root(&checkpoint_hashes(lying)?)?;
     let claim_path = dir.join(CLAIM_SUBMISSION_JSON);
     inference_artifacts::write_json(&claim_path, &claim)?;
 
@@ -750,12 +752,14 @@ fn contract_challenge(
         .with_context(|| format!("the lying claim has no `{stage}`"))?;
     let replay = replay_stage_dir(leg, name, stage)?;
     let layer = crate::availability::StubLayer::open(crate::availability::da_dir());
+    let challenger = "0x000000000000000000000000000000000000c4a1";
     let submission = crate::contract::challenge_submission(
-        &claim.checkpoints_sha256,
+        &claim.checkpoints_root,
         index as u32,
         &lying.checkpoints[index],
         &replay.join("commit.bin"),
         &file_sha256(&replay.join("output.bin"))?,
+        challenger,
         &layer,
     )?;
     inference_artifacts::write_json(
@@ -773,10 +777,14 @@ fn contract_challenge(
     }
     let mut unposted = submission.clone();
     unposted.availability.clear();
+    // The same challenge and body under another address: a copied challenge.
+    let mut copied = submission.clone();
+    copied.challenger = String::from("0x00000000000000000000000000000000000c0b1e");
     let late = now + inference_artifacts::availability::DEFAULT_RETENTION_SECS;
     for (case, rejection) in [
         ("unposted", check(&unposted, now)?),
         ("late", check(&submission, late)?),
+        ("copied", check(&copied, now)?),
     ] {
         ensure!(
             rejection
