@@ -37,6 +37,18 @@ impl Encoder {
         self
     }
 
+    /// A 64-bit number.
+    pub fn long(&mut self, value: u64) -> &mut Self {
+        self.hasher.update(value.to_le_bytes());
+        self
+    }
+
+    /// Bytes of a length the reader knows: a namespace, an address.
+    pub fn raw(&mut self, bytes: &[u8]) -> &mut Self {
+        self.hasher.update(bytes);
+        self
+    }
+
     /// How many items of a list follow.
     pub fn count(&mut self, items: usize) -> &mut Self {
         self.number(items as u32)

@@ -56,8 +56,8 @@ pub const CLAIM_NAMESPACE: [u8; NAMESPACE_BYTES] = namespace(b"iris-claim");
 /// Where challengers post their trace bodies.
 pub const CHALLENGE_NAMESPACE: [u8; NAMESPACE_BYTES] = namespace(b"iris-chall");
 
-/// The layer's directory.
-pub fn da_dir() -> PathBuf {
+/// The stand-in layer's directory, when none is given.
+fn da_dir_default() -> PathBuf {
     std::env::var_os("IRIS_DA_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|| {
@@ -131,6 +131,46 @@ impl Drop for Lock {
     }
 }
 
+/// A layer blobs are posted to and read from, besides what a contract asks
+/// of it. Everything in iris that posts or reads takes one of these, so it
+/// does not know which layer it has.
+pub trait PostingLayer: AvailabilityLayer {
+    /// Include these blobs and say where each one is.
+    fn post(
+        &self,
+        namespace: &[u8; NAMESPACE_BYTES],
+        blobs: &[Vec<u8>],
+    ) -> Result<Vec<BlobPointer>>;
+    /// The bytes of a blob, as a challenger or a defender gets them.
+    fn read(&self, pointer: &BlobPointer) -> Result<Vec<u8>>;
+    /// The root and time of the block at `height`: what a relayer tells a
+    /// contract's oracle, and what an attestation of a blob in it names.
+    fn block_root(&self, height: u64) -> Result<BlockRoot>;
+}
+
+/// A block as a contract's oracle is told of it: its height, the root of its
+/// data and its time in Unix seconds.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct BlockRoot {
+    pub height: u64,
+    /// In lowercase hex.
+    pub data_root: String,
+    pub time: u64,
+}
+
+/// The layer this process posts to and reads from. A directory given names
+/// the stand-in there. Otherwise it is the Celestia node `IRIS_CELESTIA_RPC`
+/// names, and with none named, the stand-in in its default directory.
+pub fn open_layer(da_dir: Option<&Path>) -> Result<Box<dyn PostingLayer>> {
+    if let Some(dir) = da_dir {
+        return Ok(Box::new(StubLayer::open(dir)));
+    }
+    Ok(match std::env::var(crate::celestia::CELESTIA_RPC_ENV) {
+        Ok(url) if !url.is_empty() => Box::new(crate::celestia::CelestiaLayer::open(&url)?),
+        _ => Box::new(StubLayer::open(da_dir_default())),
+    })
+}
+
 /// The stand-in layer, kept in a directory.
 pub struct StubLayer {
     dir: PathBuf,
@@ -176,9 +216,19 @@ impl StubLayer {
         Ok(hex::encode(hasher.finalize()))
     }
 
-    /// Include these blobs in one new block, have the stand-in Blobstream
-    /// attest to it, and say where each one is.
-    pub fn post(
+    /// The bytes of the blob a pointer names, when the layer holds a blob
+    /// under that commitment in that block.
+    fn included(&self, pointer: &BlobPointer) -> Option<Vec<u8>> {
+        let namespace = hex::decode(&pointer.namespace).ok()?;
+        let bytes = self.read(pointer).ok()?;
+        (stub_blob_commitment(&namespace, &bytes) == pointer.commitment).then_some(bytes)
+    }
+}
+
+impl PostingLayer for StubLayer {
+    /// One new block holding these blobs, attested by the stand-in
+    /// Blobstream.
+    fn post(
         &self,
         namespace: &[u8; NAMESPACE_BYTES],
         blobs: &[Vec<u8>],
@@ -218,19 +268,29 @@ impl StubLayer {
         Ok(pointers)
     }
 
-    /// The bytes of a blob, from the layer, as a challenger or a defender
-    /// gets them.
-    pub fn read(&self, pointer: &BlobPointer) -> Result<Vec<u8>> {
+    fn read(&self, pointer: &BlobPointer) -> Result<Vec<u8>> {
         let path = self.blob_path(pointer);
         fs::read(&path).with_context(|| format!("failed to read {}", path.display()))
     }
 
-    /// The bytes of the blob a pointer names, when the layer holds a blob
-    /// under that commitment in that block.
-    fn included(&self, pointer: &BlobPointer) -> Option<Vec<u8>> {
-        let namespace = hex::decode(&pointer.namespace).ok()?;
-        let bytes = self.read(pointer).ok()?;
-        (stub_blob_commitment(&namespace, &bytes) == pointer.commitment).then_some(bytes)
+    fn block_root(&self, height: u64) -> Result<BlockRoot> {
+        self.block(height)
+    }
+}
+
+impl StubLayer {
+    fn block(&self, height: u64) -> Result<BlockRoot> {
+        let block = self
+            .blobstream()?
+            .blocks
+            .into_iter()
+            .find(|block| block.height == height)
+            .with_context(|| format!("the stand-in layer has no block {height}"))?;
+        Ok(BlockRoot {
+            height,
+            data_root: block.data_root,
+            time: block.time,
+        })
     }
 }
 
@@ -249,7 +309,7 @@ impl AvailabilityLayer for StubLayer {
 
     fn proves(&self, blob: &PostedBlob) -> bool {
         match &blob.proof {
-            AvailabilityProof::HostChecked { outputs } => {
+            AvailabilityProof::HostChecked { outputs, .. } => {
                 self.included(&blob.pointer).is_some_and(|bytes| {
                     contents_of(&bytes, outputs).ok().as_ref() == Some(&blob.contents)
                 })
@@ -328,29 +388,33 @@ fn pack(submitter: &str, entries: Vec<BlobEntry>) -> Vec<Blob> {
     blobs
 }
 
+/// The outputs a blob's proof is given: a claim's, for the blob that holds
+/// its checkpoints, and none for any other.
+fn outputs_for<'a>(blob: &Blob, outputs: &'a [WitnessedOutput]) -> &'a [WitnessedOutput] {
+    let holds_checkpoints = blob
+        .entries
+        .iter()
+        .any(|entry| matches!(entry, BlobEntry::Checkpoints(_)));
+    if holds_checkpoints {
+        outputs
+    } else {
+        &[]
+    }
+}
+
 /// Post blobs and state each one as a claim or a challenge submits it.
 /// `outputs` are the stage outputs a claim's records are read from: they go
 /// with the proof of the blob that holds its checkpoints, and are not posted.
 fn post_blobs(
-    layer: &StubLayer,
+    layer: &dyn PostingLayer,
     namespace: &[u8; NAMESPACE_BYTES],
-    blobs: Vec<Blob>,
+    blobs: &[Blob],
     outputs: &[WitnessedOutput],
 ) -> Result<Vec<PostedBlob>> {
     let encoded: Vec<Vec<u8>> = blobs.iter().map(Blob::encode).collect();
     let given: Vec<&[WitnessedOutput]> = blobs
         .iter()
-        .map(|blob| {
-            let holds_checkpoints = blob
-                .entries
-                .iter()
-                .any(|entry| matches!(entry, BlobEntry::Checkpoints(_)));
-            if holds_checkpoints {
-                outputs
-            } else {
-                &[]
-            }
-        })
+        .map(|blob| outputs_for(blob, outputs))
         .collect();
     // What each blob holds, before anything is posted: a blob that holds
     // nothing it can state is never posted.
@@ -371,6 +435,7 @@ fn post_blobs(
             pointer,
             proof: AvailabilityProof::HostChecked {
                 outputs: outputs.to_vec(),
+                attestation: None,
             },
         })
         .collect())
@@ -406,16 +471,107 @@ pub fn new_information(prepared: &PreparedRun) -> Result<BlobEntry> {
     }))
 }
 
+/// What a claim is ready to post: its blobs, and the stage outputs its
+/// records are read from, which go to the proof and are not posted. `claim
+/// build` writes it beside the claim; `claim post` posts it, any number of
+/// times, without the claim being built again.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PreparedPosting {
+    pub blobs: Vec<Blob>,
+    pub outputs: Vec<WitnessedOutput>,
+}
+
+/// The file that lists the outputs a claim's proof is given, written beside
+/// its submission with the blobs to post (`posting-blob-<n>.bin`). They are
+/// plain files in the claim's directory: every subdirectory there is a stage.
+pub const POSTING_OUTPUTS_JSON: &str = "posting-outputs.json";
+
+fn posting_blob(claim_dir: &Path, index: usize) -> PathBuf {
+    claim_dir.join(format!("posting-blob-{index}.bin"))
+}
+
+impl PreparedPosting {
+    /// What the blobs hold together, as their proofs will state it.
+    pub fn contents(&self) -> Result<BlobContents> {
+        let mut contents = BlobContents::default();
+        for blob in &self.blobs {
+            let held = contents_of(&blob.encode(), outputs_for(blob, &self.outputs))?;
+            contents.submitter = held.submitter.clone();
+            contents.extend(&held);
+        }
+        Ok(contents)
+    }
+
+    /// Write the blobs and the outputs beside the claim, in place of any
+    /// written there before.
+    pub fn write(&self, claim_dir: &Path) -> Result<()> {
+        fs::create_dir_all(claim_dir)
+            .with_context(|| format!("failed to create {}", claim_dir.display()))?;
+        let mut stale = self.blobs.len();
+        while posting_blob(claim_dir, stale).exists() {
+            fs::remove_file(posting_blob(claim_dir, stale))?;
+            stale += 1;
+        }
+        for (index, blob) in self.blobs.iter().enumerate() {
+            let path = posting_blob(claim_dir, index);
+            fs::write(&path, blob.encode())
+                .with_context(|| format!("failed to write {}", path.display()))?;
+        }
+        inference_artifacts::write_json(&claim_dir.join(POSTING_OUTPUTS_JSON), &self.outputs)
+    }
+
+    /// Read what `claim build` wrote beside the claim.
+    pub fn read(claim_dir: &Path) -> Result<Self> {
+        let mut blobs = Vec::new();
+        loop {
+            let path = posting_blob(claim_dir, blobs.len());
+            if !path.exists() {
+                break;
+            }
+            let bytes =
+                fs::read(&path).with_context(|| format!("failed to read {}", path.display()))?;
+            blobs.push(
+                Blob::decode(&bytes)
+                    .map_err(|fault| anyhow::anyhow!("{}: {fault}", path.display()))?,
+            );
+        }
+        anyhow::ensure!(
+            !blobs.is_empty(),
+            "{} holds no blobs to post: build the claim first",
+            claim_dir.display()
+        );
+        Ok(Self {
+            blobs,
+            outputs: inference_artifacts::read_json(&claim_dir.join(POSTING_OUTPUTS_JSON))?,
+        })
+    }
+
+    /// Post the blobs to `layer`, and state each as a claim submits it.
+    pub fn post(&self, layer: &dyn PostingLayer) -> Result<Vec<PostedBlob>> {
+        post_blobs(layer, &CLAIM_NAMESPACE, &self.blobs, &self.outputs)
+    }
+}
+
 /// Post what a claim in `claim_dir` must make available, for the address
-/// `claimer`: the new information its run was given, and its checkpoint list
-/// with every checkpoint and every input manifest. No file a stage loads is
-/// posted, and no index: a challenger makes those itself.
+/// `claimer`: [`claim_blobs`], posted.
 pub fn post_claim(
-    layer: &StubLayer,
+    layer: &dyn PostingLayer,
     claim_dir: &Path,
     claimer: &str,
     new_information: Option<BlobEntry>,
 ) -> Result<Vec<PostedBlob>> {
+    claim_blobs(claim_dir, claimer, new_information)?.post(layer)
+}
+
+/// What a claim in `claim_dir` must make available, for the address
+/// `claimer`: the new information its run was given, and its checkpoint list
+/// with every checkpoint and every input manifest. No file a stage loads is
+/// among it, and no index: a challenger makes those itself.
+pub fn claim_blobs(
+    claim_dir: &Path,
+    claimer: &str,
+    new_information: Option<BlobEntry>,
+) -> Result<PreparedPosting> {
     let list = fs::read(claim_dir.join(CHECKPOINTS_TXT))
         .with_context(|| format!("{} has no {CHECKPOINTS_TXT}", claim_dir.display()))?;
     let trace_bytes = fs::read(claim_dir.join(CHECKPOINT_TRACE_JSON))
@@ -464,20 +620,23 @@ pub fn post_claim(
         trace: trace_bytes,
         input_manifests: manifests,
     }));
-    post_blobs(layer, &CLAIM_NAMESPACE, pack(claimer, entries), &outputs)
+    Ok(PreparedPosting {
+        blobs: pack(claimer, entries),
+        outputs,
+    })
 }
 
 /// Post a challenger's trace body (`commit.bin`), for the address
 /// `challenger`.
 pub fn post_trace_body(
-    layer: &StubLayer,
+    layer: &dyn PostingLayer,
     challenger: &str,
     body: Vec<u8>,
 ) -> Result<Vec<PostedBlob>> {
     post_blobs(
         layer,
         &CHALLENGE_NAMESPACE,
-        vec![Blob {
+        &[Blob {
             submitter: challenger.to_string(),
             entries: vec![BlobEntry::TraceBody { bytes: body }],
         }],
@@ -512,7 +671,7 @@ mod tests {
                 text: String::from("Which section was about a bakery?"),
             }],
         };
-        let posted = post_blobs(&layer, &CLAIM_NAMESPACE, vec![blob], &[]).unwrap();
+        let posted = post_blobs(&layer, &CLAIM_NAMESPACE, &[blob], &[]).unwrap();
         assert_eq!(
             posted[0].contents.prompt_texts,
             vec![hex::encode(Sha256::digest(
@@ -551,6 +710,37 @@ mod tests {
         // A second post is a later block.
         let later = post_trace_body(&layer, alice, vec![1, 2, 3]);
         assert!(later.is_err(), "three bytes are no trace commitment");
+    }
+
+    #[test]
+    fn a_prepared_posting_is_written_once_and_posted_as_often_as_needed() {
+        let layer = layer("prepared");
+        let alice = "0x00000000000000000000000000000000000a11ce";
+        let prepared = PreparedPosting {
+            blobs: vec![Blob {
+                submitter: alice.to_string(),
+                entries: vec![BlobEntry::PromptText {
+                    text: String::from("Which section was about a bakery?"),
+                }],
+            }],
+            outputs: Vec::new(),
+        };
+        let claim_dir = layer.dir.join("claim");
+        prepared.write(&claim_dir).unwrap();
+        let read = PreparedPosting::read(&claim_dir).unwrap();
+        assert_eq!(read, prepared);
+        // What it holds is known before anything is posted, and each post is
+        // a block of its own with the same contents.
+        let contents = read.contents().unwrap();
+        assert_eq!(contents.submitter, alice);
+        let first = read.post(&layer).unwrap();
+        let second = read.post(&layer).unwrap();
+        assert_eq!(first[0].contents, contents);
+        assert_eq!(second[0].contents, contents);
+        assert_eq!(second[0].pointer.height, first[0].pointer.height + 1);
+        assert_eq!(second[0].pointer.commitment, first[0].pointer.commitment);
+        // A directory nothing was prepared in has nothing to post.
+        assert!(PreparedPosting::read(&layer.dir.join("nothing")).is_err());
     }
 
     #[test]

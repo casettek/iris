@@ -7,17 +7,19 @@ use anyhow::{bail, Context, Result};
 use clap::{Args, Parser, Subcommand};
 
 mod availability;
+mod celestia;
 mod challenge;
 mod challenge_profile;
 mod claim;
 mod contract;
 mod convert;
+mod evm;
 mod fault;
 mod infer;
 mod parity;
-mod source;
 #[cfg(feature = "replay-profile")]
 mod replay_profile;
+mod source;
 mod stage_bindings;
 #[cfg(test)]
 mod test_support;
@@ -131,6 +133,16 @@ enum Commands {
         #[command(subcommand)]
         command: RegistryCommand,
     },
+    /// The data-availability layer: what a relayer and an attester need.
+    Da {
+        #[command(subcommand)]
+        command: DaCommand,
+    },
+    /// The calldata of the calls iris's contracts take. Nothing is sent.
+    Evm {
+        #[command(subcommand)]
+        command: EvmCommand,
+    },
     /// Fault proof workflows reserved for the proof path.
     Fault {
         #[command(subcommand)]
@@ -218,10 +230,26 @@ enum ClaimCommand {
     Build(ClaimBuildArgs),
     /// Copy and corrupt one claimed checkpoint hash for manual challenge tests.
     Corrupt(ClaimCorruptHashesArgs),
+    /// Post the data `claim build` prepared, and write where it is into the
+    /// claim's submission.
+    Post(ClaimPostArgs),
     /// Make the checks a contract would make on a claim's submission.
     Check(ClaimCheckArgs),
     /// Write what a contract of a run's pipeline over its models would pin.
     Pins(ClaimPinsArgs),
+}
+
+#[derive(Debug, Args)]
+struct ClaimPostArgs {
+    /// The `claim_submission.json` that `claim build` wrote. The blobs to
+    /// post are beside it (`posting-blob-<n>.bin`).
+    #[arg(long)]
+    submission: PathBuf,
+
+    /// The stand-in data-availability layer's directory. Default:
+    /// `IRIS_DA_DIR`, or `~/.cache/iris/stub-celestia`.
+    #[arg(long = "da-dir")]
+    da_dir: Option<PathBuf>,
 }
 
 #[derive(Debug, Args)]
@@ -276,6 +304,57 @@ struct ClaimCheckArgs {
 }
 
 #[derive(Debug, Subcommand)]
+enum DaCommand {
+    /// Print a block's height, data root and time, as a relayer posts them
+    /// to a contract's oracle.
+    BlockRoot {
+        #[arg(long)]
+        height: u64,
+        /// The stand-in layer's directory. Default: `IRIS_CELESTIA_RPC`'s
+        /// node, or the default stand-in.
+        #[arg(long = "da-dir")]
+        da_dir: Option<PathBuf>,
+    },
+    /// As the trusted host, check each blob a submission posted and sign
+    /// where it is, its block's root and what it holds, with the key in
+    /// `IRIS_ATTESTER_KEY`. The signatures are written into the submission.
+    Attest {
+        /// A claim's or a challenge's submission.
+        #[arg(long)]
+        submission: PathBuf,
+        #[arg(long = "da-dir")]
+        da_dir: Option<PathBuf>,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum EvmCommand {
+    /// The call that registers a run spec's configuration.
+    Configuration {
+        #[arg(long, default_value = inference_artifacts::INFERENCE_RUN_SPEC_TOML)]
+        run: PathBuf,
+        #[arg(long)]
+        pins: Option<PathBuf>,
+    },
+    /// The call that submits a claim.
+    Claim {
+        /// The claim's `claim_submission.json`, posted and attested.
+        #[arg(long)]
+        submission: PathBuf,
+    },
+    /// The call that submits a challenge.
+    Challenge {
+        /// The `challenge_submission.json` that `challenge post` wrote,
+        /// attested.
+        #[arg(long)]
+        challenge: PathBuf,
+        /// The disputed claim's `claim_submission.json`, in its directory.
+        #[arg(long)]
+        submission: PathBuf,
+    },
+}
+
+#[derive(Debug, Subcommand)]
 enum RegistryCommand {
     /// Register the configuration a run spec describes: its pipeline's
     /// programs, its models, its parameters and what it requires of the
@@ -322,6 +401,35 @@ struct ChallengePostArgs {
     /// --claimer`. Default: `IRIS_CHALLENGER`, or the zero address.
     #[arg(long)]
     challenger: Option<String>,
+
+    /// The stand-in data-availability layer's directory. As for `iris claim
+    /// check`.
+    #[arg(long = "da-dir")]
+    da_dir: Option<PathBuf>,
+
+    /// When the challenge is taken to be submitted, in Unix seconds. Default:
+    /// now.
+    #[arg(long = "submitted-at")]
+    submitted_at: Option<u64>,
+}
+
+#[derive(Debug, Args)]
+struct ChallengeCheckArgs {
+    /// The `challenge_submission.json` that `challenge post` wrote.
+    #[arg(long)]
+    challenge: PathBuf,
+
+    /// The disputed claim's `claim_submission.json`, in its directory.
+    #[arg(long)]
+    submission: PathBuf,
+
+    /// Run spec naming the pipeline and models of the contract.
+    #[arg(long, default_value = inference_artifacts::INFERENCE_RUN_SPEC_TOML)]
+    run: PathBuf,
+
+    /// The pins the contract holds. As for `iris claim check`.
+    #[arg(long)]
+    pins: Option<PathBuf>,
 
     /// The stand-in data-availability layer's directory. As for `iris claim
     /// check`.
@@ -411,6 +519,9 @@ enum ChallengeCommand {
     /// the challenge submission, and make the checks a contract would make
     /// on it.
     Post(ChallengePostArgs),
+    /// Make the checks a contract would make on a challenge's submission as
+    /// it is. Nothing is posted.
+    Check(ChallengeCheckArgs),
 }
 
 #[derive(Debug, Subcommand)]
@@ -529,8 +640,7 @@ fn execute(cli: Cli) -> Result<ExitCode> {
             match (result.final_result.as_ref(), result.consensus.as_ref()) {
                 (Some(first), Some(consensus)) => {
                     print_consensus(first, consensus);
-                    for (inference, result) in [first, &consensus.second].into_iter().enumerate()
-                    {
+                    for (inference, result) in [first, &consensus.second].into_iter().enumerate() {
                         println!("inference: {inference}");
                         print_infer_result(result, Some(&run_spec_path), inference);
                     }
@@ -548,15 +658,46 @@ fn execute(cli: Cli) -> Result<ExitCode> {
             println!("claim bundle: {}", result.claim_bundle_path.display());
             if let Some(path) = result.claim_submission_path.as_ref() {
                 println!("claim submission: {}", path.display());
+                if path
+                    .with_file_name(availability::POSTING_OUTPUTS_JSON)
+                    .exists()
+                {
+                    println!("posting: prepared, not posted (`iris claim post`)");
+                }
             }
             Ok(ExitCode::SUCCESS)
+        }
+        Some(Commands::Claim {
+            command: ClaimCommand::Post(args),
+        }) => {
+            let base_dir =
+                std::env::current_dir().context("failed to resolve current directory")?;
+            let submission = absolute(&base_dir, &args.submission);
+            let da_dir = args.da_dir.map(|dir| absolute(&base_dir, &dir));
+            let posted = contract::post_claim_submission(&submission, da_dir.as_deref(), None)?;
+            for blob in &posted.blobs {
+                println!(
+                    "blob: height {} commitment {} ({} bytes)",
+                    blob.pointer.height, blob.pointer.commitment, blob.length
+                );
+            }
+            println!("claim submission: {}", submission.display());
+            Ok(match posted.rejection {
+                None => {
+                    println!("ok        data posted, proven and retrievable through the challenge period");
+                    ExitCode::SUCCESS
+                }
+                Some(reason) => {
+                    println!("REJECTED  data posted: {reason}");
+                    ExitCode::FAILURE
+                }
+            })
         }
         Some(Commands::Claim {
             command: ClaimCommand::Check(args),
         }) => {
             let report = check_claim(ClaimCheckOptions {
-                base_dir: std::env::current_dir()
-                    .context("failed to resolve current directory")?,
+                base_dir: std::env::current_dir().context("failed to resolve current directory")?,
                 run_spec_path: args.run,
                 submission_path: args.submission,
                 raster_run: args.raster_run,
@@ -717,7 +858,75 @@ fn execute(cli: Cli) -> Result<ExitCode> {
                     ExitCode::FAILURE
                 })
             }
+            ChallengeCommand::Check(args) => {
+                let base_dir =
+                    std::env::current_dir().context("failed to resolve current directory")?;
+                let report =
+                    contract::check_challenge_submission(contract::ChallengeCheckOptions {
+                        run_spec_path: absolute(&base_dir, &args.run),
+                        pins_path: args.pins.map(|path| absolute(&base_dir, &path)),
+                        challenge_path: absolute(&base_dir, &args.challenge),
+                        submission_path: absolute(&base_dir, &args.submission),
+                        da_dir: args.da_dir.map(|path| absolute(&base_dir, &path)),
+                        submitted_at: args.submitted_at,
+                    })?;
+                for line in &report.lines {
+                    match &line.rejection {
+                        None => println!("ok        {}", line.check),
+                        Some(reason) => println!("REJECTED  {}: {reason}", line.check),
+                    }
+                }
+                Ok(if report.accepted() {
+                    ExitCode::SUCCESS
+                } else {
+                    ExitCode::FAILURE
+                })
+            }
         },
+        Some(Commands::Da { command }) => {
+            let base_dir =
+                std::env::current_dir().context("failed to resolve current directory")?;
+            match command {
+                DaCommand::BlockRoot { height, da_dir } => {
+                    let da_dir = da_dir.map(|dir| absolute(&base_dir, &dir));
+                    let root = availability::open_layer(da_dir.as_deref())?.block_root(height)?;
+                    println!("{}", serde_json::to_string_pretty(&root)?);
+                }
+                DaCommand::Attest { submission, da_dir } => {
+                    let da_dir = da_dir.map(|dir| absolute(&base_dir, &dir));
+                    let layer = availability::open_layer(da_dir.as_deref())?;
+                    let path = absolute(&base_dir, &submission);
+                    let attested = evm::attest_submission(&path, layer.as_ref())?;
+                    println!("attested blobs: {attested}");
+                    println!("submission: {}", path.display());
+                }
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+        Some(Commands::Evm { command }) => {
+            let base_dir =
+                std::env::current_dir().context("failed to resolve current directory")?;
+            let call = match command {
+                EvmCommand::Configuration { run, pins } => {
+                    evm::configuration_call(&contract::spec_configuration(
+                        &absolute(&base_dir, &run),
+                        pins.map(|path| absolute(&base_dir, &path)).as_deref(),
+                    )?)?
+                }
+                EvmCommand::Claim { submission } => {
+                    evm::claim_call(&absolute(&base_dir, &submission))?
+                }
+                EvmCommand::Challenge {
+                    challenge,
+                    submission,
+                } => evm::challenge_call(
+                    &absolute(&base_dir, &challenge),
+                    &absolute(&base_dir, &submission),
+                )?,
+            };
+            println!("{}", serde_json::to_string_pretty(&call)?);
+            Ok(ExitCode::SUCCESS)
+        }
         Some(Commands::Registry {
             command: RegistryCommand::Add(args),
         }) => {
@@ -1357,9 +1566,7 @@ impl ClaimBuildArgs {
             ClaimBuildOptions::from_current_dir(current_exe, staged_backend, self.run)?;
         options.claimed_token_ids = self.claimed_ids;
         options.direct_output_ids = self.direct_output_ids;
-        options.claimer = self
-            .claimer
-            .or_else(|| std::env::var("IRIS_CLAIMER").ok());
+        options.claimer = self.claimer.or_else(|| std::env::var("IRIS_CLAIMER").ok());
         Ok(options)
     }
 }

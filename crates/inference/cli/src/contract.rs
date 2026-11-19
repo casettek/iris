@@ -12,14 +12,14 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{ensure, Context, Result};
 use inference_artifacts::availability::{
-    check_claim_availability, AvailabilityParameters, RequiredPosting,
+    check_claim_availability, check_holds, AvailabilityLayer, AvailabilityParameters, BlobContents,
+    RequiredPosting,
 };
 use inference_artifacts::contract::{
     check_origin, check_pipeline, check_stated_records, check_submission, first_unapproved_stage,
     raster_boundary_mismatch, ChallengeRefusal, CheckpointList, ClaimSubmission, ContractPins,
-    LinkCheck, RequiredOrigin, RequiredParameters, RequiredSource,
-    ResultInOutput, StageAdmission, StatedInference, SubmittedConsensus,
-    SubmittedRecord, SubmittedResult, CONTRACT_PINS_JSON,
+    LinkCheck, RequiredOrigin, RequiredParameters, RequiredSource, ResultInOutput, StageAdmission,
+    StatedInference, SubmittedConsensus, SubmittedRecord, SubmittedResult, CONTRACT_PINS_JSON,
 };
 use inference_artifacts::registry::{Configuration, Registry};
 use inference_artifacts::{
@@ -197,9 +197,11 @@ fn contract_of(
                 return Ok(None);
             }
             match imports {
-                [(path, _, _)] => {
-                    load_pins(&path.with_file_name(CONTRACT_PINS_JSON), pipeline, &manifests)?
-                }
+                [(path, _, _)] => load_pins(
+                    &path.with_file_name(CONTRACT_PINS_JSON),
+                    pipeline,
+                    &manifests,
+                )?,
                 imports => {
                     let imports: Vec<(&ModelManifest, &str)> = imports
                         .iter()
@@ -231,26 +233,75 @@ pub(crate) fn run_configuration(prepared: &PreparedRun) -> Result<Option<Configu
 /// Where a contract's checks read posted data from, and when the claim is
 /// taken to be submitted.
 struct Availability<'a> {
-    layer: &'a crate::availability::StubLayer,
+    layer: &'a dyn AvailabilityLayer,
     parameters: AvailabilityParameters,
     submitted_at: u64,
 }
 
+/// What the checks have of a claim's data: what it posted, or, before it
+/// posts, what the blobs it prepared hold.
+enum Posting<'a> {
+    Posted(Availability<'a>),
+    Prepared(BlobContents),
+}
+
 /// The checks as a claimer applies them to its own claim before posting it:
 /// the first one a contract would reject it at, against `configuration`.
-/// `Ok(None)` when it would be accepted.
+/// `prepared` is what the blobs it is about to post hold. `Ok(None)` when the
+/// claim would be accepted once they are posted.
 pub(crate) fn claim_rejection(
     configuration: &Configuration,
     submission_path: &Path,
-    da_dir: &Path,
+    prepared: BlobContents,
 ) -> Result<Option<String>> {
-    let layer = crate::availability::StubLayer::open(da_dir);
-    let availability = Availability {
-        layer: &layer,
-        parameters: AvailabilityParameters::default(),
-        submitted_at: crate::availability::now()?,
-    };
-    Ok(check_claim_dir(configuration, None, submission_path, &availability)?.rejection())
+    Ok(check_claim_dir(
+        configuration,
+        None,
+        submission_path,
+        &Posting::Prepared(prepared),
+    )?
+    .rejection())
+}
+
+/// What `iris claim post` did: where each blob is, and whether a contract
+/// would take them as the claim's data.
+pub struct ClaimPosted {
+    pub blobs: Vec<inference_artifacts::availability::PostedBlob>,
+    /// `None` when they are, otherwise why not.
+    pub rejection: Option<String>,
+}
+
+/// Post the blobs `claim build` prepared beside a submission, write where
+/// they are into the submission, and make the availability check a contract
+/// would. Posting again posts new blobs and replaces the submission's list.
+pub fn post_claim_submission(
+    submission_path: &Path,
+    da_dir: Option<&Path>,
+    submitted_at: Option<u64>,
+) -> Result<ClaimPosted> {
+    let mut submission: ClaimSubmission = read_json(submission_path)?;
+    let layer = crate::availability::open_layer(da_dir)?;
+    let prepared = crate::availability::PreparedPosting::read(claim_dir(submission_path)?)?;
+    submission.availability = prepared
+        .post(layer.as_ref())
+        .context("posting the claim's data")?;
+    inference_artifacts::write_json(submission_path, &submission)?;
+    let rejection = check_claim_availability(
+        layer.as_ref(),
+        AvailabilityParameters::default(),
+        &submission.availability,
+        &RequiredPosting::of(&submission),
+        match submitted_at {
+            Some(at) => at,
+            None => crate::availability::now()?,
+        },
+    )
+    .err()
+    .map(|rejection| rejection.to_string());
+    Ok(ClaimPosted {
+        blobs: submission.availability,
+        rejection,
+    })
 }
 
 pub fn check_claim(options: ClaimCheckOptions) -> Result<ClaimCheckReport> {
@@ -260,13 +311,14 @@ pub fn check_claim(options: ClaimCheckOptions) -> Result<ClaimCheckReport> {
         .pins_path
         .as_ref()
         .map(|path| absolute(&options.base_dir, path));
-    let contract = contract_of(&run_spec_path, &run_spec, pins_path.as_deref())?.with_context(|| {
-        format!(
+    let contract =
+        contract_of(&run_spec_path, &run_spec, pins_path.as_deref())?.with_context(|| {
+            format!(
             "a model {} names has no {CONTRACT_PINS_JSON}: import it again from the iris root, \
              where the stage projects and their Raster.lock files are",
             run_spec_path.display()
         )
-    })?;
+        })?;
     let submission_path = absolute(&options.base_dir, &options.submission_path);
     // With a registry, the configuration is the one the claim names there.
     let mut unregistered = None;
@@ -290,17 +342,16 @@ pub fn check_claim(options: ClaimCheckOptions) -> Result<ClaimCheckReport> {
     let da_dir = options
         .da_dir
         .as_ref()
-        .map(|dir| absolute(&options.base_dir, dir))
-        .unwrap_or_else(crate::availability::da_dir);
-    let layer = crate::availability::StubLayer::open(da_dir);
-    let availability = Availability {
-        layer: &layer,
+        .map(|dir| absolute(&options.base_dir, dir));
+    let layer = crate::availability::open_layer(da_dir.as_deref())?;
+    let availability = Posting::Posted(Availability {
+        layer: layer.as_ref(),
         parameters: AvailabilityParameters::default(),
         submitted_at: match options.submitted_at {
             Some(at) => at,
             None => crate::availability::now()?,
         },
-    };
+    });
     let mut report = check_claim_dir(&contract, unregistered, &submission_path, &availability)?;
 
     if let Some(raster_run) = options.raster_run {
@@ -334,7 +385,7 @@ fn check_claim_dir(
     contract: &Configuration,
     unregistered: Option<String>,
     submission_path: &Path,
-    availability: &Availability,
+    posting: &Posting,
 ) -> Result<ClaimCheckReport> {
     let submission: ClaimSubmission = read_json(submission_path)?;
     let dir = claim_dir(submission_path)?;
@@ -387,15 +438,27 @@ fn check_claim_dir(
     });
     // What the claim posted: the new information its statement names and its
     // checkpoints, each proven and retrievable through the challenge period.
-    let posted = check_claim_availability(
-        availability.layer,
-        availability.parameters,
-        &submission.availability,
-        &RequiredPosting::of(&submission),
-        availability.submitted_at,
-    );
+    let required = RequiredPosting::of(&submission);
+    let (check, posted) = match posting {
+        Posting::Posted(availability) => (
+            "submission: data posted, proven and retrievable through the challenge period",
+            check_claim_availability(
+                availability.layer,
+                availability.parameters,
+                &submission.availability,
+                &required,
+                availability.submitted_at,
+            ),
+        ),
+        // Before a claim posts, the same question of the blobs it prepared:
+        // whether they are its claimer's and hold what its statement names.
+        Posting::Prepared(contents) => (
+            "submission: the data prepared to post is the claim's",
+            check_holds(contents, &required).map(|()| contents.clone()),
+        ),
+    };
     lines.push(CheckLine {
-        check: "submission: data posted, proven and retrievable through the challenge period",
+        check,
         rejection: posted.as_ref().err().map(ToString::to_string),
     });
     // What the claim's proof read out of its last stage's output and its
@@ -545,11 +608,41 @@ pub struct ChallengePosted {
     pub submission_path: PathBuf,
 }
 
+pub struct ChallengeCheckOptions {
+    pub run_spec_path: PathBuf,
+    pub pins_path: Option<PathBuf>,
+    /// The `challenge_submission.json` that `challenge post` wrote.
+    pub challenge_path: PathBuf,
+    /// The disputed claim's `claim_submission.json`, in its claim directory.
+    pub submission_path: PathBuf,
+    pub da_dir: Option<PathBuf>,
+    pub submitted_at: Option<u64>,
+}
+
+/// Make the checks a contract would make of a challenge's submission as it
+/// is. Nothing is posted and nothing is written.
+pub fn check_challenge_submission(options: ChallengeCheckOptions) -> Result<ClaimCheckReport> {
+    let configuration = spec_configuration(&options.run_spec_path, options.pins_path.as_deref())?;
+    let submission: inference_artifacts::contract::ChallengeSubmission =
+        read_json(&options.challenge_path)?;
+    let layer = crate::availability::open_layer(options.da_dir.as_deref())?;
+    let submitted_at = match options.submitted_at {
+        Some(at) => at,
+        None => crate::availability::now()?,
+    };
+    check_challenge(
+        &configuration,
+        &options.submission_path,
+        &submission,
+        layer.as_ref(),
+        submitted_at,
+    )
+}
+
 /// Post a challenge's trace body, write its submission beside the bundle,
 /// and make the checks a contract would make when it arrives.
 pub fn post_challenge(options: ChallengePostOptions) -> Result<ChallengePosted> {
-    let configuration =
-        spec_configuration(&options.run_spec_path, options.pins_path.as_deref())?;
+    let configuration = spec_configuration(&options.run_spec_path, options.pins_path.as_deref())?;
     let claim: ClaimSubmission = read_json(&options.submission_path)?;
     let trace = claim_trace(&options.submission_path)?;
     let bundle = inference_artifacts::read_challenge_bundle(&options.challenge_bundle_path)?;
@@ -559,12 +652,8 @@ pub fn post_challenge(options: ChallengePostOptions) -> Result<ChallengePosted> 
         .iter()
         .position(|checkpoint| checkpoint.stage == bundle.stage)
         .with_context(|| format!("the claim has no stage `{}`", bundle.stage))?;
-    let layer = crate::availability::StubLayer::open(
-        options
-            .da_dir
-            .clone()
-            .unwrap_or_else(crate::availability::da_dir),
-    );
+    let layer = crate::availability::open_layer(options.da_dir.as_deref())?;
+    let layer = layer.as_ref();
     let challenger = options
         .challenger
         .clone()
@@ -580,7 +669,7 @@ pub fn post_challenge(options: ChallengePostOptions) -> Result<ChallengePosted> 
         &bundle.raster_commit_path,
         &replay.raster_output_sha256,
         &challenger,
-        &layer,
+        layer,
     )?;
     let submission_path = options
         .challenge_bundle_path
@@ -594,7 +683,7 @@ pub fn post_challenge(options: ChallengePostOptions) -> Result<ChallengePosted> 
         &configuration,
         &options.submission_path,
         &submission,
-        &layer,
+        layer,
         submitted_at,
     )?;
     Ok(ChallengePosted {
@@ -615,7 +704,7 @@ pub(crate) fn challenge_submission(
     commit_path: &Path,
     output_sha256: &str,
     challenger: &str,
-    layer: &crate::availability::StubLayer,
+    layer: &dyn crate::availability::PostingLayer,
 ) -> Result<inference_artifacts::contract::ChallengeSubmission> {
     let commitment = raster_prover::commitment_file::CommitmentFile::read_memory(commit_path)
         .with_context(|| format!("{} is not a Raster trace commitment", commit_path.display()))?;
@@ -648,7 +737,7 @@ pub fn check_challenge(
     configuration: &Configuration,
     claim_submission_path: &Path,
     submission: &inference_artifacts::contract::ChallengeSubmission,
-    layer: &crate::availability::StubLayer,
+    layer: &dyn AvailabilityLayer,
     submitted_at: u64,
 ) -> Result<ClaimCheckReport> {
     let claim: ClaimSubmission = read_json(claim_submission_path)?;
@@ -673,11 +762,9 @@ pub fn check_challenge(
     });
     let checkpoint = trace.checkpoints.get(submission.stage as usize);
     let admission = match (&list, checkpoint) {
-        (Some(list), Some(checkpoint)) => Some(list.admit_stage_challenge(
-            &configuration.programs,
-            submission.stage,
-            checkpoint,
-        )),
+        (Some(list), Some(checkpoint)) => {
+            Some(list.admit_stage_challenge(&configuration.programs, submission.stage, checkpoint))
+        }
         _ => None,
     };
     lines.push(CheckLine {
@@ -709,7 +796,8 @@ pub fn check_challenge(
             .map(|refusal| format!("{refusal:?}")),
     });
     lines.push(CheckLine {
-        check: "challenge: trace body posted, proven and retrievable through the fault-proof window",
+        check:
+            "challenge: trace body posted, proven and retrievable through the fault-proof window",
         rejection: inference_artifacts::availability::check_challenge_availability(
             layer,
             AvailabilityParameters::default(),

@@ -74,3 +74,19 @@ test-parity:
 # Refresh proof guest identities after Raster, guest, dependency or toolchain changes.
 build-raster-stages:
     bash scripts/build-raster-stages.sh
+
+# The local chains (devstack/README.md): a Celestia validator and bridge node, and an EVM node.
+devstack-up:
+    docker compose -f devstack/docker-compose.yml up -d --wait
+
+# Stop the local chains and delete their state.
+devstack-down:
+    docker compose -f devstack/docker-compose.yml down -v
+
+# Build and deploy the contracts to the local EVM node; writes devstack/deployment.json.
+devstack-deploy:
+    bash devstack/deploy.sh
+
+# Hold the contracts to iris on one posted claim: <run spec> <claim_submission.json>
+devstack-replay run submission:
+    python3 devstack/replay.py claim --run "{{run}}" --submission "{{submission}}"

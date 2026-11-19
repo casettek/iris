@@ -33,6 +33,7 @@ direct-infer = { path = "../direct" }
 det-num = { path = "../../det-num" }
 staged-infer = { path = "../staged" }
 hex = "0.4"
+k256 = { version = "0.13", default-features = false, features = ["ecdsa"] }
 inference-artifacts = { path = "../artifacts" }
 model-import = { path = "../../model/import" }
 raster-runtime = { path = "../../../../raster/crates/raster-runtime" }

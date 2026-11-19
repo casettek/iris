@@ -1,8 +1,10 @@
 # Blockchain integration: gaps to close first, and how to integrate
 
-Status: review, 2026-11-18. Nothing here is built. It reviews the claim and
-challenge structures as they are at `4f886a3` and outlines the integration with
-a locally running Celestia and EVM.
+Status: review, 2026-11-18. It reviews the claim and challenge structures as
+they are at `4f886a3` and outlines the integration with a locally running
+Celestia and EVM. The baseline of that integration is built since:
+[the chains](../internals/chains.md) describes it, and
+[the order of work](#order-of-work) says which steps it covers.
 
 Background: [what a contract holds and checks](../internals/contract.md) and
 [data availability and the registry](../internals/availability.md). Gaps those
@@ -229,12 +231,17 @@ for the contract. Solidity re-implements only what is a hash or a comparison.
    on chain.
 3. **Celestia**: an `AvailabilityLayer` over a local node: the real blob
    commitment, posting, reading, share proofs. The parity gate runs against it
-   behind a flag.
-4. **The availability program**, in dev mode first, then proven.
+   behind a flag. Built, without share proofs: the attester stands in for
+   them. `claim build` no longer posts.
+4. **The availability program**, in dev mode first, then proven. Not built: a
+   trusted attester signs what each blob holds.
 5. **Contracts** on a local EVM: registry, claim and challenge entry points,
    the state machine of step 2, the Blobstream check with a trusted relayer,
    receipt verification. Each contract test replays a case the Rust model
-   already decides, and both must agree.
+   already decides, and both must agree. Built: the registry, the two entry
+   points with their arrival checks, a root oracle fed by a trusted relayer,
+   and the replay (`devstack/replay.py`). Not built: the state machine and
+   receipt verification.
 6. **End to end** on the parity model: an honest claim that finalizes, a false
    checkpoint that is challenged and voided, a false challenge that is defended.
 

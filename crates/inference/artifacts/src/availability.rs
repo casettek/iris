@@ -145,7 +145,8 @@ pub trait OutputReader {
 }
 
 impl BlobContents {
-    fn extend(&mut self, other: &BlobContents) {
+    /// Add what another blob holds to what these hold together.
+    pub fn extend(&mut self, other: &BlobContents) {
         self.sources.extend(other.sources.iter().cloned());
         self.prompt_texts.extend(other.prompt_texts.iter().cloned());
         self.checkpoint_lists
@@ -175,7 +176,23 @@ pub enum AvailabilityProof {
     HostChecked {
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         outputs: Vec<WitnessedOutput>,
+        /// The attester's signature, for a contract: the host that read the
+        /// blob vouches for it there.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        attestation: Option<HostAttestation>,
     },
+}
+
+/// A trusted host's word to a contract that a blob is in its block and holds
+/// what its contents state: the stand-in for a receipt a contract verifies.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct HostAttestation {
+    /// The data root of the block the blob is in, in lowercase hex. A
+    /// contract holds it to the root its oracle has for that height.
+    pub data_root: String,
+    /// The attester's signature over [`crate::evm::attestation_digest`]: 65
+    /// bytes in hex, `r`, `s` and the recovery byte (27 or 28).
+    pub signature: String,
 }
 
 impl AvailabilityProof {
@@ -183,6 +200,7 @@ impl AvailabilityProof {
     pub fn host_checked() -> Self {
         Self::HostChecked {
             outputs: Vec::new(),
+            attestation: None,
         }
     }
 }
@@ -732,6 +750,30 @@ pub fn check_claim_availability(
         &required.submitter,
         submitted_at.saturating_add(parameters.challenge_period_secs),
     )?;
+    check_holds(&contents, required)?;
+    Ok(contents)
+}
+
+/// Whether blobs that hold `contents` together are a claim's posting: they
+/// name its claimer, and hold the new information its statement names and
+/// its checkpoint list. A claimer makes this check on the blobs it is about
+/// to post; a contract makes it on what was posted.
+pub fn check_holds(
+    contents: &BlobContents,
+    required: &RequiredPosting,
+) -> Result<(), AvailabilityRejection> {
+    if !is_address(&required.submitter) {
+        return Err(AvailabilityRejection::NoSubmitter {
+            named: required.submitter.clone(),
+        });
+    }
+    if contents.submitter != required.submitter {
+        return Err(AvailabilityRejection::AnotherSubmitter {
+            blob: 0,
+            posted_for: contents.submitter.clone(),
+            submitted_by: required.submitter.clone(),
+        });
+    }
     match &required.new_information {
         NewInformation::Source { source_sha256 } => {
             if !holds(&contents.sources, source_sha256) {
@@ -753,7 +795,7 @@ pub fn check_claim_availability(
             checkpoints_root: required.checkpoints_root.clone(),
         });
     }
-    Ok(contents)
+    Ok(())
 }
 
 /// The availability check on a challenge submitted at `challenged_at`: the

@@ -97,10 +97,15 @@ the chain then checks it.
   replay, the Raster stage challenge built from the claimer's checkpoint and the
   challenger's trace is one Raster's own admission accepts, about that
   checkpoint, and the same trace against the honest checkpoint is refused.
-  The same challenge as a contract receives it (challenge leg only): its trace
-  body posted, it is admitted against a claim whose list holds the claimer's
-  checkpoint, and refused when its body is not posted, expires before the
-  fault-proof window ends, or was posted for another address.
+  The same challenge as a contract receives it (challenge leg only): the lying
+  claim posts its own checkpoint list, and a contract takes its data and its
+  stated records, since nothing at arrival tells a false output from a true
+  one. The challenge, its trace body posted, is admitted against that claim,
+  and refused when its body is not posted, expires before the fault-proof
+  window ends, or was posted for another address. Run against a Celestia node
+  (`IRIS_CELESTIA_RPC`), the gate leaves both posted there, and
+  `devstack/replay.py` takes them to the contracts
+  ([the chains](../internals/chains.md)).
 - Over wrong token marks, on the templated case: the prompt stages finish through
   both Raster and native-staged, agree byte for byte, and record the expected fault.
   This includes marks past the end of the prompt, a range with no marks, a token

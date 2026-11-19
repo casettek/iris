@@ -2,9 +2,9 @@
 //! checked against direct generation position by position. Every worker owns its
 //! runtime state.
 mod challenge;
+pub(crate) mod compare;
 mod consensus;
 mod source;
-pub(crate) mod compare;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, File};
@@ -20,11 +20,10 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use staged_infer::chain_runner::StagedExecutionBackend;
 
-use crate::claim::{build_claim, prepare_claim_run, ClaimBuildOptions};
+use crate::claim::{build_posted_claim, prepare_claim_run, ClaimBuildOptions};
 use compare::{
     check_inventory, compare, final_record, read_boundaries, teacher_forced_names, with_result,
-    Boundary,
-    RangedShape,
+    Boundary, RangedShape,
 };
 
 #[derive(Debug, Deserialize)]
@@ -2034,7 +2033,8 @@ fn run_availability_cases(dir: &Path, spec: &Path, submission_path: &Path) -> Re
         "submission: data posted",
     )?);
     // Submitted so late that the blobs are gone before the period ends.
-    let late = crate::availability::now()? + inference_artifacts::availability::DEFAULT_RETENTION_SECS;
+    let late =
+        crate::availability::now()? + inference_artifacts::availability::DEFAULT_RETENTION_SECS;
     cases.push(refused_at(
         "expires",
         check("expires", &honest, None, Some(late))?,
@@ -2042,10 +2042,11 @@ fn run_availability_cases(dir: &Path, spec: &Path, submission_path: &Path) -> Re
     )?);
     // The checkpoints posted with their proof, and no prompt text; then
     // another prompt text in its place.
-    let layer = crate::availability::StubLayer::open(crate::availability::da_dir());
+    let layer = crate::availability::open_layer(None)?;
+    let layer = layer.as_ref();
     let mut unavailable = honest.clone();
     unavailable.availability =
-        crate::availability::post_claim(&layer, claim_dir, &honest.claimer, None)?;
+        crate::availability::post_claim(layer, claim_dir, &honest.claimer, None)?;
     cases.push(refused_at(
         "prompt-not-posted",
         check("prompt-not-posted", &unavailable, None, None)?,
@@ -2053,7 +2054,7 @@ fn run_availability_cases(dir: &Path, spec: &Path, submission_path: &Path) -> Re
     )?);
     let mut other_prompt = honest.clone();
     other_prompt.availability = crate::availability::post_claim(
-        &layer,
+        layer,
         claim_dir,
         &honest.claimer,
         Some(inference_artifacts::availability::BlobEntry::PromptText {
@@ -2120,7 +2121,7 @@ pub fn worker(spec: &Path, output: &Path, direct: bool) -> Result<()> {
             "ordinary and diagnostic direct execution differ"
         );
     } else {
-        let result = build_claim(ClaimBuildOptions {
+        let result = build_posted_claim(ClaimBuildOptions {
             base_dir: output.to_path_buf(),
             run_spec_path: spec.to_path_buf(),
             current_exe: std::env::current_exe()?,

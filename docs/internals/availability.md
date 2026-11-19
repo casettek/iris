@@ -8,10 +8,11 @@ configuration it is a claim of.
 
 The rules are in `inference_artifacts::availability` and
 `inference_artifacts::registry`; [the contract page](contract.md) lists the
-checks in the order a contract makes them. The layer, Blobstream and the
-availability proof are stand-ins run by the host
-(`crates/inference/cli/src/availability.rs`), behind one trait, so that a later
-integration with real systems replaces them and nothing else.
+checks in the order a contract makes them. The layer is behind one trait
+(`crates/inference/cli/src/availability.rs`), with two implementations: a
+stand-in directory, and a local Celestia node. Blobstream and the availability
+proof are still stand-ins run by a trusted host. [The chains](chains.md) says
+how the Celestia node and the contracts are used.
 
 ## What is posted, and what is not
 
@@ -168,6 +169,12 @@ claim states.
 | The availability proof | `AvailabilityProof::HostChecked`: the host reads the blob and recomputes what it holds. A real one is a receipt of a program that does the same, verified against its pinned image id |
 
 `IRIS_DA_NOW` fixes the time new blocks are stamped with, for tests.
+
+With `IRIS_CELESTIA_RPC` set and no `--da-dir`, the first two rows are the
+real thing: blobs go to a Celestia node and are named by Celestia's own
+commitment. The last two rows stay stand-ins there, in another form: a trusted
+relayer posts block roots to a contract, and a trusted attester signs what
+each blob holds ([the chains](chains.md)).
 
 ## Open
 

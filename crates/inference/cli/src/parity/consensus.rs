@@ -26,8 +26,8 @@ use super::compare::{compare, read_boundaries};
 use super::{command, logged, source};
 use crate::challenge::locate_divergence;
 use crate::claim::{
-    build_claim, corrupt_checkpoint_hashes, ClaimBuildOptions, CorruptCheckpointHashesOptions,
-    CorruptCheckpointSelection,
+    build_posted_claim, corrupt_checkpoint_hashes, ClaimBuildOptions,
+    CorruptCheckpointHashesOptions, CorruptCheckpointSelection,
 };
 
 /// The code both models' answers are given.
@@ -124,7 +124,7 @@ pub(super) fn run_consensus_leg(
         direct_consensus.agree && direct_consensus.code == AGREED_CODE,
         "direct inference does not find the two answers to agree: {direct_consensus:?}"
     );
-    let built = build_claim(ClaimBuildOptions {
+    let built = build_posted_claim(ClaimBuildOptions {
         base_dir: claim_dir.clone(),
         run_spec_path: spec.clone(),
         current_exe: exe.to_path_buf(),
@@ -164,7 +164,12 @@ pub(super) fn run_consensus_leg(
     logged(run, &claim_dir.join("raster.log")).context("Raster-staged execution")?;
     let order = inference_artifacts::read_stage_order(&built.chain_dir)?
         .context("native chain recorded no stage inventory")?;
-    let of = |label: &str| order.iter().filter(|stage| stage.starts_with(label)).count();
+    let of = |label: &str| {
+        order
+            .iter()
+            .filter(|stage| stage.starts_with(label))
+            .count()
+    };
     ensure!(
         order.first().map(String::as_str) == Some("source")
             && order.last().map(String::as_str) == Some("result")
@@ -246,7 +251,9 @@ pub(super) fn run_consensus_leg(
     let mut overstated: Value = inference_artifacts::read_json(&submission_path)?;
     overstated["consensus"]["agree"] = json!(false);
     overstated["consensus"]["code"] = json!(0);
-    let overstated_path = built.chain_dir.join(format!("denied.{CLAIM_SUBMISSION_JSON}"));
+    let overstated_path = built
+        .chain_dir
+        .join(format!("denied.{CLAIM_SUBMISSION_JSON}"));
     inference_artifacts::write_json(&overstated_path, &overstated)?;
     let refused = check(&overstated_path, None)?;
     let refusal = refused

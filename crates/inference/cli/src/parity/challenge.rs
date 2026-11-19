@@ -25,7 +25,7 @@ use staged_infer::{CheckpointedInferenceConfig, CheckpointedInferenceExecutor, P
 use super::{block_name, command, logged, manifest_blocks, Case};
 use crate::challenge::locate_divergence;
 use crate::claim::{
-    build_claim, corrupt_checkpoint_hashes, render_ranged_manifest, ClaimBuildOptions,
+    build_posted_claim, corrupt_checkpoint_hashes, render_ranged_manifest, ClaimBuildOptions,
     ClaimBuildResult, CorruptCheckpointHashesOptions, CorruptCheckpointSelection, PreparedClaimRun,
 };
 
@@ -477,7 +477,7 @@ fn run_spec(leg: &Leg, model_path: &Path, file: &str) -> Result<PathBuf> {
 fn claim(leg: &Leg, name: &str, spec: &Path, ids: Option<Vec<u32>>) -> Result<ClaimBuildResult> {
     let base_dir = leg.dir.join(name).join("claim");
     fs::create_dir_all(&base_dir)?;
-    build_claim(ClaimBuildOptions {
+    build_posted_claim(ClaimBuildOptions {
         base_dir,
         run_spec_path: spec.to_path_buf(),
         current_exe: leg.exe.to_path_buf(),
@@ -713,11 +713,12 @@ fn dispute_tie(
     Ok(outcome)
 }
 
-/// The challenge of a lying checkpoint as a contract receives it: the
+/// The challenge of a lying checkpoint as a contract receives it. The liar
+/// posts its own checkpoint list and submits its claim, which a contract
+/// takes: nothing at arrival tells a false output from a true one. The
 /// challenger posts its trace body and submits the Raster stage challenge
-/// about the claimer's checkpoint, against a claim whose list holds that
-/// checkpoint. A contract admits it; one whose body was not posted, or is
-/// gone before a defender's window ends, it refuses.
+/// about the claimer's checkpoint. A contract admits it; one whose body was
+/// not posted, or is gone before a defender's window ends, it refuses.
 fn contract_challenge(
     leg: &Leg,
     name: &str,
@@ -743,7 +744,42 @@ fn contract_challenge(
     claim.checkpoint_count = lying.checkpoints.len() as u32;
     claim.checkpoints_root = inference_artifacts::checkpoints_root(&checkpoint_hashes(lying)?)?;
     let claim_path = dir.join(CLAIM_SUBMISSION_JSON);
+    let configuration = crate::contract::spec_configuration(spec, None)?;
+    let layer = crate::availability::open_layer(None)?;
+    let layer = layer.as_ref();
+    let now = crate::availability::now()?;
+
+    // What the liar posts: the honest claim's data, with the lying list and
+    // checkpoints in place of the honest ones.
+    let mut posting = crate::availability::PreparedPosting::read(&honest.chain_dir)?;
+    let lying_list = fs::read(&list_path)?;
+    let lying_trace = fs::read(dir.join(inference_artifacts::CHECKPOINT_TRACE_JSON))?;
+    for blob in &mut posting.blobs {
+        for entry in &mut blob.entries {
+            if let inference_artifacts::availability::BlobEntry::Checkpoints(package) = entry {
+                package.list = lying_list.clone();
+                package.trace = lying_trace.clone();
+            }
+        }
+    }
+    claim.availability = posting
+        .post(layer)
+        .with_context(|| format!("`{name}`: posting the lying claim's data"))?;
     inference_artifacts::write_json(&claim_path, &claim)?;
+    let posted = inference_artifacts::availability::check_claim_availability(
+        layer,
+        inference_artifacts::availability::AvailabilityParameters::default(),
+        &claim.availability,
+        &inference_artifacts::availability::RequiredPosting::of(&claim),
+        now,
+    )
+    .map_err(|rejection| {
+        anyhow::anyhow!("`{name}`: a contract does not take the lying claim's data: {rejection}")
+    })?;
+    inference_artifacts::contract::check_stated_records(&configuration.programs, &claim, &posted)
+        .map_err(|rejection| {
+        anyhow::anyhow!("`{name}`: a contract does not take the lying claim: {rejection}")
+    })?;
 
     let index = lying
         .checkpoints
@@ -751,7 +787,6 @@ fn contract_challenge(
         .position(|checkpoint| checkpoint.stage == stage)
         .with_context(|| format!("the lying claim has no `{stage}`"))?;
     let replay = replay_stage_dir(leg, name, stage)?;
-    let layer = crate::availability::StubLayer::open(crate::availability::da_dir());
     let challenger = "0x000000000000000000000000000000000000c4a1";
     let submission = crate::contract::challenge_submission(
         &claim.checkpoints_root,
@@ -760,16 +795,14 @@ fn contract_challenge(
         &replay.join("commit.bin"),
         &file_sha256(&replay.join("output.bin"))?,
         challenger,
-        &layer,
+        layer,
     )?;
     inference_artifacts::write_json(
         &dir.join(inference_artifacts::contract::CHALLENGE_SUBMISSION_JSON),
         &submission,
     )?;
-    let configuration = crate::contract::spec_configuration(spec, None)?;
-    let now = crate::availability::now()?;
     let check = |submission: &inference_artifacts::contract::ChallengeSubmission, at: u64| {
-        crate::contract::check_challenge(&configuration, &claim_path, submission, &layer, at)
+        crate::contract::check_challenge(&configuration, &claim_path, submission, layer, at)
             .map(|report| report.rejection())
     };
     if let Some(rejection) = check(&submission, now)? {
@@ -793,6 +826,7 @@ fn contract_challenge(
             "`{name}`: a contract does not refuse the {case} challenge for its body: {rejection:?}"
         );
     }
+    outcome["contract_takes_the_lying_claim"] = json!(true);
     outcome["contract_admits"] = json!(true);
     outcome["trace_body_bytes"] = json!(submission.availability[0].length);
     Ok(outcome)

@@ -1,10 +1,12 @@
 pub mod availability;
+pub mod celestia;
 pub mod challenge;
 pub mod checkpoint;
 pub mod claim;
 pub mod contract;
 pub mod direct;
 pub mod encoding;
+pub mod evm;
 pub mod inference;
 pub mod io;
 pub mod manifest;
@@ -21,8 +23,8 @@ pub use challenge::{
 };
 pub use checkpoint::{
     build_checkpoint_trace, checkpoint_hash, checkpoint_hashes, checkpoint_opening,
-    checkpoints_root, read_checkpoint_from_stage_dir, verify_checkpoint_opening,
-    read_checkpoint_hashes, read_checkpoint_trace, read_stage_order, write_checkpoint_hashes,
+    checkpoints_root, read_checkpoint_from_stage_dir, read_checkpoint_hashes,
+    read_checkpoint_trace, read_stage_order, verify_checkpoint_opening, write_checkpoint_hashes,
     write_checkpoint_hashes_artifact, write_checkpoint_trace_artifact, write_stage_program,
     Checkpoint, CheckpointTrace, CHECKPOINTS_TXT, CHECKPOINT_HASHES_TXT, CHECKPOINT_TRACE_JSON,
     EXECUTION_TIMES_JSON, STAGE_PROGRAM_JSON,
@@ -37,16 +39,15 @@ pub use direct::{
     MODEL_ARTIFACTS_DIR, MODEL_MANIFEST_JSON, MODEL_MANIFEST_VERSION,
 };
 pub use inference::{
-    ConsensusOutcome, InferAuxWaveTiming, InferStageTiming, InferenceResult, InferenceRunReport, InferenceTimings,
+    ConsensusOutcome, InferAuxWaveTiming, InferStageTiming, InferenceResult, InferenceRunReport,
+    InferenceTimings,
 };
 pub use io::{read_json, write_json};
 pub use manifest::resolve_raster_manifest_paths;
 pub use pipeline::Pipeline;
 pub use run::{
     read_run_spec, InferenceRunSpec, ModelSpec, PreparedInference, PreparedPiece, PreparedPrompt,
-    PreparedRun,
-    PreparedSourceInputs, RunFileRef,
-    SourceDocumentSpec, SourceSpec,
+    PreparedRun, PreparedSourceInputs, RunFileRef, SourceDocumentSpec, SourceSpec,
     INFERENCE_RUN_SPEC_TOML, PREPARED_RUN_JSON, PREPARED_RUN_VERSION,
 };
 
@@ -493,7 +494,10 @@ mod tests {
             spec.model_manifests(),
             [Path::new("a/manifest.json"), Path::new("b/manifest.json")]
         );
-        assert_eq!(spec.model_manifest_of(1).unwrap(), Path::new("b/manifest.json"));
+        assert_eq!(
+            spec.model_manifest_of(1).unwrap(),
+            Path::new("b/manifest.json")
+        );
         assert!(spec.model_manifest_of(2).is_err());
 
         // One model, three models, or a model named the single way: each is
@@ -528,7 +532,11 @@ mod tests {
         fs::create_dir_all(&base).unwrap();
         let path = base.join("inference.toml");
         let source = "[source]\nrecipe = \"recipe.json\"\nsigner = \"signer.json\"\n[[source.documents]]\ndocument = \"event.bin\"\nattestation = \"event.json\"\n[[source.documents]]\ndocument = \"comments.bin\"\nattestation = \"comments.json\"\n";
-        fs::write(&path, format!("model_manifest = \"m.json\"\ntokens = 4\n{source}")).unwrap();
+        fs::write(
+            &path,
+            format!("model_manifest = \"m.json\"\ntokens = 4\n{source}"),
+        )
+        .unwrap();
         let spec = read_run_spec(&path).unwrap();
         assert_eq!(
             spec.source,
@@ -559,10 +567,8 @@ mod tests {
 
         fs::write(
             &path,
-            format!("model_manifest = \"m.json\"\n{source}extra = \"x\"\n").replace(
-                "signer = ",
-                "notary = \"x\"\nsigner = ",
-            ),
+            format!("model_manifest = \"m.json\"\n{source}extra = \"x\"\n")
+                .replace("signer = ", "notary = \"x\"\nsigner = "),
         )
         .unwrap();
         assert!(read_run_spec(&path).is_err());

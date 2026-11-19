@@ -342,9 +342,10 @@ cargo run --release -p iris-cli -- claim check \
 
 The command reads the checkpoint files, every stage's input list and the
 outputs of each inference's last check and of the result stage from the
-directory the submission is in, and the posted blobs from the stand-in
-data-availability layer (`--da-dir`, default `IRIS_DA_DIR` or
-`~/.cache/iris/stub-celestia`). It makes the configuration and pipeline checks,
+directory the submission is in, and the posted blobs from the
+data-availability layer: the stand-in directory (`--da-dir`, default
+`IRIS_DA_DIR` or `~/.cache/iris/stub-celestia`), or a Celestia node when
+`IRIS_CELESTIA_RPC` is set and no directory is given. It makes the configuration and pipeline checks,
 the submission checks, the availability check and the challenge-time
 comparisons, the link comparison for every chained input of every stage. It
 prints eight lines for a `single` claim and nine for a `consensus` one, which
@@ -352,8 +353,18 @@ has a statement line per inference. `--registry <file>` judges the claim by the
 configuration it names in that registry; without it, by the one the run spec
 and the pins describe. `--submitted-at <seconds>` sets when the claim is taken
 to be submitted.
-`claim build` names its configuration, posts its data, and makes the same
-checks on its own claim before it reports success, when the imports have pins.
+`claim build` names its configuration, prepares the blobs it has to post, and
+makes the same checks on its own claim before it reports success, when the
+imports have pins. It makes them against what the prepared blobs hold, and
+posts nothing: `iris claim post` posts them, and the claim passes the
+availability check from then on.
+
+`iris challenge check --challenge <challenge_submission.json> --submission
+<claim_submission.json>` makes the checks of a challenge the same way, on the
+submission `iris challenge post` wrote.
+
+The contracts on a local EVM chain make these checks too, and are tested
+against these two commands case by case ([the chains](chains.md)).
 
 Add `--raster-run <dir>` with a Raster chain run of the same claim to hold every
 checkpoint to the boundary that run committed: the same stages in the same order,

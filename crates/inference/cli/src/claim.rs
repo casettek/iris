@@ -120,9 +120,8 @@ pub fn build_claim(options: ClaimBuildOptions) -> Result<ClaimBuildResult> {
     // A claimer applies the rule a challenger will: the claim is judged by
     // its own final record, and a claim of several inferences by each one's.
     let pipeline = prepared.prepared_run.pipeline;
-    let mut rejection = crate::challenge::claimed_output_rejection(
-        checkpointed.final_result.as_ref(),
-    )?;
+    let mut rejection =
+        crate::challenge::claimed_output_rejection(checkpointed.final_result.as_ref())?;
     if pipeline.inferences() > 1 && rejection.is_none() {
         let consensus = checkpointed
             .consensus
@@ -156,16 +155,16 @@ pub fn build_claim(options: ClaimBuildOptions) -> Result<ClaimBuildResult> {
     // checkpoint names an approved program, and the record is the last
     // stage's.
     //
-    // The claim names its configuration and posts its data first: the new
-    // information its run was given and its checkpoints, each blob with its
-    // availability proof.
-    // Without pins there is no configuration to name, and nothing is posted.
+    // The claim names its configuration and its claimer, and prepares what
+    // it has to post: the new information its run was given and its
+    // checkpoints. Posting is `iris claim post`'s, so that a post that fails
+    // is tried again without the claim being built again.
+    // Without pins there is no configuration to name, and nothing to check.
     if let Some(path) = result.claim_submission_path.as_ref() {
         let Some(configuration) = crate::contract::run_configuration(&prepared.prepared_run)?
         else {
             return Ok(result);
         };
-        let da_dir = crate::availability::da_dir();
         let mut submission: ClaimSubmission = inference_artifacts::read_json(path)?;
         submission.configuration = configuration.id();
         if let Some(claimer) = options.claimer {
@@ -175,15 +174,19 @@ pub fn build_claim(options: ClaimBuildOptions) -> Result<ClaimBuildResult> {
             );
             submission.claimer = claimer;
         }
-        submission.availability = crate::availability::post_claim(
-            &crate::availability::StubLayer::open(&da_dir),
+        inference_artifacts::write_json(path, &submission)?;
+        let posting = crate::availability::claim_blobs(
             &result.chain_dir,
             &submission.claimer,
-            Some(crate::availability::new_information(&prepared.prepared_run)?),
+            Some(crate::availability::new_information(
+                &prepared.prepared_run,
+            )?),
         )
-        .context("posting the claim's data")?;
-        inference_artifacts::write_json(path, &submission)?;
-        if let Some(reason) = crate::contract::claim_rejection(&configuration, path, &da_dir)? {
+        .context("preparing the claim's data")?;
+        posting.write(&result.chain_dir)?;
+        if let Some(reason) =
+            crate::contract::claim_rejection(&configuration, path, posting.contents()?)?
+        {
             if options.claimed_token_ids.is_none() {
                 anyhow::bail!("a contract would not accept this claim: {reason}");
             }
@@ -191,6 +194,24 @@ pub fn build_claim(options: ClaimBuildOptions) -> Result<ClaimBuildResult> {
                 "warning: a contract would not accept this claim: {reason}; it was written \
                  anyway because --claimed-ids was given"
             );
+        }
+    }
+    Ok(result)
+}
+
+/// [`build_claim`], then its data posted: a claim as a contract receives it.
+pub fn build_posted_claim(options: ClaimBuildOptions) -> Result<ClaimBuildResult> {
+    let result = build_claim(options)?;
+    if let Some(path) = result.claim_submission_path.as_ref() {
+        // A claim with no configuration prepared nothing to post.
+        if path
+            .with_file_name(crate::availability::POSTING_OUTPUTS_JSON)
+            .exists()
+        {
+            let posted = crate::contract::post_claim_submission(path, None, None)?;
+            if let Some(reason) = posted.rejection {
+                anyhow::bail!("a contract would not take what the claim posted: {reason}");
+            }
         }
     }
     Ok(result)
@@ -273,7 +294,12 @@ fn write_claim_result(
     let results: Vec<&InferenceResult> = checkpointed
         .final_result
         .iter()
-        .chain(checkpointed.consensus.iter().map(|consensus| &consensus.second))
+        .chain(
+            checkpointed
+                .consensus
+                .iter()
+                .map(|consensus| &consensus.second),
+        )
         .collect();
     let consensus = checkpointed.consensus.as_ref().map(|consensus| {
         inference_artifacts::contract::SubmittedConsensus {
@@ -913,8 +939,8 @@ pub(crate) fn render_chain(
             }
         }
         if table == "[[chain.repeat]]" && trimmed.starts_with("count =") {
-            let (inference, base) = named
-                .with_context(|| format!("unexpected repeat `{name}` in chain template"))?;
+            let (inference, base) =
+                named.with_context(|| format!("unexpected repeat `{name}` in chain template"))?;
             let files = &inferences[inference];
             let range_count = match base {
                 "prompt" => Some((0, files.marks.len())),
@@ -1400,9 +1426,15 @@ mod tests {
         // Each inference has its own run files, in a directory of its own.
         for (label, claimed_ranges) in [("m0", 1), ("m1", 2)] {
             let claimed = &chain["input"][format!("{label}_claimed_ids").as_str()];
-            assert_eq!(claimed["commitments"].as_array().unwrap().len(), claimed_ranges);
+            assert_eq!(
+                claimed["commitments"].as_array().unwrap().len(),
+                claimed_ranges
+            );
             let path = claimed["path"].as_str().unwrap();
-            assert!(path.ends_with(&format!("prompt/{label}/claimed_{{k}}.rastered")), "{path}");
+            assert!(
+                path.ends_with(&format!("prompt/{label}/claimed_{{k}}.rastered")),
+                "{path}"
+            );
             for input in ["prompt_text", "prompt_marks"] {
                 let input = &chain["input"][format!("{label}_{input}").as_str()];
                 assert_eq!(input["commitments"].as_array().unwrap().len(), 1);
@@ -1417,7 +1449,9 @@ mod tests {
         };
         // A text taken as given: no source stage, and each first bind is given
         // the constant of its own model.
-        assert!(stages.iter().all(|stage| stage["name"].as_str() != Some("source")));
+        assert!(stages
+            .iter()
+            .all(|stage| stage["name"].as_str() != Some("source")));
         let config = |label: &str| {
             stage(&format!("{label}_prompt_bind_p0"))["inputs"]["config"]["external"]["commitment"]
                 .as_str()
@@ -1443,8 +1477,14 @@ mod tests {
             .as_str()
             .unwrap()
             .ends_with("raster-stages/consensus-result"));
-        assert_eq!(result["inputs"]["first"]["from"].as_str(), Some("m0_check_c0"));
-        assert_eq!(result["inputs"]["second"]["from"].as_str(), Some("m1_check_c1"));
+        assert_eq!(
+            result["inputs"]["first"]["from"].as_str(),
+            Some("m0_check_c0")
+        );
+        assert_eq!(
+            result["inputs"]["second"]["from"].as_str(),
+            Some("m1_check_c1")
+        );
         assert!(result["inputs"]["forms"]["external"]["commitment"].is_str());
         // The repeat of the checks after the first runs for the second
         // inference only.
@@ -1457,7 +1497,9 @@ mod tests {
         };
         assert_eq!(count("m0_claimed"), Some(0));
         assert_eq!(count("m1_claimed"), Some(1));
-        assert!(!fs::read_to_string(&prepared.manifest_path).unwrap().contains('@'));
+        assert!(!fs::read_to_string(&prepared.manifest_path)
+            .unwrap()
+            .contains('@'));
 
         // Ids given on the command line are one inference's, and a claim
         // holds the ids of each.
