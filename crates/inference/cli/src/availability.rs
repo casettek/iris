@@ -546,6 +546,30 @@ impl PreparedPosting {
         })
     }
 
+    /// This posting for another claim of the same run: `list` and `trace` in
+    /// place of the checkpoint list and the checkpoints, and every blob
+    /// posted for `submitter`. The new information and the input manifests
+    /// stay. It is what a claimer posts who states another output for a
+    /// checkpoint of an honest run.
+    pub fn with_checkpoints(mut self, submitter: &str, list: &[u8], trace: &[u8]) -> Result<Self> {
+        let mut replaced = 0;
+        for blob in &mut self.blobs {
+            blob.submitter = submitter.to_string();
+            for entry in &mut blob.entries {
+                if let BlobEntry::Checkpoints(package) = entry {
+                    package.list = list.to_vec();
+                    package.trace = trace.to_vec();
+                    replaced += 1;
+                }
+            }
+        }
+        anyhow::ensure!(
+            replaced == 1,
+            "the posting holds {replaced} checkpoint lists, and a claim posts one"
+        );
+        Ok(self)
+    }
+
     /// Post the blobs to `layer`, and state each as a claim submits it.
     pub fn post(&self, layer: &dyn PostingLayer) -> Result<Vec<PostedBlob>> {
         post_blobs(layer, &CLAIM_NAMESPACE, &self.blobs, &self.outputs)

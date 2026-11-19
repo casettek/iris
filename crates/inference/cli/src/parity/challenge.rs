@@ -136,8 +136,69 @@ pub(super) fn run_challenge_leg(leg: &Leg) -> Result<Value> {
             outcome["settled_by"] == "replay" && outcome["raster_admits"] == true,
             "`{name}`: a claim that states another output was not settled by a replay Raster admits"
         );
-        let outcome = contract_challenge(leg, &name, &spec, &honest, &lying, stage, outcome)?;
+        let outcome = contract_challenge(
+            leg,
+            &name,
+            &spec,
+            &honest,
+            &lying,
+            stage,
+            stage == FALSIFIED_STAGES[0],
+            outcome,
+        )?;
         replays.push(outcome);
+    }
+
+    // The command that stages such a claim (`claim corrupt --submission`)
+    // writes one a contract takes: the honest list with one hash changed,
+    // posted for the liar. A lie about the result is refused there, since
+    // the claim's records are read from that output and no proof would
+    // state them.
+    {
+        let honest_submission = honest
+            .claim_submission_path
+            .as_ref()
+            .context("the honest claim wrote no submission")?;
+        let liar = "0x00000000000000000000000000000000000011a2";
+        let corrupt = |stage: &str, out: &str| {
+            crate::posted::corrupt_claim(crate::posted::CorruptClaimOptions {
+                submission_path: honest_submission.clone(),
+                selection: CorruptCheckpointSelection::Stage(stage.to_string()),
+                claimer: Some(liar.to_string()),
+                out_dir: leg.dir.join(out),
+            })
+        };
+        let stage = FALSIFIED_STAGES[0];
+        let lying = corrupt(stage, "corrupted-claim")?;
+        let honest_hashes =
+            inference_artifacts::read_checkpoint_hashes(&honest.checkpoint_hashes_path)?;
+        let lying_hashes = inference_artifacts::read_checkpoint_hashes(&lying.hashes_path)?;
+        ensure!(
+            honest_hashes.len() == lying_hashes.len()
+                && honest_hashes
+                    .iter()
+                    .zip(&lying_hashes)
+                    .enumerate()
+                    .all(|(index, (before, after))| (before != after)
+                        == (index == lying.checkpoint_index)),
+            "a corrupted claim's list differs from the honest one elsewhere than at `{stage}`"
+        );
+        let claim: inference_artifacts::contract::ClaimSubmission =
+            read_json(&lying.submission_path)?;
+        let posting = crate::availability::PreparedPosting::read(&leg.dir.join("corrupted-claim"))?;
+        ensure!(
+            claim.claimer == liar
+                && inference_artifacts::availability::check_holds(
+                    &posting.contents()?,
+                    &inference_artifacts::availability::RequiredPosting::of(&claim),
+                )
+                .is_ok(),
+            "a corrupted claim's data is not the liar's own"
+        );
+        ensure!(
+            corrupt("result", "corrupted-result").is_err(),
+            "a claim that states another result was written as one a contract would take"
+        );
     }
 
     // A false result. The result stage is a handful of steps, under the
@@ -726,6 +787,7 @@ fn contract_challenge(
     honest: &ClaimBuildResult,
     lying: &CheckpointTrace,
     stage: &str,
+    challenge_as_posted: bool,
     mut outcome: Value,
 ) -> Result<Value> {
     use inference_artifacts::contract::{ClaimSubmission, CLAIM_SUBMISSION_JSON};
@@ -751,17 +813,11 @@ fn contract_challenge(
 
     // What the liar posts: the honest claim's data, with the lying list and
     // checkpoints in place of the honest ones.
-    let mut posting = crate::availability::PreparedPosting::read(&honest.chain_dir)?;
-    let lying_list = fs::read(&list_path)?;
-    let lying_trace = fs::read(dir.join(inference_artifacts::CHECKPOINT_TRACE_JSON))?;
-    for blob in &mut posting.blobs {
-        for entry in &mut blob.entries {
-            if let inference_artifacts::availability::BlobEntry::Checkpoints(package) = entry {
-                package.list = lying_list.clone();
-                package.trace = lying_trace.clone();
-            }
-        }
-    }
+    let posting = crate::availability::PreparedPosting::read(&honest.chain_dir)?.with_checkpoints(
+        &claim.claimer,
+        &fs::read(&list_path)?,
+        &fs::read(dir.join(inference_artifacts::CHECKPOINT_TRACE_JSON))?,
+    )?;
     claim.availability = posting
         .post(layer)
         .with_context(|| format!("`{name}`: posting the lying claim's data"))?;
@@ -825,6 +881,62 @@ fn contract_challenge(
                 .is_some_and(|rejection| rejection.starts_with("challenge: trace body posted")),
             "`{name}`: a contract does not refuse the {case} challenge for its body: {rejection:?}"
         );
+    }
+    // The challenger's side of the same claim: read back from the layer into
+    // a directory that holds nothing else, it is the liar's list and
+    // checkpoints exactly, with every stage's input manifest.
+    let fetched = crate::posted::fetch_claim(crate::posted::FetchClaimOptions {
+        submission_path: claim_path.clone(),
+        run_spec_path: spec.to_path_buf(),
+        pins_path: None,
+        da_dir: None,
+        out_dir: dir.join("fetched"),
+    })
+    .with_context(|| format!("`{name}`: reading the lying claim back from the layer"))?;
+    let fetched_dir = fetched
+        .submission_path
+        .parent()
+        .context("the fetched claim has no directory")?;
+    for file in [
+        inference_artifacts::CHECKPOINTS_TXT,
+        inference_artifacts::CHECKPOINT_TRACE_JSON,
+    ] {
+        ensure!(
+            fs::read(fetched_dir.join(file))? == fs::read(dir.join(file))?,
+            "`{name}`: the {file} read back from the layer is not the one posted"
+        );
+    }
+    for checkpoint in &lying.checkpoints {
+        let manifest = Path::new(&checkpoint.stage).join("input_manifest.json");
+        ensure!(
+            fs::read(fetched_dir.join(&manifest))? == fs::read(honest.chain_dir.join(&manifest))?,
+            "`{name}`: the input manifest of `{}` read back from the layer is not the claim's",
+            checkpoint.stage
+        );
+    }
+    outcome["read_back_from_the_layer"] = json!(true);
+    if challenge_as_posted {
+        // And a challenge built from that directory alone, with nothing of
+        // the claimer's run: the run is prepared from the spec over what the
+        // claim posted, and it finds and replays the same stage.
+        let posted_dir = leg.dir.join(name).join("posted-challenge");
+        fs::create_dir_all(&posted_dir)?;
+        let log = posted_dir.join("challenge.log");
+        let mut run = command(leg.exe, leg.root);
+        run.current_dir(&posted_dir)
+            .args(["challenge", "build", "--run"])
+            .arg(&fetched.run_spec_path)
+            .arg("--submission")
+            .arg(&fetched.submission_path);
+        logged(run, &log).with_context(|| format!("`{name}`: challenge of the posted claim"))?;
+        ensure!(
+            has_line(
+                &fs::read_to_string(&log)?,
+                &format!("divergence found: {stage}")
+            ),
+            "`{name}`: a challenge built from the posted claim did not find `{stage}`"
+        );
+        outcome["challenged_from_the_layer"] = json!(true);
     }
     outcome["contract_takes_the_lying_claim"] = json!(true);
     outcome["contract_admits"] = json!(true);

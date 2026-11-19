@@ -1042,7 +1042,7 @@ fn absolute(base: &Path, path: &Path) -> PathBuf {
     }
 }
 
-fn select_checkpoint_index(
+pub(crate) fn select_checkpoint_index(
     selection: &CorruptCheckpointSelection,
     hashes: &[String],
     trace: Option<&inference_artifacts::CheckpointTrace>,
@@ -1098,7 +1098,7 @@ fn random_checkpoint_index(seed: &Option<String>, hashes: &[String]) -> usize {
     (u64::from_be_bytes(bytes) as usize) % hashes.len()
 }
 
-fn corrupt_hash(hash: &str) -> String {
+pub(crate) fn corrupt_hash(hash: &str) -> String {
     let mut bytes = hash.as_bytes().to_vec();
     bytes[0] = if bytes[0] == b'0' { b'1' } else { b'0' };
     String::from_utf8(bytes).expect("checkpoints are valid hex")

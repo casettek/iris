@@ -601,6 +601,11 @@ pub struct ChallengePostOptions {
     pub challenger: Option<String>,
     pub da_dir: Option<PathBuf>,
     pub submitted_at: Option<u64>,
+    /// The trace commitment to post, in place of the bundle's own: a copy of
+    /// it that `challenge corrupt` changed.
+    pub commitment_path: Option<PathBuf>,
+    /// Where to write the submission. Default: beside the bundle.
+    pub out_path: Option<PathBuf>,
 }
 
 pub struct ChallengePosted {
@@ -666,14 +671,19 @@ pub fn post_challenge(options: ChallengePostOptions) -> Result<ChallengePosted> 
         &claim.checkpoints_root,
         stage as u32,
         &trace.checkpoints[stage],
-        &bundle.raster_commit_path,
+        options
+            .commitment_path
+            .as_deref()
+            .unwrap_or(&bundle.raster_commit_path),
         &replay.raster_output_sha256,
         &challenger,
         layer,
     )?;
-    let submission_path = options
-        .challenge_bundle_path
-        .with_file_name(inference_artifacts::contract::CHALLENGE_SUBMISSION_JSON);
+    let submission_path = options.out_path.clone().unwrap_or_else(|| {
+        options
+            .challenge_bundle_path
+            .with_file_name(inference_artifacts::contract::CHALLENGE_SUBMISSION_JSON)
+    });
     inference_artifacts::write_json(&submission_path, &submission)?;
     let submitted_at = match options.submitted_at {
         Some(at) => at,

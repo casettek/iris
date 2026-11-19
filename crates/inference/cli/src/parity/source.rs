@@ -291,7 +291,7 @@ fn run_honest(
     // boundary the Raster run committed.
     let contract = crate::contract::check_claim(crate::contract::ClaimCheckOptions {
         base_dir: dir.to_path_buf(),
-        run_spec_path: spec,
+        run_spec_path: spec.clone(),
         submission_path: native_dir.join(inference_artifacts::contract::CLAIM_SUBMISSION_JSON),
         raster_run: Some(raster_dir),
         pins_path: None,
@@ -308,6 +308,42 @@ fn run_honest(
             line.rejection.as_deref().unwrap_or_default()
         );
     }
+
+    // The challenger's side: read back from the layer into an empty
+    // directory, the claim's source is the documents it posted, and the run
+    // spec written over them gives the source record the claim names.
+    let fetched = crate::posted::fetch_claim(crate::posted::FetchClaimOptions {
+        submission_path: native_dir.join(inference_artifacts::contract::CLAIM_SUBMISSION_JSON),
+        run_spec_path: spec,
+        pins_path: None,
+        da_dir: None,
+        out_dir: dir.join("fetched"),
+    })
+    .context("reading the claim back from the layer")?;
+    let fetched_spec = inference_artifacts::read_run_spec(&fetched.run_spec_path)?;
+    let fetched_source = run_prep::source::load_source(
+        fetched
+            .run_spec_path
+            .parent()
+            .context("the fetched run spec has no directory")?,
+        fetched_spec
+            .source
+            .as_ref()
+            .context("the run spec read back for a claim with a source names none")?,
+    )?;
+    ensure!(
+        fetched_source.documents.len() == source.documents.len()
+            && fetched_source
+                .documents
+                .iter()
+                .zip(&source.documents)
+                .all(|(fetched, posted)| fetched.body == posted.body),
+        "the documents read back from the layer are not the ones the claim was built from"
+    );
+    ensure!(
+        run_prep::source_id(Some(&fetched_source.run().record)) == expected,
+        "the source read back from the layer does not give the record the claim names"
+    );
     Ok((
         json!({
             "checkpoints": order.len(),

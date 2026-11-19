@@ -95,6 +95,26 @@ just challenge \
   target/staged-infer/runs/.../checkpoints.corrupt.txt
 ```
 
+## From a posted claim
+
+The inputs above come from the claimer's own directory. A challenger of a
+submitted claim has none of it, and starts from the data-availability layer:
+
+```bash
+iris claim fetch --submission <claim_submission.json> --run inference.toml --out fetched
+iris challenge build --run fetched/inference.toml --submission fetched/claim_submission.json
+```
+
+`claim fetch` writes the claim's checkpoint list, checkpoints and input
+manifests as it posted them, and a run spec over the prompt text or the
+source documents it posted ([the chains](../internals/chains.md#starting-from-the-chains)).
+`challenge build --submission` prepares its run from that spec the way `claim
+build` does, with the output found by direct inference, or taken from
+`--direct-output-ids` when the challenger has already run `iris infer` on the
+spec. It compares the run with the posted list hash by hash, and from there
+the flow and the outputs are the ones above. It refuses a spec whose prompt is
+not the one the claim names.
+
 `--claim` and `--trace` remain lower-level debug inputs that compare full checkpoint records. `--trace` prepares a run from `--run` because a trace alone has no frozen run metadata. It uses that run spec’s model, prompt, and token count, and discovers the output with direct inference. `challenge locate` remains reserved. See [Fault proving](fault-prove.md) for `challenge corrupt` and `fault prove`.
 
 A stage whose trace is 128 steps or fewer cannot be replayed at this window, so a

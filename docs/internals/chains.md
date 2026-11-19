@@ -19,6 +19,8 @@ Both chains run locally from [`devstack/`](../../devstack/README.md).
 | Sign what each blob holds, as the attester | iris, with the attester's key | `iris da attest` |
 | Read a block's root for the relayer | iris | `iris da block-root` |
 | Write the bytes of each contract call | iris | `iris evm configuration`, `iris evm claim`, `iris evm challenge` |
+| Read a submitted claim's data back, as a challenger | iris | `iris claim fetch` |
+| Read a submitted challenge's trace back, as a defender | iris | `iris challenge fetch` |
 | Send the transactions, relay the roots, keep the results | the caller | `devstack/submit.py`, or iris-backend |
 
 iris holds no account and sends nothing to the EVM. Each command does one
@@ -127,6 +129,71 @@ checkpoint's program on its inputs is what a defence settles.
 
 The same claim, or the same challenge, is refused a second time.
 
+## Starting from the chains
+
+A challenger has the configuration and the models, and nothing of the
+claimer's. A defender has its own run of the disputed stage, and nothing of
+the challenger's. Each reads the rest back from Celestia.
+
+**`iris claim fetch --submission <claim_submission.json> --run <spec> --out <dir>`**
+reads every blob the submission names and writes a new directory:
+
+| File | What it is |
+| --- | --- |
+| `claim_submission.json` | The submission, as given |
+| `checkpoints.txt`, `checkpoint_trace.json` | The claim's list and checkpoints, byte for byte as posted |
+| `<stage>/input_manifest.json` | Each stage's input manifest |
+| `inference.toml` | The reader's run spec over what the claim posted |
+
+`--run` is the reader's own spec of the configuration: the pipeline, the
+models, the parameters, and for a claim with a source the recipe and the
+signer's key. The command keeps those and replaces the rest with what was
+posted: the prompt text, written into the spec itself, or the source's
+documents with their attestations.
+
+Nothing is written unless the spec describes the configuration the claim
+names, every blob was posted for the claimer, and together they hold the new
+information the statement names and the checkpoint list the claim names. The
+outputs that travel with the stand-in proof are not read: a challenger makes
+its own.
+
+The submission's bytes are the ones of the transaction. The command takes
+them as a file, and whoever runs it asks the contract whether it holds a
+claim with that id (`claims(bytes32)`), as iris-backend does.
+
+**`iris challenge build --run <dir>/inference.toml --submission <dir>/claim_submission.json`**
+builds the challenge from that directory alone. The run is prepared as a
+claimer prepares its own, from the spec, with the output found by direct
+inference (or given with `--direct-output-ids`), and is compared with the
+posted list hash by hash. The command refuses a spec whose prompt is not the
+one the claim names. `iris challenge post` and `iris evm challenge` then take
+the same directory as the claim's.
+
+**`iris challenge fetch --challenge <challenge_submission.json> --out <commit.bin>`**
+reads the trace the challenge names. It is written only when it was posted
+for the challenger and its header is the one the challenge names, and it is
+the file `iris fault prove --commitment` takes.
+
+### Staging a dispute
+
+Two commands make the wrong submissions a test needs. Neither is anything an
+honest party runs.
+
+- `iris claim corrupt --submission <claim_submission.json> --stage <stage> --claimer <address> --output <dir>`
+  writes the claim a lying claimer submits: the honest claim with another
+  output stated for one checkpoint, under its own list and root, with the
+  honest claim's blobs carrying that list. A changed hash alone is no claim,
+  since a list is posted with the checkpoints it names. The command refuses a
+  checkpoint the claim's records are read from (the last stage's and its
+  checks'): a contract refuses that claim on arrival, so there is nothing to
+  challenge.
+- `iris challenge post --commitment <corrupted_commit.bin> --out <file>` posts
+  a challenge over the copy of a trace that `iris challenge corrupt` changed,
+  in place of the bundle's own.
+
+A contract takes both, as it must: nothing at arrival tells them from honest
+ones.
+
 ## What a trusted host does in place of a proof
 
 | Trusted part | What it does | What replaces it |
@@ -164,10 +231,23 @@ lying claim with the challenge of it
 checkpoint list, so a contract takes it, as it must: nothing at arrival tells
 a false output from a true one. The challenge is then admitted.
 
+The gate also takes the challenger's side. Each lying claim is read back from
+the layer into an empty directory and compared with what was posted: the
+list, the checkpoints and every input manifest. For the first of them a
+challenge is built from that directory alone, and must find and replay the
+same stage. The claim with a source is read back too: its documents must be
+the posted ones, and the run spec written over them must give the source
+record the claim names.
+
 ## Not built
 
 - **After arrival.** The defence of a challenge, the clocks that close a
   claim, bonds, and what a claim nobody successfully challenged becomes.
+- **The fault proof on chain.** No contract call takes a proof. `iris fault
+  prove` also still holds its proof to the checkpoint of the claim bundle it
+  is given, which in a staged dispute is the honest claim's, while the
+  challenge on chain is of the lying claim's checkpoint. A proof a contract
+  takes has to be about the challenge the contract holds.
 - **The proof program.** See the trusted parts above.
 - **Raster's admission of a challenge.** `iris challenge check` asks Raster
   whether it admits the challenge (`verify_challenge`). The contract does not,

@@ -80,6 +80,37 @@ whether the contract took it, or the error it refused it with.
 A challenge goes the same way: `iris challenge post`, then `submit.py
 challenge --challenge <dir>/challenge_submission.json`.
 
+## Challenge a claim from the chains
+
+A challenger starts from what Celestia holds, in a directory of its own:
+
+```bash
+# Read the claim's data back, with a run spec over what it posted.
+iris claim fetch --submission <claim_submission.json> --run spec.toml --out fetched
+# Rerun it and replay the first stage that differs. Nothing of the claimer's is read.
+iris challenge build --run fetched/inference.toml --submission fetched/claim_submission.json
+# Post the trace, then submit.
+iris challenge post --challenge <challenge_bundle.json> \
+  --submission fetched/claim_submission.json --run fetched/inference.toml --challenger 0x...
+python3 devstack/submit.py challenge --run spec.toml \
+  --submission fetched/claim_submission.json --challenge <dir>/challenge_submission.json
+```
+
+An honest claim has nothing to challenge. To have one, make the claim a lying
+claimer would submit, and submit it as a claim of its own:
+
+```bash
+iris claim corrupt --submission <claim_submission.json> --stage <stage> \
+  --claimer 0x... --output lying
+iris claim post --submission lying/claim_submission.json
+python3 devstack/submit.py claim --run spec.toml --submission lying/claim_submission.json
+```
+
+A defender reads a challenge's trace back the same way: `iris challenge fetch
+--challenge <challenge_submission.json> --out commit.bin`.
+[The chains](../docs/internals/chains.md#starting-from-the-chains) says what
+each of these checks.
+
 ## Check the contracts against iris
 
 ```bash

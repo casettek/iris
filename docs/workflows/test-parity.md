@@ -102,7 +102,15 @@ the chain then checks it.
   stated records, since nothing at arrival tells a false output from a true
   one. The challenge, its trace body posted, is admitted against that claim,
   and refused when its body is not posted, expires before the fault-proof
-  window ends, or was posted for another address. Run against a Celestia node
+  window ends, or was posted for another address. Each lying claim is then
+  read back from the layer into an empty directory (`iris claim fetch`), and
+  its list, checkpoints and input manifests must be the posted ones byte for
+  byte. For the first of them a challenge is built from that directory alone
+  (`challenge build --submission`), and must find and replay the same stage.
+  The claim with a source is read back the same way (source leg): the
+  documents must be the posted ones, and the run spec written over them must
+  give the source record the claim names.
+  Run against a Celestia node
   (`IRIS_CELESTIA_RPC`), the gate leaves both posted there, and
   `devstack/replay.py` takes them to the contracts
   ([the chains](../internals/chains.md)).

@@ -17,6 +17,7 @@ mod evm;
 mod fault;
 mod infer;
 mod parity;
+mod posted;
 #[cfg(feature = "replay-profile")]
 mod replay_profile;
 mod source;
@@ -228,8 +229,14 @@ struct ReplayProfileArgs {
 enum ClaimCommand {
     /// Build a staged-infer checkpoint claim.
     Build(ClaimBuildArgs),
-    /// Copy and corrupt one claimed checkpoint hash for manual challenge tests.
+    /// Copy and corrupt one claimed checkpoint hash for manual challenge
+    /// tests. With `--submission`, write the claim a lying claimer would
+    /// submit: another output stated for one checkpoint, with its own list.
     Corrupt(ClaimCorruptHashesArgs),
+    /// Read a submitted claim's data back from the data-availability layer
+    /// into a new directory, with a run spec over what it posted: what a
+    /// challenger starts from.
+    Fetch(ClaimFetchArgs),
     /// Post the data `claim build` prepared, and write where it is into the
     /// claim's submission.
     Post(ClaimPostArgs),
@@ -250,6 +257,34 @@ struct ClaimPostArgs {
     /// `IRIS_DA_DIR`, or `~/.cache/iris/stub-celestia`.
     #[arg(long = "da-dir")]
     da_dir: Option<PathBuf>,
+}
+
+#[derive(Debug, Args)]
+struct ClaimFetchArgs {
+    /// The claim's `claim_submission.json` as it was submitted, with where
+    /// its data is.
+    #[arg(long)]
+    submission: PathBuf,
+
+    /// Your own run spec of the configuration the claim names: its
+    /// pipeline, models and parameters, and for a claim with a source the
+    /// recipe and the signer's key. Its prompt and its documents are
+    /// replaced by the ones the claim posted.
+    #[arg(long, default_value = inference_artifacts::INFERENCE_RUN_SPEC_TOML)]
+    run: PathBuf,
+
+    /// The pins the contract holds. As for `iris claim check`.
+    #[arg(long)]
+    pins: Option<PathBuf>,
+
+    /// The stand-in data-availability layer's directory. As for `iris claim
+    /// check`.
+    #[arg(long = "da-dir")]
+    da_dir: Option<PathBuf>,
+
+    /// A new directory to write the claim's files and `inference.toml` to.
+    #[arg(long)]
+    out: PathBuf,
 }
 
 #[derive(Debug, Args)]
@@ -411,6 +446,33 @@ struct ChallengePostArgs {
     /// now.
     #[arg(long = "submitted-at")]
     submitted_at: Option<u64>,
+
+    /// Post this trace commitment in place of the bundle's own: the copy
+    /// `iris challenge corrupt` wrote, for a challenge a defender can refute.
+    #[arg(long)]
+    commitment: Option<PathBuf>,
+
+    /// Where to write the challenge submission. Default:
+    /// `challenge_submission.json` beside the bundle.
+    #[arg(long)]
+    out: Option<PathBuf>,
+}
+
+#[derive(Debug, Args)]
+struct ChallengeFetchArgs {
+    /// The `challenge_submission.json` as it was submitted, with where its
+    /// trace body is.
+    #[arg(long)]
+    challenge: PathBuf,
+
+    /// The stand-in data-availability layer's directory. As for `iris claim
+    /// check`.
+    #[arg(long = "da-dir")]
+    da_dir: Option<PathBuf>,
+
+    /// The file to write the trace commitment to (a `commit.bin`).
+    #[arg(long)]
+    out: PathBuf,
 }
 
 #[derive(Debug, Args)]
@@ -477,10 +539,22 @@ struct ClaimBuildArgs {
 #[derive(Debug, Args)]
 struct ClaimCorruptHashesArgs {
     /// Checkpoints hash list to copy and corrupt.
-    #[arg(long = "checkpoints")]
-    checkpoints: PathBuf,
+    #[arg(long = "checkpoints", required_unless_present = "submission")]
+    checkpoints: Option<PathBuf>,
 
-    /// Optional output path for the corrupted hash list.
+    /// An honest claim's `claim_submission.json`, in its directory. The
+    /// lying claim is written to `--output`, a new directory, ready for
+    /// `iris claim post`.
+    #[arg(long, conflicts_with_all = ["checkpoints", "trace"], requires = "output")]
+    submission: Option<PathBuf>,
+
+    /// With `--submission`: the address the lying claim is attributed to.
+    /// Default: the honest claim's.
+    #[arg(long, requires = "submission")]
+    claimer: Option<String>,
+
+    /// Optional output path for the corrupted hash list. With
+    /// `--submission`, the lying claim's directory.
     #[arg(long)]
     output: Option<PathBuf>,
 
@@ -519,6 +593,9 @@ enum ChallengeCommand {
     /// the challenge submission, and make the checks a contract would make
     /// on it.
     Post(ChallengePostArgs),
+    /// Read the trace a submitted challenge names back from the
+    /// data-availability layer: what a defender audits its own run against.
+    Fetch(ChallengeFetchArgs),
     /// Make the checks a contract would make on a challenge's submission as
     /// it is. Nothing is posted.
     Check(ChallengeCheckArgs),
@@ -734,6 +811,50 @@ fn execute(cli: Cli) -> Result<ExitCode> {
             Ok(ExitCode::SUCCESS)
         }
         Some(Commands::Claim {
+            command: ClaimCommand::Fetch(args),
+        }) => {
+            let base_dir =
+                std::env::current_dir().context("failed to resolve current directory")?;
+            let fetched = posted::fetch_claim(posted::FetchClaimOptions {
+                submission_path: absolute(&base_dir, &args.submission),
+                run_spec_path: absolute(&base_dir, &args.run),
+                pins_path: args.pins.map(|path| absolute(&base_dir, &path)),
+                da_dir: args.da_dir.map(|path| absolute(&base_dir, &path)),
+                out_dir: absolute(&base_dir, &args.out),
+            })?;
+            println!("blobs read: {} ({} bytes)", fetched.blobs, fetched.bytes);
+            println!("checkpoints: {}", fetched.checkpoints);
+            println!("input manifests: {}", fetched.input_manifests);
+            println!("claim submission: {}", fetched.submission_path.display());
+            println!("run spec: {}", fetched.run_spec_path.display());
+            Ok(ExitCode::SUCCESS)
+        }
+        Some(Commands::Claim {
+            command: ClaimCommand::Corrupt(args),
+        }) if args.submission.is_some() => {
+            let base_dir =
+                std::env::current_dir().context("failed to resolve current directory")?;
+            let selection = args.selection()?;
+            let lying = posted::corrupt_claim(posted::CorruptClaimOptions {
+                submission_path: absolute(&base_dir, &args.submission.expect("checked above")),
+                selection,
+                claimer: args.claimer,
+                out_dir: absolute(&base_dir, &args.output.expect("clap requires it")),
+            })?;
+            println!("corrupted checkpoints: {}", lying.hashes_path.display());
+            println!("corruption manifest: {}", lying.manifest_path.display());
+            println!("corrupted checkpoint index: {}", lying.checkpoint_index);
+            println!(
+                "corrupted checkpoint number: {}",
+                lying.checkpoint_index + 1
+            );
+            println!("corrupted stage: {}", lying.stage);
+            println!("original hash: {}", lying.original_hash);
+            println!("corrupted hash: {}", lying.corrupted_hash);
+            println!("claim submission: {}", lying.submission_path.display());
+            Ok(ExitCode::SUCCESS)
+        }
+        Some(Commands::Claim {
             command: ClaimCommand::Corrupt(args),
         }) => {
             let result = corrupt_checkpoint_hashes(args.into_options()?)?;
@@ -844,6 +965,8 @@ fn execute(cli: Cli) -> Result<ExitCode> {
                         .or_else(|| std::env::var("IRIS_CHALLENGER").ok()),
                     da_dir: args.da_dir.map(|path| absolute(&base_dir, &path)),
                     submitted_at: args.submitted_at,
+                    commitment_path: args.commitment.map(|path| absolute(&base_dir, &path)),
+                    out_path: args.out.map(|path| absolute(&base_dir, &path)),
                 })?;
                 for line in &posted.report.lines {
                     match &line.rejection {
@@ -857,6 +980,22 @@ fn execute(cli: Cli) -> Result<ExitCode> {
                 } else {
                     ExitCode::FAILURE
                 })
+            }
+            ChallengeCommand::Fetch(args) => {
+                let base_dir =
+                    std::env::current_dir().context("failed to resolve current directory")?;
+                let fetched = posted::fetch_challenge(posted::FetchChallengeOptions {
+                    challenge_path: absolute(&base_dir, &args.challenge),
+                    da_dir: args.da_dir.map(|path| absolute(&base_dir, &path)),
+                    out_path: absolute(&base_dir, &args.out),
+                })?;
+                println!("trace header: {}", fetched.header_digest);
+                println!(
+                    "trace commitment: {} ({} bytes)",
+                    fetched.commitment_path.display(),
+                    fetched.bytes
+                );
+                Ok(ExitCode::SUCCESS)
             }
             ChallengeCommand::Check(args) => {
                 let base_dir =
@@ -1005,6 +1144,23 @@ struct ChallengeBuildArgs {
     /// Claim bundle used only as frozen run context for --checkpoints.
     #[arg(long = "claim-context")]
     claim_context: Option<PathBuf>,
+
+    /// A submitted claim as `iris claim fetch` wrote it: its
+    /// `claim_submission.json`, with its checkpoint list beside it. Give
+    /// `--run` the spec that command wrote there. Nothing of the claimer's
+    /// own run is read.
+    #[arg(long, conflicts_with_all = ["claim", "trace", "checkpoint_hashes", "claim_context"])]
+    submission: Option<PathBuf>,
+
+    /// With `--submission`: the comma-separated output ids your own `iris
+    /// infer` printed for the fetched run spec, taken in place of running
+    /// direct inference again.
+    #[arg(
+        long = "direct-output-ids",
+        value_delimiter = ',',
+        requires = "submission"
+    )]
+    direct_output_ids: Option<Vec<u32>>,
 
     /// Use the previous per-stage child-process staged-infer runner.
     #[arg(long = "staged-subprocess", alias = "direct-subprocess", hide = true)]
@@ -1572,22 +1728,30 @@ impl ClaimBuildArgs {
 }
 
 impl ClaimCorruptHashesArgs {
-    fn into_options(self) -> Result<CorruptCheckpointHashesOptions> {
+    fn selection(&self) -> Result<CorruptCheckpointSelection> {
         let selector_count = usize::from(self.index.is_some())
             + usize::from(self.stage.is_some())
             + usize::from(self.random);
         if selector_count > 1 {
             anyhow::bail!("claim corrupt accepts only one of --index, --stage, or --random");
         }
-        let selection = if let Some(index) = self.index {
+        Ok(if let Some(index) = self.index {
             CorruptCheckpointSelection::Index(index)
-        } else if let Some(stage) = self.stage {
+        } else if let Some(stage) = self.stage.clone() {
             CorruptCheckpointSelection::Stage(stage)
         } else {
-            CorruptCheckpointSelection::Random { seed: self.seed }
-        };
+            CorruptCheckpointSelection::Random {
+                seed: self.seed.clone(),
+            }
+        })
+    }
+
+    fn into_options(self) -> Result<CorruptCheckpointHashesOptions> {
+        let selection = self.selection()?;
         Ok(CorruptCheckpointHashesOptions {
-            hashes_path: self.checkpoints,
+            hashes_path: self
+                .checkpoints
+                .context("claim corrupt requires --checkpoints or --submission")?,
             trace_path: self.trace,
             output_path: self.output,
             selection,
@@ -1597,12 +1761,23 @@ impl ClaimCorruptHashesArgs {
 
 impl ChallengeBuildArgs {
     fn into_options(self) -> Result<ChallengeBuildOptions> {
+        let posted = self
+            .submission
+            .map(|submission_path| -> Result<ChallengeInput> {
+                Ok(ChallengeInput::Posted {
+                    submission_path: absolute(
+                        &std::env::current_dir().context("failed to resolve current directory")?,
+                        &submission_path,
+                    ),
+                })
+            });
         let input = match (
             self.claim,
             self.trace,
             self.checkpoint_hashes,
             self.claim_context,
         ) {
+            (None, None, None, None) if posted.is_some() => posted.expect("checked")?,
             (Some(claim), None, None, None) => ChallengeInput::Claim(claim),
             (None, Some(trace), None, None) => ChallengeInput::Trace(trace),
             (None, None, Some(checkpoint_hashes_path), Some(claim_context_path)) => {
@@ -1630,7 +1805,10 @@ impl ChallengeBuildArgs {
         } else {
             staged_infer::chain_runner::StagedExecutionBackend::InProcess
         };
-        ChallengeBuildOptions::from_current_dir(current_exe, staged_backend, input, self.run)
+        let mut options =
+            ChallengeBuildOptions::from_current_dir(current_exe, staged_backend, input, self.run)?;
+        options.direct_output_ids = self.direct_output_ids;
+        Ok(options)
     }
 }
 

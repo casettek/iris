@@ -29,6 +29,14 @@ pub enum ChallengeInput {
         claim_context_path: PathBuf,
         checkpoint_hashes_path: PathBuf,
     },
+    /// A submitted claim as `iris claim fetch` read it back from the layer:
+    /// its `claim_submission.json`, with its `checkpoints.txt` beside it.
+    /// Nothing of the claimer's own run is read. The run is prepared from
+    /// `run_spec_path`, which `claim fetch` wrote over the new information
+    /// the claim posted, as a claimer prepares its own.
+    Posted {
+        submission_path: PathBuf,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -38,6 +46,9 @@ pub struct ChallengeBuildOptions {
     pub current_exe: PathBuf,
     pub staged_backend: StagedExecutionBackend,
     pub input: ChallengeInput,
+    /// For a posted claim: the output ids the challenger's own direct run of
+    /// the spec produced, taken in place of running it again.
+    pub direct_output_ids: Option<Vec<u32>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -78,46 +89,48 @@ pub fn build_challenge(options: ChallengeBuildOptions) -> Result<ChallengeBuildR
     let executor = CheckpointedInferenceExecutor;
     let (recomputed_chain_dir, recomputed_trace, divergence, final_result, consensus) =
         match &claimed_input.checkpoints {
-        ClaimedCheckpoints::Hashes { path, hashes } => {
-            let recomputed = executor.run_until_hash_divergence(CheckpointHashChallengeConfig {
-                base_dir: options.base_dir.clone(),
-                manifest_path: manifest_path.clone(),
-                current_exe: options.current_exe.clone(),
-                staged_backend: options.staged_backend,
-                claimed_hashes_path: path.clone(),
-                claimed_hashes: hashes.clone(),
-            })?;
-            (
-                recomputed.chain_dir,
-                recomputed.recomputed_trace,
-                recomputed.divergence,
-                recomputed.final_result,
-                recomputed.consensus,
-            )
-        }
-        ClaimedCheckpoints::Trace { .. } => {
-            let recomputed = executor.run(CheckpointedInferenceConfig {
-                base_dir: options.base_dir.clone(),
-                manifest_path: manifest_path.clone(),
-                current_exe: options.current_exe.clone(),
-                staged_backend: options.staged_backend,
-                parity_policy: ParityPolicy::Skip,
-            })?;
-            let recomputed_trace = build_checkpoint_trace(&recomputed.chain_dir, &manifest_path)?;
-            let recomputed_trace_path = recomputed
-                .chain_dir
-                .join(inference_artifacts::CHECKPOINT_TRACE_JSON);
-            let divergence =
-                claimed_input.locate_divergence(&recomputed_trace_path, &recomputed_trace)?;
-            (
-                recomputed.chain_dir,
-                recomputed_trace,
-                divergence,
-                recomputed.final_result,
-                recomputed.consensus,
-            )
-        }
-    };
+            ClaimedCheckpoints::Hashes { path, hashes } => {
+                let recomputed =
+                    executor.run_until_hash_divergence(CheckpointHashChallengeConfig {
+                        base_dir: options.base_dir.clone(),
+                        manifest_path: manifest_path.clone(),
+                        current_exe: options.current_exe.clone(),
+                        staged_backend: options.staged_backend,
+                        claimed_hashes_path: path.clone(),
+                        claimed_hashes: hashes.clone(),
+                    })?;
+                (
+                    recomputed.chain_dir,
+                    recomputed.recomputed_trace,
+                    recomputed.divergence,
+                    recomputed.final_result,
+                    recomputed.consensus,
+                )
+            }
+            ClaimedCheckpoints::Trace { .. } => {
+                let recomputed = executor.run(CheckpointedInferenceConfig {
+                    base_dir: options.base_dir.clone(),
+                    manifest_path: manifest_path.clone(),
+                    current_exe: options.current_exe.clone(),
+                    staged_backend: options.staged_backend,
+                    parity_policy: ParityPolicy::Skip,
+                })?;
+                let recomputed_trace =
+                    build_checkpoint_trace(&recomputed.chain_dir, &manifest_path)?;
+                let recomputed_trace_path = recomputed
+                    .chain_dir
+                    .join(inference_artifacts::CHECKPOINT_TRACE_JSON);
+                let divergence =
+                    claimed_input.locate_divergence(&recomputed_trace_path, &recomputed_trace)?;
+                (
+                    recomputed.chain_dir,
+                    recomputed_trace,
+                    divergence,
+                    recomputed.final_result,
+                    recomputed.consensus,
+                )
+            }
+        };
     let recomputed_trace_path =
         write_checkpoint_trace_artifact(&recomputed_chain_dir, &recomputed_trace)?;
     let checkpoint_trace_duration = checkpoint_trace_started.elapsed();
@@ -268,10 +281,36 @@ fn challenge_run(
         current_exe: options.current_exe.clone(),
         staged_backend: options.staged_backend,
         claimed_token_ids: None,
-        direct_output_ids: None,
+        direct_output_ids: options.direct_output_ids.clone(),
         claimer: None,
     })?;
-    Ok((prepared.manifest_path, None))
+    let ChallengeInput::Posted { submission_path } = &options.input else {
+        // A bare trace claims nothing.
+        return Ok((prepared.manifest_path, None));
+    };
+    // The run must be over what the claim posted: its text, or its source.
+    // Any other run differs from the claim at its first stage and disputes
+    // nothing the claimer did.
+    let submission: inference_artifacts::contract::ClaimSubmission =
+        inference_artifacts::read_json(submission_path)?;
+    let prompt = &prepared.prepared_run.first()?.prompt;
+    let text_sha256 = hex::encode(<sha2::Sha256 as sha2::Digest>::digest(
+        prompt.resolved_prompt.as_bytes(),
+    ));
+    let source_sha256 = prompt
+        .source
+        .as_ref()
+        .map(inference_artifacts::contract::source_record_id)
+        .unwrap_or_else(inference_artifacts::inference::no_source_id);
+    anyhow::ensure!(
+        text_sha256.eq_ignore_ascii_case(&submission.input_text_sha256)
+            && source_sha256.eq_ignore_ascii_case(&submission.source_sha256),
+        "the run spec's prompt is not the one the claim names: give --run the spec `iris claim \
+         fetch` wrote beside the submission"
+    );
+    // A posted claim is a claim: with no checkpoint to dispute it is judged
+    // by its own final record.
+    Ok((prepared.manifest_path, Some(prepared.prepared_run)))
 }
 
 /// Prepares the claim's prompt, token budget and claimed ids from the model the
@@ -335,7 +374,11 @@ fn rebuild_teacher_forced_run(
         &claimed.prompt.forms,
         &ids,
     )?;
-    for (claimed, rebuilt) in frozen.inferences.iter().zip(&rebuilt.prepared_run.inferences) {
+    for (claimed, rebuilt) in frozen
+        .inferences
+        .iter()
+        .zip(&rebuilt.prepared_run.inferences)
+    {
         if rebuilt.model_id != claimed.model_id {
             eprintln!(
                 "warning: the claim names model {}, but --run selects model {}; a divergence here means the claim did not run the selected model",
@@ -602,6 +645,17 @@ fn load_claimed_input(input: &ChallengeInput) -> Result<ClaimedInput> {
                     path: path.clone(),
                     trace,
                 },
+                prepared_run: None,
+            })
+        }
+        ChallengeInput::Posted { submission_path } => {
+            let path = submission_path
+                .parent()
+                .context("the claim submission has no parent directory")?
+                .join(inference_artifacts::CHECKPOINTS_TXT);
+            let hashes = read_checkpoint_hashes(&path)?;
+            Ok(ClaimedInput {
+                checkpoints: ClaimedCheckpoints::Hashes { path, hashes },
                 prepared_run: None,
             })
         }
@@ -892,6 +946,7 @@ impl ChallengeBuildOptions {
             current_exe,
             staged_backend,
             input,
+            direct_output_ids: None,
         })
     }
 }
@@ -936,6 +991,7 @@ mod tests {
             current_exe: PathBuf::from("unused"),
             staged_backend: StagedExecutionBackend::InProcess,
             input: ChallengeInput::Trace(base.join("trace.json")),
+            direct_output_ids: None,
         };
         let claimed = ClaimedInput {
             checkpoints: ClaimedCheckpoints::Trace {
@@ -1326,6 +1382,7 @@ mod tests {
             current_exe: PathBuf::from("unused"),
             staged_backend: StagedExecutionBackend::InProcess,
             input: ChallengeInput::Trace(base.join("trace.json")),
+            direct_output_ids: None,
         };
         // The claimer's model files are not needed to challenge the claim.
         fs::remove_dir_all(base.join("models/claimers-model")).unwrap();
@@ -1341,7 +1398,10 @@ mod tests {
             fs::canonicalize(&rebuilt.inferences[0].model_manifest_path).unwrap(),
             fs::canonicalize(&selected).unwrap()
         );
-        assert_ne!(rebuilt.inferences[0].model_id, frozen.inferences[0].model_id);
+        assert_ne!(
+            rebuilt.inferences[0].model_id,
+            frozen.inferences[0].model_id
+        );
 
         // Same text, so every range's text and the text claim agree; the
         // configuration names a different model, so the bind's committed
@@ -1383,6 +1443,7 @@ mod tests {
             current_exe: PathBuf::from("unused"),
             staged_backend: StagedExecutionBackend::InProcess,
             input: ChallengeInput::Trace(base.join("trace.json")),
+            direct_output_ids: None,
         };
         let claimed = ClaimedInput {
             checkpoints: ClaimedCheckpoints::Trace {
