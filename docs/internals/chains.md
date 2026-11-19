@@ -20,6 +20,7 @@ Both chains run locally from [`devstack/`](../../devstack/README.md).
 | Read a block's root for the relayer | iris | `iris da block-root` |
 | Write the bytes of each contract call | iris | `iris evm configuration`, `iris evm claim`, `iris evm challenge`, `iris evm fault-proof` |
 | Name Raster's proof programs for a deployment | iris | `iris evm proof-programs` |
+| Measure what a submission put on Celestia | iris | `iris da contents` |
 | Read a submitted claim's data back, as a challenger | iris | `iris claim fetch` |
 | Read a submitted challenge's trace back, as a defender | iris | `iris challenge fetch` |
 | Send the transactions, relay the roots, keep the results | the caller | `devstack/submit.py`, or iris-backend |
@@ -59,6 +60,47 @@ over them in subtrees, and a Merkle root over the subtree roots. iris computes
 it itself (`inference_artifacts::celestia::blob_commitment`), so a pointer can
 be checked before anything is posted. The tests reproduce seven commitments
 the local node gave.
+
+### What a submission posts
+
+`iris da contents --submission <claim or challenge submission>` reads every
+blob the submission names back from the layer and says what each holds:
+
+```json
+{
+  "bytes": 182482,
+  "blobs": [
+    {
+      "height": 40003,
+      "commitment": "da10...",
+      "bytes": 182482,
+      "framing_bytes": 57,
+      "parts": [
+        { "kind": "prompt_text", "bytes": 11, "text_bytes": 9 },
+        {
+          "kind": "checkpoints",
+          "bytes": 182414,
+          "list_bytes": 9490,
+          "trace_bytes": 70459,
+          "input_manifests": 146,
+          "input_manifest_bytes": 102165
+        }
+      ]
+    }
+  ]
+}
+```
+
+`bytes` is everything posted: the whole of every blob. A part's `bytes` is
+its size as the blob encodes it, and `framing_bytes` is the rest of the blob
+(the magic, the submitter and the lengths), so a blob's parts and framing add
+up to it. A claim posts its prompt text or its source (`kind: "source"`, with
+the documents' bodies apart from the attestations and recipe) and its
+checkpoints: the list, the checkpoints and every input manifest. A challenge
+posts the challenger's trace of the stage (`kind: "trace_body"`).
+
+The numbers above are a one-token claim of Gemma 4 E2B: 146 checkpoints, and
+the input manifests are over half of it.
 
 ## The contracts
 

@@ -914,6 +914,32 @@ fn contract_challenge(
             checkpoint.stage
         );
     }
+    // What the claim put on the layer, measured there: every byte of the
+    // blobs it names, with the list and the checkpoints at the sizes of the
+    // files that were posted.
+    let measured = crate::posted::measure_posting(&claim_path, None)
+        .with_context(|| format!("`{name}`: measuring what the lying claim posted"))?;
+    let posted: inference_artifacts::contract::ClaimSubmission = read_json(&claim_path)?;
+    ensure!(
+        measured["bytes"].as_u64()
+            == Some(posted.availability.iter().map(|blob| blob.length).sum()),
+        "`{name}`: the bytes measured on the layer are not the blobs the claim names"
+    );
+    let checkpoints = measured["blobs"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .flat_map(|blob| blob["parts"].as_array().into_iter().flatten())
+        .find(|part| part["kind"] == "checkpoints")
+        .with_context(|| format!("`{name}`: no checkpoints were measured on the layer"))?;
+    ensure!(
+        checkpoints["list_bytes"].as_u64()
+            == Some(fs::metadata(dir.join(inference_artifacts::CHECKPOINTS_TXT))?.len())
+            && checkpoints["trace_bytes"].as_u64()
+                == Some(fs::metadata(dir.join(inference_artifacts::CHECKPOINT_TRACE_JSON))?.len()),
+        "`{name}`: the checkpoints measured on the layer are not the size of the ones posted"
+    );
+    outcome["posted_bytes"] = measured["bytes"].clone();
     outcome["read_back_from_the_layer"] = json!(true);
     if challenge_as_posted {
         // And a challenge built from that directory alone, with nothing of

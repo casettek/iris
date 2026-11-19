@@ -108,6 +108,10 @@ python3 devstack/submit.py claim --run spec.toml --submission lying/claim_submis
 
 A defender reads a challenge's trace back the same way: `iris challenge fetch
 --challenge <challenge_submission.json> --out commit.bin`.
+
+`iris da contents --submission <submission>` measures what a claim or a
+challenge put on Celestia: every blob read back, and its size split among
+what it holds.
 [The chains](../docs/internals/chains.md#starting-from-the-chains) says what
 each of these checks.
 

@@ -488,3 +488,94 @@ pub fn fetch_challenge(options: FetchChallengeOptions) -> Result<FetchedChalleng
     }
     bail!("no blob the challenge posted holds the trace it names ({wanted})")
 }
+
+/// What a submission put on the layer, measured there: each blob it names is
+/// read back, and its size is split among what it holds.
+///
+/// `bytes` is everything posted: the whole of every blob. Each blob's parts
+/// are sized as the blob encodes them, and `framing_bytes` is what is left:
+/// the magic, the submitter and the lengths. A source's size is split into
+/// its documents' bodies and the rest (the attestations, the recipe and the
+/// signer's key), and a claim's checkpoints into the list, the checkpoints
+/// and the input manifests.
+pub fn measure_posting(submission_path: &Path, da_dir: Option<&Path>) -> Result<serde_json::Value> {
+    #[derive(serde::Deserialize)]
+    struct Posted {
+        #[serde(default)]
+        availability: Vec<inference_artifacts::availability::PostedBlob>,
+    }
+    let submission: Posted = read_json(submission_path)?;
+    ensure!(
+        !submission.availability.is_empty(),
+        "{} names no posted data: nothing was posted",
+        submission_path.display()
+    );
+    let layer = open_layer(da_dir)?;
+    let encoded =
+        |entry: &BlobEntry| -> Result<u64> { Ok(postcard::to_allocvec(entry)?.len() as u64) };
+    let mut blobs = Vec::new();
+    let mut total = 0u64;
+    for (index, posted) in submission.availability.iter().enumerate() {
+        let bytes = layer
+            .read(&posted.pointer)
+            .with_context(|| format!("blob {index} could not be read from the layer"))?;
+        ensure!(
+            bytes.len() as u64 == posted.length,
+            "blob {index} is {} bytes on the layer, and the submission says {}",
+            bytes.len(),
+            posted.length
+        );
+        let blob =
+            Blob::decode(&bytes).map_err(|fault| anyhow::anyhow!("blob {index}: {fault}"))?;
+        let mut parts = Vec::new();
+        let mut held = 0u64;
+        for entry in &blob.entries {
+            let size = encoded(entry)?;
+            held += size;
+            parts.push(match entry {
+                BlobEntry::Source(source) => {
+                    let bodies: u64 = source
+                        .documents
+                        .iter()
+                        .map(|document| document.body.len() as u64)
+                        .sum();
+                    serde_json::json!({
+                        "kind": "source",
+                        "bytes": size,
+                        "documents": source.documents.len(),
+                        "document_bytes": bodies,
+                        "other_bytes": size - bodies,
+                    })
+                }
+                BlobEntry::PromptText { text } => serde_json::json!({
+                    "kind": "prompt_text",
+                    "bytes": size,
+                    "text_bytes": text.len(),
+                }),
+                BlobEntry::Checkpoints(package) => serde_json::json!({
+                    "kind": "checkpoints",
+                    "bytes": size,
+                    "list_bytes": package.list.len(),
+                    "trace_bytes": package.trace.len(),
+                    "input_manifests": package.input_manifests.len(),
+                    "input_manifest_bytes":
+                        package.input_manifests.iter().map(Vec::len).sum::<usize>(),
+                }),
+                BlobEntry::TraceBody { bytes: body } => serde_json::json!({
+                    "kind": "trace_body",
+                    "bytes": size,
+                    "trace_bytes": body.len(),
+                }),
+            });
+        }
+        total += posted.length;
+        blobs.push(serde_json::json!({
+            "height": posted.pointer.height,
+            "commitment": posted.pointer.commitment,
+            "bytes": posted.length,
+            "framing_bytes": posted.length - held,
+            "parts": parts,
+        }));
+    }
+    Ok(serde_json::json!({ "bytes": total, "blobs": blobs }))
+}

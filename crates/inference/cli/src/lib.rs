@@ -360,6 +360,15 @@ enum DaCommand {
         #[arg(long = "da-dir")]
         da_dir: Option<PathBuf>,
     },
+    /// What a submission put on the layer, measured there: every blob it
+    /// names is read back and its size split among what it holds.
+    Contents {
+        /// A claim's or a challenge's submission, posted.
+        #[arg(long)]
+        submission: PathBuf,
+        #[arg(long = "da-dir")]
+        da_dir: Option<PathBuf>,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -1054,6 +1063,14 @@ fn execute(cli: Cli) -> Result<ExitCode> {
                     let attested = evm::attest_submission(&path, layer.as_ref())?;
                     println!("attested blobs: {attested}");
                     println!("submission: {}", path.display());
+                }
+                DaCommand::Contents { submission, da_dir } => {
+                    let da_dir = da_dir.map(|dir| absolute(&base_dir, &dir));
+                    let measured = posted::measure_posting(
+                        &absolute(&base_dir, &submission),
+                        da_dir.as_deref(),
+                    )?;
+                    println!("{}", serde_json::to_string_pretty(&measured)?);
                 }
             }
             Ok(ExitCode::SUCCESS)
