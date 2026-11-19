@@ -6,3 +6,6 @@ solc = "0.8.28"
 via_ir = true
 optimizer = true
 optimizer_runs = 200
+libs = ["lib"]
+remappings = ["risc0/=lib/risc0-ethereum/src/", "openzeppelin/=lib/openzeppelin/"]
+fs_permissions = [{ access = "read", path = "./test" }]

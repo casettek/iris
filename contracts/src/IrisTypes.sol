@@ -168,3 +168,12 @@ struct Challenge {
     bytes32 claimedOutput;
     PostedBlob[] availability;
 }
+
+/// A Raster fault proof of a challenger's trace: the journal of Raster's
+/// transition program as RISC Zero wrote it, and the Groth16 seal over it as
+/// RISC Zero's verifier takes it (the verifier's selector, then the proof).
+struct FaultProof {
+    bytes32 challengeId;
+    bytes journal;
+    bytes seal;
+}

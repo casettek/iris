@@ -1,15 +1,18 @@
 #!/usr/bin/env python3
-"""Send a claim or a challenge to the local contracts, as the trusted host
-and the sender would.
+"""Send a claim, a challenge or a fault proof to the local contracts, as the
+trusted host and the sender would.
 
   submit.py claim --run <spec.toml> --submission <claim_submission.json>
-  submit.py challenge --run <spec.toml> --submission <claim_submission.json> \\
+  submit.py challenge --submission <claim_submission.json> \\
                       --challenge <challenge_submission.json>
+  submit.py fault-proof --submission <claim_submission.json> \\
+                        --challenge <challenge_submission.json> --receipt <fault.receipt>
 
 For a claim: the attester signs each posted blob, the relayer posts the block
 roots those blobs are under, the configuration is registered if it is not, and
 the claim is submitted. For a challenge: the same for its trace body, then the
-challenge is submitted.
+challenge is submitted. A fault proof answers a challenge the contract holds:
+it is sent as it is, and the contract verifies it.
 
 Prints one JSON object: whether the contract took it, the id it gave it, or
 the error it reverted with. iris itself sends nothing: it writes the bytes,
@@ -128,10 +131,11 @@ def submit(function, built, arguments):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("what", choices=["claim", "challenge"])
-    parser.add_argument("--run", required=True, help="the run spec of the configuration")
+    parser.add_argument("what", choices=["claim", "challenge", "fault-proof"])
+    parser.add_argument("--run", help="the run spec of a claim's configuration")
     parser.add_argument("--submission", required=True, help="the claim's claim_submission.json")
     parser.add_argument("--challenge", help="the challenge's challenge_submission.json")
+    parser.add_argument("--receipt", help="the fault proof `iris fault prove` wrote")
     parser.add_argument("--no-attest", action="store_true")
     parser.add_argument("--no-relay", action="store_true")
     parser.add_argument("--no-register", action="store_true")
@@ -143,8 +147,21 @@ def main():
         built = json.loads(iris("evm", "claim", "--submission", arguments.submission))
         outcome = {"claim": built["claim"]}
         if not arguments.no_register:
+            if not arguments.run:
+                parser.error("registering a claim's configuration needs --run")
             outcome["configuration"] = register(arguments.run)
         outcome.update(submit("submitClaim", built, arguments))
+    elif arguments.what == "fault-proof":
+        if not arguments.challenge or not arguments.receipt:
+            parser.error("a fault proof needs --challenge and --receipt")
+        built = json.loads(iris("evm", "fault-proof", "--receipt", arguments.receipt,
+                                "--challenge", arguments.challenge,
+                                "--submission", arguments.submission))
+        # What iris expects the contract to say of the journal, beside what
+        # the contract said.
+        outcome = {"challenge": built["challenge"], "expected_rejection": built["rejection"]}
+        ok, result = send(DEPLOYMENT["claims"], "submitFaultProof(bytes)", built["argument"])
+        outcome.update({"accepted": True} if ok else {"accepted": False, **result})
     else:
         if not arguments.challenge:
             parser.error("a challenge needs --challenge")
@@ -152,7 +169,7 @@ def main():
             iris("da", "attest", "--submission", arguments.challenge)
         built = json.loads(iris("evm", "challenge", "--challenge", arguments.challenge,
                                 "--submission", arguments.submission))
-        outcome = {"claim": built["claim"]}
+        outcome = {"claim": built["claim"], "challenge": built["challenge"]}
         outcome.update(submit("submitChallenge", built, arguments))
     print(json.dumps(outcome, indent=2))
     sys.exit(0 if outcome["accepted"] else 1)

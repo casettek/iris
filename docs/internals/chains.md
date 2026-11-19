@@ -18,7 +18,8 @@ Both chains run locally from [`devstack/`](../../devstack/README.md).
 | Post the blobs to Celestia | iris | `iris claim post` |
 | Sign what each blob holds, as the attester | iris, with the attester's key | `iris da attest` |
 | Read a block's root for the relayer | iris | `iris da block-root` |
-| Write the bytes of each contract call | iris | `iris evm configuration`, `iris evm claim`, `iris evm challenge` |
+| Write the bytes of each contract call | iris | `iris evm configuration`, `iris evm claim`, `iris evm challenge`, `iris evm fault-proof` |
+| Name Raster's proof programs for a deployment | iris | `iris evm proof-programs` |
 | Read a submitted claim's data back, as a challenger | iris | `iris claim fetch` |
 | Read a submitted challenge's trace back, as a defender | iris | `iris challenge fetch` |
 | Send the transactions, relay the roots, keep the results | the caller | `devstack/submit.py`, or iris-backend |
@@ -61,13 +62,14 @@ the local node gave.
 
 ## The contracts
 
-Three contracts, in [`contracts/src`](../../contracts/src):
+Four contracts, in [`contracts/src`](../../contracts/src):
 
 | Contract | Holds | Entry points |
 | --- | --- | --- |
 | `IrisRegistry` | Each registered configuration, under its id | `register(bytes)`, by the owner |
 | `DataRootOracle` | Each Celestia block's data root and time, by height | `post(height, dataRoot, time)`, by the relayer |
-| `IrisClaims` | Each accepted claim and admitted challenge | `submitClaim(bytes)`, `submitChallenge(bytes)` |
+| `IrisClaims` | Each accepted claim and admitted challenge, and whether a fault proof dismissed it | `submitClaim(bytes)`, `submitChallenge(bytes)`, `submitFaultProof(bytes)` |
+| `RasterVerifier` | Nothing: RISC Zero's verifier of a Groth16 proof | `verify(seal, imageId, journalDigest)`, called by `IrisClaims` |
 
 Each entry point takes one `bytes` argument, the ABI encoding of one struct
 (`IrisTypes.sol`), and decodes it itself. iris writes that encoding
@@ -125,9 +127,58 @@ of its own that could name another one: Raster's one-stage commitment is made
 from the checkpoint, not submitted. `iris evm challenge` refuses to encode a
 challenge that was built about another checkpoint, since those bytes would
 state a challenge nobody made. Whether the trace is a run of that
-checkpoint's program on its inputs is what a defence settles.
+checkpoint's program on its inputs is what a fault proof settles.
 
 The same claim, or the same challenge, is refused a second time.
+
+### What `submitFaultProof` checks
+
+A challenge says that honest execution of the disputed checkpoint's program
+on its inputs gives another output, and posts the trace of that execution. A
+Raster fault proof answers it: a window of that trace re-executed in RISC
+Zero, ending at a step the trace gets wrong. `iris fault prove` writes it as
+a Groth16 proof of Raster's transition program, and that proof, as it is, is
+what the contract takes. Nothing else is proven for the chain.
+
+1. The challenge is one the contract admitted and has not dismissed.
+2. The proof's journal says the window reached the fault verdict.
+3. The journal names the transition and authorization programs the contract
+   was deployed with. A journal says which programs checked the window's
+   earlier steps and its inputs, and a proof that names others was checked by
+   nothing the contract knows.
+4. The trace the window refutes is the one the challenge posted: its header
+   digest is the one stored when the challenge was admitted.
+5. The window runs the disputed checkpoint's program, on the disputed
+   checkpoint's inputs. Both are stored when the challenge is admitted.
+6. The Groth16 seal verifies over the whole journal, as a proof of the
+   transition program.
+
+Steps 2 to 5 are the checks `raster_core::chain::defend` makes for a
+refutation. Step 4 is there because a real proof that some other trace is
+false would otherwise dismiss an honest challenge. Step 5 is there because a
+real proof that the trace is not a run of some other program, or on other
+inputs, is true of every trace.
+
+The challenge is then marked dismissed, with the time. Anyone may send the
+proof: it says the same whoever holds it. No clock is read, and nothing
+follows from a dismissal yet (see [Not built](#not-built)).
+
+**The journal.** A fault proof's journal is Raster's `TransitionJournal` as
+RISC Zero wrote it, and it begins with the window's opening state, whose size
+depends on where the window opens. `RasterJournal.sol` finds the fields above
+by walking it. `iris evm fault-proof` makes the same reading of the bytes
+(`inference_artifacts::evm::read_fault_journal`) and holds it to the decoded
+journal every time it writes a call, and a unit test holds it to RISC Zero's
+own encoding, so a change of Raster's journal is caught before a contract
+reads one wrongly.
+
+**The verifier.** `RasterVerifier` is RISC Zero's `RiscZeroGroth16Verifier`,
+unchanged, from `risc0-ethereum` v3.0.1 (`contracts/lib`, with the one
+OpenZeppelin file it imports). That release takes proofs of the RISC Zero
+circuits Raster is built with. A deployment also pins the ids of Raster's two
+proof programs, which `iris evm proof-programs` prints, so it takes fault
+proofs of one build of Raster: after a Raster update, build iris and deploy
+again.
 
 ## Starting from the chains
 
@@ -194,6 +245,13 @@ honest party runs.
 A contract takes both, as it must: nothing at arrival tells them from honest
 ones.
 
+The staged dispute then ends as a real one would. `iris fault prove` proves a
+window of the corrupted trace, read back from Celestia, and `iris evm
+fault-proof --receipt <fault.receipt> --challenge <challenge_submission.json>
+--submission <claim_submission.json>` writes the call that answers the
+corrupted challenge with it. The call also carries `rejection`: the contract
+error iris expects from the journal, or null.
+
 ## What a trusted host does in place of a proof
 
 | Trusted part | What it does | What replaces it |
@@ -223,6 +281,16 @@ A few cases are the contract's alone, and the replay prints them as such:
   claim's directory and stops before its checks when the list there is not
   the one the submission names.
 
+A fault proof is tested apart from the replay, since a real one takes a
+prover to make. `contracts/test/FaultProof.t.sol` (`just contracts-test`, a
+few seconds, in the Foundry image) gives `submitFaultProof` a real Groth16
+fault proof of a small stage, kept as `contracts/test/fault_proof.json`:
+RISC Zero's verifier takes it, the challenge it is about is dismissed once,
+and the same proof is refused against a challenge of another trace, another
+program or other inputs, under other pinned programs, and with its journal or
+its seal changed. The proof names its own programs, so it stays one whatever
+Raster's current programs are.
+
 The claims and challenges to replay come from the parity gate run against
 Celestia (`IRIS_CELESTIA_RPC=... just test-parity`), which leaves them posted:
 a claim with a source, a consensus claim, and for each falsified checkpoint a
@@ -241,13 +309,32 @@ record the claim names.
 
 ## Not built
 
-- **After arrival.** The defence of a challenge, the clocks that close a
-  claim, bonds, and what a claim nobody successfully challenged becomes.
-- **The fault proof on chain.** No contract call takes a proof. `iris fault
-  prove` also still holds its proof to the checkpoint of the claim bundle it
-  is given, which in a staged dispute is the honest claim's, while the
-  challenge on chain is of the lying claim's checkpoint. A proof a contract
-  takes has to be about the challenge the contract holds.
+The contract covers the two cases Raster covers today: a claim is challenged
+with a replayed checkpoint, and a challenge is shown false with a fault proof
+of its trace. What is around them is open, and each is its own piece of work:
+
+- **What follows.** Nothing reads a dismissal, or the lack of one. A claim
+  with an unanswered challenge and a claim with none are held the same way.
+  The clocks that close a claim or a challenge, bonds, and what a claim nobody
+  successfully challenged becomes are not built. `submitFaultProof` reads no
+  clock: the fault-proof window is used only for how long a challenge's trace
+  must stay retrievable.
+- **Several challenges of one claim.** Each is admitted and dismissed alone.
+  How they are settled together belongs with the clocks and bonds.
+- **A true trace with a false label.** Raster has a second defence: the
+  challenger's trace is an honest run, and ends in another output than the
+  challenger stated for it (`TerminalMatch`). The contract does not take it,
+  so such a challenge cannot be dismissed on chain yet. It needs the stated
+  output compared with the one the window ends in.
+- **`iris fault prove` and the contract ask slightly different things.**
+  `fault prove` holds its proof to the checkpoint of the claim bundle it is
+  given, which in a staged dispute is the honest claim's, while the challenge
+  on chain is of the lying claim's checkpoint. The two have the same program
+  and inputs, which is all a fault proof names, so the proof serves both.
+  `fault prove` also does not ask which authorization program the journal
+  names; `iris evm fault-proof` and the contract do.
+- **Upgrades.** A deployment takes proofs of one build of Raster and one
+  release of RISC Zero's circuits.
 - **The proof program.** See the trusted parts above.
 - **Raster's admission of a challenge.** `iris challenge check` asks Raster
   whether it admits the challenge (`verify_challenge`). The contract does not,

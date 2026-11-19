@@ -5,6 +5,8 @@ import "./IrisTypes.sol";
 import "./IrisEncoding.sol";
 import "./IrisRegistry.sol";
 import "./DataRootOracle.sol";
+import "./RasterJournal.sol";
+import {IRiscZeroVerifier} from "risc0/IRiscZeroVerifier.sol";
 
 /// Where a claim and a challenge arrive, and the checks made of each on
 /// arrival: `inference_artifacts::contract` and `::availability`, in the
@@ -16,9 +18,14 @@ import "./DataRootOracle.sol";
 /// block and what it holds. And Celestia's block roots come from a trusted
 /// relayer through `DataRootOracle`.
 ///
-/// What happens after arrival is not here: the defence of a challenge, the
-/// clocks that close a claim, bonds, and what a contract does with a claim
-/// nobody successfully challenged.
+/// A challenge is answered with a Raster fault proof of the challenger's
+/// trace (`submitFaultProof`), which this contract verifies for real: the
+/// Groth16 proof through RISC Zero's verifier, and what its journal says
+/// against the challenge it holds.
+///
+/// What follows from any of it is not here: the clocks that close a claim or
+/// a challenge, bonds, how several challenges of one claim are settled, and
+/// what a contract does with a claim nobody successfully challenged.
 contract IrisClaims {
     IrisRegistry public immutable registry;
     DataRootOracle public immutable oracle;
@@ -30,6 +37,13 @@ contract IrisClaims {
     uint64 public immutable challengePeriod;
     /// How long a defender has to answer a challenge.
     uint64 public immutable faultProofWindow;
+    /// RISC Zero's verifier of a Groth16 proof.
+    IRiscZeroVerifier public immutable verifier;
+    /// Raster's transition program: the one a fault proof is a proof of.
+    bytes32 public immutable transitionImageId;
+    /// Raster's authorization program: the one a fault proof's inputs were
+    /// checked by.
+    bytes32 public immutable authorizationImageId;
 
     struct Accepted {
         bytes32 configuration;
@@ -46,6 +60,12 @@ contract IrisClaims {
         bytes32 traceHeaderDigest;
         bytes32 claimedOutput;
         uint64 challengedAt;
+        /// The disputed checkpoint's program and inputs: what a fault proof
+        /// of the challenger's trace has to be about.
+        bytes32 program;
+        bytes32 inputCommitment;
+        /// When a fault proof showed the challenger's trace false, or zero.
+        uint64 dismissedAt;
     }
 
     mapping(bytes32 => Accepted) public claims;
@@ -57,6 +77,7 @@ contract IrisClaims {
     event ChallengeAdmitted(
         bytes32 indexed challengeId, bytes32 indexed claimId, address indexed challenger, uint32 stage
     );
+    event ChallengeDismissed(bytes32 indexed challengeId, bytes32 indexed claimId);
 
     // The claim is of no registered configuration, or does not hold what a
     // claim of its pipeline does.
@@ -100,6 +121,16 @@ contract IrisClaims {
     error NotTheCheckpoint();
     error UnapprovedProgram(bytes32 program);
     error OutputNotDisputed();
+    // A fault proof.
+    error UnknownChallenge(bytes32 id);
+    error AlreadyDismissed(bytes32 id);
+    error NotAFaultVerdict();
+    error TransitionImageIdMismatch();
+    error AuthorizationImageIdMismatch();
+    error AnotherTraceCommitment();
+    error AnotherProgram();
+    error AnotherInputManifest();
+    error ProofNotVerified();
 
     constructor(
         IrisRegistry registry_,
@@ -107,7 +138,10 @@ contract IrisClaims {
         address attester_,
         uint64 retention_,
         uint64 challengePeriod_,
-        uint64 faultProofWindow_
+        uint64 faultProofWindow_,
+        IRiscZeroVerifier verifier_,
+        bytes32 transitionImageId_,
+        bytes32 authorizationImageId_
     ) {
         registry = registry_;
         oracle = oracle_;
@@ -116,6 +150,10 @@ contract IrisClaims {
         retention = retention_;
         challengePeriod = challengePeriod_;
         faultProofWindow = faultProofWindow_;
+        require(address(verifier_) != address(0), "no verifier");
+        verifier = verifier_;
+        transitionImageId = transitionImageId_;
+        authorizationImageId = authorizationImageId_;
     }
 
     // ----------------------------------------------------------------- claim
@@ -389,8 +427,57 @@ contract IrisClaims {
             stage: challenge.stage,
             traceHeaderDigest: challenge.traceHeaderDigest,
             claimedOutput: challenge.claimedOutput,
-            challengedAt: uint64(block.timestamp)
+            challengedAt: uint64(block.timestamp),
+            program: challenge.checkpoint.program,
+            inputCommitment: challenge.checkpoint.inputCommitment,
+            dismissedAt: 0
         });
         emit ChallengeAdmitted(challengeId, challenge.claimId, challenge.challenger, challenge.stage);
+    }
+
+    // -----------------------------------------------------------------------
+    // A fault proof
+    // -----------------------------------------------------------------------
+
+    /// Show a challenger's trace false: `encoded` is a `FaultProof`, a Raster
+    /// fault proof as `iris fault prove` writes it.
+    ///
+    /// A challenge states that honest execution of the disputed checkpoint's
+    /// program on its inputs gives another output, and posts the trace of
+    /// that execution. A fault proof is a window of that trace re-executed in
+    /// RISC Zero, ending at a step the trace gets wrong. So the challenge is
+    /// dismissed when the proof is one of Raster's transition program, has
+    /// reached that verdict, and is about this challenge: the trace it posted,
+    /// the checkpoint's program and the checkpoint's inputs. These are the
+    /// checks of `raster_core::chain::defend` for a refutation, made here.
+    ///
+    /// Anyone may send it: the proof says the same whoever holds it. No clock
+    /// is read, and nothing follows from a dismissal yet.
+    function submitFaultProof(bytes calldata encoded) external {
+        FaultProof memory proof = abi.decode(encoded, (FaultProof));
+        Admitted storage challenge = challenges[proof.challengeId];
+        if (challenge.challengedAt == 0) revert UnknownChallenge(proof.challengeId);
+        if (challenge.dismissedAt != 0) revert AlreadyDismissed(proof.challengeId);
+
+        FaultVerdict memory verdict = RasterJournal.read(proof.journal);
+        if (!verdict.finished) revert NotAFaultVerdict();
+        // The journal names the programs its own earlier steps and its inputs
+        // were checked by. A proof that names others was checked by nothing
+        // this contract knows.
+        if (verdict.transitionImageId != transitionImageId) revert TransitionImageIdMismatch();
+        if (verdict.authorizationImageId != authorizationImageId) revert AuthorizationImageIdMismatch();
+        if (verdict.refutedTrace != challenge.traceHeaderDigest) revert AnotherTraceCommitment();
+        if (verdict.program != challenge.program) revert AnotherProgram();
+        if (verdict.inputManifest != challenge.inputCommitment) revert AnotherInputManifest();
+
+        // The verifier reverts on a proof it does not take, with its own
+        // errors or with none.
+        try verifier.verify(proof.seal, transitionImageId, sha256(proof.journal)) {}
+        catch {
+            revert ProofNotVerified();
+        }
+
+        challenge.dismissedAt = uint64(block.timestamp);
+        emit ChallengeDismissed(proof.challengeId, challenge.claimId);
     }
 }

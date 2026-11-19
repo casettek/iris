@@ -111,6 +111,29 @@ A defender reads a challenge's trace back the same way: `iris challenge fetch
 [The chains](../docs/internals/chains.md#starting-from-the-chains) says what
 each of these checks.
 
+## Answer a challenge with a fault proof
+
+A challenge is shown false with a Raster fault proof of its trace, as `iris
+fault prove` writes it:
+
+```bash
+python3 devstack/submit.py fault-proof --submission <claim_submission.json> \
+  --challenge <challenge_submission.json> --receipt <fault.receipt>
+```
+
+The contract verifies the Groth16 proof with RISC Zero's verifier and checks
+that it is about that challenge: its trace, and the disputed checkpoint's
+program and inputs. `iris evm fault-proof --receipt <fault.receipt>` alone
+prints what a contract is given and what it reads from the journal.
+
+The claims contract is deployed with the ids of Raster's proof programs as
+the iris binary names them (`iris evm proof-programs`), so `deploy.sh` needs
+a built iris, and a deployment made before a Raster update refuses proofs
+made after it. Deploy again.
+
+`just contracts-test` runs the contract's own test of this on a real proof
+kept in `contracts/test/fault_proof.json`. It needs Docker and no chain.
+
 ## Check the contracts against iris
 
 ```bash

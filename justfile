@@ -87,6 +87,10 @@ devstack-down:
 devstack-deploy:
     bash devstack/deploy.sh
 
+# The contracts' own tests, in the Foundry image: a real fault proof against `submitFaultProof`.
+contracts-test:
+    bash devstack/foundry.sh forge test
+
 # Hold the contracts to iris on one posted claim: <run spec> <claim_submission.json>
 devstack-replay run submission:
     python3 devstack/replay.py claim --run "{{run}}" --submission "{{submission}}"

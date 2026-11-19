@@ -188,6 +188,15 @@ def block_time(height):
     return json.loads(iris("da", "block-root", "--height", str(height)))["time"]
 
 
+def accepted_at(claim_id):
+    """When the contract accepted a claim, in Unix seconds."""
+    held = submit.call(DEPLOYMENT["claims"], "claims(bytes32)", claim_id,
+                       returns="(bytes32,address,uint32,bytes32,uint64)")
+    if held is None:
+        sys.exit(f"the contract does not answer for claim {claim_id}")
+    return int(held.splitlines()[4].split()[0])
+
+
 def unsign(submission):
     for blob in submission["availability"]:
         blob["proof"].pop("attestation", None)
@@ -341,8 +350,10 @@ def replay_challenge(arguments):
                   contract_verdict("submitChallenge", build(path, unknown)["argument"]),
                   contract_only="UnknownClaim")
     # The contract's alone: the Rust model keeps no clock for a claim yet.
+    # The period runs from when the contract accepted the claim, which can be
+    # long after the challenge's trace was posted.
     case("period-over", lambda s: None,
-         at=block_time(built["heights"][0]) + DEPLOYMENT["challenge_period_secs"] + 3600,
+         at=accepted_at(built["claim"]) + DEPLOYMENT["challenge_period_secs"] + 3600,
          contract_only="ChallengePeriodOver")
 
     if not already:

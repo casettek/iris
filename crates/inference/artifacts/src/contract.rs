@@ -38,7 +38,7 @@ use raster_core::chain::{
     defend, ChainCommitment, ChainShape, DefenceInput, DefenceJournal, DefenceRefusal,
     InputBindingSource, StageChallenge, StageCheckpoint,
 };
-use raster_core::transition::{TraceCommitmentHeader, TransitionJournal};
+use raster_core::transition::{TraceCommitmentHeader, TransitionJournal, TransitionState};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -1812,6 +1812,110 @@ pub fn check_defence(
         transition_image_id: transition_image_id.to_vec(),
     })
     .map_err(DefenceRejection::Refused)
+}
+
+/// Why a Raster fault proof does not dismiss a challenge a contract holds.
+/// Each is the error of the same name in `IrisClaims.submitFaultProof`, which
+/// makes these checks in this order.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FaultProofRejection {
+    /// The challenge's own commitment of the disputed stage does not decode.
+    MalformedChallenge,
+    /// The proven window has not ended at a step the trace gets wrong.
+    NotAFaultVerdict,
+    /// The window's earlier steps were checked by another transition program.
+    TransitionImageIdMismatch,
+    /// The window's inputs were checked by another authorization program.
+    AuthorizationImageIdMismatch,
+    /// The window refutes another trace than the one the challenge posted.
+    AnotherTraceCommitment,
+    /// The window runs another program than the disputed checkpoint's.
+    AnotherProgram,
+    /// The window runs on other inputs than the disputed checkpoint's.
+    AnotherInputManifest,
+}
+
+impl FaultProofRejection {
+    /// The contract error this is.
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::MalformedChallenge => "MalformedChallenge",
+            Self::NotAFaultVerdict => "NotAFaultVerdict",
+            Self::TransitionImageIdMismatch => "TransitionImageIdMismatch",
+            Self::AuthorizationImageIdMismatch => "AuthorizationImageIdMismatch",
+            Self::AnotherTraceCommitment => "AnotherTraceCommitment",
+            Self::AnotherProgram => "AnotherProgram",
+            Self::AnotherInputManifest => "AnotherInputManifest",
+        }
+    }
+}
+
+impl std::fmt::Display for FaultProofRejection {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let text = match self {
+            Self::MalformedChallenge => "the challenge's commitment of its stage does not decode",
+            Self::NotAFaultVerdict => "the proof has not reached a fault verdict",
+            Self::TransitionImageIdMismatch => {
+                "the proof's earlier steps were checked by another transition program"
+            }
+            Self::AuthorizationImageIdMismatch => {
+                "the proof's inputs were checked by another authorization program"
+            }
+            Self::AnotherTraceCommitment => {
+                "the proof refutes another trace than the one the challenge posted"
+            }
+            Self::AnotherProgram => "the proof runs another program than the checkpoint's",
+            Self::AnotherInputManifest => "the proof runs on other inputs than the checkpoint's",
+        };
+        write!(f, "{text} ({})", self.name())
+    }
+}
+
+/// Whether a Raster fault proof dismisses a challenge, as a contract decides
+/// it (`IrisClaims.submitFaultProof`).
+///
+/// `journal` is the journal of a receipt the caller has verified against the
+/// transition program. The two image ids are the ones a contract pins: the
+/// journal names the programs its earlier steps and its inputs were checked
+/// by, and a proof that names others was checked by nothing known.
+///
+/// These are the checks of `raster_core::chain::defend` for a refutation, on
+/// what a contract holds of the challenge: the digest of the trace it posted
+/// and the disputed checkpoint's program and inputs. A window that ends by
+/// matching the trace (`TerminalMatch`), which Raster takes as a defence when
+/// the trace's output is not the one the challenger stated, is not a fault
+/// proof and is not taken here.
+pub fn check_fault_proof(
+    challenge: &StageChallenge,
+    journal: &TransitionJournal,
+    transition_image_id: &[u8],
+    authorization_image_id: &[u8],
+) -> std::result::Result<(), FaultProofRejection> {
+    let chain: ChainCommitment = postcard::from_bytes(&challenge.chain_commitment_bytes)
+        .map_err(|_| FaultProofRejection::MalformedChallenge)?;
+    let stage = usize::try_from(challenge.challenged_stage)
+        .ok()
+        .and_then(|index| chain.stages.get(index))
+        .ok_or(FaultProofRejection::MalformedChallenge)?;
+    if !matches!(journal.current_state, TransitionState::Finished) {
+        return Err(FaultProofRejection::NotAFaultVerdict);
+    }
+    if journal.transition_image_id != transition_image_id {
+        return Err(FaultProofRejection::TransitionImageIdMismatch);
+    }
+    if journal.authorization_image_id != authorization_image_id {
+        return Err(FaultProofRejection::AuthorizationImageIdMismatch);
+    }
+    if journal.refuted_trace_commitment != challenge.trace_commitment_header.digest() {
+        return Err(FaultProofRejection::AnotherTraceCommitment);
+    }
+    if journal.program_commitment != stage.program_commitment {
+        return Err(FaultProofRejection::AnotherProgram);
+    }
+    if journal.input_manifest_commitment != stage.input_manifest_commitment {
+        return Err(FaultProofRejection::AnotherInputManifest);
+    }
+    Ok(())
 }
 
 /// Which rule settles a difference between a claimed checkpoint and the one a
@@ -3594,6 +3698,76 @@ inputs.second = { from = "m1_check_c@m1_LAST_CLAIMED_RANGE@" }
             ),
             Err(DefenceRejection::AnotherCheckpoint)
         );
+    }
+
+    #[test]
+    fn a_contract_takes_a_fault_proof_only_of_the_challenge_it_holds() {
+        const AUTHORIZATION_ID: [u8; 32] = [0xa0; 32];
+        let checkpoint = Claim::honest().trace.checkpoints[1].clone();
+        let challenge =
+            stage_challenge(&checkpoint, trace_header(), &hex::encode([0x13; 32])).unwrap();
+        let check = |journal: &TransitionJournal| {
+            check_fault_proof(&challenge, journal, &TRANSITION_ID, &AUTHORIZATION_ID)
+        };
+        let proven = || journal(&checkpoint, TransitionState::Finished, &[]);
+        assert_eq!(check(&proven()), Ok(()));
+
+        // The cheat this rule is for: a real proof that some other trace is
+        // false, sent against this challenge.
+        let mut another_trace = proven();
+        another_trace.refuted_trace_commitment = vec![9; 32];
+        assert_eq!(
+            check(&another_trace),
+            Err(FaultProofRejection::AnotherTraceCommitment)
+        );
+        // And a real proof that this trace is not a run of some other
+        // program, or on other inputs, which is true of every trace.
+        let mut another_program = proven();
+        another_program.program_commitment = vec![9; 32];
+        assert_eq!(
+            check(&another_program),
+            Err(FaultProofRejection::AnotherProgram)
+        );
+        let mut other_inputs = proven();
+        other_inputs.input_manifest_commitment = vec![9; 32];
+        assert_eq!(
+            check(&other_inputs),
+            Err(FaultProofRejection::AnotherInputManifest)
+        );
+        // A proof whose earlier steps or whose inputs were checked by a
+        // program the contract does not pin.
+        assert_eq!(
+            check_fault_proof(&challenge, &proven(), &[9; 32], &AUTHORIZATION_ID),
+            Err(FaultProofRejection::TransitionImageIdMismatch)
+        );
+        assert_eq!(
+            check_fault_proof(&challenge, &proven(), &TRANSITION_ID, &[9; 32]),
+            Err(FaultProofRejection::AuthorizationImageIdMismatch)
+        );
+        // A window that ended by matching the trace is not a fault proof,
+        // whatever output it ended in.
+        assert_eq!(
+            check(&journal(
+                &checkpoint,
+                TransitionState::TerminalMatch,
+                &[7; 32]
+            )),
+            Err(FaultProofRejection::NotAFaultVerdict)
+        );
+        // The verdict is asked first, as the contract asks it: a journal
+        // short of one has nothing else read from it.
+        let mut unfinished = journal(&checkpoint, TransitionState::TerminalMatch, &[]);
+        unfinished.refuted_trace_commitment = vec![9; 32];
+        assert_eq!(
+            check(&unfinished),
+            Err(FaultProofRejection::NotAFaultVerdict)
+        );
+
+        // Raster's own rule agrees wherever both speak.
+        assert!(check_defence(&checkpoint, &challenge, &proven(), &TRANSITION_ID).is_ok());
+        assert!(check_defence(&checkpoint, &challenge, &another_trace, &TRANSITION_ID).is_err());
+        assert!(check_defence(&checkpoint, &challenge, &another_program, &TRANSITION_ID).is_err());
+        assert!(check_defence(&checkpoint, &challenge, &other_inputs, &TRANSITION_ID).is_err());
     }
 
     #[test]

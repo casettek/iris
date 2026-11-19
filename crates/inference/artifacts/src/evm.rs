@@ -681,6 +681,107 @@ pub fn challenge_token(
     ]))
 }
 
+/// The id a contract gives a challenge: the SHA-256 of its ABI encoding,
+/// as a claim's is.
+pub fn challenge_id(
+    claim_id: &[u8; 32],
+    submission: &ChallengeSubmission,
+    checkpoint: &Checkpoint,
+    path: &[String],
+) -> Result<[u8; 32]> {
+    Ok(Sha256::digest(abi_encode(&challenge_token(
+        claim_id, submission, checkpoint, path,
+    )?))
+    .into())
+}
+
+// ---------------------------------------------------------------------------
+// A fault proof
+// ---------------------------------------------------------------------------
+
+/// A fault proof as `IrisClaims.submitFaultProof` takes it: the challenge it
+/// answers, the journal of Raster's transition program as RISC Zero wrote it,
+/// and the Groth16 seal as RISC Zero's verifier takes it.
+pub fn fault_proof_token(challenge_id: &[u8; 32], journal: &[u8], seal: &[u8]) -> Token {
+    Token::Tuple(vec![
+        Token::Word(*challenge_id),
+        Token::Bytes(journal.to_vec()),
+        Token::Bytes(seal.to_vec()),
+    ])
+}
+
+/// What a contract reads from a fault proof's journal: `RasterJournal.read`,
+/// byte for byte.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FaultVerdict {
+    pub transition_image_id: [u8; 32],
+    pub authorization_image_id: [u8; 32],
+    pub input_manifest: [u8; 32],
+    pub program: [u8; 32],
+    pub refuted_trace: [u8; 32],
+}
+
+/// Read a transition journal's bytes as `RasterJournal.read` does: `None`
+/// for bytes that are not one (the contract's `MalformedJournal`),
+/// `Some(None)` for a journal that has not reached the fault verdict, and
+/// the fields otherwise.
+///
+/// The journal is a run of little-endian 32-bit words. It begins with the
+/// window's opening state, whose size depends on where the window opens, so
+/// the fields are found by walking it. The layout is the transition
+/// program's: `iris evm fault-proof` checks this reading against the decoded
+/// journal every time it writes a call.
+pub fn read_fault_journal(journal: &[u8]) -> Option<Option<FaultVerdict>> {
+    struct Cursor<'a>(&'a [u8], usize);
+    impl Cursor<'_> {
+        fn skip(&mut self, bytes: usize) -> Option<()> {
+            self.1 = self.1.checked_add(bytes)?;
+            (self.1 <= self.0.len()).then_some(())
+        }
+        fn word(&mut self) -> Option<usize> {
+            let at = self.1;
+            self.skip(4)?;
+            Some(u32::from_le_bytes(self.0[at..at + 4].try_into().ok()?) as usize)
+        }
+        fn bytes(&mut self) -> Option<&[u8]> {
+            let length = self.word()?;
+            let at = self.1;
+            self.skip(length.checked_add(3)? / 4 * 4)?;
+            Some(&self.0[at..at + length])
+        }
+        fn hash(&mut self) -> Option<[u8; 32]> {
+            self.bytes()?.try_into().ok()
+        }
+        fn frontier(&mut self) -> Option<()> {
+            self.skip(8)?;
+            self.bytes()?;
+            for _ in 0..self.word()? {
+                self.bytes()?;
+            }
+            Some(())
+        }
+    }
+    const FINISHED: usize = 2;
+    let mut at = Cursor(journal, 0);
+    at.frontier()?;
+    at.frontier()?;
+    at.bytes()?;
+    at.bytes()?;
+    at.skip(8)?;
+    let count = at.word()?;
+    at.skip(count.checked_mul(8)?.checked_add(8)?)?;
+    if at.word()? != FINISHED {
+        return Some(None);
+    }
+    Some(Some(FaultVerdict {
+        transition_image_id: at.hash()?,
+        authorization_image_id: at.hash()?,
+        input_manifest: at.hash()?,
+        program: at.hash()?,
+        refuted_trace: at.hash()?,
+    }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -705,6 +806,7 @@ mod tests {
             ("register", "82fbdc9c"),
             ("submitClaim", "ddfdfbb0"),
             ("submitChallenge", "5e9c0523"),
+            ("submitFaultProof", "f8389708"),
         ] {
             assert_eq!(hex::encode(&call_with_bytes(name, b"")[..4]), selector);
         }

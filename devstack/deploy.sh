@@ -6,6 +6,11 @@
 # published with it: the first deploys, owns the registry, relays Celestia's
 # block roots and sends every transaction; the second is the attester, the
 # trusted host whose signature stands for a blob's availability proof.
+#
+# The claims contract is deployed with RISC Zero's verifier and the ids of
+# Raster's two proof programs, which the iris binary names. A deployment
+# takes fault proofs of that build of Raster only: after a Raster update,
+# build iris and deploy again.
 set -euo pipefail
 
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -27,11 +32,22 @@ foundry forge build > /dev/null 2>&1 || {
   exit 1
 }
 
+iris="${IRIS_BINARY:-$here/../target/release/iris}"
+programs=$("$iris" evm proof-programs) || {
+  echo "could not read Raster's proof programs from $iris: build iris first" >&2
+  exit 1
+}
+program() { python3 -c 'import json, sys; print(json.loads(sys.argv[1])[sys.argv[2]])' "$programs" "$1"; }
+transition=$(program transition_image_id)
+authorization=$(program authorization_image_id)
+
 oracle=$(deploy DataRootOracle "$IRIS_SENDER_ADDRESS")
 registry=$(deploy IrisRegistry "$IRIS_SENDER_ADDRESS")
+verifier=$(deploy RasterVerifier)
 claims=$(deploy IrisClaims "$registry" "$oracle" "$IRIS_ATTESTER_ADDRESS" \
-  "$IRIS_RETENTION_SECS" "$IRIS_CHALLENGE_PERIOD_SECS" "$IRIS_FAULT_PROOF_WINDOW_SECS")
-[ -n "$oracle" ] && [ -n "$registry" ] && [ -n "$claims" ] || {
+  "$IRIS_RETENTION_SECS" "$IRIS_CHALLENGE_PERIOD_SECS" "$IRIS_FAULT_PROOF_WINDOW_SECS" \
+  "$verifier" "$transition" "$authorization")
+[ -n "$oracle" ] && [ -n "$registry" ] && [ -n "$verifier" ] && [ -n "$claims" ] || {
   echo "a contract did not deploy" >&2
   exit 1
 }
@@ -39,7 +55,7 @@ claims=$(deploy IrisClaims "$registry" "$oracle" "$IRIS_ATTESTER_ADDRESS" \
 # The contracts' errors by selector, so that whoever sends a transaction can
 # name the error a refused one reverted with.
 errors=$(
-  for contract in DataRootOracle IrisRegistry IrisClaims; do
+  for contract in DataRootOracle IrisRegistry IrisClaims RasterJournal; do
     foundry forge inspect "$contract" errors --json 2> /dev/null
   done | python3 -c '
 import json, sys
@@ -60,6 +76,9 @@ cat > "$here/deployment.json" <<EOF
   "oracle": "$oracle",
   "registry": "$registry",
   "claims": "$claims",
+  "verifier": "$verifier",
+  "transition_image_id": "$transition",
+  "authorization_image_id": "$authorization",
   "relayer": "$IRIS_SENDER_ADDRESS",
   "owner": "$IRIS_SENDER_ADDRESS",
   "attester": "$IRIS_ATTESTER_ADDRESS",
