@@ -115,6 +115,26 @@ what it holds.
 [The chains](../docs/internals/chains.md#starting-from-the-chains) says what
 each of these checks.
 
+## Point at a fault no replay shows
+
+Before replaying anything, a challenger asks of the fetched claim whether
+every checkpoint names an approved program and whether every input a stage
+takes from an earlier one is that stage's output:
+
+```bash
+iris claim audit --submission fetched/claim_submission.json \
+  --run fetched/inference.toml --calls calls.json
+python3 devstack/submit.py fault --calls calls.json --call <n>
+```
+
+The audit runs nothing and prints each fault with the number of the call that
+points at it. The contract checks the call against the claim's own
+checkpoints and holds the claim void (`voided(claimId)`); there is no
+challenge to post and nothing for the claimer to answer.
+
+To have such a claim, make the lie with `iris claim corrupt --submission ...
+--fault program` or `--fault input`, then post and submit it as above.
+
 ## Answer a challenge with a fault proof
 
 A challenge is shown false with a Raster fault proof of its trace, as `iris
@@ -145,6 +165,10 @@ python3 devstack/replay.py claim --run spec.toml --submission <dir>/claim_submis
 python3 devstack/replay.py challenge --run spec.toml \
   --submission <dir>/claim_submission.json --challenge <dir>/challenge_submission.json
 ```
+
+`python3 devstack/replay.py faults --run fetched/inference.toml --submission
+fetched/claim_submission.json` does the same for the two on-the-spot calls:
+every question the audit asks, asked of the contract.
 
 `replay.py` is the contracts' test. It asks `iris claim check` (or `iris
 challenge check`) and the contract about the same submission, then about one

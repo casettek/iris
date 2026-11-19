@@ -6,6 +6,7 @@ import "./IrisEncoding.sol";
 import "./IrisRegistry.sol";
 import "./DataRootOracle.sol";
 import "./RasterJournal.sol";
+import "./InputManifest.sol";
 import {IRiscZeroVerifier} from "risc0/IRiscZeroVerifier.sol";
 
 /// Where a claim and a challenge arrive, and the checks made of each on
@@ -68,8 +69,30 @@ contract IrisClaims {
         uint64 dismissedAt;
     }
 
+    /// What a challenger showed wrong with a claim on the spot, with no
+    /// replay: `inference_artifacts::contract::StageAdmission` and
+    /// `LinkFault`. The first stands for no fault.
+    enum ClaimFault {
+        None,
+        UnapprovedProgram,
+        UnreadableInputList,
+        InputMissing,
+        NoProducer,
+        ProducerNotEarlier,
+        ProducerOfWrongKind,
+        NotTheProducersOutput
+    }
+
+    /// A claim a challenger showed void, the stage it pointed at and when.
+    struct Voided {
+        ClaimFault fault;
+        uint32 stage;
+        uint64 voidedAt;
+    }
+
     mapping(bytes32 => Accepted) public claims;
     mapping(bytes32 => Admitted) public challenges;
+    mapping(bytes32 => Voided) public voided;
 
     event ClaimAccepted(
         bytes32 indexed claimId, bytes32 indexed configuration, address indexed claimer, bytes32 checkpointsRoot
@@ -78,6 +101,7 @@ contract IrisClaims {
         bytes32 indexed challengeId, bytes32 indexed claimId, address indexed challenger, uint32 stage
     );
     event ChallengeDismissed(bytes32 indexed challengeId, bytes32 indexed claimId);
+    event ClaimVoided(bytes32 indexed claimId, uint32 stage, ClaimFault fault);
 
     // The claim is of no registered configuration, or does not hold what a
     // claim of its pipeline does.
@@ -121,6 +145,19 @@ contract IrisClaims {
     error NotTheCheckpoint();
     error UnapprovedProgram(bytes32 program);
     error OutputNotDisputed();
+    // The shape of a challenger's trace: `raster_prover::challenge`'s
+    // admission of it.
+    error TraceTooShort();
+    error WindowSizeNotProtocol();
+    error NonCanonicalBitsPerItem();
+    // A fault pointed at with no replay. The first two say there is none.
+    error ProgramApproved();
+    error Linked();
+    error AlreadyVoided(bytes32 id);
+    error NotTheInputManifest();
+    error UnapprovedStage();
+    error NotAChainedInput();
+    error ProducerNotPresented();
     // A fault proof.
     error UnknownChallenge(bytes32 id);
     error AlreadyDismissed(bytes32 id);
@@ -397,25 +434,29 @@ contract IrisClaims {
         if (claim.submittedAt == 0) revert UnknownClaim(challenge.claimId);
         if (block.timestamp > claim.submittedAt + challengePeriod) revert ChallengePeriodOver();
 
-        if (challenge.path.length != IrisEncoding.TREE_DEPTH || challenge.stage >= claim.checkpointCount) {
-            revert NotTheCheckpoint();
-        }
-        bytes32 root = IrisEncoding.listRoot(
-            IrisEncoding.checkpointHash(challenge.checkpoint), challenge.stage, claim.checkpointCount, challenge.path
-        );
-        if (root != claim.checkpointsRoot) revert NotTheCheckpoint();
+        _open(claim, challenge.stage, challenge.checkpoint, challenge.path);
         // A stage that names a program outside the approved set is not a
-        // matter for a replay: it voids the claim by itself, which is the
-        // lifecycle's to act on.
+        // matter for a replay: it voids the claim by itself, and
+        // `voidForProgram` is how a challenger says so.
         if (registry.stageOf(claim.configuration, challenge.checkpoint.program) == bytes32(0)) {
             revert UnapprovedProgram(challenge.checkpoint.program);
         }
         if (challenge.claimedOutput == challenge.checkpoint.outputSha256) revert OutputNotDisputed();
+        // The trace is in the one shape the protocol fixes for its length. A
+        // window the challenger chose, or another packing of the fingerprint,
+        // is a trace no defender is held to answer.
+        uint64 window = IrisEncoding.protocolWindow(challenge.header.fingerprintLen);
+        if (window == 0) revert TraceTooShort();
+        if (challenge.header.windowSize != window) revert WindowSizeNotProtocol();
+        if (challenge.header.bitsPerItem != IrisEncoding.protocolBitsPerItem(window)) {
+            revert NonCanonicalBitsPerItem();
+        }
+        bytes32 traceHeaderDigest = IrisEncoding.traceHeaderDigest(challenge.header);
 
         _checkPosted(challenge.availability, challenge.challenger, uint64(block.timestamp) + faultProofWindow);
         bool body;
         for (uint256 i = 0; i < challenge.availability.length; i++) {
-            body = body || _has(challenge.availability[i].contents.traceBodies, challenge.traceHeaderDigest);
+            body = body || _has(challenge.availability[i].contents.traceBodies, traceHeaderDigest);
         }
         if (!body) revert TraceBodyNotPosted();
 
@@ -425,7 +466,7 @@ contract IrisClaims {
             claimId: challenge.claimId,
             challenger: challenge.challenger,
             stage: challenge.stage,
-            traceHeaderDigest: challenge.traceHeaderDigest,
+            traceHeaderDigest: traceHeaderDigest,
             claimedOutput: challenge.claimedOutput,
             challengedAt: uint64(block.timestamp),
             program: challenge.checkpoint.program,
@@ -433,6 +474,120 @@ contract IrisClaims {
             dismissedAt: 0
         });
         emit ChallengeAdmitted(challengeId, challenge.claimId, challenge.challenger, challenge.stage);
+    }
+
+    /// Hold a presented checkpoint to its place in a claim's list.
+    function _open(Accepted memory claim, uint32 stage, Checkpoint memory checkpoint, bytes32[] memory path)
+        private
+        pure
+    {
+        if (path.length != IrisEncoding.TREE_DEPTH || stage >= claim.checkpointCount) revert NotTheCheckpoint();
+        bytes32 root =
+            IrisEncoding.listRoot(IrisEncoding.checkpointHash(checkpoint), stage, claim.checkpointCount, path);
+        if (root != claim.checkpointsRoot) revert NotTheCheckpoint();
+    }
+
+    // -----------------------------------------------------------------------
+    // A fault pointed at, with no replay
+    // -----------------------------------------------------------------------
+    //
+    // A replay runs the program a checkpoint names on the inputs it names, so
+    // it says nothing of whether that is the program that should run or
+    // whether those inputs came from where the claim says. A challenger
+    // points at either, the contract reads the claim's own checkpoints, and
+    // the claim is void in the same transaction: there is nothing to answer.
+    // Anyone may point. What a void claim costs its claimer is not here.
+
+    function _void(bytes32 claimId, uint32 stage, ClaimFault fault) private {
+        voided[claimId] = Voided({fault: fault, stage: stage, voidedAt: uint64(block.timestamp)});
+        emit ClaimVoided(claimId, stage, fault);
+    }
+
+    function _held(bytes32 claimId) private view returns (Accepted memory claim) {
+        claim = claims[claimId];
+        if (claim.submittedAt == 0) revert UnknownClaim(claimId);
+        if (voided[claimId].voidedAt != 0) revert AlreadyVoided(claimId);
+    }
+
+    /// Show that a stage of a claim names a program outside the approved set:
+    /// `encoded` is a `ProgramFault`. Reverts with `ProgramApproved` when the
+    /// program is one the configuration approves.
+    function voidForProgram(bytes calldata encoded) external {
+        ProgramFault memory fault = abi.decode(encoded, (ProgramFault));
+        Accepted memory claim = _held(fault.claimId);
+        _open(claim, fault.stage, fault.checkpoint, fault.path);
+        if (registry.stageOf(claim.configuration, fault.checkpoint.program) != bytes32(0)) revert ProgramApproved();
+        _void(fault.claimId, fault.stage, ClaimFault.UnapprovedProgram);
+    }
+
+    /// Show that an input of a stage is not what the claim says an earlier
+    /// stage produced: `encoded` is an `InputFault`. The checks and their
+    /// order are `CheckpointList::check_link`'s. Reverts with `Linked` when
+    /// the input is an earlier checkpoint's output of the right kind, or an
+    /// empty value the configuration allows.
+    ///
+    /// Nothing here is the challenger's word. The stage's checkpoint says
+    /// which checkpoint produced the input, the input list it commits to says
+    /// what the stage loaded, and the configuration says which programs may
+    /// produce it. Which earlier stage is the right one is not judged: every
+    /// output says which step produced it, and the consuming stage checks
+    /// that.
+    function voidForInput(bytes calldata encoded) external {
+        InputFault memory fault = abi.decode(encoded, (InputFault));
+        Accepted memory claim = _held(fault.claimId);
+        _open(claim, fault.stage, fault.checkpoint, fault.path);
+        if (sha256(fault.manifest) != fault.checkpoint.inputCommitment) revert NotTheInputManifest();
+        if (registry.stageOf(claim.configuration, fault.checkpoint.program) == bytes32(0)) revert UnapprovedStage();
+        (bool chained, bytes32[] memory producers, bytes32[] memory emptyValues) =
+            registry.chainedInput(claim.configuration, fault.checkpoint.program, fault.input);
+        if (!chained) revert NotAChainedInput();
+
+        (bool readable, bool found, bytes memory loaded) =
+            InputManifest.commitmentOf(fault.manifest, bytes(fault.input));
+        if (!readable) {
+            _void(fault.claimId, fault.stage, ClaimFault.UnreadableInputList);
+            return;
+        }
+        if (!found) {
+            _void(fault.claimId, fault.stage, ClaimFault.InputMissing);
+            return;
+        }
+        bytes32 loadedText = keccak256(loaded);
+        for (uint256 i = 0; i < emptyValues.length; i++) {
+            if (keccak256(bytes(IrisEncoding.hexText(emptyValues[i]))) == loadedText) revert Linked();
+        }
+        (bool named, uint32 producer) = _producerOf(fault.checkpoint, fault.input);
+        if (!named) {
+            _void(fault.claimId, fault.stage, ClaimFault.NoProducer);
+            return;
+        }
+        if (producer >= fault.stage) {
+            _void(fault.claimId, fault.stage, ClaimFault.ProducerNotEarlier);
+            return;
+        }
+        if (!fault.hasProducer) revert ProducerNotPresented();
+        _open(claim, producer, fault.producer, fault.producerPath);
+        bytes32 kind = registry.stageOf(claim.configuration, fault.producer.program);
+        if (kind == bytes32(0) || !_has(producers, kind)) {
+            _void(fault.claimId, fault.stage, ClaimFault.ProducerOfWrongKind);
+            return;
+        }
+        if (keccak256(bytes(IrisEncoding.hexText(fault.producer.outputCommitment))) != loadedText) {
+            _void(fault.claimId, fault.stage, ClaimFault.NotTheProducersOutput);
+            return;
+        }
+        revert Linked();
+    }
+
+    /// The checkpoint a stage's own checkpoint names as the producer of one
+    /// of its inputs.
+    function _producerOf(Checkpoint memory checkpoint, string memory input) private pure returns (bool, uint32) {
+        for (uint256 i = 0; i < checkpoint.inputSources.length; i++) {
+            if (IrisEncoding.sameText(checkpoint.inputSources[i].name, input)) {
+                return (true, checkpoint.inputSources[i].position);
+            }
+        }
+        return (false, 0);
     }
 
     // -----------------------------------------------------------------------

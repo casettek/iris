@@ -548,6 +548,25 @@ pub enum ChallengeRefusal {
     ProducerNotPresented { stage: u32, producer: u32 },
 }
 
+impl ChallengeRefusal {
+    /// The contract error this is. A list or a checkpoint that is not the
+    /// claim's is one error there: the contract holds only the root, and a
+    /// checkpoint either opens against it or does not.
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::AnotherCheckpointList { .. }
+            | Self::MalformedCheckpointList
+            | Self::EmptyCheckpointList
+            | Self::UnknownStage { .. }
+            | Self::NotTheCheckpoint { .. } => "NotTheCheckpoint",
+            Self::NotTheInputManifest { .. } => "NotTheInputManifest",
+            Self::UnapprovedStage { .. } => "UnapprovedStage",
+            Self::NotAChainedInput { .. } => "NotAChainedInput",
+            Self::ProducerNotPresented { .. } => "ProducerNotPresented",
+        }
+    }
+}
+
 impl std::fmt::Display for ChallengeRefusal {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -640,6 +659,20 @@ pub enum LinkFault {
         loaded: String,
         produced: String,
     },
+}
+
+impl LinkFault {
+    /// The fault a contract records for the claim: `IrisClaims.ClaimFault`.
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::UnreadableInputList => "UnreadableInputList",
+            Self::InputMissing => "InputMissing",
+            Self::NoProducer { .. } => "NoProducer",
+            Self::ProducerNotEarlier { .. } => "ProducerNotEarlier",
+            Self::ProducerOfWrongKind { .. } => "ProducerOfWrongKind",
+            Self::NotTheProducersOutput { .. } => "NotTheProducersOutput",
+        }
+    }
 }
 
 impl std::fmt::Display for LinkFault {
@@ -1375,15 +1408,27 @@ struct ManifestEntry {
     r#type: String,
 }
 
+/// Text a contract reads as it stands: printable ASCII with no quote and no
+/// backslash, so that nothing in it is escaped.
+fn plain(text: &str) -> bool {
+    text.bytes()
+        .all(|byte| (0x20..0x7f).contains(&byte) && byte != b'"' && byte != b'\\')
+}
+
 /// The commitment each input of a stage was loaded by, read from the bytes of
 /// its `input_manifest.json`. `None` unless the bytes are exactly the
 /// canonical encoding of what they hold, so that no two readers can take the
 /// same bytes for different inputs: a repeated name, an extra field or other
-/// spacing is refused.
+/// spacing is refused. So is a name or a field that is not plain text: a
+/// contract reads the list byte by byte (`InputManifest.sol`) and unescapes
+/// nothing.
 fn read_input_manifest(bytes: &[u8]) -> Option<BTreeMap<String, String>> {
     let entries: BTreeMap<String, ManifestEntry> = serde_json::from_slice(bytes).ok()?;
     let canonical = serde_json::to_vec_pretty(&serde_json::to_value(&entries).ok()?).ok()?;
-    (canonical == bytes).then(|| {
+    let all_plain = entries.iter().all(|(name, entry)| {
+        plain(name) && plain(&entry.commitment) && plain(&entry.encoding) && plain(&entry.r#type)
+    });
+    (canonical == bytes && all_plain).then(|| {
         entries
             .into_iter()
             .map(|(name, entry)| (name, entry.commitment))
@@ -2531,7 +2576,16 @@ mod tests {
         let respaced = String::from_utf8(manifest(&[("activations", &real), ("prior", &empty_edge())]))
             .unwrap()
             .replace("\n  \"prior\"", "\n\n  \"prior\"");
-        for bytes in [twice.into_bytes(), respaced.into_bytes()] {
+        // Canonical, but with text a reader would have to unescape or decode:
+        // a contract reads the list byte by byte and takes only plain text.
+        let escaped = manifest(&[("activations", &real), ("pri\"r", &empty_edge())]);
+        let beyond_ascii = manifest(&[("activations", &real), ("pri\u{f6}r", &empty_edge())]);
+        for bytes in [
+            twice.into_bytes(),
+            respaced.into_bytes(),
+            escaped,
+            beyond_ascii,
+        ] {
             let honest = Claim::honest();
             let mut manifests = honest.manifests;
             manifests[2] = bytes;

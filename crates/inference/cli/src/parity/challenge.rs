@@ -164,6 +164,7 @@ pub(super) fn run_challenge_leg(leg: &Leg) -> Result<Value> {
             crate::posted::corrupt_claim(crate::posted::CorruptClaimOptions {
                 submission_path: honest_submission.clone(),
                 selection: CorruptCheckpointSelection::Stage(stage.to_string()),
+                fault: crate::posted::CorruptFault::Output,
                 claimer: Some(liar.to_string()),
                 out_dir: leg.dir.join(out),
             })
@@ -199,6 +200,85 @@ pub(super) fn run_challenge_leg(leg: &Leg) -> Result<Value> {
             corrupt("result", "corrupted-result").is_err(),
             "a claim that states another result was written as one a contract would take"
         );
+
+        // The two lies no replay shows: a checkpoint that names a program
+        // outside the approved set, and one whose input is not its producer's
+        // output. A contract takes each claim, since nothing at arrival reads
+        // that checkpoint. A challenger who reads the claim back finds the
+        // fault by auditing it, with nothing run, at the checkpoint that
+        // lies.
+        let layer = crate::availability::open_layer(None)?;
+        let configuration = crate::contract::spec_configuration(&spec, None)?;
+        for (fault, out, expected) in [
+            (
+                crate::posted::CorruptFault::Program,
+                "corrupted-program",
+                "UnapprovedProgram",
+            ),
+            (
+                crate::posted::CorruptFault::Input(None),
+                "corrupted-input",
+                "NotTheProducersOutput",
+            ),
+        ] {
+            let lie = crate::posted::corrupt_claim(crate::posted::CorruptClaimOptions {
+                submission_path: honest_submission.clone(),
+                selection: CorruptCheckpointSelection::Stage(stage.to_string()),
+                fault,
+                claimer: Some(liar.to_string()),
+                out_dir: leg.dir.join(out),
+            })?;
+            let mut claim: inference_artifacts::contract::ClaimSubmission =
+                read_json(&lie.submission_path)?;
+            claim.availability = crate::availability::PreparedPosting::read(&leg.dir.join(out))?
+                .post(layer.as_ref())
+                .with_context(|| format!("`{out}`: posting the lying claim's data"))?;
+            inference_artifacts::write_json(&lie.submission_path, &claim)?;
+            let posted = inference_artifacts::availability::check_claim_availability(
+                layer.as_ref(),
+                inference_artifacts::availability::AvailabilityParameters::default(),
+                &claim.availability,
+                &inference_artifacts::availability::RequiredPosting::of(&claim),
+                crate::availability::now()?,
+            )
+            .map_err(|rejection| {
+                anyhow::anyhow!(
+                    "`{out}`: a contract does not take the lying claim's data: {rejection}"
+                )
+            })?;
+            inference_artifacts::contract::check_stated_records(
+                &configuration.programs,
+                &claim,
+                &posted,
+            )
+            .map_err(|rejection| {
+                anyhow::anyhow!("`{out}`: a contract does not take the lying claim: {rejection}")
+            })?;
+            let fetched = crate::posted::fetch_claim(crate::posted::FetchClaimOptions {
+                submission_path: lie.submission_path.clone(),
+                run_spec_path: spec.to_path_buf(),
+                pins_path: None,
+                da_dir: None,
+                out_dir: leg.dir.join(format!("{out}-fetched")),
+            })
+            .with_context(|| format!("`{out}`: reading the lying claim back from the layer"))?;
+            let audit = crate::posted::audit_claim(crate::posted::AuditClaimOptions {
+                submission_path: fetched.submission_path,
+                run_spec_path: fetched.run_spec_path,
+                pins_path: None,
+            })?;
+            let found = audit
+                .faults
+                .first()
+                .with_context(|| format!("`{out}`: an audit of the lying claim found no fault"))?;
+            ensure!(
+                found.checkpoint as usize == lie.checkpoint_index && found.fault == expected,
+                "`{out}`: an audit found {} at checkpoint {}, and the lie is {expected} at {}",
+                found.fault,
+                found.checkpoint,
+                lie.checkpoint_index
+            );
+        }
     }
 
     // A false result. The result stage is a handful of steps, under the
@@ -940,6 +1020,20 @@ fn contract_challenge(
         "`{name}`: the checkpoints measured on the layer are not the size of the ones posted"
     );
     outcome["posted_bytes"] = measured["bytes"].clone();
+    // A lie about a stage's output is no fault to point at: every program is
+    // approved and every input is its producer's output, so the claim is
+    // disputed by a replay or not at all.
+    let audit = crate::posted::audit_claim(crate::posted::AuditClaimOptions {
+        submission_path: fetched.submission_path.clone(),
+        run_spec_path: fetched.run_spec_path.clone(),
+        pins_path: None,
+    })?;
+    ensure!(
+        audit.faults.is_empty() && audit.programs_approved == lying.checkpoints.len(),
+        "`{name}`: an audit of a claim that lies only about an output found {} fault(s)",
+        audit.faults.len()
+    );
+    outcome["audited_inputs"] = json!(audit.inputs_linked);
     outcome["read_back_from_the_layer"] = json!(true);
     if challenge_as_posted {
         // And a challenge built from that directory alone, with nothing of

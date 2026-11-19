@@ -33,6 +33,9 @@ use sha2::{Digest, Sha256};
 use crate::availability::{contents_of, open_layer, trace_header_digest, PreparedPosting};
 use crate::claim::{corrupt_hash, select_checkpoint_index, CorruptCheckpointSelection};
 
+/// A stage's input list, in the stage's directory.
+const INPUT_MANIFEST_JSON: &str = "input_manifest.json";
+
 /// The file `corrupt_claim` writes beside the lying claim: which checkpoint
 /// it changed, in the form `claim corrupt --checkpoints` writes.
 pub const CORRUPTION_JSON: &str = "checkpoints.corruption.json";
@@ -66,11 +69,26 @@ fn fresh_dir(dir: &Path) -> Result<()> {
     fs::create_dir_all(dir).with_context(|| format!("failed to create {}", dir.display()))
 }
 
+/// What a lying claim says falsely of the checkpoint it lies about.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum CorruptFault {
+    /// Another output than the stage's: a lie about the stage's execution,
+    /// which a replay of the stage shows.
+    #[default]
+    Output,
+    /// A program outside the approved set.
+    Program,
+    /// An input that is not what its producer made. The named input, or the
+    /// first the checkpoint names a producer for.
+    Input(Option<String>),
+}
+
 #[derive(Debug, Clone)]
 pub struct CorruptClaimOptions {
     /// The honest claim's `claim_submission.json`, in its directory.
     pub submission_path: PathBuf,
     pub selection: CorruptCheckpointSelection,
+    pub fault: CorruptFault,
     /// The address the lying claim is attributed to. With none, the honest
     /// claim's.
     pub claimer: Option<String>,
@@ -89,11 +107,15 @@ pub struct CorruptedClaim {
 }
 
 /// The claim a lying claimer submits in place of an honest one: the same run
-/// and the same results, with another output stated for one checkpoint.
+/// and the same results, with one checkpoint false. By default it states
+/// another output. It can instead name a program outside the approved set,
+/// or commit to an input list in which one input is not its producer's
+/// output; neither is a lie a replay shows, and a contract takes the claim
+/// all the same unless the checkpoint is one its records are read from.
 ///
 /// A checkpoint list is posted with the checkpoints it names, so a changed
-/// hash alone is no claim: the lie is a checkpoint that states another
-/// output, and the list and its root follow from it. The directory written
+/// hash alone is no claim: the lie is a checkpoint that states something
+/// false, and the list and its root follow from it. The directory written
 /// is ready for `claim post`: the submission, the list, the checkpoints, and
 /// the honest claim's blobs with the lying list and checkpoints in place of
 /// the honest ones.
@@ -112,7 +134,57 @@ pub fn corrupt_claim(options: CorruptClaimOptions) -> Result<CorruptedClaim> {
     );
     let index = select_checkpoint_index(&options.selection, &honest_hashes, Some(&trace))?;
     let stage = trace.checkpoints[index].stage.clone();
-    trace.checkpoints[index].output_sha256 = corrupt_hash(&trace.checkpoints[index].output_sha256);
+    // Input lists the lying claim posts beside the honest ones, with the
+    // input each one lies about.
+    let mut lying_manifests: Vec<Vec<u8>> = Vec::new();
+    let mut lied_input = None;
+    match &options.fault {
+        CorruptFault::Output => {
+            trace.checkpoints[index].output_sha256 =
+                corrupt_hash(&trace.checkpoints[index].output_sha256);
+        }
+        CorruptFault::Program => {
+            trace.checkpoints[index].program_commitment =
+                corrupt_hash(&trace.checkpoints[index].program_commitment);
+        }
+        CorruptFault::Input(named) => {
+            let checkpoint = &mut trace.checkpoints[index];
+            let input = match named {
+                Some(input) => input.clone(),
+                None => checkpoint
+                    .input_sources
+                    .keys()
+                    .next()
+                    .cloned()
+                    .with_context(|| {
+                        format!(
+                        "checkpoint {index} (`{stage}`) names no producer for any input: pick a \
+                         later stage, or name the input"
+                    )
+                    })?,
+            };
+            let manifest_path = dir.join(stage_dir_name(&stage)?).join(INPUT_MANIFEST_JSON);
+            let honest_manifest = fs::read(&manifest_path)
+                .with_context(|| format!("failed to read {}", manifest_path.display()))?;
+            ensure!(
+                hex::encode(Sha256::digest(&honest_manifest)) == checkpoint.input_commitment,
+                "{} is not the input list checkpoint {index} commits to",
+                manifest_path.display()
+            );
+            let mut entries: BTreeMap<String, BTreeMap<String, String>> =
+                serde_json::from_slice(&honest_manifest)
+                    .with_context(|| format!("failed to parse {}", manifest_path.display()))?;
+            let loaded = entries
+                .get_mut(&input)
+                .and_then(|entry| entry.get_mut("commitment"))
+                .with_context(|| format!("stage `{stage}` has no input `{input}`"))?;
+            *loaded = corrupt_hash(loaded);
+            let lying = serde_json::to_vec_pretty(&entries)?;
+            checkpoint.input_commitment = hex::encode(Sha256::digest(&lying));
+            lying_manifests.push(lying);
+            lied_input = Some(input);
+        }
+    }
     let hashes = checkpoint_hashes(&trace)?;
 
     let claimer = options.claimer.unwrap_or_else(|| honest.claimer.clone());
@@ -131,11 +203,15 @@ pub fn corrupt_claim(options: CorruptClaimOptions) -> Result<CorruptedClaim> {
     write_checkpoint_hashes(&hashes_path, &hashes)?;
     let trace_path = options.out_dir.join(CHECKPOINT_TRACE_JSON);
     write_json(&trace_path, &trace)?;
-    let posting = PreparedPosting::read(dir)?.with_checkpoints(
-        &claimer,
-        &fs::read(&hashes_path)?,
-        &fs::read(&trace_path)?,
-    )?;
+    for manifest in &lying_manifests {
+        let stage_dir = options.out_dir.join(stage_dir_name(&stage)?);
+        fs::create_dir_all(&stage_dir)
+            .with_context(|| format!("failed to create {}", stage_dir.display()))?;
+        fs::write(stage_dir.join(INPUT_MANIFEST_JSON), manifest)?;
+    }
+    let posting = PreparedPosting::read(dir)?
+        .with_checkpoints(&claimer, &fs::read(&hashes_path)?, &fs::read(&trace_path)?)?
+        .with_input_manifests(lying_manifests)?;
     // The proof of a claim's checkpoints reads its records out of the last
     // stage's output and the checks', each held to its checkpoint's hash. A
     // lie about one of those has no output behind it, so no proof states it
@@ -164,6 +240,12 @@ pub fn corrupt_claim(options: CorruptClaimOptions) -> Result<CorruptedClaim> {
             "checkpoint_index": index,
             "checkpoint_number": index + 1,
             "stage": stage,
+            "fault": match &options.fault {
+                CorruptFault::Output => "output",
+                CorruptFault::Program => "program",
+                CorruptFault::Input(_) => "input",
+            },
+            "input": lied_input,
             "original_hash": honest_hashes[index],
             "corrupted_hash": hashes[index],
         }),
@@ -578,4 +660,203 @@ pub fn measure_posting(submission_path: &Path, da_dir: Option<&Path>) -> Result<
         }));
     }
     Ok(serde_json::json!({ "bytes": total, "blobs": blobs }))
+}
+
+#[derive(Debug, Clone)]
+pub struct AuditClaimOptions {
+    /// The claim's `claim_submission.json`, in a directory that holds its
+    /// checkpoint list, checkpoints and input lists: the one `fetch_claim`
+    /// wrote.
+    pub submission_path: PathBuf,
+    /// A run spec of the configuration the claim names.
+    pub run_spec_path: PathBuf,
+    pub pins_path: Option<PathBuf>,
+}
+
+/// One thing wrong with a claim that no replay shows.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AuditFault {
+    /// The position in [`ClaimAudit::calls`] of the call that points at it.
+    pub call: usize,
+    pub checkpoint: u32,
+    pub stage: String,
+    /// The input, for a fault of an input.
+    pub input: Option<String>,
+    /// The fault a contract records: `IrisClaims.ClaimFault`.
+    pub fault: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct ClaimAudit {
+    pub checkpoints: usize,
+    pub programs_approved: usize,
+    pub inputs_linked: usize,
+    pub faults: Vec<AuditFault>,
+    /// Every question a contract can be asked of the claim with no replay:
+    /// for each checkpoint whether its program is approved, and for each
+    /// input its program takes from an earlier stage whether it is that
+    /// stage's output. Each is the contract call with `expected`: the fault
+    /// it records (`void`) or the error it reverts with (`revert`).
+    pub calls: Vec<serde_json::Value>,
+}
+
+/// What is wrong with a claim that no replay shows: a checkpoint that names
+/// a program outside the approved set, or an input that is not what an
+/// earlier checkpoint produced.
+///
+/// A replay runs the program a checkpoint names on the inputs it names, so a
+/// challenger asks these two things first, of every checkpoint, from the
+/// claim's own files and the configuration alone. Nothing is run. A fault
+/// found here is pointed at with `voidForProgram` or `voidForInput`, and the
+/// claim is void: there is no challenge to post and nothing to answer.
+pub fn audit_claim(options: AuditClaimOptions) -> Result<ClaimAudit> {
+    use inference_artifacts::contract::{CheckpointList, LinkCheck, StageAdmission};
+    use inference_artifacts::evm::{abi_encode, claim_id, input_fault_token, program_fault_token};
+
+    let submission: ClaimSubmission = read_json(&options.submission_path)?;
+    let configuration =
+        crate::contract::spec_configuration(&options.run_spec_path, options.pins_path.as_deref())?;
+    ensure!(
+        configuration.id() == submission.configuration,
+        "the claim is of configuration {}, and {} describes {}: give the run spec of the \
+         configuration the claim names",
+        submission.configuration,
+        options.run_spec_path.display(),
+        configuration.id()
+    );
+    let pins = &configuration.programs;
+    let dir = parent(&options.submission_path)?;
+    let hashes_path = dir.join(CHECKPOINTS_TXT);
+    let list = CheckpointList::open(
+        &submission,
+        &fs::read(&hashes_path)
+            .with_context(|| format!("failed to read {}", hashes_path.display()))?,
+    )
+    .map_err(|refusal| anyhow::anyhow!("{}: {refusal}", hashes_path.display()))?;
+    let hashes = read_checkpoint_hashes(&hashes_path)?;
+    let trace = read_checkpoint_trace(&dir.join(CHECKPOINT_TRACE_JSON))?;
+    ensure!(
+        trace.checkpoints.len() == hashes.len(),
+        "{} lists {} checkpoints, and {CHECKPOINT_TRACE_JSON} holds {}",
+        hashes_path.display(),
+        hashes.len(),
+        trace.checkpoints.len()
+    );
+    let claim = claim_id(&submission)?;
+
+    let mut audit = ClaimAudit {
+        checkpoints: hashes.len(),
+        programs_approved: 0,
+        inputs_linked: 0,
+        faults: Vec::new(),
+        calls: Vec::new(),
+    };
+    for (index, checkpoint) in trace.checkpoints.iter().enumerate() {
+        let position = index as u32;
+        let path = inference_artifacts::checkpoint_opening(&hashes, index)?;
+        let refused =
+            |refusal| anyhow::anyhow!("checkpoint {index} (`{}`): {refusal}", checkpoint.stage);
+        let approved = matches!(
+            list.admit_stage_challenge(pins, position, checkpoint)
+                .map_err(refused)?,
+            StageAdmission::Disputed { .. }
+        );
+        let mut asked = crate::evm::call(
+            "voidForProgram",
+            &abi_encode(&program_fault_token(&claim, position, checkpoint, &path)?),
+        );
+        asked["checkpoint"] = serde_json::json!(position);
+        asked["stage"] = serde_json::json!(checkpoint.stage);
+        asked["input"] = serde_json::Value::Null;
+        asked["expected"] = if approved {
+            serde_json::json!({ "revert": "ProgramApproved" })
+        } else {
+            serde_json::json!({ "void": "UnapprovedProgram" })
+        };
+        audit.calls.push(asked);
+        let Some(program) = pins.program(&checkpoint.program_commitment) else {
+            audit.faults.push(AuditFault {
+                call: audit.calls.len() - 1,
+                checkpoint: position,
+                stage: checkpoint.stage.clone(),
+                input: None,
+                fault: String::from("UnapprovedProgram"),
+            });
+            // What an unapproved program takes from earlier stages is not
+            // defined, so its inputs are not asked about.
+            continue;
+        };
+        audit.programs_approved += 1;
+        if program.chained_inputs.is_empty() {
+            continue;
+        }
+        let manifest_path = dir
+            .join(stage_dir_name(&checkpoint.stage)?)
+            .join(INPUT_MANIFEST_JSON);
+        let manifest = fs::read(&manifest_path).with_context(|| {
+            format!(
+                "failed to read {}: audit the directory `iris claim fetch` wrote",
+                manifest_path.display()
+            )
+        })?;
+        for chained in &program.chained_inputs {
+            let producer = checkpoint
+                .input_sources
+                .get(&chained.name)
+                .and_then(|producer| {
+                    let listed = trace.checkpoints.get(*producer as usize)?;
+                    Some((*producer as usize, listed))
+                });
+            let verdict = list.check_link(
+                pins,
+                position,
+                checkpoint,
+                &manifest,
+                &chained.name,
+                producer.map(|(_, listed)| listed),
+            );
+            let producer_opening = producer
+                .map(|(producer, listed)| {
+                    inference_artifacts::checkpoint_opening(&hashes, producer)
+                        .map(|path| (listed, path))
+                })
+                .transpose()?;
+            let mut asked = crate::evm::call(
+                "voidForInput",
+                &abi_encode(&input_fault_token(
+                    &claim,
+                    position,
+                    checkpoint,
+                    &path,
+                    &manifest,
+                    &chained.name,
+                    producer_opening
+                        .as_ref()
+                        .map(|(listed, path)| (*listed, path.as_slice())),
+                )?),
+            );
+            asked["checkpoint"] = serde_json::json!(position);
+            asked["stage"] = serde_json::json!(checkpoint.stage);
+            asked["input"] = serde_json::json!(chained.name);
+            asked["expected"] = match &verdict {
+                Ok(LinkCheck::Linked) => {
+                    audit.inputs_linked += 1;
+                    serde_json::json!({ "revert": "Linked" })
+                }
+                Ok(LinkCheck::Void(fault)) => {
+                    audit.faults.push(AuditFault {
+                        call: audit.calls.len(),
+                        checkpoint: position,
+                        stage: checkpoint.stage.clone(),
+                        input: Some(chained.name.clone()),
+                        fault: fault.name().to_string(),
+                    });
+                    serde_json::json!({ "void": fault.name() })
+                }
+                Err(refusal) => serde_json::json!({ "revert": refusal.name() }),
+            };
+            audit.calls.push(asked);
+        }
+    }
+    Ok(audit)
 }

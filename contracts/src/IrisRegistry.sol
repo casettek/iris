@@ -87,6 +87,55 @@ contract IrisRegistry {
         return at;
     }
 
+    /// What a configuration says of one input of one of its programs:
+    /// whether the program takes it from an earlier stage, and if so the
+    /// stages that may produce it (each as the hash of its name, as `stageOf`
+    /// gives a program's) and the empty values it may hold in place of one.
+    function chainedInput(bytes32 id, bytes32 program, string calldata input)
+        external
+        view
+        returns (bool chained, bytes32[] memory producers, bytes32[] memory emptyValues)
+    {
+        bytes memory encoded = configurations[id];
+        if (encoded.length == 0) revert NotRegistered(id);
+        bytes memory programs = abi.decode(encoded, (Configuration)).programs;
+        bytes32 wanted = keccak256(bytes(input));
+        (uint256 items, uint256 at) = IrisEncoding.readCount(programs, 0);
+        for (uint256 i = 0; i < items; i++) {
+            bytes32 current;
+            (, at) = IrisEncoding.readText(programs, at);
+            (current, at) = IrisEncoding.readHash(programs, at);
+            uint256 inputs;
+            (inputs, at) = IrisEncoding.readCount(programs, at);
+            for (uint256 j = 0; j < inputs; j++) {
+                bytes memory name;
+                (name, at) = IrisEncoding.readText(programs, at);
+                uint256 listed;
+                (listed, at) = IrisEncoding.readCount(programs, at);
+                producers = new bytes32[](listed);
+                for (uint256 k = 0; k < listed; k++) {
+                    bytes memory producer;
+                    (producer, at) = IrisEncoding.readText(programs, at);
+                    producers[k] = keccak256(producer);
+                }
+                (listed, at) = IrisEncoding.readCount(programs, at);
+                emptyValues = new bytes32[](listed);
+                for (uint256 k = 0; k < listed; k++) {
+                    (emptyValues[k], at) = IrisEncoding.readHash(programs, at);
+                }
+                if (current == program && keccak256(name) == wanted) {
+                    return (true, producers, emptyValues);
+                }
+            }
+            uint256 runInputs;
+            (runInputs, at) = IrisEncoding.readCount(programs, at);
+            for (uint256 j = 0; j < runInputs; j++) {
+                (, at) = IrisEncoding.readText(programs, at);
+            }
+        }
+        return (false, new bytes32[](0), new bytes32[](0));
+    }
+
     function isRegistered(bytes32 id) external view returns (bool) {
         return configurations[id].length != 0;
     }

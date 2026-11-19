@@ -107,6 +107,11 @@ the chain then checks it.
   its list, checkpoints and input manifests must be the posted ones byte for
   byte. For the first of them a challenge is built from that directory alone
   (`challenge build --submission`), and must find and replay the same stage.
+  A lying claim is also made of each kind no replay shows, a checkpoint that
+  names an unapproved program and one whose input is not its producer's
+  output: a contract takes each claim, and an audit of it read back
+  (`iris claim audit`) must find that fault at that checkpoint. An audit of a
+  claim that lies only about an output must find none.
   The claim with a source is read back the same way (source leg): the
   documents must be the posted ones, and the run spec written over them must
   give the source record the claim names.

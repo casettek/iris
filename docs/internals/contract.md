@@ -240,7 +240,12 @@ way.
 The second comparison reads the stage's `input_manifest.json`, held to the
 checkpoint's `input_commitment`. It must be exactly the canonical encoding of
 what it holds: a repeated name, an extra field or other spacing voids the claim,
-so that no two readers can take one input list for different inputs.
+so that no two readers can take one input list for different inputs. Its names
+and fields must also be plain text, printable ASCII with no quote and no
+backslash: the EVM contract reads the list byte by byte and unescapes nothing.
+
+Both comparisons are on the EVM contract as `voidForProgram` and
+`voidForInput` ([the chains](chains.md#the-four-ways-to-challenge-a-claim)).
 
 Which earlier stage is the right producer is not the contract's to judge. Every
 output says which step produced it, and the consuming stage checks that against
@@ -395,9 +400,12 @@ These are open. None is closed by anything on this page.
   proof of a full-size stage has been produced. The dispute rules above are
   tested on Raster's own admission and defence functions with real traces and
   made-up journals, and on one real proof of a small fixture.
-- **`challenge build` replays whatever differs.** It does not yet sort a
-  divergence into the program comparison, the link comparison or a replay. A
-  replay aimed at a checkpoint that ran other inputs fails safely, since the
+- **`challenge build` replays whatever differs.** It does not sort a
+  divergence into the program comparison, the link comparison or a replay.
+  `iris claim audit` makes the first two of every checkpoint with nothing
+  run, so a challenger audits a claim before it replays anything. What is
+  left unsorted is a stage that ran on another run input or other model data
+  than the challenger's: a replay aimed at it fails safely, since the
   defender can refute it.
 
 - **The signer's key is a run input.** The `source` stage checks attestations

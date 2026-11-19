@@ -7,12 +7,17 @@ trusted host and the sender would.
                       --challenge <challenge_submission.json>
   submit.py fault-proof --submission <claim_submission.json> \\
                         --challenge <challenge_submission.json> --receipt <fault.receipt>
+  submit.py fault --calls <calls.json> --call <n>
 
 For a claim: the attester signs each posted blob, the relayer posts the block
 roots those blobs are under, the configuration is registered if it is not, and
 the claim is submitted. For a challenge: the same for its trace body, then the
 challenge is submitted. A fault proof answers a challenge the contract holds:
-it is sent as it is, and the contract verifies it.
+it is sent as it is, and the contract verifies it. A fault is something wrong
+with a claim that no replay shows: `iris claim audit --calls` writes the call
+that points at each one it finds, and `fault` sends the one named. The
+contract checks it against the claim's own checkpoints and holds the claim
+void.
 
 Prints one JSON object: whether the contract took it, the id it gave it, or
 the error it reverted with. iris itself sends nothing: it writes the bytes,
@@ -98,6 +103,15 @@ def send(to, signature, *arguments):
     return False, revert_reason(done.stderr + done.stdout, ERRORS)
 
 
+def gas_used(receipt):
+    """The gas a sent transaction used, from the receipt `cast send` prints."""
+    for line in receipt.splitlines():
+        name, _, value = line.partition(" ")
+        if name == "gasUsed":
+            return int(value.strip())
+    return None
+
+
 def relay(heights):
     """Post each block's root to the oracle, as the trusted relayer."""
     for height in heights:
@@ -131,15 +145,31 @@ def submit(function, built, arguments):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("what", choices=["claim", "challenge", "fault-proof"])
+    parser.add_argument("what", choices=["claim", "challenge", "fault-proof", "fault"])
     parser.add_argument("--run", help="the run spec of a claim's configuration")
-    parser.add_argument("--submission", required=True, help="the claim's claim_submission.json")
+    parser.add_argument("--submission", help="the claim's claim_submission.json")
+    parser.add_argument("--calls", help="the calls `iris claim audit --calls` wrote")
+    parser.add_argument("--call", type=int, help="which of them to send")
     parser.add_argument("--challenge", help="the challenge's challenge_submission.json")
     parser.add_argument("--receipt", help="the fault proof `iris fault prove` wrote")
     parser.add_argument("--no-attest", action="store_true")
     parser.add_argument("--no-relay", action="store_true")
     parser.add_argument("--no-register", action="store_true")
     arguments = parser.parse_args()
+
+    if arguments.what == "fault":
+        if not arguments.calls or arguments.call is None:
+            parser.error("a fault needs --calls and --call")
+        fault = json.loads(pathlib.Path(arguments.calls).read_text())[arguments.call]
+        outcome = {"checkpoint": fault["checkpoint"], "stage": fault["stage"], "input": fault["input"],
+                   "expected": fault["expected"]}
+        ok, result = send(DEPLOYMENT["claims"], fault["function"], fault["argument"])
+        outcome.update({"accepted": True, "gas_used": gas_used(result)} if ok
+                       else {"accepted": False, **result})
+        print(json.dumps(outcome, indent=2))
+        sys.exit(0 if outcome["accepted"] else 1)
+    if not arguments.submission:
+        parser.error("a claim, a challenge and a fault proof need --submission")
 
     if arguments.what == "claim":
         if not arguments.no_attest:

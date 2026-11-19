@@ -570,6 +570,26 @@ impl PreparedPosting {
         Ok(self)
     }
 
+    /// The same posting with more input manifests beside the ones it holds:
+    /// those of checkpoints that commit to another input list than the
+    /// claim's own.
+    pub fn with_input_manifests(mut self, manifests: Vec<Vec<u8>>) -> Result<Self> {
+        if manifests.is_empty() {
+            return Ok(self);
+        }
+        let package = self
+            .blobs
+            .iter_mut()
+            .flat_map(|blob| &mut blob.entries)
+            .find_map(|entry| match entry {
+                BlobEntry::Checkpoints(package) => Some(package),
+                _ => None,
+            })
+            .context("the posting holds no checkpoints")?;
+        package.input_manifests.extend(manifests);
+        Ok(self)
+    }
+
     /// Post the blobs to `layer`, and state each as a claim submits it.
     pub fn post(&self, layer: &dyn PostingLayer) -> Result<Vec<PostedBlob>> {
         post_blobs(layer, &CLAIM_NAMESPACE, &self.blobs, &self.outputs)

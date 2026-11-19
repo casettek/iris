@@ -18,12 +18,15 @@ source "$here/env.sh"
 
 foundry() { "$here/foundry.sh" "$@"; }
 
+# The libraries a contract is linked with, as `forge create` takes them.
+link=()
+
 deploy() {
   local contract=$1
   shift
   foundry forge create "src/$contract.sol:$contract" \
     --rpc-url "$IRIS_EVM_RPC" --private-key "$IRIS_SENDER_KEY" --broadcast \
-    ${1:+--constructor-args "$@"} 2>&1 |
+    "${link[@]}" ${1:+--constructor-args "$@"} 2>&1 |
     sed -n 's/^Deployed to: //p'
 }
 
@@ -44,6 +47,16 @@ authorization=$(program authorization_image_id)
 oracle=$(deploy DataRootOracle "$IRIS_SENDER_ADDRESS")
 registry=$(deploy IrisRegistry "$IRIS_SENDER_ADDRESS")
 verifier=$(deploy RasterVerifier)
+# The claims contract calls these two as deployed libraries: its own code is
+# near the size a contract may be.
+manifest=$(deploy InputManifest)
+journal=$(deploy RasterJournal)
+[ -n "$manifest" ] && [ -n "$journal" ] || {
+  echo "a library did not deploy" >&2
+  exit 1
+}
+link=(--libraries "src/InputManifest.sol:InputManifest:$manifest"
+  --libraries "src/RasterJournal.sol:RasterJournal:$journal")
 claims=$(deploy IrisClaims "$registry" "$oracle" "$IRIS_ATTESTER_ADDRESS" \
   "$IRIS_RETENTION_SECS" "$IRIS_CHALLENGE_PERIOD_SECS" "$IRIS_FAULT_PROOF_WINDOW_SECS" \
   "$verifier" "$transition" "$authorization")
@@ -55,7 +68,7 @@ claims=$(deploy IrisClaims "$registry" "$oracle" "$IRIS_ATTESTER_ADDRESS" \
 # The contracts' errors by selector, so that whoever sends a transaction can
 # name the error a refused one reverted with.
 errors=$(
-  for contract in DataRootOracle IrisRegistry IrisClaims RasterJournal; do
+  for contract in DataRootOracle IrisRegistry IrisClaims RasterJournal InputManifest; do
     foundry forge inspect "$contract" errors --json 2> /dev/null
   done | python3 -c '
 import json, sys

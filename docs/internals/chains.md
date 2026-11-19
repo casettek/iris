@@ -22,6 +22,7 @@ Both chains run locally from [`devstack/`](../../devstack/README.md).
 | Name Raster's proof programs for a deployment | iris | `iris evm proof-programs` |
 | Measure what a submission put on Celestia | iris | `iris da contents` |
 | Read a submitted claim's data back, as a challenger | iris | `iris claim fetch` |
+| Ask of a claim what no replay shows, and write the call for each fault | iris | `iris claim audit` |
 | Read a submitted challenge's trace back, as a defender | iris | `iris challenge fetch` |
 | Send the transactions, relay the roots, keep the results | the caller | `devstack/submit.py`, or iris-backend |
 
@@ -110,7 +111,7 @@ Four contracts, in [`contracts/src`](../../contracts/src):
 | --- | --- | --- |
 | `IrisRegistry` | Each registered configuration, under its id | `register(bytes)`, by the owner |
 | `DataRootOracle` | Each Celestia block's data root and time, by height | `post(height, dataRoot, time)`, by the relayer |
-| `IrisClaims` | Each accepted claim and admitted challenge, and whether a fault proof dismissed it | `submitClaim(bytes)`, `submitChallenge(bytes)`, `submitFaultProof(bytes)` |
+| `IrisClaims` | Each accepted claim, whether a challenger showed it void, each admitted challenge, and whether a fault proof dismissed it | `submitClaim(bytes)`, `voidForProgram(bytes)`, `voidForInput(bytes)`, `submitChallenge(bytes)`, `submitFaultProof(bytes)` |
 | `RasterVerifier` | Nothing: RISC Zero's verifier of a Groth16 proof | `verify(seal, imageId, journalDigest)`, called by `IrisClaims` |
 
 Each entry point takes one `bytes` argument, the ABI encoding of one struct
@@ -150,19 +151,103 @@ rejection it is.
 The contract recomputes every hash these checks compare: the statement, the
 source record's digest, the forms and their result, the stated records.
 
+### The four ways to challenge a claim
+
+A claim can be wrong in four ways, and each has its own call.
+
+| What is wrong | The call | How it is settled |
+| --- | --- | --- |
+| A stage's execution: its program on its inputs gives another output | `submitChallenge` | The challenger posts its trace of the stage. The claimer can answer with a fault proof (`submitFaultProof`) |
+| A stage's program: it is outside the approved set | `voidForProgram` | On the spot: the claim is void |
+| A stage's input from an earlier stage: it is not what that stage produced | `voidForInput` | On the spot: the claim is void |
+| A stage's input from the run itself: it is not the pinned model's, or not what the claim posted | none yet | See [Not built](#not-built) |
+
+The first is an assertion that can itself be false, which is why it has an
+answer. The next two are facts the contract reads from the claim's own
+checkpoints, so there is nothing to answer and nothing to wait for. A replay
+cannot stand in for them: it runs the program a checkpoint names on the
+inputs it names, and so says nothing of whether that is the right program or
+where the inputs came from.
+
+`iris claim audit --submission <fetched>/claim_submission.json --run <spec>`
+asks the last two of every checkpoint of a claim, from its files and the
+configuration alone, with nothing run. A challenger does this first. With
+`--calls <file>` it writes every call a contract can be asked, each with what
+the contract is expected to answer, and the ones that point at a fault are
+the ones to send (`devstack/submit.py fault --calls <file> --call <n>`).
+
+### What `voidForProgram` and `voidForInput` check
+
+Both open the claim's own checkpoint at a stage against the claim's
+checkpoint root, as a challenge does. Nothing in either is the challenger's
+word.
+
+`voidForProgram` looks the checkpoint's program up in the claim's
+configuration. Approved, the call reverts with `ProgramApproved`. Otherwise
+the claim is void (`UnapprovedProgram`).
+
+`voidForInput` takes the bytes of the stage's input list, which the
+checkpoint commits to by hash, the name of one input, and the checkpoint the
+stage's own checkpoint names as that input's producer. Its checks and their
+order are `CheckpointList::check_link`'s:
+
+1. The list is the one the checkpoint commits to, the stage's program is
+   approved, and the input is one the configuration says that program takes
+   from an earlier stage. Otherwise the call reverts: it is not this call's
+   to judge.
+2. The list is in its one canonical form, or the claim is void
+   (`UnreadableInputList`).
+3. The list holds the input, or the claim is void (`InputMissing`).
+4. If the input holds an empty value the configuration allows it, the call
+   reverts with `Linked`.
+5. The checkpoint names a producer for the input (`NoProducer`), and the
+   producer is an earlier checkpoint (`ProducerNotEarlier`).
+6. The producer's program is one that may produce this input
+   (`ProducerOfWrongKind`).
+7. The commitment the stage loaded the input by is the producer's output
+   commitment (`NotTheProducersOutput`). If it is, the call reverts with
+   `Linked`.
+
+A void claim is recorded with its fault, the stage and the time
+(`voided(claimId)`), and cannot be voided again. Nothing reads that record
+yet.
+
+**The input list.** A checkpoint commits to its stage's
+`input_manifest.json` by the SHA-256 of its bytes, so for those bytes to say
+one thing to every reader they must be exactly the canonical encoding of what
+they hold: two spaces of indent, the entries in ascending order of their
+names with none repeated, the three fields in order, and nothing else. Every
+name and field is plain text, printable ASCII with no quote and no backslash,
+so nothing is escaped. `InputManifest.sol` reads the list byte by byte in
+that form, and `read_input_manifest` in Rust holds the same rule.
+
+**Cost.** On a 306-checkpoint claim, `voidForProgram` used about 101,000 gas
+with 1.3 KB of call data, and `voidForInput` about 1,630,000 gas with 4.1 KB.
+The second reads the whole configuration from storage and the input list
+byte by byte, and neither has been made cheaper.
+
 ### What `submitChallenge` checks
 
 1. The claim is one the contract accepted, and its challenge period is open.
 2. The checkpoint the challenge gives is the claim's at that stage: its hash,
    with the Merkle path given, makes the claim's checkpoint root.
-3. The stage names a program the configuration approves.
+3. The stage names a program the configuration approves. A stage that does
+   not is `voidForProgram`'s, and no replay of it is admitted.
 4. The challenge disputes that checkpoint's output.
-5. The trace body is posted under a root the oracle holds, stays retrievable
+5. The challenger's trace is in the one shape the protocol fixes for its
+   length: Raster's own admission of a challenge
+   (`raster_prover::challenge::verify_challenge`). The window is 128 items,
+   or for a shorter trace the largest power of two below its length, and the
+   fingerprint is packed at the bits per item that window reveals 128 bits
+   with. A window the challenger chose, or another packing, is a trace no
+   defender is held to answer.
+6. The trace body is posted under a root the oracle holds, stays retrievable
    through the fault-proof window, carries the attester's signature, and names
    the challenger.
 
-Only the trace's fingerprint (the digest of its header) goes on chain. The
-body is on Celestia.
+A challenge gives the header of its trace whole, and the contract makes the
+digest the posted body is found by from it. Only that header goes on chain.
+The body is on Celestia.
 
 On chain a challenge is of the checkpoint it opens. It carries no commitment
 of its own that could name another one: Raster's one-stage commitment is made
@@ -280,6 +365,11 @@ honest party runs.
   checkpoint the claim's records are read from (the last stage's and its
   checks'): a contract refuses that claim on arrival, so there is nothing to
   challenge.
+- `--fault program` and `--fault input` on the same command write the two
+  lies no replay shows in place of a false output: a checkpoint that names a
+  program outside the approved set, and one that commits to an input list in
+  which one input is not its producer's output. The second posts its own
+  input list beside the honest ones.
 - `iris challenge post --commitment <corrupted_commit.bin> --out <file>` posts
   a challenge over the copy of a trace that `iris challenge corrupt` changed,
   in place of the bundle's own.
@@ -333,6 +423,18 @@ program or other inputs, under other pinned programs, and with its journal or
 its seal changed. The proof names its own programs, so it stays one whatever
 Raster's current programs are.
 
+`replay.py faults` holds the two on-the-spot calls to iris. It takes a claim
+in the directory `iris claim fetch` wrote, asks the contract every question
+`iris claim audit` asks (of each checkpoint whether its program is approved,
+of each chained input whether it is its producer's output), and fails unless
+the contract answers each as iris does: it refuses to void an honest stage
+with the same error, and takes a fault iris found. A fault found is then
+sent, and the claim must read as void of that fault. An honest claim is the
+case that matters most: a rule a little stricter than what honest claims do
+would let anyone void one. `contracts/test/InputManifest.t.sol` holds the
+input list's form, and the trace's shape, to the same cases as the Rust
+tests.
+
 The claims and challenges to replay come from the parity gate run against
 Celestia (`IRIS_CELESTIA_RPC=... just test-parity`), which leaves them posted:
 a claim with a source, a consensus claim, and for each falsified checkpoint a
@@ -351,9 +453,24 @@ record the claim names.
 
 ## Not built
 
-The contract covers the two cases Raster covers today: a claim is challenged
-with a replayed checkpoint, and a challenge is shown false with a fault proof
-of its trace. What is around them is open, and each is its own piece of work:
+The contract covers the two cases Raster covers today, a claim challenged
+with a replayed checkpoint and a challenge shown false with a fault proof of
+its trace, and the two faults of a claim that no replay shows. What is around
+them is open, and each is its own piece of work:
+
+- **A wrong input from the run itself.** A stage's inputs are of three
+  kinds: from an earlier stage (`voidForInput`), from the model, and from
+  this run (the prompt or the documents, and what the claimer derives from
+  them). Nothing holds the last two to anything on chain. The model's data
+  is in every stage's input list by its commitment, and the configuration
+  pins the model's commitments by role, but which role belongs at which
+  stage is the schedule's, and some inputs (`descriptor`,
+  `witness`) are not among the pinned ones at all. A run input has no value
+  on chain to be compared with: the contract knows the posted prompt by its
+  SHA-256, and a stage loads it by another commitment. And a challenger
+  cannot replay a stage on a run input it does not have, since only the
+  input's commitment is posted. This is the same hole as the first item of
+  [availability's open list](availability.md#open).
 
 - **What follows.** Nothing reads a dismissal, or the lack of one. A claim
   with an unanswered challenge and a claim with none are held the same way.

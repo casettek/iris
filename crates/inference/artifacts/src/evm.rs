@@ -675,9 +675,101 @@ pub fn challenge_token(
         Token::number(u64::from(submission.stage)),
         checkpoint_token(checkpoint)?,
         hashes_token(path)?,
-        Token::hash(&submission.trace_header_digest())?,
+        trace_header_token(&submission.challenge.trace_commitment_header)?,
         Token::Word(claimed_output),
         blobs_token(&submission.availability)?,
+    ]))
+}
+
+fn word(bytes: &[u8], what: &str) -> Result<Token> {
+    let word: [u8; 32] = bytes
+        .try_into()
+        .ok()
+        .with_context(|| format!("the trace header's {what} is not 32 bytes"))?;
+    Ok(Token::Word(word))
+}
+
+/// The header of a challenger's trace commitment, as a challenge gives it:
+/// whole, so that a contract can hold its shape to the protocol's and make
+/// the digest the posted trace body is found by.
+pub fn trace_header_token(
+    header: &raster_core::transition::TraceCommitmentHeader,
+) -> Result<Token> {
+    Ok(Token::Tuple(vec![
+        Token::number(header.bits_packer.0 as u64),
+        Token::number(header.fingerprint_len),
+        word(&header.fingerprint_root, "fingerprint root")?,
+        word(
+            &header.revealed_items_commitment,
+            "revealed items commitment",
+        )?,
+        Token::number(header.window_size),
+        word(
+            &header.revealed_tail_roots_commitment,
+            "revealed tail roots commitment",
+        )?,
+    ]))
+}
+
+// ---------------------------------------------------------------------------
+// A fault pointed at, with no replay
+// ---------------------------------------------------------------------------
+
+/// A stage that names a program outside the approved set, as
+/// `IrisClaims.voidForProgram` takes it: the claim's own checkpoint at that
+/// stage, with the path that opens it.
+pub fn program_fault_token(
+    claim_id: &[u8; 32],
+    stage: u32,
+    checkpoint: &Checkpoint,
+    path: &[String],
+) -> Result<Token> {
+    Ok(Token::Tuple(vec![
+        Token::Word(*claim_id),
+        Token::number(u64::from(stage)),
+        checkpoint_token(checkpoint)?,
+        hashes_token(path)?,
+    ]))
+}
+
+/// A stage whose input is not what the claim says an earlier stage produced,
+/// as `IrisClaims.voidForInput` takes it: the stage's checkpoint, the bytes
+/// of the input list it commits to, the input, and the checkpoint the stage's
+/// own checkpoint names as the producer, when it names one.
+pub fn input_fault_token(
+    claim_id: &[u8; 32],
+    stage: u32,
+    checkpoint: &Checkpoint,
+    path: &[String],
+    input_manifest: &[u8],
+    input: &str,
+    producer: Option<(&Checkpoint, &[String])>,
+) -> Result<Token> {
+    let (has_producer, producer, producer_path) = match producer {
+        Some((producer, path)) => (true, checkpoint_token(producer)?, hashes_token(path)?),
+        None => (
+            false,
+            Token::Tuple(vec![
+                Token::text(""),
+                Token::Word([0; 32]),
+                Token::Word([0; 32]),
+                Token::Array(Vec::new()),
+                Token::Word([0; 32]),
+                Token::Word([0; 32]),
+            ]),
+            Token::Array(Vec::new()),
+        ),
+    };
+    Ok(Token::Tuple(vec![
+        Token::Word(*claim_id),
+        Token::number(u64::from(stage)),
+        checkpoint_token(checkpoint)?,
+        hashes_token(path)?,
+        Token::Bytes(input_manifest.to_vec()),
+        Token::text(input),
+        Token::flag(has_producer),
+        producer,
+        producer_path,
     ]))
 }
 
@@ -807,6 +899,8 @@ mod tests {
             ("submitClaim", "ddfdfbb0"),
             ("submitChallenge", "5e9c0523"),
             ("submitFaultProof", "f8389708"),
+            ("voidForProgram", "592cf381"),
+            ("voidForInput", "8cd1e035"),
         ] {
             assert_eq!(hex::encode(&call_with_bytes(name, b"")[..4]), selector);
         }

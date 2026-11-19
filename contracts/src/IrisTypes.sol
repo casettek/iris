@@ -158,15 +158,55 @@ struct Checkpoint {
     bytes32 outputSha256;
 }
 
+// The header of a Raster trace commitment:
+// `raster_core::transition::TraceCommitmentHeader`. A challenge gives it
+// whole, so that a contract can hold its shape to the protocol's and make the
+// digest the posted trace body is found by.
+struct TraceHeader {
+    uint64 bitsPerItem;
+    uint64 fingerprintLen;
+    bytes32 fingerprintRoot;
+    bytes32 revealedItems;
+    uint64 windowSize;
+    bytes32 revealedTailRoots;
+}
+
 struct Challenge {
     bytes32 claimId;
     address challenger;
     uint32 stage;
     Checkpoint checkpoint;
     bytes32[] path;
-    bytes32 traceHeaderDigest;
+    TraceHeader header;
     bytes32 claimedOutput;
     PostedBlob[] availability;
+}
+
+// --- a fault a challenger points at, with no replay ---
+
+// A stage that names a program outside the approved set: the claim's own
+// checkpoint at that stage, opened.
+struct ProgramFault {
+    bytes32 claimId;
+    uint32 stage;
+    Checkpoint checkpoint;
+    bytes32[] path;
+}
+
+// A stage whose input is not what the claim says an earlier stage produced:
+// the stage's checkpoint, the bytes of the input list it commits to, the
+// input, and the checkpoint its own checkpoint names as the producer, when it
+// names one.
+struct InputFault {
+    bytes32 claimId;
+    uint32 stage;
+    Checkpoint checkpoint;
+    bytes32[] path;
+    bytes manifest;
+    string input;
+    bool hasProducer;
+    Checkpoint producer;
+    bytes32[] producerPath;
 }
 
 /// A Raster fault proof of a challenger's trace: the journal of Raster's

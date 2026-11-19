@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command as ProcessCommand, ExitCode, ExitStatus};
 
 use anyhow::{bail, Context, Result};
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 
 mod availability;
 mod celestia;
@@ -237,6 +237,10 @@ enum ClaimCommand {
     /// into a new directory, with a run spec over what it posted: what a
     /// challenger starts from.
     Fetch(ClaimFetchArgs),
+    /// Ask of a fetched claim what no replay shows: whether every checkpoint
+    /// names an approved program, and whether every input a stage takes from
+    /// an earlier one is that stage's output. Nothing is run.
+    Audit(ClaimAuditArgs),
     /// Post the data `claim build` prepared, and write where it is into the
     /// claim's submission.
     Post(ClaimPostArgs),
@@ -257,6 +261,41 @@ struct ClaimPostArgs {
     /// `IRIS_DA_DIR`, or `~/.cache/iris/stub-celestia`.
     #[arg(long = "da-dir")]
     da_dir: Option<PathBuf>,
+}
+
+#[derive(Debug, Args)]
+struct ClaimAuditArgs {
+    /// The claim's `claim_submission.json`, in the directory `iris claim
+    /// fetch` wrote: with its checkpoint list, checkpoints and input lists.
+    #[arg(long)]
+    submission: PathBuf,
+
+    /// A run spec of the configuration the claim names.
+    #[arg(long, default_value = inference_artifacts::INFERENCE_RUN_SPEC_TOML)]
+    run: PathBuf,
+
+    /// The pins the contract holds. As for `iris claim check`.
+    #[arg(long)]
+    pins: Option<PathBuf>,
+
+    /// Write every call a contract can be asked of the claim with no replay,
+    /// as a JSON list: `voidForProgram` for each checkpoint and
+    /// `voidForInput` for each input taken from an earlier stage, each with
+    /// what the contract is expected to answer. The calls that point at a
+    /// fault are the ones to send.
+    #[arg(long)]
+    calls: Option<PathBuf>,
+}
+
+/// What a lying claim says falsely of its checkpoint.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum ClaimFaultArg {
+    /// Another output than the stage's.
+    Output,
+    /// A program outside the approved set.
+    Program,
+    /// An input that is not what its producer made.
+    Input,
 }
 
 #[derive(Debug, Args)]
@@ -578,6 +617,17 @@ struct ClaimCorruptHashesArgs {
     #[arg(long, requires = "submission")]
     claimer: Option<String>,
 
+    /// With `--submission`: what the lying claim says falsely of the
+    /// checkpoint. An output is a lie a replay shows. A program or an input
+    /// is one a challenger points at (`iris claim audit`).
+    #[arg(long, value_enum, default_value = "output", requires = "submission")]
+    fault: ClaimFaultArg,
+
+    /// With `--fault input`: the input to lie about. Default: the first the
+    /// checkpoint names a producer for.
+    #[arg(long, requires = "submission")]
+    input: Option<String>,
+
     /// Optional output path for the corrupted hash list. With
     /// `--submission`, the lying claim's directory.
     #[arg(long)]
@@ -855,14 +905,55 @@ fn execute(cli: Cli) -> Result<ExitCode> {
             Ok(ExitCode::SUCCESS)
         }
         Some(Commands::Claim {
+            command: ClaimCommand::Audit(args),
+        }) => {
+            let base_dir =
+                std::env::current_dir().context("failed to resolve current directory")?;
+            let audit = posted::audit_claim(posted::AuditClaimOptions {
+                submission_path: absolute(&base_dir, &args.submission),
+                run_spec_path: absolute(&base_dir, &args.run),
+                pins_path: args.pins.map(|path| absolute(&base_dir, &path)),
+            })?;
+            println!("checkpoints: {}", audit.checkpoints);
+            println!("programs approved: {}", audit.programs_approved);
+            println!("chained inputs linked: {}", audit.inputs_linked);
+            println!("faults: {}", audit.faults.len());
+            for fault in &audit.faults {
+                let input = fault
+                    .input
+                    .as_ref()
+                    .map(|input| format!(", input `{input}`"))
+                    .unwrap_or_default();
+                println!(
+                    "fault: checkpoint {} (`{}`){input}: {} (call {})",
+                    fault.checkpoint, fault.stage, fault.fault, fault.call
+                );
+            }
+            if let Some(calls) = args.calls {
+                let calls = absolute(&base_dir, &calls);
+                inference_artifacts::write_json(&calls, &audit.calls)?;
+                println!("calls: {}", calls.display());
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+        Some(Commands::Claim {
             command: ClaimCommand::Corrupt(args),
         }) if args.submission.is_some() => {
             let base_dir =
                 std::env::current_dir().context("failed to resolve current directory")?;
             let selection = args.selection()?;
+            anyhow::ensure!(
+                args.input.is_none() || args.fault == ClaimFaultArg::Input,
+                "--input names the input of a `--fault input` lie"
+            );
             let lying = posted::corrupt_claim(posted::CorruptClaimOptions {
                 submission_path: absolute(&base_dir, &args.submission.expect("checked above")),
                 selection,
+                fault: match args.fault {
+                    ClaimFaultArg::Output => posted::CorruptFault::Output,
+                    ClaimFaultArg::Program => posted::CorruptFault::Program,
+                    ClaimFaultArg::Input => posted::CorruptFault::Input(args.input),
+                },
                 claimer: args.claimer,
                 out_dir: absolute(&base_dir, &args.output.expect("clap requires it")),
             })?;

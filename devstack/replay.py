@@ -4,6 +4,7 @@
   replay.py claim --run <spec.toml> --submission <claim_submission.json>
   replay.py challenge --run <spec.toml> --submission <claim_submission.json> \\
                       --challenge <challenge_submission.json>
+  replay.py faults --run <spec.toml> --submission <fetched>/claim_submission.json
 
 `claim` takes a claim that `iris claim post` has posted. It asks `iris claim
 check` and the contract about the claim as it is, then about one changed copy
@@ -14,6 +15,15 @@ at the same check. The claim itself is then submitted.
 posted: it compares `iris challenge check` with the contract on the challenge
 and on changed copies, and submits the challenge. The claim it disputes is
 submitted first if the contract does not hold it.
+
+`faults` takes a claim in the directory `iris claim fetch` wrote, and asks
+the contract everything `iris claim audit` asks of it with no replay: of each
+checkpoint whether its program is approved, and of each input a stage takes
+from an earlier one whether it is that stage's output. The contract must
+answer each as iris does: refuse to void an honest stage, with the same
+error, and take a fault iris found. A fault found is then sent, and the claim
+must read as void of that fault. The claim is submitted first if the contract
+does not hold it.
 
 A changed copy is only ever called, never sent, so nothing but the claim and
 the challenge themselves reaches the contract's state. A few cases are the
@@ -31,6 +41,7 @@ import json
 import pathlib
 import subprocess
 import sys
+import urllib.request
 
 import submit
 from submit import DEPLOYMENT, ENV, IRIS, foundry, iris
@@ -72,7 +83,16 @@ CHECK_OF = {
     "NotTheCheckpoint": "challenge: of the claim's checkpoint",
     "UnapprovedProgram": "challenge admission: the stage names an approved program",
     "OutputNotDisputed": "challenge: Raster admits it",
+    "TraceTooShort": "challenge: Raster admits it",
+    "WindowSizeNotProtocol": "challenge: Raster admits it",
+    "NonCanonicalBitsPerItem": "challenge: Raster admits it",
 }
+
+# `IrisClaims.ClaimFault`, in order.
+CLAIM_FAULTS = [
+    None, "UnapprovedProgram", "UnreadableInputList", "InputMissing", "NoProducer",
+    "ProducerNotEarlier", "ProducerOfWrongKind", "NotTheProducersOutput",
+]
 
 
 def check_name(line):
@@ -173,6 +193,111 @@ class Replay:
         print(f"{len(self.rows) - len(differing)} of {len(self.rows)} cases agree")
         if differing:
             sys.exit(f"the contract and iris differ on: {', '.join(differing)}")
+
+
+def rpc(method, params):
+    """One JSON-RPC call to the EVM node."""
+    request = urllib.request.Request(
+        ENV["IRIS_EVM_RPC"],
+        data=json.dumps({"jsonrpc": "2.0", "id": 1, "method": method, "params": params}).encode(),
+        headers={"content-type": "application/json"},
+    )
+    with urllib.request.urlopen(request) as response:
+        return json.loads(response.read())
+
+
+def asked(call):
+    """What the contract answers a call that points at a fault, by a call
+    that changes nothing: None when it would void the claim, otherwise the
+    error it reverts with."""
+    answer = rpc("eth_call", [
+        {"from": ENV["IRIS_SENDER_ADDRESS"], "to": DEPLOYMENT["claims"], "data": call["calldata"]},
+        "latest",
+    ])
+    if "error" not in answer:
+        return None
+    return submit.revert_reason(json.dumps(answer["error"]), ERRORS)["error"].partition("(")[0]
+
+
+def voided(claim_id):
+    """The fault the contract holds a claim void of, or None."""
+    held = submit.call(DEPLOYMENT["claims"], "voided(bytes32)", claim_id, returns="(uint8,uint32,uint64)")
+    if held is None:
+        sys.exit(f"the contract does not answer for claim {claim_id}")
+    return CLAIM_FAULTS[int(held.splitlines()[0].split()[0])]
+
+
+def replay_faults(arguments):
+    spec = arguments.run
+    path = pathlib.Path(arguments.submission).resolve()
+    replay = Replay()
+
+    claim = json.loads(iris("evm", "claim", "--submission", str(path)))
+    submit.register(spec)
+    submit.relay(claim["heights"])
+    held = contract_verdict("submitClaim", claim["argument"])
+    if held is None:
+        ok, result = submit.send(DEPLOYMENT["claims"], "submitClaim(bytes)", claim["argument"])
+        if not ok:
+            sys.exit(f"the contract refused the claim it had taken in a call: {result}")
+    elif held != "AlreadySubmitted":
+        sys.exit(f"the contract does not take the claim: {held}")
+
+    calls_path = path.with_name("replay-audit-calls.json")
+    print(iris("claim", "audit", "--submission", str(path), "--run", spec,
+               "--calls", str(calls_path)).strip(), flush=True)
+    calls = json.loads(calls_path.read_text())
+    faults = [call for call in calls if "void" in call["expected"]]
+    before = voided(claim["claim"])
+
+    def row(name, iris_text, contract_text, agree):
+        replay.rows.append({"case": name, "iris": iris_text, "contract": contract_text, "agree": agree})
+        print(f"{'ok  ' if agree else 'DIFF'}  {name:24} iris: {iris_text:58} contract: {contract_text}",
+              flush=True)
+
+    if before is not None:
+        # Sent on an earlier replay. A void claim answers nothing else.
+        expected = faults[0]["expected"]["void"] if faults else "no fault"
+        row("already void", expected, before, bool(faults) and before == expected)
+        replay.finish()
+        return
+
+    # Every question, by a call that changes nothing.
+    answers = {}
+    differing = []
+    for call in calls:
+        expected = call["expected"].get("revert")
+        got = asked(call)
+        answers.setdefault(expected or "void", [0, 0])[0] += 1
+        if got == expected:
+            answers[expected or "void"][1] += 1
+        else:
+            where = f"checkpoint {call['checkpoint']} ({call['stage']})"
+            if call["input"]:
+                where += f" input {call['input']}"
+            differing.append((where, call["expected"], got or "would void"))
+    for expected, (count, same) in sorted(answers.items()):
+        row(f"{count} x {expected}"[:24],
+            "refuses to void" if expected != "void" else "a fault",
+            f"{same} of {count} the same", same == count)
+    for where, expected, got in differing[:20]:
+        row("differs", f"{where}: {json.dumps(expected)}", got, False)
+
+    # A fault iris found is one the contract takes, and records as iris named it.
+    if faults:
+        fault = faults[0]
+        function = fault["function"].partition("(")[0]
+        ok, result = submit.send(DEPLOYMENT["claims"], fault["function"], fault["argument"])
+        row(f"send {function}"[:24], fault["expected"]["void"],
+            f"sent, {submit.gas_used(result)} gas, {(len(fault['calldata']) - 2) // 2} bytes of call data"
+            if ok else str(result.get("error")), ok)
+        now = voided(claim["claim"])
+        row("void of", fault["expected"]["void"], str(now), now == fault["expected"]["void"])
+        row("again", "(no part)", str(asked(fault)), asked(fault) == "AlreadyVoided")
+    else:
+        row("not void", "no fault", str(voided(claim["claim"])), voided(claim["claim"]) is None)
+    print(json.dumps({"claim": claim["claim"], "questions": len(calls), "faults": len(faults)}))
+    replay.finish()
 
 
 def changed(path, name, original, change):
@@ -339,6 +464,14 @@ def replay_challenge(arguments):
     stated = (stated["checkpoints"] if isinstance(stated, dict) else stated)[honest["stage"]]["output_sha256"]
     case("undisputed",
          lambda s: s["challenge"].__setitem__("claimed_output", list(bytes.fromhex(stated))))
+    # A trace in another shape than the protocol fixes for its length: a
+    # window the challenger chose, another packing, or too short to have one.
+    header = lambda s: s["challenge"]["trace_commitment_header"]
+    case("another-window",
+         lambda s: header(s).__setitem__("window_size", header(s)["window_size"] // 2))
+    case("another-packing",
+         lambda s: header(s).__setitem__("bits_packer", header(s)["bits_packer"] + 1))
+    case("short-trace", lambda s: header(s).__setitem__("fingerprint_len", 2))
     case("overstated-contents",
          lambda s: s["availability"][0]["contents"]["trace_bodies"].append("33" * 32))
     case("unsigned", unsign, contract_only="NotIncluded")
@@ -369,13 +502,15 @@ def replay_challenge(arguments):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("what", choices=["claim", "challenge"])
+    parser.add_argument("what", choices=["claim", "challenge", "faults"])
     parser.add_argument("--run", required=True, help="the run spec of the configuration")
     parser.add_argument("--submission", required=True, help="the claim's claim_submission.json")
     parser.add_argument("--challenge", help="the challenge_submission.json that `iris challenge post` wrote")
     arguments = parser.parse_args()
     if arguments.what == "claim":
         replay_claim(arguments)
+    elif arguments.what == "faults":
+        replay_faults(arguments)
     else:
         if not arguments.challenge:
             parser.error("a challenge needs --challenge")

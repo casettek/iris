@@ -235,6 +235,55 @@ library IrisEncoding {
         return sha256(abi.encodePacked("iris/checkpoints/v1\x00", le32(total), hash(node)));
     }
 
+    // --- a Raster trace commitment header ---
+
+    /// A number as postcard writes it: seven bits a byte, low first.
+    function varint(uint64 value) internal pure returns (bytes memory out) {
+        while (value >= 0x80) {
+            out = abi.encodePacked(out, bytes1(uint8(value & 0x7f) | 0x80));
+            value >>= 7;
+        }
+        out = abi.encodePacked(out, bytes1(uint8(value)));
+    }
+
+    /// `TraceCommitmentHeader::digest`: what a fault proof's journal names as
+    /// the trace it refutes, and what a posted trace body is found by.
+    function traceHeaderDigest(TraceHeader memory header) internal pure returns (bytes32) {
+        return sha256(
+            abi.encodePacked(
+                "raster/trace-commitment/v2",
+                varint(header.bitsPerItem),
+                varint(header.fingerprintLen),
+                bytes1(0x20),
+                header.fingerprintRoot,
+                bytes1(0x20),
+                header.revealedItems,
+                varint(header.windowSize),
+                bytes1(0x20),
+                header.revealedTailRoots
+            )
+        );
+    }
+
+    /// The window size a trace of `traceLength` items must be committed at:
+    /// `raster_prover::challenge::protocol_window_size`. 128, or for a
+    /// shorter trace the largest power of two below its length. Zero for a
+    /// trace too short for any window.
+    function protocolWindow(uint64 traceLength) internal pure returns (uint64) {
+        if (traceLength <= 2) return 0;
+        uint64 below = 1;
+        for (uint64 rest = traceLength - 1; rest > 1; rest >>= 1) {
+            below <<= 1;
+        }
+        return below < 128 ? below : 128;
+    }
+
+    /// The fingerprint bits an item has at a window size:
+    /// `FraudProofConfig::from_window_size`. A window reveals 128 bits.
+    function protocolBitsPerItem(uint64 window) internal pure returns (uint64) {
+        return (128 + window - 1) / window;
+    }
+
     // --- a posted blob: `attestation_digest` ---
 
     function record(Record memory value) internal pure returns (bytes memory) {

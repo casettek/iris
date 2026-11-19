@@ -50,12 +50,15 @@ struct FaultVerdict {
 ///
 /// What follows is not read. The layout is the transition program's, so it
 /// changes only with that program's id, which a contract pins.
+///
+/// Deployed by itself and linked into the claims contract, which is near the
+/// size a contract may be.
 library RasterJournal {
     error MalformedJournal();
 
     uint256 private constant FINISHED = 2;
 
-    function read(bytes memory journal) internal pure returns (FaultVerdict memory verdict) {
+    function read(bytes memory journal) public pure returns (FaultVerdict memory verdict) {
         uint256 at = _frontier(journal, 0);
         at = _frontier(journal, at);
         (, at) = _bytes(journal, at);
