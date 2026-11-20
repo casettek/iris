@@ -273,6 +273,14 @@ pub fn programs_encoding(configuration: &Configuration) -> Vec<u8> {
         for input in &program.run_inputs {
             text(&mut out, input);
         }
+        count(&mut out, program.pinned_inputs.len());
+        for input in &program.pinned_inputs {
+            text(&mut out, &input.name);
+            count(&mut out, input.values.len());
+            for value in &input.values {
+                out.extend(hash_field(value));
+            }
+        }
     }
     out
 }
@@ -412,7 +420,7 @@ pub fn attestation_digest(blob: &PostedBlob, data_root: &str) -> Result<[u8; 32]
         .ok()
         .filter(|bytes| bytes.len() == NAMESPACE_BYTES)
         .with_context(|| format!("`{}` is not a namespace", blob.pointer.namespace))?;
-    let mut encoder = Encoder::new(b"iris/blob-attestation/v1\0");
+    let mut encoder = Encoder::new(b"iris/blob-attestation/v2\0");
     encoder
         .long(blob.pointer.height)
         .raw(&namespace)
@@ -421,8 +429,7 @@ pub fn attestation_digest(blob: &PostedBlob, data_root: &str) -> Result<[u8; 32]
         .hash(data_root)
         .raw(&address_bytes(&blob.contents.submitter)?);
     for list in [
-        &blob.contents.sources,
-        &blob.contents.prompt_texts,
+        &blob.contents.run_inputs,
         &blob.contents.checkpoint_lists,
         &blob.contents.trace_bodies,
     ] {
@@ -542,8 +549,7 @@ fn stated_token(stated: Option<&StatedRecords>) -> Result<Token> {
 fn contents_token(contents: &BlobContents) -> Result<Token> {
     Ok(Token::Tuple(vec![
         Token::address(&contents.submitter)?,
-        hashes_token(&contents.sources)?,
-        hashes_token(&contents.prompt_texts)?,
+        hashes_token(&contents.run_inputs)?,
         hashes_token(&contents.checkpoint_lists)?,
         hashes_token(&contents.trace_bodies)?,
         Token::Array(
@@ -744,6 +750,7 @@ pub fn input_fault_token(
     input_manifest: &[u8],
     input: &str,
     producer: Option<(&Checkpoint, &[String])>,
+    posted: &[String],
 ) -> Result<Token> {
     let (has_producer, producer, producer_path) = match producer {
         Some((producer, path)) => (true, checkpoint_token(producer)?, hashes_token(path)?),
@@ -770,6 +777,7 @@ pub fn input_fault_token(
         Token::flag(has_producer),
         producer,
         producer_path,
+        hashes_token(posted)?,
     ]))
 }
 

@@ -201,10 +201,11 @@ pub(super) fn run_challenge_leg(leg: &Leg) -> Result<Value> {
             "a claim that states another result was written as one a contract would take"
         );
 
-        // The two lies no replay shows: a checkpoint that names a program
-        // outside the approved set, and one whose input is not its producer's
-        // output. A contract takes each claim, since nothing at arrival reads
-        // that checkpoint. A challenger who reads the claim back finds the
+        // The lies no replay shows: a checkpoint that names a program outside
+        // the approved set, one whose input is not its producer's output, one
+        // that names other fixed data than the configuration pins, and one
+        // that names a run input the claim did not post. A contract takes
+        // each claim, since nothing at arrival reads that checkpoint. A challenger who reads the claim back finds the
         // fault by auditing it, with nothing run, at the checkpoint that
         // lies.
         let layer = crate::availability::open_layer(None)?;
@@ -219,6 +220,22 @@ pub(super) fn run_challenge_leg(leg: &Leg) -> Result<Value> {
                 crate::posted::CorruptFault::Input(None),
                 "corrupted-input",
                 "NotTheProducersOutput",
+            ),
+            // An input the program is given from fixed data, here the
+            // model's tokenizer: the stage checks it as it runs, but a
+            // challenger has no such bytes to run the stage on.
+            (
+                crate::posted::CorruptFault::Input(Some(String::from("tokenizer"))),
+                "corrupted-pinned",
+                "NotAPinnedValue",
+            ),
+            // An input the run gives, here the range's token marks: the
+            // claim posted its real marks, and this checkpoint names others,
+            // which nobody but the claimer has.
+            (
+                crate::posted::CorruptFault::Input(Some(String::from("marks"))),
+                "corrupted-posted",
+                "NotAPostedInput",
             ),
         ] {
             let lie = crate::posted::corrupt_claim(crate::posted::CorruptClaimOptions {

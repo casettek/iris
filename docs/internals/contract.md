@@ -23,7 +23,7 @@ A contract judges a claim by the registered configuration the claim names
 (`Configuration`, see [data availability and the registry](availability.md)):
 the [pipeline](pipelines.md), that pipeline's stage programs, one model per
 inference the pipeline makes, and the contract's own parameters. The first
-three are the pins, a file, `contract_pins.json` (version 4):
+three are the pins, a file, `contract_pins.json` (version 5):
 
 | Field | Meaning |
 | --- | --- |
@@ -36,8 +36,9 @@ the import's `manifest.json`. `iris claim pins --run <spec> --out <file>` writes
 those of the run spec's pipeline over the models it names, from their imports and
 the stage projects' locks as they are when it runs.
 
-**The program entry** is true of the stage programs whatever model they run.
-Two models of one family under one pipeline have the same one.
+**The program entry** is true of the stage programs whatever model they run,
+but for the pinned values of the inputs that hold a model's data. Two models
+of one family under one pipeline differ in those alone.
 
 | Value | Where it comes from |
 | --- | --- |
@@ -45,7 +46,8 @@ Two models of one family under one pipeline have the same one.
 | Each program's chained inputs | The chain template: an input is chained when any stage of the program takes it `from` another stage |
 | For each chained input, the programs that may produce it | The chain template |
 | For each chained input, the empty values it may hold | The fixed externals the chain's first stages are given in its place |
-| Each program's run inputs | The chain template: an input bound `{ run = ... }`, or to a file under the run placeholder directory. Not checked yet: kept for the step in which a claimer posts a run input on request ([availability](availability.md#open)) |
+| Each program's run inputs | The chain template: an input bound `{ run = ... }`, or to a file under the run placeholder directory. A checkpoint may name for such an input only a value the claim posted ([availability](availability.md#what-is-posted-and-what-is-not)) |
+| Each program's pinned inputs, with the commitments each may hold | The chain template: an input bound to a file the import wrote, or to a chain input of such files, which lists one commitment per layer. A checkpoint may name nothing else for such an input ([the chains](chains.md#the-ways-to-challenge-a-claim)) |
 
 **A model entry** is true of one model.
 
@@ -134,7 +136,7 @@ tree over those hashes, with their count: `checkpoints_root`. See
 | `consensus` | For a `consensus` claim: `same_input`, `agree` and `code`, as its result stage states them. Absent for `single` |
 | `checkpoint_count` | How many checkpoints the claim has |
 | `checkpoints_root` | The claim's commitment to its checkpoint list: the count and the root of the tree over the checkpoint hashes |
-| `availability` | The blobs the claimer posted: the new information its statement names (the source, or the prompt text of a run with none), and the checkpoint list with every checkpoint, each with where it is, what it holds and its availability proof ([availability](availability.md)) |
+| `availability` | The blobs the claimer posted: the inputs its run was given, and the checkpoint list with every checkpoint, each with where it is, what it holds and its availability proof ([availability](availability.md)) |
 
 The three `record` values are the claim record an inference's last check states
 in its output (`ClaimRecord` in `raster-stages/sequence-check/src/input.rs`). The
@@ -189,9 +191,10 @@ made of each inference, against the model the configuration pins for it
 6. **Data posted** (`check_claim_availability`). Every blob the claim lists is
    included in a data root Blobstream has attested to, its availability proof
    holds, and it stays retrievable past the end of the challenge period. The
-   blobs hold the new information the statement names, a source whose record
-   has the statement's source digest or a prompt text with its input hash, and
-   the claim's checkpoint list.
+   blobs hold the claim's checkpoint list. The run inputs they hold are
+   recorded and not judged here: a stage input that was not posted is a fault
+   of the checkpoint that names it, shown with no replay
+   ([the chains](chains.md#the-ways-to-challenge-a-claim)).
 7. **Records are its checkpoints'** (`check_stated_records`). A claim ends in
    its pipeline's result stage: its last checkpoint's program must be that
    pipeline's result program. That checkpoint names, for each inference, the
@@ -245,7 +248,7 @@ and fields must also be plain text, printable ASCII with no quote and no
 backslash: the EVM contract reads the list byte by byte and unescapes nothing.
 
 Both comparisons are on the EVM contract as `voidForProgram` and
-`voidForInput` ([the chains](chains.md#the-four-ways-to-challenge-a-claim)).
+`voidForInput` ([the chains](chains.md#the-ways-to-challenge-a-claim)).
 
 Which earlier stage is the right producer is not the contract's to judge. Every
 output says which step produced it, and the consuming stage checks that against
@@ -400,13 +403,13 @@ These are open. None is closed by anything on this page.
   proof of a full-size stage has been produced. The dispute rules above are
   tested on Raster's own admission and defence functions with real traces and
   made-up journals, and on one real proof of a small fixture.
-- **`challenge build` replays whatever differs.** It does not sort a
-  divergence into the program comparison, the link comparison or a replay.
-  `iris claim audit` makes the first two of every checkpoint with nothing
-  run, so a challenger audits a claim before it replays anything. What is
-  left unsorted is a stage that ran on another run input or other model data
-  than the challenger's: a replay aimed at it fails safely, since the
-  defender can refute it.
+- **`challenge build` replays only a stage that differs in its output.** For
+  a posted claim it runs every stage on the inputs the claim posted, and
+  stops when the first checkpoint that differs names another program or
+  other inputs than its run's. `iris claim audit` rules on the first and on
+  an input that is none a challenger holds, with nothing run. What is left
+  is a stage given a held input the chain would not give it, which needs a
+  replay on that arrangement ([availability](availability.md#open)).
 
 - **The signer's key is a run input.** The `source` stage checks attestations
   against the key the run gives it and states that key in its record. No stage

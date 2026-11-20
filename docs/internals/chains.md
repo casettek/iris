@@ -95,9 +95,10 @@ blob the submission names back from the layer and says what each holds:
 `bytes` is everything posted: the whole of every blob. A part's `bytes` is
 its size as the blob encodes it, and `framing_bytes` is the rest of the blob
 (the magic, the submitter and the lengths), so a blob's parts and framing add
-up to it. A claim posts its prompt text or its source (`kind: "source"`, with
-the documents' bodies apart from the attestations and recipe) and its
-checkpoints: the list, the checkpoints and every input manifest. A challenge
+up to it. A claim posts its run's inputs (`kind: "run_inputs"`, with the text,
+the token marks, the claimed ids and a source's documents each apart from the
+rest) and its checkpoints: the list, the checkpoints and every input manifest.
+A challenge
 posts the challenger's trace of the stage (`kind: "trace_body"`).
 
 The numbers above are a one-token claim of Gemma 4 E2B: 146 checkpoints, and
@@ -143,35 +144,56 @@ rejection it is.
    give the submitted text; so is the agreement.
 4. Every blob is under a root the oracle holds, stays retrievable through the
    challenge period, carries the attester's signature, and names the claimer.
-   Together they hold the new information the statement names and the claim's
-   checkpoint list.
+   Together they hold the claim's checkpoint list. The contract keeps one
+   hash of the commitments of the run inputs they hold.
 5. The records and results the blobs' proofs state are the ones the claim
    submits.
 
 The contract recomputes every hash these checks compare: the statement, the
 source record's digest, the forms and their result, the stated records.
 
-### The four ways to challenge a claim
+### The ways to challenge a claim
 
-A claim can be wrong in four ways, and each has its own call.
+A claim can be wrong in these ways, and each has its call.
 
 | What is wrong | The call | How it is settled |
 | --- | --- | --- |
 | A stage's execution: its program on its inputs gives another output | `submitChallenge` | The challenger posts its trace of the stage. The claimer can answer with a fault proof (`submitFaultProof`) |
 | A stage's program: it is outside the approved set | `voidForProgram` | On the spot: the claim is void |
 | A stage's input from an earlier stage: it is not what that stage produced | `voidForInput` | On the spot: the claim is void |
-| A stage's input from the run itself: it is not the pinned model's, or not what the claim posted | none yet | See [Not built](#not-built) |
+| A stage's input from fixed data, such as the model's: it is not a commitment the configuration pins | `voidForInput` | On the spot: the claim is void |
+| A stage's input from the run itself: it is not a value the claim posted | `voidForInput` | On the spot: the claim is void |
 
 The first is an assertion that can itself be false, which is why it has an
-answer. The next two are facts the contract reads from the claim's own
-checkpoints, so there is nothing to answer and nothing to wait for. A replay
-cannot stand in for them: it runs the program a checkpoint names on the
-inputs it names, and so says nothing of whether that is the right program or
-where the inputs came from.
+answer. The next four are facts the contract reads from the claim's own
+checkpoints, its configuration and what it posted, so there is nothing to
+answer and nothing to wait for. A replay cannot stand in for them: it runs the program a
+checkpoint names on the inputs it names, and so says nothing of whether that
+is the right program or where the inputs came from.
+
+**Why the inputs are compared, when the stages check them.** A stage checks
+what it loads against a pinned identity as it runs: the model's data against
+the model id, for one. That makes a wrong input show in an honest run. But a
+challenger shows a lie about a stage by running the stage on the same inputs,
+and a dispute is settled against the inputs the claimer's checkpoint names.
+A claimer that ran a stage on other weights and stated a clean output could
+answer an honest challenger with a real fault proof, since the challenger's
+trace is not a run on those weights, and the challenger has no such weights
+to run on. So a checkpoint may name, for every input, only something a
+challenger also holds: an earlier checkpoint's output, a commitment the
+configuration pins, or a value the claim posted. Then whenever two parties
+disagree about a stage they ran it on the same inputs, and a replay settles
+it.
+
+The contract does not judge what a posted input says. A claimer can post
+token marks that are not the tokenizer's. The stage checks them as it runs,
+so an honest run on those marks ends in a record that says so, and a claim
+that stated a clean record for that stage is shown false by a replay on the
+marks it posted ([availability](availability.md#what-is-posted-and-what-is-not)).
 
 `iris claim audit --submission <fetched>/claim_submission.json --run <spec>`
-asks the last two of every checkpoint of a claim, from its files and the
-configuration alone, with nothing run. A challenger does this first. With
+asks these of every checkpoint of a claim and every input its program has,
+from its files and the configuration alone, with nothing run. A challenger does this first. With
 `--calls <file>` it writes every call a contract can be asked, each with what
 the contract is expected to answer, and the ones that point at a fault are
 the ones to send (`devstack/submit.py fault --calls <file> --call <n>`).
@@ -192,15 +214,24 @@ stage's own checkpoint names as that input's producer. Its checks and their
 order are `CheckpointList::check_link`'s:
 
 1. The list is the one the checkpoint commits to, the stage's program is
-   approved, and the input is one the configuration says that program takes
-   from an earlier stage. Otherwise the call reverts: it is not this call's
-   to judge.
+   approved, and the input is one the configuration lists for that program.
+   Otherwise the call reverts: it is not this call's to judge.
 2. The list is in its one canonical form, or the claim is void
    (`UnreadableInputList`).
 3. The list holds the input, or the claim is void (`InputMissing`).
-4. If the input holds an empty value the configuration allows it, the call
-   reverts with `Linked`.
-5. The checkpoint names a producer for the input (`NoProducer`), and the
+4. An input the program is given from fixed data holds a commitment the
+   configuration pins for it, and the call reverts with `Linked`, or the
+   claim is void (`NotAPinnedValue`). An input the run gives holds the
+   commitment of a value the claim posted, and the call reverts with
+   `Linked`, or the claim is void (`NotAPostedInput`). For that the caller
+   presents the commitments of every run input the claim posted, which the
+   contract holds to the hash it kept when the claim arrived
+   (`NotThePostedInputs`). An input that may be either, such as the claimed
+   ids, which are a pinned empty value in a prompt range, is linked by
+   either.
+5. For an input from an earlier stage: if it holds an empty value the
+   configuration allows it, the call reverts with `Linked`. Otherwise the
+   checkpoint names a producer for the input (`NoProducer`), and the
    producer is an earlier checkpoint (`ProducerNotEarlier`).
 6. The producer's program is one that may produce this input
    (`ProducerOfWrongKind`).
@@ -221,10 +252,21 @@ name and field is plain text, printable ASCII with no quote and no backslash,
 so nothing is escaped. `InputManifest.sol` reads the list byte by byte in
 that form, and `read_input_manifest` in Rust holds the same rule.
 
-**Cost.** On a 306-checkpoint claim, `voidForProgram` used about 101,000 gas
-with 1.3 KB of call data, and `voidForInput` about 1,630,000 gas with 4.1 KB.
-The second reads the whole configuration from storage and the input list
-byte by byte, and neither has been made cheaper.
+**The pinned inputs.** The configuration lists, for each program, every
+input the chain template binds to a file the import wrote, with every
+commitment it is bound to: the tokenizer, the embedding, the model's
+descriptor, the witness each stage checks its data with, the decoder and the
+head, and one commitment per layer for the weights. They are read from the
+template as the chained inputs are, so nothing about them is particular to a
+model. An input bound per layer may hold any of its commitments: which layer
+belongs at which stage is the schedule's, checked inside the stages, and a
+challenger has every layer.
+
+**Cost.** On a 146-checkpoint claim, `voidForProgram` used about 104,000 gas
+with 1.5 KB of call data. `voidForInput` used about 650,000 gas with 3 KB for
+an input with one or two allowed values, and about 1,640,000 gas for a
+layer's weights, where it compares against 35 pinned commitments. Neither has
+been made cheaper.
 
 ### What `submitChallenge` checks
 
@@ -321,17 +363,18 @@ reads every blob the submission names and writes a new directory:
 | `claim_submission.json` | The submission, as given |
 | `checkpoints.txt`, `checkpoint_trace.json` | The claim's list and checkpoints, byte for byte as posted |
 | `<stage>/input_manifest.json` | Each stage's input manifest |
+| `posted_run.bin` | The inputs the claim's run was given, as it posted them |
 | `inference.toml` | The reader's run spec over what the claim posted |
 
 `--run` is the reader's own spec of the configuration: the pipeline, the
 models, the parameters, and for a claim with a source the recipe and the
 signer's key. The command keeps those and replaces the rest with what was
-posted: the prompt text, written into the spec itself, or the source's
-documents with their attestations.
+posted: the prompt text the posted slices concatenate to, written into the
+spec itself, or the source's documents with their attestations.
 
 Nothing is written unless the spec describes the configuration the claim
-names, every blob was posted for the claimer, and together they hold the new
-information the statement names and the checkpoint list the claim names. The
+names, every blob was posted for the claimer, and together they hold the
+checkpoint list the claim names and the inputs of one run. The
 outputs that travel with the stand-in proof are not read: a challenger makes
 its own.
 
@@ -340,12 +383,15 @@ them as a file, and whoever runs it asks the contract whether it holds a
 claim with that id (`claims(bytes32)`), as iris-backend does.
 
 **`iris challenge build --run <dir>/inference.toml --submission <dir>/claim_submission.json`**
-builds the challenge from that directory alone. The run is prepared as a
-claimer prepares its own, from the spec, with the output found by direct
-inference (or given with `--direct-output-ids`), and is compared with the
-posted list hash by hash. The command refuses a spec whose prompt is not the
-one the claim names. `iris challenge post` and `iris evm challenge` then take
-the same directory as the claim's.
+builds the challenge from that directory alone. Every stage is run on the
+inputs the claim posted: nothing is tokenized and no output is found by
+direct inference, since the stages check what they are given. The run is
+compared with the posted list hash by hash, and the first stage whose output
+differs is replayed. The command stops when the claim's checkpoint for that
+stage names another program or other inputs than this run's: a replay of it
+here would not be a run on the claimer's inputs, and such a claim is one
+`iris claim audit` rules on. `iris challenge post` and `iris evm challenge`
+then take the same directory as the claim's.
 
 **`iris challenge fetch --challenge <challenge_submission.json> --out <commit.bin>`**
 reads the trace the challenge names. It is written only when it was posted
@@ -455,22 +501,16 @@ record the claim names.
 
 The contract covers the two cases Raster covers today, a claim challenged
 with a replayed checkpoint and a challenge shown false with a fault proof of
-its trace, and the two faults of a claim that no replay shows. What is around
+its trace, and the faults of a claim that no replay shows. What is around
 them is open, and each is its own piece of work:
 
-- **A wrong input from the run itself.** A stage's inputs are of three
-  kinds: from an earlier stage (`voidForInput`), from the model, and from
-  this run (the prompt or the documents, and what the claimer derives from
-  them). Nothing holds the last two to anything on chain. The model's data
-  is in every stage's input list by its commitment, and the configuration
-  pins the model's commitments by role, but which role belongs at which
-  stage is the schedule's, and some inputs (`descriptor`,
-  `witness`) are not among the pinned ones at all. A run input has no value
-  on chain to be compared with: the contract knows the posted prompt by its
-  SHA-256, and a stage loads it by another commitment. And a challenger
-  cannot replay a stage on a run input it does not have, since only the
-  input's commitment is posted. This is the same hole as the first item of
-  [availability's open list](availability.md#open).
+- **A stage given its inputs in another arrangement than the chain's.** Every
+  input a checkpoint names is one a challenger holds, so every stage can be
+  replayed on the claimer's inputs. `challenge build` makes that replay for
+  a claim whose stages are given their inputs as the chain arranges them. A
+  claim that gives a stage another held input, such as another layer's
+  weights, is not replayed by it yet
+  ([availability's open list](availability.md#open)).
 
 - **What follows.** Nothing reads a dismissal, or the lack of one. A claim
   with an unanswered challenge and a claim with none are held the same way.

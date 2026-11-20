@@ -70,8 +70,6 @@ CHECK_OF = {
     "ExpiresTooSoon": "posted",
     "NotProven": "posted",
     "AnotherSubmitter": "posted",
-    "SourceNotPosted": "posted",
-    "PromptTextNotPosted": "posted",
     "CheckpointsNotPosted": "posted",
     "TraceBodyNotPosted": "posted",
     "RecordsNotStated": "submission: records and results",
@@ -91,7 +89,8 @@ CHECK_OF = {
 # `IrisClaims.ClaimFault`, in order.
 CLAIM_FAULTS = [
     None, "UnapprovedProgram", "UnreadableInputList", "InputMissing", "NoProducer",
-    "ProducerNotEarlier", "ProducerOfWrongKind", "NotTheProducersOutput",
+    "ProducerNotEarlier", "ProducerOfWrongKind", "NotTheProducersOutput", "NotAPinnedValue",
+    "NotAPostedInput",
 ]
 
 
@@ -316,7 +315,7 @@ def block_time(height):
 def accepted_at(claim_id):
     """When the contract accepted a claim, in Unix seconds."""
     held = submit.call(DEPLOYMENT["claims"], "claims(bytes32)", claim_id,
-                       returns="(bytes32,address,uint32,bytes32,uint64)")
+                       returns="(bytes32,address,uint32,bytes32,uint64,bytes32)")
     if held is None:
         sys.exit(f"the contract does not answer for claim {claim_id}")
     return int(held.splitlines()[4].split()[0])
@@ -387,7 +386,7 @@ def replay_claim(arguments):
     # its checks when the list there is not the one the submission names.
     case("other-root", lambda s: s.__setitem__("checkpoints_root", "22" * 32),
          contract_only="CheckpointsNotPosted")
-    case("overstated-contents", lambda s: s["availability"][0]["contents"].setdefault("prompt_texts", []).append("33" * 32))
+    case("overstated-contents", lambda s: s["availability"][0]["contents"].setdefault("run_inputs", []).append("33" * 32))
 
     def unstate(s):
         for posted in s["availability"]:

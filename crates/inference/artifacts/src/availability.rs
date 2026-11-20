@@ -6,22 +6,22 @@
 //! so a claim is only accepted with its data posted to the data-availability
 //! layer (Celestia), and a challenge only with its trace body posted.
 //!
-//! A claimer posts what a challenger cannot make itself: the new information
-//! given to the pipeline, which no configuration or model fixes, and its own
-//! checkpoints with their input manifests. The new information is a source's
-//! documents with their attestations and its recipe, or, for a run with no
-//! source, the prompt text. Every file a stage loads is made from it, the
-//! configuration and the model, the same way by anyone, so a challenger
-//! reruns everything itself.
+//! A claimer posts everything its stages were given that neither an earlier
+//! stage nor the configuration fixes: the run's inputs ([`PostedRun`]), each
+//! as the value a stage loads, and its own checkpoints with their input
+//! manifests. A stage's input is then one of three things, and a challenger
+//! holds all three: an earlier checkpoint's output, a commitment the
+//! configuration pins, or a value posted here. So whenever two parties
+//! disagree about a stage they ran it on the same inputs.
 //!
 //! Every posted blob names the address it was posted for and carries an
 //! availability proof made by the party posting it: these bytes, which the
 //! layer commits to as the blob, hold data with these commitments, the ones
-//! the claim or the challenge names. For the new information that is the
-//! claim's statement itself: the source step run over the posted signer,
-//! recipe and documents gives the source record whose digest the statement
-//! names, and the posted prompt text hashes to the statement's input text. A
-//! contract checks the proof and the blob's inclusion (Blobstream) up front.
+//! the claim or the challenge names. For a run's inputs those are the
+//! commitments a stage's input list names each one by. A contract checks the
+//! proof and the blob's inclusion (Blobstream) up front. It does not judge
+//! what a posted input says: the stages do that as they run, and a replay on
+//! the posted input shows a stage that said otherwise.
 //!
 //! Here are the formats and the rules. The layer itself, Blobstream and the
 //! proof are behind [`AvailabilityLayer`]; today the host stands in for all
@@ -30,13 +30,13 @@
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+pub use prompt_core::{PromptText, RunConfig, RunSchedule, TextClaim};
+
 use crate::checkpoint::{checkpoint_hash, checkpoints_root, CheckpointTrace};
-use crate::contract::{
-    is_address, source_record_id, ClaimSubmission, ResultInOutput, SubmittedRecord,
-};
+use crate::contract::{is_address, ClaimSubmission, ResultInOutput, SubmittedRecord};
 
 /// The first bytes of every blob iris posts.
-pub const BLOB_MAGIC: &[u8] = b"iris/blob/v2\n";
+pub const BLOB_MAGIC: &[u8] = b"iris/blob/v3\n";
 /// A Celestia namespace: one version byte and 28 bytes of id.
 pub const NAMESPACE_BYTES: usize = 29;
 /// About how long Celestia keeps a blob retrievable after its block: the
@@ -65,14 +65,10 @@ pub struct BlobContents {
     /// The address the blob names: the claimer or the challenger it was
     /// posted for. A submission under another address cannot use the blob.
     pub submitter: String,
-    /// For each source in the blob, the digest of the record the source step
-    /// gives over it: what a statement names a source by.
+    /// The commitment of each run input in the blob: what a stage's input
+    /// list names it by ([`PostedRun::values`] gives their order).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub sources: Vec<String>,
-    /// The SHA-256 of each prompt text in the blob: what a statement names
-    /// its input text by.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub prompt_texts: Vec<String>,
+    pub run_inputs: Vec<String>,
     /// The root of each checkpoint list in the blob
     /// ([`crate::checkpoint::checkpoints_root`]), posted with every
     /// checkpoint it lists and every input manifest those commit to.
@@ -133,8 +129,12 @@ pub struct WitnessedOutput {
 }
 
 /// What reads the Raster formats this crate does not link: a trace body's
-/// header, and the records in two kinds of stage output.
+/// header, the records in two kinds of stage output, and the commitment a
+/// stage names a run input by.
 pub trait OutputReader {
+    /// The commitment of each of a run's inputs, in the order of
+    /// [`PostedRun::values`], or `None` when one does not encode.
+    fn run_inputs(&self, run: &PostedRun) -> Option<Vec<String>>;
     /// The digest of the header of a trace commitment body, or `None` when
     /// the bytes are no well-formed one.
     fn trace_header(&self, body: &[u8]) -> Option<String>;
@@ -147,8 +147,7 @@ pub trait OutputReader {
 impl BlobContents {
     /// Add what another blob holds to what these hold together.
     pub fn extend(&mut self, other: &BlobContents) {
-        self.sources.extend(other.sources.iter().cloned());
-        self.prompt_texts.extend(other.prompt_texts.iter().cloned());
+        self.run_inputs.extend(other.run_inputs.iter().cloned());
         self.checkpoint_lists
             .extend(other.checkpoint_lists.iter().cloned());
         self.trace_bodies.extend(other.trace_bodies.iter().cloned());
@@ -225,13 +224,9 @@ pub struct Blob {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum BlobEntry {
-    /// A run's source: the documents with their attestations, the recipe,
-    /// and the key they were checked against.
-    Source(PostedSource),
-    /// The prompt text of a run with no source, exactly as given.
-    PromptText {
-        text: String,
-    },
+    /// A run's inputs: every value its stages were given that neither an
+    /// earlier stage nor the configuration fixes.
+    Run(PostedRun),
     Checkpoints(CheckpointPackage),
     /// A Raster trace commitment body (`commit.bin`), postcard-encoded.
     TraceBody {
@@ -239,37 +234,118 @@ pub enum BlobEntry {
     },
 }
 
-/// A source as a claimer posts it. The key is the configuration's, posted so
-/// that the source step can be run over the blob alone.
+/// A run's inputs as a claimer posts them: each value a stage is given that
+/// is neither an earlier stage's output nor the configuration's. A stage
+/// loads each as a Raster file, which anyone writes from the value, and its
+/// input list names it by that file's commitment.
+///
+/// The text is posted once, as the slices the binds are given: they
+/// concatenate to the prompt. A source's documents are posted once, as the
+/// chunks the source stage is given.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct PostedSource {
+pub struct PostedRun {
+    /// The source stage's inputs, in a run that has a source.
+    pub source: Option<PostedSourceInputs>,
+    /// The result stage's forms.
+    pub forms: source_core::ResultForms,
+    /// One per inference, in the order the pipeline runs them.
+    pub inferences: Vec<PostedInference>,
+}
+
+/// What the source stage is given: the key attestations are checked against,
+/// the recipe, and the documents with their attestations.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PostedSourceInputs {
     pub signer: source_core::SignerKey,
     pub recipe: source_core::Recipe,
-    /// In the order the recipe names them.
-    pub documents: Vec<PostedDocument>,
+    pub documents: source_core::SourceDocuments,
 }
 
+/// What one inference's stages are given.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct PostedDocument {
-    pub attestation: source_core::Attestation,
-    /// The document's bytes, as the server sent them.
-    pub body: Vec<u8>,
+pub struct PostedInference {
+    pub config: prompt_core::RunConfig,
+    pub schedule: prompt_core::RunSchedule,
+    /// What the run claims of the whole text.
+    pub claim: prompt_core::TextClaim,
+    /// One slice of the text per prompt range.
+    pub text: Vec<prompt_core::PromptText>,
+    /// One set of token marks per prompt range.
+    pub marks: Vec<Vec<u32>>,
+    /// One set of claimed output ids per claimed range.
+    pub claimed: Vec<Vec<u32>>,
 }
 
-impl PostedSource {
-    /// The record the source step states over this source: what the
-    /// statement of a claim built from it names.
-    pub fn record(&self) -> source_core::SourceRecord {
-        let documents: Vec<source_core::SourceDocument> = self
-            .documents
-            .iter()
-            .map(|document| source_core::SourceDocument {
-                attestation: &document.attestation,
-                body: &document.body,
-            })
-            .collect();
-        source_core::run_source(&self.signer, &self.recipe, &documents).record
+/// One of a run's inputs, with the stage input it is given as.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RunInput<'a> {
+    Signer(&'a source_core::SignerKey),
+    Recipe(&'a source_core::Recipe),
+    Documents(&'a source_core::SourceDocuments),
+    Forms(&'a source_core::ResultForms),
+    Config(&'a prompt_core::RunConfig),
+    Schedule(&'a prompt_core::RunSchedule),
+    Claim(&'a prompt_core::TextClaim),
+    Text(&'a prompt_core::PromptText),
+    Marks(&'a [u32]),
+    Claimed(&'a [u32]),
+}
+
+impl RunInput<'_> {
+    /// The name of the stage input this is given as.
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::Signer(_) => "signer",
+            Self::Recipe(_) => "recipe",
+            Self::Documents(_) => "documents",
+            Self::Forms(_) => "forms",
+            Self::Config(_) => "config",
+            Self::Schedule(_) => "schedule",
+            Self::Claim(_) => "claim",
+            Self::Text(_) => "text",
+            Self::Marks(_) => "marks",
+            Self::Claimed(_) => "claimed",
+        }
     }
+}
+
+impl PostedRun {
+    /// Every input of the run, in one order: the source's, the forms, then
+    /// each inference's configuration, schedule, text claim, text slices,
+    /// marks and claimed ids.
+    pub fn values(&self) -> Vec<RunInput<'_>> {
+        let mut values = Vec::new();
+        if let Some(source) = &self.source {
+            values.push(RunInput::Signer(&source.signer));
+            values.push(RunInput::Recipe(&source.recipe));
+            values.push(RunInput::Documents(&source.documents));
+        }
+        values.push(RunInput::Forms(&self.forms));
+        for inference in &self.inferences {
+            values.push(RunInput::Config(&inference.config));
+            values.push(RunInput::Schedule(&inference.schedule));
+            values.push(RunInput::Claim(&inference.claim));
+            values.extend(inference.text.iter().map(RunInput::Text));
+            values.extend(inference.marks.iter().map(|marks| RunInput::Marks(marks)));
+            values.extend(inference.claimed.iter().map(|ids| RunInput::Claimed(ids)));
+        }
+        values
+    }
+}
+
+/// The digest a contract keeps of the run inputs a claim posted: the SHA-256
+/// of their commitments, in the order its blobs state them. A challenger
+/// that says an input was not posted presents the commitments, and a
+/// contract holds them to this.
+pub fn posted_inputs_digest(commitments: &[String]) -> Option<String> {
+    let mut hasher = Sha256::new();
+    for commitment in commitments {
+        let bytes = hex::decode(commitment)
+            .ok()
+            .filter(|bytes| bytes.len() == 32)?;
+        hasher.update(bytes);
+    }
+    Some(hex::encode(hasher.finalize()))
 }
 
 /// A claim's checkpoint list with what a challenger needs to open any
@@ -304,6 +380,8 @@ pub enum BlobFault {
     MalformedCheckpoints(String),
     /// A trace body is not a well-formed Raster trace commitment.
     MalformedTraceBody,
+    /// A run input is not a value a stage can be given.
+    MalformedRunInput,
     /// An output given to read records from is not the one the claim's
     /// checkpoint at that position commits to, or does not hold what a last
     /// stage's output does.
@@ -323,6 +401,9 @@ impl std::fmt::Display for BlobFault {
                     f,
                     "a trace body is not a well-formed Raster trace commitment"
                 )
+            }
+            Self::MalformedRunInput => {
+                write!(f, "a run input is not a value a stage can be given")
             }
             Self::NotTheOutput { checkpoint } => write!(
                 f,
@@ -373,13 +454,10 @@ impl Blob {
         };
         for entry in &self.entries {
             match entry {
-                BlobEntry::Source(source) => {
-                    contents.sources.push(source_record_id(&source.record()));
-                }
-                BlobEntry::PromptText { text } => {
+                BlobEntry::Run(run) => {
                     contents
-                        .prompt_texts
-                        .push(hex::encode(Sha256::digest(text.as_bytes())));
+                        .run_inputs
+                        .extend(reader.run_inputs(run).ok_or(BlobFault::MalformedRunInput)?);
                 }
                 BlobEntry::Checkpoints(package) => {
                     let root = package.check()?;
@@ -576,15 +654,6 @@ pub enum AvailabilityRejection {
     CheckpointsNotPosted {
         checkpoints_root: String,
     },
-    /// No posted blob holds a source whose record is the one the statement
-    /// names.
-    SourceNotPosted {
-        source_sha256: String,
-    },
-    /// No posted blob holds the prompt text the statement names.
-    PromptTextNotPosted {
-        input_text_sha256: String,
-    },
     /// No posted blob holds the challenge's trace body.
     TraceBodyNotPosted {
         header_digest: String,
@@ -626,15 +695,6 @@ impl std::fmt::Display for AvailabilityRejection {
             Self::CheckpointsNotPosted { checkpoints_root } => write!(
                 f,
                 "no posted blob holds the checkpoint list {checkpoints_root}"
-            ),
-            Self::SourceNotPosted { source_sha256 } => write!(
-                f,
-                "no posted blob holds a source whose record is {source_sha256}, the one the \
-                 statement names"
-            ),
-            Self::PromptTextNotPosted { input_text_sha256 } => write!(
-                f,
-                "no posted blob holds the prompt text {input_text_sha256} the statement names"
             ),
             Self::TraceBodyNotPosted { header_digest } => write!(
                 f,
@@ -694,39 +754,21 @@ pub fn check_posted(
     Ok(contents)
 }
 
-/// What a claim must have posted, and for whom: its new information, as its
-/// statement names it, and its checkpoint list.
+/// What a claim must have posted, and for whom: its checkpoint list. Its
+/// run inputs are not required here. A stage input that was not posted is a
+/// fault of the checkpoint that names it, which a challenger points at
+/// ([`crate::contract::CheckpointList::check_link`]).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RequiredPosting {
     /// The address the claim names as its claimer.
     pub submitter: String,
-    pub new_information: NewInformation,
     pub checkpoints_root: String,
-}
-
-/// The new information a statement names.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum NewInformation {
-    /// A source whose record has this digest.
-    Source { source_sha256: String },
-    /// A prompt text with this SHA-256, for a run with no source.
-    PromptText { input_text_sha256: String },
 }
 
 impl RequiredPosting {
     pub fn of(submission: &ClaimSubmission) -> Self {
-        let new_information = if submission.source_sha256 == crate::inference::no_source_id() {
-            NewInformation::PromptText {
-                input_text_sha256: submission.input_text_sha256.clone(),
-            }
-        } else {
-            NewInformation::Source {
-                source_sha256: submission.source_sha256.clone(),
-            }
-        };
         Self {
             submitter: submission.claimer.clone(),
-            new_information,
             checkpoints_root: submission.checkpoints_root.clone(),
         }
     }
@@ -734,8 +776,7 @@ impl RequiredPosting {
 
 /// The availability check on a claim submitted at `submitted_at`: what it
 /// posted was posted for its claimer, is retrievable for the whole challenge
-/// period, and holds the new information its statement names and its
-/// checkpoint list.
+/// period, and holds its checkpoint list.
 pub fn check_claim_availability(
     layer: &dyn AvailabilityLayer,
     parameters: AvailabilityParameters,
@@ -755,9 +796,8 @@ pub fn check_claim_availability(
 }
 
 /// Whether blobs that hold `contents` together are a claim's posting: they
-/// name its claimer, and hold the new information its statement names and
-/// its checkpoint list. A claimer makes this check on the blobs it is about
-/// to post; a contract makes it on what was posted.
+/// name its claimer and hold its checkpoint list. A claimer makes this check
+/// on the blobs it is about to post; a contract makes it on what was posted.
 pub fn check_holds(
     contents: &BlobContents,
     required: &RequiredPosting,
@@ -773,22 +813,6 @@ pub fn check_holds(
             posted_for: contents.submitter.clone(),
             submitted_by: required.submitter.clone(),
         });
-    }
-    match &required.new_information {
-        NewInformation::Source { source_sha256 } => {
-            if !holds(&contents.sources, source_sha256) {
-                return Err(AvailabilityRejection::SourceNotPosted {
-                    source_sha256: source_sha256.clone(),
-                });
-            }
-        }
-        NewInformation::PromptText { input_text_sha256 } => {
-            if !holds(&contents.prompt_texts, input_text_sha256) {
-                return Err(AvailabilityRejection::PromptTextNotPosted {
-                    input_text_sha256: input_text_sha256.clone(),
-                });
-            }
-        }
     }
     if !holds(&contents.checkpoint_lists, &required.checkpoints_root) {
         return Err(AvailabilityRejection::CheckpointsNotPosted {
@@ -836,6 +860,18 @@ mod tests {
     struct Reader(Option<String>);
 
     impl OutputReader for Reader {
+        fn run_inputs(&self, run: &PostedRun) -> Option<Vec<String>> {
+            // Each value by its name and place: enough to tell them apart.
+            Some(
+                run.values()
+                    .iter()
+                    .enumerate()
+                    .map(|(index, value)| {
+                        hex::encode(Sha256::digest(format!("{}/{index}", value.name())))
+                    })
+                    .collect(),
+            )
+        }
         fn trace_header(&self, _body: &[u8]) -> Option<String> {
             self.0.clone()
         }
@@ -929,69 +965,51 @@ mod tests {
         let mut other_list = package;
         other_list.list = format!("{}\n", "00".repeat(32)).into_bytes();
         assert!(other_list.check().is_err());
-
-        // A prompt text is named by its SHA-256.
-        let prompt = blob(vec![BlobEntry::PromptText {
-            text: String::from("hello"),
-        }]);
-        assert_eq!(
-            prompt.contents(&Reader(None), &[]).unwrap().prompt_texts,
-            vec![hex::encode(Sha256::digest(b"hello"))]
-        );
     }
 
-    /// A source signed by a test key: one document, a recipe that takes one
-    /// value from it.
-    fn source() -> PostedSource {
-        let secret = [7u8; 32];
-        let signer = source_core::signer_key(&secret).unwrap();
-        let body = br#"{"magnitude":"6.1"}"#.to_vec();
-        let mut attestation = source_core::Attestation {
-            scheme: signer.scheme,
-            time: 1_700_000_000,
-            server: String::from("earthquake.usgs.gov"),
-            target: String::from("/event"),
-            records_sha256: source_core::hex(&source_core::sha256(&body)),
-            records_length: body.len() as u64,
-            ..source_core::Attestation::default()
+    /// A run of one inference over two prompt ranges and one claimed range.
+    fn run() -> PostedRun {
+        use prompt_core::PromptText;
+        let slice = |text: &str| PromptText {
+            chunks: vec![text.to_string()].into(),
         };
-        source_core::sign_attestation(&secret, &mut attestation).unwrap();
-        PostedSource {
-            recipe: source_core::Recipe {
-                base: source_core::text_chunks("Magnitude: ").into(),
-                documents: vec![source_core::DocumentName {
-                    server: attestation.server.clone(),
-                    target: attestation.target.clone(),
-                }]
-                .into(),
-                fields: vec![source_core::Field {
-                    lead: String::new(),
-                    document: 0,
-                    path: String::from("magnitude"),
-                }]
-                .into(),
-                tail: String::from("."),
-            },
-            signer,
-            documents: vec![PostedDocument { attestation, body }],
+        PostedRun {
+            source: None,
+            forms: source_core::ResultForms::default(),
+            inferences: vec![PostedInference {
+                config: Default::default(),
+                schedule: Default::default(),
+                claim: Default::default(),
+                text: vec![slice("hello "), slice("there")],
+                marks: vec![vec![1, 0, 1], vec![1]],
+                claimed: vec![vec![7, 8]],
+            }],
         }
     }
 
     #[test]
-    fn a_posted_source_is_named_by_the_record_the_source_step_gives() {
-        let source = source();
-        let record = source.record();
-        assert_eq!(record.fault, 0, "the test source is not a clean one");
-        let posted = blob(vec![BlobEntry::Source(source.clone())]);
-        assert_eq!(Blob::decode(&posted.encode()), Ok(posted.clone()));
+    fn a_blob_states_the_commitment_of_every_run_input_it_holds() {
+        let run = run();
+        let names: Vec<&str> = run.values().iter().map(RunInput::name).collect();
         assert_eq!(
-            posted.contents(&Reader(None), &[]).unwrap().sources,
-            vec![source_record_id(&record)]
+            names,
+            ["forms", "config", "schedule", "claim", "text", "text", "marks", "marks", "claimed"]
         );
-        // Another document is another record.
-        let mut other = source;
-        other.documents[0].body = br#"{"magnitude":"7.1"}"#.to_vec();
-        assert_ne!(source_record_id(&other.record()), source_record_id(&record));
+        let posted = blob(vec![BlobEntry::Run(run.clone())]);
+        assert_eq!(Blob::decode(&posted.encode()), Ok(posted.clone()));
+        let contents = posted.contents(&Reader(None), &[]).unwrap();
+        assert_eq!(contents.run_inputs.len(), names.len());
+        // The digest a contract keeps is over the commitments in order, and
+        // of 32-byte commitments only.
+        let digest = posted_inputs_digest(&contents.run_inputs).unwrap();
+        let mut swapped = contents.run_inputs.clone();
+        swapped.swap(0, 1);
+        assert_ne!(posted_inputs_digest(&swapped).unwrap(), digest);
+        assert_eq!(posted_inputs_digest(&[String::from("aa")]), None);
+        assert_eq!(
+            posted_inputs_digest(&[]).unwrap(),
+            hex::encode(Sha256::digest(b""))
+        );
     }
 
     #[test]
@@ -1123,18 +1141,14 @@ mod tests {
         };
         let list = BlobContents {
             checkpoint_lists: vec![String::from("cc")],
-            prompt_texts: vec![String::from("tt")],
+            run_inputs: vec![String::from("tt")],
             ..BlobContents::default()
         };
         let good = posted("ok", list.clone());
-        let required = |new_information| RequiredPosting {
+        let text = RequiredPosting {
             submitter: ALICE.to_string(),
-            new_information,
             checkpoints_root: String::from("cc"),
         };
-        let text = required(NewInformation::PromptText {
-            input_text_sha256: String::from("tt"),
-        });
         let check = |blobs: &[PostedBlob], at| {
             check_claim_availability(&Layer, parameters, blobs, &text, at)
         };
@@ -1160,48 +1174,24 @@ mod tests {
             check(&[posted("bad", list.clone())], 0),
             Err(AvailabilityRejection::NotProven { blob: 0 })
         );
+        // The checkpoint list is what a claim must have posted. Its run
+        // inputs are not required when it arrives: one that is missing is a
+        // fault of the checkpoint that names it.
         let checkpoints_only = BlobContents {
             checkpoint_lists: vec![String::from("cc")],
             ..BlobContents::default()
         };
-        assert_eq!(
-            check(&[posted("ok", checkpoints_only.clone())], 0),
-            Err(AvailabilityRejection::PromptTextNotPosted {
-                input_text_sha256: String::from("tt"),
-            })
-        );
-        let text_only = BlobContents {
-            prompt_texts: vec![String::from("tt")],
+        assert!(check(&[posted("ok", checkpoints_only)], 0).is_ok());
+        let inputs_only = BlobContents {
+            run_inputs: vec![String::from("tt")],
             ..BlobContents::default()
         };
         assert_eq!(
-            check(&[posted("ok", text_only)], 0),
+            check(&[posted("ok", inputs_only)], 0),
             Err(AvailabilityRejection::CheckpointsNotPosted {
                 checkpoints_root: String::from("cc"),
             })
         );
-        // A claim with a source needs the source, not a text.
-        let sourced = required(NewInformation::Source {
-            source_sha256: String::from("ss"),
-        });
-        assert_eq!(
-            check_claim_availability(&Layer, parameters, std::slice::from_ref(&good), &sourced, 0),
-            Err(AvailabilityRejection::SourceNotPosted {
-                source_sha256: String::from("ss"),
-            })
-        );
-        let with_source = BlobContents {
-            sources: vec![String::from("ss")],
-            ..checkpoints_only
-        };
-        assert!(check_claim_availability(
-            &Layer,
-            parameters,
-            &[posted("ok", with_source)],
-            &sourced,
-            0
-        )
-        .is_ok());
 
         // Another address cannot submit a claim over these blobs, and a
         // submission has to name one.

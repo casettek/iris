@@ -94,6 +94,13 @@ impl Configuration {
             for input in &program.run_inputs {
                 encoder.text(input);
             }
+            encoder.count(program.pinned_inputs.len());
+            for input in &program.pinned_inputs {
+                encoder.text(&input.name).count(input.values.len());
+                for value in &input.values {
+                    encoder.hash(value);
+                }
+            }
         }
         encoder.count(self.models.len());
         for model in &self.models {

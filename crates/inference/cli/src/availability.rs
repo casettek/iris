@@ -21,13 +21,11 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use anyhow::{bail, Context, Result};
 use inference_artifacts::availability::{
     stub_blob_commitment, AvailabilityLayer, AvailabilityProof, Blob, BlobContents, BlobEntry,
-    BlobPointer, CheckpointPackage, OutputReader, PostedBlob, PostedDocument, PostedSource,
-    WitnessedOutput, NAMESPACE_BYTES,
+    BlobPointer, CheckpointPackage, OutputReader, PostedBlob, PostedRun, WitnessedOutput,
+    NAMESPACE_BYTES,
 };
 use inference_artifacts::contract::{ResultInOutput, SubmittedRecord};
-use inference_artifacts::{
-    read_run_spec, CheckpointTrace, PreparedRun, CHECKPOINTS_TXT, CHECKPOINT_TRACE_JSON,
-};
+use inference_artifacts::{CheckpointTrace, PreparedRun, CHECKPOINTS_TXT, CHECKPOINT_TRACE_JSON};
 use raster::core::trace::TraceCommitment;
 use raster_prover::trace::TraceCommitmentExt;
 use serde::{Deserialize, Serialize};
@@ -319,10 +317,10 @@ impl AvailabilityLayer for StubLayer {
 }
 
 /// What a blob holds, as the stand-in proof establishes it by reading the
-/// blob: the record the source step gives over each source, the hash of each
-/// prompt text, each checkpoint package whole, and each trace body a
-/// well-formed Raster trace commitment. With the stage outputs a claimer
-/// gives, also the records its checkpoints commit to.
+/// blob: the commitment a stage names each run input by, each checkpoint
+/// package whole, and each trace body a well-formed Raster trace commitment.
+/// With the stage outputs a claimer gives, also the records its checkpoints
+/// commit to.
 pub fn contents_of(bytes: &[u8], outputs: &[WitnessedOutput]) -> Result<BlobContents> {
     Blob::decode(bytes)
         .and_then(|blob| blob.contents(&HostReader, outputs))
@@ -334,6 +332,10 @@ pub fn contents_of(bytes: &[u8], outputs: &[WitnessedOutput]) -> Result<BlobCont
 struct HostReader;
 
 impl OutputReader for HostReader {
+    fn run_inputs(&self, run: &PostedRun) -> Option<Vec<String>> {
+        crate::run_inputs::commitments(run).ok()
+    }
+
     fn trace_header(&self, body: &[u8]) -> Option<String> {
         trace_header_digest(body)
     }
@@ -441,34 +443,16 @@ fn post_blobs(
         .collect())
 }
 
-/// The new information a prepared run was given, which no configuration or
-/// model fixes: its source (the documents with their attestations, the
-/// recipe, and the configuration's signer key), or, for a run with no source,
-/// its prompt text as given.
-pub fn new_information(prepared: &PreparedRun) -> Result<BlobEntry> {
-    let run_spec = read_run_spec(&prepared.run_spec_path)?;
-    let Some(spec) = &run_spec.source else {
-        return Ok(BlobEntry::PromptText {
-            text: prepared.first()?.prompt.resolved_prompt.clone(),
-        });
-    };
-    let spec_dir = prepared
-        .run_spec_path
-        .parent()
-        .context("the run spec has no directory")?;
-    let loaded = run_prep::source::load_source(spec_dir, spec)?;
-    Ok(BlobEntry::Source(PostedSource {
-        signer: loaded.signer,
-        recipe: loaded.recipe.recipe(),
-        documents: loaded
-            .documents
-            .into_iter()
-            .map(|document| PostedDocument {
-                attestation: document.attestation,
-                body: document.body,
-            })
-            .collect(),
-    }))
+/// The inputs a prepared run's stages were given that neither an earlier
+/// stage nor the configuration fixes, as run preparation wrote them beside
+/// the run's manifest: the values its files were written from.
+pub fn posted_run(prepared: &PreparedRun) -> Result<BlobEntry> {
+    let run_dir = prepared
+        .run_manifest_path
+        .as_deref()
+        .and_then(Path::parent)
+        .context("the prepared run has no manifest")?;
+    Ok(BlobEntry::Run(crate::run_inputs::load(run_dir)?))
 }
 
 /// What a claim is ready to post: its blobs, and the stage outputs its
@@ -608,9 +592,9 @@ pub fn post_claim(
 }
 
 /// What a claim in `claim_dir` must make available, for the address
-/// `claimer`: the new information its run was given, and its checkpoint list
-/// with every checkpoint and every input manifest. No file a stage loads is
-/// among it, and no index: a challenger makes those itself.
+/// `claimer`: the inputs its run was given, and its checkpoint list with
+/// every checkpoint and every input manifest. A run input is posted as its
+/// value, and anyone writes the file a stage loads from it.
 pub fn claim_blobs(
     claim_dir: &Path,
     claimer: &str,
@@ -705,23 +689,41 @@ mod tests {
         StubLayer::open(dir)
     }
 
+    /// The inputs of a run of one inference over one prompt range.
+    fn run() -> PostedRun {
+        use inference_artifacts::availability::{PostedInference, PromptText};
+        PostedRun {
+            source: None,
+            forms: Default::default(),
+            inferences: vec![PostedInference {
+                config: Default::default(),
+                schedule: Default::default(),
+                claim: Default::default(),
+                text: vec![PromptText {
+                    chunks: vec![String::from("Which section was about a bakery?")].into(),
+                }],
+                marks: vec![vec![1, 0, 1]],
+                claimed: vec![vec![7]],
+            }],
+        }
+    }
+
     #[test]
-    fn a_posted_prompt_is_included_proven_and_named_by_its_hash() {
+    fn posted_run_inputs_are_included_proven_and_named_by_their_commitments() {
         let layer = layer("prompt");
         let alice = "0x00000000000000000000000000000000000a11ce";
         let blob = Blob {
             submitter: alice.to_string(),
-            entries: vec![BlobEntry::PromptText {
-                text: String::from("Which section was about a bakery?"),
-            }],
+            entries: vec![BlobEntry::Run(run())],
         };
         let posted = post_blobs(&layer, &CLAIM_NAMESPACE, &[blob], &[]).unwrap();
+        // Each input by the commitment a stage's input list names it by: the
+        // one its Raster file has.
         assert_eq!(
-            posted[0].contents.prompt_texts,
-            vec![hex::encode(Sha256::digest(
-                b"Which section was about a bakery?"
-            ))]
+            posted[0].contents.run_inputs,
+            crate::run_inputs::commitments(&run()).unwrap()
         );
+        assert_eq!(posted[0].contents.run_inputs.len(), 7);
         assert!(layer.proves(&posted[0]));
         assert!(layer
             .included_at(&posted[0].pointer, posted[0].length)
@@ -748,7 +750,7 @@ mod tests {
         assert!(layer.included_at(&moved.pointer, moved.length).is_none());
         assert!(!layer.proves(&moved));
         let mut overstated = posted[0].clone();
-        overstated.contents.prompt_texts.push("11".repeat(32));
+        overstated.contents.run_inputs.push("11".repeat(32));
         assert!(!layer.proves(&overstated));
 
         // A second post is a later block.
@@ -763,9 +765,7 @@ mod tests {
         let prepared = PreparedPosting {
             blobs: vec![Blob {
                 submitter: alice.to_string(),
-                entries: vec![BlobEntry::PromptText {
-                    text: String::from("Which section was about a bakery?"),
-                }],
+                entries: vec![BlobEntry::Run(run())],
             }],
             outputs: Vec::new(),
         };

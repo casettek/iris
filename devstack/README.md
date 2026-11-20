@@ -87,7 +87,7 @@ A challenger starts from what Celestia holds, in a directory of its own:
 ```bash
 # Read the claim's data back, with a run spec over what it posted.
 iris claim fetch --submission <claim_submission.json> --run spec.toml --out fetched
-# Rerun it and replay the first stage that differs. Nothing of the claimer's is read.
+# Run its stages on the inputs it posted and replay the first whose output differs.
 iris challenge build --run fetched/inference.toml --submission fetched/claim_submission.json
 # Post the trace, then submit.
 iris challenge post --challenge <challenge_bundle.json> \

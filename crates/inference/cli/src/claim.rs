@@ -156,8 +156,7 @@ pub fn build_claim(options: ClaimBuildOptions) -> Result<ClaimBuildResult> {
     // stage's.
     //
     // The claim names its configuration and its claimer, and prepares what
-    // it has to post: the new information its run was given and its
-    // checkpoints. Posting is `iris claim post`'s, so that a post that fails
+    // it has to post: the inputs its run was given and its checkpoints. Posting is `iris claim post`'s, so that a post that fails
     // is tried again without the claim being built again.
     // Without pins there is no configuration to name, and nothing to check.
     if let Some(path) = result.claim_submission_path.as_ref() {
@@ -178,9 +177,7 @@ pub fn build_claim(options: ClaimBuildOptions) -> Result<ClaimBuildResult> {
         let posting = crate::availability::claim_blobs(
             &result.chain_dir,
             &submission.claimer,
-            Some(crate::availability::new_information(
-                &prepared.prepared_run,
-            )?),
+            Some(crate::availability::posted_run(&prepared.prepared_run)?),
         )
         .context("preparing the claim's data")?;
         posting.write(&result.chain_dir)?;
@@ -359,7 +356,25 @@ impl ClaimBuildOptions {
 pub(crate) fn prepare_claim_run(options: &ClaimBuildOptions) -> Result<PreparedClaimRun> {
     let run_spec_path = absolute(&options.base_dir, &options.run_spec_path);
     let run_spec = read_run_spec(&run_spec_path)?;
-    prepare_run(options, run_spec_path, &run_spec, None, true)
+    prepare_run(options, run_spec_path, &run_spec, None, None, true)
+}
+
+/// Prepares a run on the inputs a claim posted, as a challenger of a posted
+/// claim does: every file a stage is given from the run is written from the
+/// claim's own value, so each stage runs on the inputs the claimer's did.
+///
+/// Nothing is tokenized and no output is discovered here. The stages check
+/// what they are given as they run: marks that are not the tokenizer's, text
+/// that is not the claimed text and ids that are not the greedy output each
+/// end in a record that says so, which is another output than a claim that
+/// stated a clean one.
+pub(crate) fn prepare_posted_run(
+    options: &ClaimBuildOptions,
+    posted: &inference_artifacts::availability::PostedRun,
+) -> Result<PreparedClaimRun> {
+    let run_spec_path = absolute(&options.base_dir, &options.run_spec_path);
+    let run_spec = read_run_spec(&run_spec_path)?;
+    prepare_run(options, run_spec_path, &run_spec, None, Some(posted), false)
 }
 
 /// Prepares a run from a spec a claim already fixed, as a challenger does.
@@ -384,6 +399,7 @@ pub(crate) fn prepare_challenge_run(
         run_spec_path,
         run_spec,
         Some(Frozen { source, forms, ids }),
+        None,
         false,
     )
 }
@@ -417,21 +433,20 @@ struct RunModel {
 /// The files written for one inference of a run.
 struct WrittenInference {
     label: String,
-    text: Vec<run_prep::RunFile>,
-    config: run_prep::RunFile,
-    schedule: run_prep::RunFile,
-    claim: run_prep::RunFile,
-    marks: Vec<run_prep::RunFile>,
-    claimed: Vec<run_prep::RunFile>,
+    files: crate::run_inputs::InferenceRunFiles,
 }
 
+/// `given` is the inputs a claim posted, for a challenger of that claim:
+/// they are the run's inputs, in place of the ones this would prepare.
 fn prepare_run(
     options: &ClaimBuildOptions,
     run_spec_path: PathBuf,
     run_spec: &InferenceRunSpec,
     frozen: Option<Frozen<'_>>,
+    given: Option<&inference_artifacts::availability::PostedRun>,
     check_claimed_length: bool,
 ) -> Result<PreparedClaimRun> {
+    use inference_artifacts::availability::{PostedInference, PostedRun, PostedSourceInputs};
     let run_spec_dir = run_spec_path
         .parent()
         .ok_or_else(|| anyhow::anyhow!("run spec has no parent directory"))?;
@@ -497,17 +512,37 @@ fn prepare_run(
             run_spec.tokens,
         ));
     let prompt_dir = run_dir.join("prompt");
-    // The source stage's inputs: written from the run's own source, or the
-    // claim's for a challenger. A run without a source has no such stage.
+    if let Some(given) = given {
+        anyhow::ensure!(
+            given.inferences.len() == pipeline.inferences(),
+            "the claim posted the inputs of {} inference(s), and the `{pipeline}` pipeline makes {}",
+            given.inferences.len(),
+            pipeline.inferences()
+        );
+    }
+    // The source stage's inputs: the claim's own for a challenger, or written
+    // from the run's source. A run without a source has no such stage. The
+    // values are kept beside the files: they are what a claim posts. A
+    // challenger given only the files of a claim built here posts nothing.
     let frozen_source = frozen.as_ref().and_then(|frozen| frozen.source);
-    let source_inputs = match (run_spec.source.as_ref(), frozen_source) {
-        (Some(source), _) => Some(run_prep::write_source_inputs(
-            &run_prep::source::load_source(run_spec_dir, source)?,
-            &prompt_dir,
-        )?),
-        (None, Some((_, inputs))) => Some(inputs.clone()),
+    let source_values = match (given, run_spec.source.as_ref()) {
+        (Some(given), _) => given.source.clone(),
+        (None, Some(source)) => {
+            let loaded = run_prep::source::load_source(run_spec_dir, source)?;
+            Some(PostedSourceInputs {
+                signer: loaded.signer.clone(),
+                recipe: loaded.recipe.recipe(),
+                documents: loaded.documents(),
+            })
+        }
         (None, None) => None,
     };
+    let source_inputs = match (&source_values, frozen_source) {
+        (Some(source), _) => Some(crate::run_inputs::write_source(source, &prompt_dir)?),
+        (None, Some((_, inputs))) if given.is_none() => Some(inputs.clone()),
+        _ => None,
+    };
+    let postable = given.is_some() || source_values.is_some() == source_inputs.is_some();
     // The imports wrote each model's part of a chain. The pipeline makes the
     // chain's template from them.
     let parts: Vec<&str> = models.iter().map(|model| model.part.as_str()).collect();
@@ -516,9 +551,20 @@ fn prepare_run(
         .template_path
         .parent()
         .ok_or_else(|| anyhow::anyhow!("manifest template has no parent directory"))?;
-    let forms = run_prep::write_result_forms(&first.prompt.forms, &prompt_dir)?;
+    let form_values = match given {
+        Some(given) => given.forms.clone(),
+        None => source_core::ResultForms {
+            forms: first.prompt.forms.to_vec().into(),
+        },
+    };
+    let forms = run_prep::write_run_input(
+        inference_artifacts::availability::RunInput::Forms(&form_values),
+        &prompt_dir,
+        "result_forms",
+    )?;
 
     let mut written = Vec::new();
+    let mut values = Vec::new();
     let mut claimed_ids = Vec::new();
     for (inference, model) in models.iter().enumerate() {
         let label = pipeline.label(inference);
@@ -529,6 +575,17 @@ fn prepare_run(
         } else {
             prompt_dir.join(label.trim_end_matches('_'))
         };
+        if let Some(given) = given {
+            // The claim's own values: nothing is prepared.
+            let posted = given.inferences[inference].clone();
+            claimed_ids.push(posted.claimed.concat());
+            written.push(WrittenInference {
+                files: crate::run_inputs::write_inference(&posted, &dir)?,
+                label,
+            });
+            values.push(posted);
+            continue;
+        }
         let ids = match (&frozen, given_ids) {
             (Some(frozen), _) => frozen.ids[inference].clone(),
             (None, Some(ids)) => ids.clone(),
@@ -555,42 +612,58 @@ fn prepare_run(
             range_size as usize,
             &run_prep::prompt_tokenizer(&model.tokenizer)?,
         )?;
-        let marks: Vec<Vec<u32>> = bound
-            .ranges
-            .iter()
-            .map(|range| range.marks.clone())
+        // A claim's ids are cut as `claimed_ranges` cuts them, which also
+        // refuses a claim of no ids.
+        run_prep::claimed_ranges(&ids, range_size as usize)?;
+        let claimed: Vec<Vec<u32>> = ids
+            .chunks(range_size as usize)
+            .map(<[u32]>::to_vec)
             .collect();
-        let marks = run_prep::write_marks(&marks, &dir)?;
-        let claimed = run_prep::write_claimed_ranges(&ids, range_size as usize, &dir)?;
-        written.push(WrittenInference {
-            text: run_prep::write_bound_text(&bound.ranges, &dir)?,
-            config: run_prep::write_run_config(
-                &run_prep::RunConfig {
-                    model_id: model.manifest.model_id.clone(),
-                    raw_prompt: run_spec.raw_prompt,
-                    max_new_tokens: run_spec.tokens,
-                    range_size,
-                },
-                &dir,
-            )?,
-            schedule: run_prep::write_run_schedule(marks.len(), claimed.len(), &dir)?,
-            claim: run_prep::write_text_claim(&bound.claim, &dir)?,
-            marks,
+        // The values a stage is given, which are what the claim posts. Each
+        // file is written from its value, so the two cannot differ.
+        let posted = PostedInference {
+            config: inference_artifacts::availability::RunConfig {
+                model_id: model.manifest.model_id.clone(),
+                raw_prompt: run_spec.raw_prompt,
+                max_new_tokens: run_spec.tokens,
+                range_size,
+            },
+            schedule: inference_artifacts::availability::RunSchedule {
+                prompt_ranges: u32::try_from(bound.ranges.len())
+                    .context("prompt range count exceeds u32")?,
+                claimed_ranges: u32::try_from(claimed.len())
+                    .context("claimed range count exceeds u32")?,
+            },
+            claim: crate::run_inputs::recast(&bound.claim)?,
+            text: bound
+                .ranges
+                .iter()
+                .map(|range| crate::run_inputs::recast(&range.text))
+                .collect::<Result<_>>()?,
+            marks: bound
+                .ranges
+                .iter()
+                .map(|range| range.marks.clone())
+                .collect(),
             claimed,
+        };
+        written.push(WrittenInference {
+            files: crate::run_inputs::write_inference(&posted, &dir)?,
             label,
         });
+        values.push(posted);
         claimed_ids.push(ids);
     }
     let inferences: Vec<InferenceFiles<'_>> = written
         .iter()
         .map(|written| InferenceFiles {
             label: &written.label,
-            text: &written.text,
-            config: &written.config,
-            schedule: &written.schedule,
-            claim: &written.claim,
-            marks: &written.marks,
-            claimed: &written.claimed,
+            text: &written.files.text,
+            config: &written.files.config,
+            schedule: &written.files.schedule,
+            claim: &written.files.claim,
+            marks: &written.files.marks,
+            claimed: &written.files.claimed,
         })
         .collect();
     let run_manifest = render_chain(
@@ -628,6 +701,17 @@ fn prepare_run(
         source_inputs,
     };
     write_json(&run_dir.join(PREPARED_RUN_JSON), &prepared_run)?;
+    // The run's inputs as values, for the claim to post.
+    if postable {
+        crate::run_inputs::save(
+            &PostedRun {
+                source: source_values,
+                forms: form_values,
+                inferences: values,
+            },
+            &run_dir,
+        )?;
+    }
 
     Ok(PreparedClaimRun {
         prepared_run,

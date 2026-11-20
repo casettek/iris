@@ -52,6 +52,9 @@ contract IrisClaims {
         uint32 checkpointCount;
         bytes32 checkpointsRoot;
         uint64 submittedAt;
+        /// The SHA-256 of the commitments of the run inputs the claim
+        /// posted, in the order its blobs state them.
+        bytes32 postedInputs;
     }
 
     struct Admitted {
@@ -80,7 +83,9 @@ contract IrisClaims {
         NoProducer,
         ProducerNotEarlier,
         ProducerOfWrongKind,
-        NotTheProducersOutput
+        NotTheProducersOutput,
+        NotAPinnedValue,
+        NotAPostedInput
     }
 
     /// A claim a challenger showed void, the stage it pointed at and when.
@@ -128,8 +133,6 @@ contract IrisClaims {
     error ExpiresTooSoon(uint256 blob);
     error NotProven(uint256 blob);
     error AnotherSubmitter(uint256 blob);
-    error SourceNotPosted();
-    error PromptTextNotPosted();
     error CheckpointsNotPosted();
     error TraceBodyNotPosted();
     // The records the claim's proof states.
@@ -157,6 +160,7 @@ contract IrisClaims {
     error NotTheInputManifest();
     error UnapprovedStage();
     error NotAChainedInput();
+    error NotThePostedInputs();
     error ProducerNotPresented();
     // A fault proof.
     error UnknownChallenge(bytes32 id);
@@ -215,7 +219,7 @@ contract IrisClaims {
         _checkInferences(configuration, claim);
         _checkOrigin(configuration, claim);
         _checkPosted(claim.availability, claim.claimer, uint64(block.timestamp) + challengePeriod);
-        _checkHolds(claim);
+        bytes32 postedInputs = _checkHolds(claim);
         _checkStatedRecords(consensus, claim);
 
         claims[claimId] = Accepted({
@@ -223,7 +227,8 @@ contract IrisClaims {
             claimer: claim.claimer,
             checkpointCount: claim.checkpointCount,
             checkpointsRoot: claim.checkpointsRoot,
-            submittedAt: uint64(block.timestamp)
+            submittedAt: uint64(block.timestamp),
+            postedInputs: postedInputs
         });
         emit ClaimAccepted(claimId, claim.configuration, claim.claimer, claim.checkpointsRoot);
     }
@@ -329,26 +334,21 @@ contract IrisClaims {
         return false;
     }
 
-    /// `check_holds`: the blobs hold the new information the statement names
-    /// and the claim's checkpoint list.
-    function _checkHolds(Claim memory claim) private pure {
-        bool information;
+    /// `check_holds`: the blobs hold the claim's checkpoint list. Returns
+    /// `posted_inputs_digest`: the digest of the run inputs they hold. Which
+    /// inputs a claim must have posted is not judged here: a stage input
+    /// that was not posted is a fault of the checkpoint that names it
+    /// (`voidForInput`).
+    function _checkHolds(Claim memory claim) private pure returns (bytes32) {
         bool checkpoints;
+        bytes memory posted;
         for (uint256 i = 0; i < claim.availability.length; i++) {
             BlobContents memory held = claim.availability[i].contents;
-            information = information
-                || (
-                    claim.sourceSha256 == bytes32(0)
-                        ? _has(held.promptTexts, claim.inputTextSha256)
-                        : _has(held.sources, claim.sourceSha256)
-                );
             checkpoints = checkpoints || _has(held.checkpointLists, claim.checkpointsRoot);
-        }
-        if (!information) {
-            if (claim.sourceSha256 == bytes32(0)) revert PromptTextNotPosted();
-            revert SourceNotPosted();
+            posted = abi.encodePacked(posted, held.runInputs);
         }
         if (!checkpoints) revert CheckpointsNotPosted();
+        return sha256(posted);
     }
 
     // --------------------------------------------------------------- records
@@ -520,11 +520,19 @@ contract IrisClaims {
         _void(fault.claimId, fault.stage, ClaimFault.UnapprovedProgram);
     }
 
-    /// Show that an input of a stage is not what the claim says an earlier
-    /// stage produced: `encoded` is an `InputFault`. The checks and their
-    /// order are `CheckpointList::check_link`'s. Reverts with `Linked` when
-    /// the input is an earlier checkpoint's output of the right kind, or an
-    /// empty value the configuration allows.
+    /// Show that an input of a stage is not from where the configuration
+    /// says it comes: `encoded` is an `InputFault`. An input a program takes
+    /// from an earlier stage must be that stage's output; an input bound to
+    /// fixed data, such as the model's, must be a commitment the
+    /// configuration pins; an input the run gives must be one the claim
+    /// posted. The checks and their order are
+    /// `CheckpointList::check_link`'s. Reverts with `Linked` when the input
+    /// is what it should be, or an empty value the configuration allows.
+    ///
+    /// So a stage's inputs are always ones a challenger also holds, and two
+    /// parties that disagree about a stage ran it on the same inputs. What a
+    /// posted input says is not judged: the stage checks it as it runs, and
+    /// a replay on the posted input shows a stage that said otherwise.
     ///
     /// Nothing here is the challenger's word. The stage's checkpoint says
     /// which checkpoint produced the input, the input list it commits to says
@@ -538,9 +546,9 @@ contract IrisClaims {
         _open(claim, fault.stage, fault.checkpoint, fault.path);
         if (sha256(fault.manifest) != fault.checkpoint.inputCommitment) revert NotTheInputManifest();
         if (registry.stageOf(claim.configuration, fault.checkpoint.program) == bytes32(0)) revert UnapprovedStage();
-        (bool chained, bytes32[] memory producers, bytes32[] memory emptyValues) =
-            registry.chainedInput(claim.configuration, fault.checkpoint.program, fault.input);
-        if (!chained) revert NotAChainedInput();
+        InputRule memory rule = registry.inputOf(claim.configuration, fault.checkpoint.program, fault.input);
+        // A name the program's entry does not list is not an input of it.
+        if (!rule.chained && !rule.pinned && !rule.run) revert NotAChainedInput();
 
         (bool readable, bool found, bytes memory loaded) =
             InputManifest.commitmentOf(fault.manifest, bytes(fault.input));
@@ -553,9 +561,24 @@ contract IrisClaims {
             return;
         }
         bytes32 loadedText = keccak256(loaded);
-        for (uint256 i = 0; i < emptyValues.length; i++) {
-            if (keccak256(bytes(IrisEncoding.hexText(emptyValues[i]))) == loadedText) revert Linked();
+        if (!rule.chained) {
+            // Bound to fixed data: the model's, or another pinned identity.
+            // The stage checks what it loads against that identity as it
+            // runs, and that holds only for an input a challenger also has,
+            // so the stage may name nothing but a pinned commitment.
+            if (_holds(rule.pinnedValues, loadedText)) revert Linked();
+            // Given by the run: the claimer posted it, or a challenger has
+            // nothing to run the stage on.
+            if (rule.run) {
+                if (sha256(abi.encodePacked(fault.posted)) != claim.postedInputs) revert NotThePostedInputs();
+                if (_holds(fault.posted, loadedText)) revert Linked();
+                _void(fault.claimId, fault.stage, ClaimFault.NotAPostedInput);
+                return;
+            }
+            _void(fault.claimId, fault.stage, ClaimFault.NotAPinnedValue);
+            return;
         }
+        if (_holds(rule.emptyValues, loadedText)) revert Linked();
         (bool named, uint32 producer) = _producerOf(fault.checkpoint, fault.input);
         if (!named) {
             _void(fault.claimId, fault.stage, ClaimFault.NoProducer);
@@ -568,7 +591,7 @@ contract IrisClaims {
         if (!fault.hasProducer) revert ProducerNotPresented();
         _open(claim, producer, fault.producer, fault.producerPath);
         bytes32 kind = registry.stageOf(claim.configuration, fault.producer.program);
-        if (kind == bytes32(0) || !_has(producers, kind)) {
+        if (kind == bytes32(0) || !_has(rule.producers, kind)) {
             _void(fault.claimId, fault.stage, ClaimFault.ProducerOfWrongKind);
             return;
         }
@@ -577,6 +600,15 @@ contract IrisClaims {
             return;
         }
         revert Linked();
+    }
+
+    /// Whether one of `values`, as the hex text an input list holds a
+    /// commitment in, is the text with this hash.
+    function _holds(bytes32[] memory values, bytes32 loadedText) private pure returns (bool) {
+        for (uint256 i = 0; i < values.length; i++) {
+            if (keccak256(bytes(IrisEncoding.hexText(values[i]))) == loadedText) return true;
+        }
+        return false;
     }
 
     /// The checkpoint a stage's own checkpoint names as the producer of one

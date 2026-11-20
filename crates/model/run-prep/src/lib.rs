@@ -310,6 +310,70 @@ fn write_run_file<T: serde::Serialize>(value: &T, dir: &Path, name: &str) -> Res
     })
 }
 
+/// One of a run's inputs as a stage is given it: the value the stage's
+/// program reads, which is what its Raster file is written from.
+///
+/// A claim posts its run's inputs as values
+/// ([`inference_artifacts::availability::PostedRun`]), and anyone writes the
+/// file a stage loads from one. The token marks and the claimed ids are
+/// posted as plain numbers and given to a stage as the stage's own type.
+fn with_run_input<R>(
+    input: inference_artifacts::availability::RunInput<'_>,
+    encode: &mut dyn FnMut(&dyn ErasedRunValue) -> Result<R>,
+) -> Result<R> {
+    use inference_artifacts::availability::RunInput;
+    match input {
+        RunInput::Signer(value) => encode(value),
+        RunInput::Recipe(value) => encode(value),
+        RunInput::Documents(value) => encode(value),
+        RunInput::Forms(value) => encode(value),
+        RunInput::Config(value) => encode(value),
+        RunInput::Schedule(value) => encode(value),
+        RunInput::Claim(value) => encode(value),
+        RunInput::Text(value) => encode(value),
+        RunInput::Marks(starts) => encode(&prompt_check::check::TokenMarks {
+            starts: List::from(starts.to_vec()),
+        }),
+        RunInput::Claimed(ids) => encode(&ClaimedOutput {
+            token_ids: List::from(ids.to_vec()),
+        }),
+    }
+}
+
+/// A run value of any of the types a stage is given.
+trait ErasedRunValue {
+    fn commitment(&self) -> Result<String>;
+    fn write(&self, dir: &Path, name: &str) -> Result<RunFile>;
+}
+
+impl<T: serde::Serialize> ErasedRunValue for T {
+    fn commitment(&self) -> Result<String> {
+        let (_, _, commitment) =
+            raster::encode_raster_value(self).map_err(|error| anyhow::anyhow!("{error}"))?;
+        Ok(commitment)
+    }
+
+    fn write(&self, dir: &Path, name: &str) -> Result<RunFile> {
+        write_run_file(self, dir, name)
+    }
+}
+
+/// The commitment a stage's input list names this run input by.
+pub fn run_input_commitment(
+    input: inference_artifacts::availability::RunInput<'_>,
+) -> Result<String> {
+    with_run_input(input, &mut |value| value.commitment())
+}
+
+/// Writes a run input as the files a stage loads, named `name`.
+pub fn write_run_input(
+    input: inference_artifacts::availability::RunInput<'_>,
+    dir: &Path,
+    name: &str,
+) -> Result<RunFile> {
+    with_run_input(input, &mut |value| value.write(dir, name))
+}
+
 /// One prompt range as `prompt-check` takes it: whole tokens, at most the
 /// range size of them, with a mark for each piece saying whether a token
 /// starts there.

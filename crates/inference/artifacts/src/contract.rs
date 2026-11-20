@@ -52,7 +52,7 @@ use crate::pipeline::Pipeline;
 pub const CONTRACT_PINS_JSON: &str = "contract_pins.json";
 /// Written beside a claim's `claim_bundle.json`.
 pub const CLAIM_SUBMISSION_JSON: &str = "claim_submission.json";
-pub const CONTRACT_PINS_VERSION: u32 = 4;
+pub const CONTRACT_PINS_VERSION: u32 = 5;
 pub const CLAIM_SUBMISSION_VERSION: u32 = 7;
 
 /// What a contract pins before any claim arrives: the pipeline it accepts
@@ -103,6 +103,23 @@ pub struct StageProgram {
     /// request.
     #[serde(default)]
     pub run_inputs: Vec<String>,
+    /// The inputs this program is given from fixed data: the model's, and
+    /// whatever else an import writes once. The program checks what it loads
+    /// against a pinned identity as it runs. A check inside a stage holds
+    /// only for an input a challenger also has, so a checkpoint may name
+    /// nothing for such an input but a commitment listed here.
+    #[serde(default)]
+    pub pinned_inputs: Vec<PinnedInput>,
+}
+
+/// One input a stage program is given from fixed data.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PinnedInput {
+    pub name: String,
+    /// Every commitment the chain template binds the input to: one for an
+    /// input every stage of the program takes the same way, and one per
+    /// layer for an input that differs by layer.
+    pub values: Vec<String>,
 }
 
 /// One input a stage program takes from an earlier stage.
@@ -298,13 +315,24 @@ pub struct ClaimSubmission {
     /// ([`crate::checkpoint::checkpoints_root`]). One checkpoint opens
     /// against it with a path.
     pub checkpoints_root: String,
-    /// What the claimer posted to the data-availability layer: the new
-    /// information its statement names (a source, or a prompt text) and its
-    /// checkpoint list with every checkpoint and input manifest, each blob
-    /// with its availability proof. Empty until posted; a contract accepts no
-    /// claim without it (`crate::availability`).
+    /// What the claimer posted to the data-availability layer: its run's
+    /// inputs and its checkpoint list with every checkpoint and input
+    /// manifest, each blob with its availability proof. Empty until posted;
+    /// a contract accepts no claim without it (`crate::availability`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub availability: Vec<PostedBlob>,
+}
+
+impl ClaimSubmission {
+    /// The commitment of every run input the claim posted, in the order its
+    /// blobs state them. A contract keeps their digest
+    /// ([`crate::availability::posted_inputs_digest`]).
+    pub fn posted_run_inputs(&self) -> Vec<String> {
+        self.availability
+            .iter()
+            .flat_map(|blob| blob.contents.run_inputs.iter().cloned())
+            .collect()
+    }
 }
 
 /// The address of a submission nobody is named for.
@@ -542,7 +570,7 @@ pub enum ChallengeRefusal {
     /// The stage names a program outside the approved set, so its inputs are
     /// not defined here. That is its own challenge, and it voids the claim.
     UnapprovedStage { stage: u32 },
-    /// The input is not one the stage's program takes from an earlier stage.
+    /// The input is not one the configuration lists for the stage's program.
     NotAChainedInput { stage: u32, input: String },
     /// The checkpoint names a producer for the input and none was presented.
     ProducerNotPresented { stage: u32, producer: u32 },
@@ -607,7 +635,7 @@ impl std::fmt::Display for ChallengeRefusal {
             ),
             Self::NotAChainedInput { stage, input } => write!(
                 f,
-                "`{input}` is not an input stage {stage}'s program takes from an earlier stage"
+                "`{input}` is not an input the configuration lists for stage {stage}'s program"
             ),
             Self::ProducerNotPresented { stage, producer } => write!(
                 f,
@@ -629,10 +657,11 @@ pub enum StageAdmission {
     UnapprovedProgram { program_commitment: String },
 }
 
-/// Whether a stage's input is what the claim says an earlier stage produced.
+/// Whether a stage's input is from where the configuration says it comes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LinkCheck {
-    /// The input is an earlier checkpoint's output, or a pinned empty value.
+    /// The input is an earlier checkpoint's output, a pinned value, or a
+    /// value the claim posted.
     Linked,
     /// It is not: the claim is void with no replay.
     Void(LinkFault),
@@ -659,6 +688,12 @@ pub enum LinkFault {
         loaded: String,
         produced: String,
     },
+    /// The input is one the program is given from fixed data, and the stage
+    /// loaded a commitment the configuration does not pin for it.
+    NotAPinnedValue { loaded: String },
+    /// The input is one the run gives the program, and the stage loaded a
+    /// commitment that is none of the run inputs the claim posted.
+    NotAPostedInput { loaded: String },
 }
 
 impl LinkFault {
@@ -671,6 +706,8 @@ impl LinkFault {
             Self::ProducerNotEarlier { .. } => "ProducerNotEarlier",
             Self::ProducerOfWrongKind { .. } => "ProducerOfWrongKind",
             Self::NotTheProducersOutput { .. } => "NotTheProducersOutput",
+            Self::NotAPinnedValue { .. } => "NotAPinnedValue",
+            Self::NotAPostedInput { .. } => "NotAPostedInput",
         }
     }
 }
@@ -708,6 +745,14 @@ impl std::fmt::Display for LinkFault {
             } => write!(
                 f,
                 "it loaded {loaded}, but checkpoint {producer} produced {produced}"
+            ),
+            Self::NotAPinnedValue { loaded } => write!(
+                f,
+                "it loaded {loaded}, which is no commitment the configuration pins for it"
+            ),
+            Self::NotAPostedInput { loaded } => write!(
+                f,
+                "it loaded {loaded}, which is none of the run inputs the claim posted"
             ),
         }
     }
@@ -810,9 +855,21 @@ impl PipelinePins {
     /// stages. `family` names the model families whose programs these are.
     pub fn from_template(family: String, template: &str) -> Result<Self> {
         let mut run_inputs = pipeline_run_inputs(template)?;
+        let mut pinned_inputs = pipeline_pinned_inputs(template)?;
         let stage_programs = pipeline_wiring(template)?
             .into_iter()
             .map(|(project, chained_inputs)| {
+                // A chained input's fixed values are its empty values.
+                let pinned_inputs = pinned_inputs
+                    .remove(&project)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .filter(|(name, _)| !chained_inputs.iter().any(|input| input.name == *name))
+                    .map(|(name, values)| PinnedInput {
+                        name,
+                        values: values.into_iter().collect(),
+                    })
+                    .collect();
                 Ok(StageProgram {
                     stage: project_name(&project)?,
                     program_commitment: locked_program_commitment(&project)?,
@@ -822,6 +879,7 @@ impl PipelinePins {
                         .unwrap_or_default()
                         .into_iter()
                         .collect(),
+                    pinned_inputs,
                 })
             })
             .collect::<Result<Vec<_>>>()?;
@@ -853,6 +911,10 @@ impl PipelinePins {
 impl StageProgram {
     pub fn chained_input(&self, name: &str) -> Option<&ChainedInput> {
         self.chained_inputs.iter().find(|input| input.name == name)
+    }
+
+    pub fn pinned_input(&self, name: &str) -> Option<&PinnedInput> {
+        self.pinned_inputs.iter().find(|input| input.name == name)
     }
 }
 
@@ -1079,6 +1141,104 @@ pub fn pipeline_run_inputs(template: &str) -> Result<BTreeMap<PathBuf, BTreeSet<
         }
     }
     Ok(run_inputs)
+}
+
+/// The inputs each stage project a chain template names is given from fixed
+/// data, with every commitment the template binds each to: an external whose
+/// file is not a run's, or a chain input whose files are not a run's, which
+/// lists a commitment per layer. These are the model's data and whatever
+/// else an import writes once.
+pub fn pipeline_pinned_inputs(
+    template: &str,
+) -> Result<BTreeMap<PathBuf, BTreeMap<String, BTreeSet<String>>>> {
+    let document: toml::Value =
+        toml::from_str(template).context("the chain template is not valid TOML")?;
+    let chain = document
+        .get("chain")
+        .context("the chain template has no [chain] table")?;
+    let from_run = |value: Option<&toml::Value>| {
+        value
+            .and_then(toml::Value::as_str)
+            .is_some_and(|path| path.contains(RUN_PLACEHOLDER_DIR))
+    };
+    // The chain inputs whose files are fixed, each with its commitments.
+    let fixed_chain_inputs: Vec<(&String, Vec<String>)> = chain
+        .get("input")
+        .and_then(toml::Value::as_table)
+        .into_iter()
+        .flatten()
+        .filter(|(_, input)| !from_run(input.get("path")))
+        .map(|(name, input)| {
+            let commitments = input
+                .get("commitments")
+                .and_then(toml::Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(toml::Value::as_str)
+                .map(String::from)
+                .collect();
+            (name, commitments)
+        })
+        .collect();
+    let stages_of = |table: &toml::Value| -> Vec<toml::Value> {
+        ["stage", "stages"]
+            .iter()
+            .filter_map(|key| table.get(*key).and_then(toml::Value::as_array))
+            .flatten()
+            .cloned()
+            .collect()
+    };
+    let mut stages = stages_of(chain);
+    for repeat in chain
+        .get("repeat")
+        .and_then(toml::Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        stages.extend(stages_of(repeat));
+    }
+    let mut pinned: BTreeMap<PathBuf, BTreeMap<String, BTreeSet<String>>> = BTreeMap::new();
+    for stage in &stages {
+        let project = PathBuf::from(
+            stage
+                .get("project")
+                .and_then(toml::Value::as_str)
+                .context("a chain stage has no `project`")?,
+        );
+        let inputs = stage.get("inputs").and_then(toml::Value::as_table);
+        for (param, binding) in inputs.into_iter().flatten() {
+            let mut values = Vec::new();
+            if let Some(external) = binding.get("external") {
+                if !from_run(external.get("path")) {
+                    values.extend(
+                        external
+                            .get("commitment")
+                            .and_then(toml::Value::as_str)
+                            .map(String::from),
+                    );
+                }
+            }
+            if let Some(name) = binding.get("input").and_then(toml::Value::as_str) {
+                for (input, commitments) in &fixed_chain_inputs {
+                    let named = name
+                        .strip_prefix(input.as_str())
+                        .is_some_and(|rest| rest.is_empty() || rest.starts_with('_'));
+                    if named {
+                        values.extend(commitments.iter().cloned());
+                    }
+                }
+            }
+            if !values.is_empty() {
+                pinned
+                    .entry(project.clone())
+                    .or_default()
+                    .entry(param.clone())
+                    .or_default()
+                    .extend(values);
+            }
+        }
+    }
+    Ok(pinned)
 }
 
 /// The program identity a stage project's `Raster.lock` records.
@@ -1447,6 +1607,9 @@ fn read_input_manifest(bytes: &[u8]) -> Option<BTreeMap<String, String>> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CheckpointList {
     hashes: Vec<String>,
+    /// The commitment of every run input the claim posted. A contract holds
+    /// their digest, and is presented the commitments with a challenge.
+    posted: Vec<String>,
 }
 
 impl CheckpointList {
@@ -1476,7 +1639,10 @@ impl CheckpointList {
                 presented,
             });
         }
-        Ok(Self { hashes })
+        Ok(Self {
+            hashes,
+            posted: submission.posted_run_inputs(),
+        })
     }
 
     pub fn len(&self) -> usize {
@@ -1530,8 +1696,11 @@ impl CheckpointList {
         })
     }
 
-    /// Whether one input of a stage is what the claim says an earlier stage
-    /// produced. `input_manifest` is the bytes of the stage's
+    /// Whether one input of a stage is from where the configuration says it
+    /// comes: an earlier stage's output for an input the program takes from
+    /// one, a pinned commitment for an input bound to fixed data, a value
+    /// the claim posted for an input the run gives.
+    /// `input_manifest` is the bytes of the stage's
     /// `input_manifest.json`; `producer` is the checkpoint the stage's own
     /// checkpoint names as the input's producer, when it names one.
     ///
@@ -1559,14 +1728,19 @@ impl CheckpointList {
                 presented,
             });
         }
-        let chained = pins
+        let program = pins
             .program(&checkpoint.program_commitment)
-            .ok_or(ChallengeRefusal::UnapprovedStage { stage })?
-            .chained_input(input)
-            .ok_or_else(|| ChallengeRefusal::NotAChainedInput {
+            .ok_or(ChallengeRefusal::UnapprovedStage { stage })?;
+        let chained = program.chained_input(input);
+        let pinned = program.pinned_input(input);
+        let from_run = program.run_inputs.iter().any(|run| run == input);
+        // A name the program's entry does not list is not an input of it.
+        if chained.is_none() && pinned.is_none() && !from_run {
+            return Err(ChallengeRefusal::NotAChainedInput {
                 stage,
                 input: input.to_string(),
-            })?;
+            });
+        }
 
         let void = |fault| Ok(LinkCheck::Void(fault));
         let Some(inputs) = read_input_manifest(input_manifest) else {
@@ -1574,6 +1748,31 @@ impl CheckpointList {
         };
         let Some(loaded) = inputs.get(input) else {
             return void(LinkFault::InputMissing);
+        };
+        let Some(chained) = chained else {
+            // Bound to fixed data: the model's, or another pinned identity.
+            // The stage checks what it loads against that identity as it
+            // runs, and a challenger can show a lie about that check only by
+            // running the stage on the same input, which it holds only if
+            // the input is a pinned one.
+            if pinned.is_some_and(|pinned| pinned.values.contains(loaded)) {
+                return Ok(LinkCheck::Linked);
+            }
+            // Given by the run: the claimer posted it, or a challenger has
+            // nothing to run the stage on. What the value says is not judged
+            // here. The stage checks it as it runs, and a replay on the
+            // posted value shows a stage that said otherwise.
+            if from_run {
+                if self.posted.contains(loaded) {
+                    return Ok(LinkCheck::Linked);
+                }
+                return void(LinkFault::NotAPostedInput {
+                    loaded: loaded.clone(),
+                });
+            }
+            return void(LinkFault::NotAPinnedValue {
+                loaded: loaded.clone(),
+            });
         };
         if chained.empty_values.contains(loaded) {
             return Ok(LinkCheck::Linked);
@@ -2043,6 +2242,10 @@ mod tests {
             program_commitment: hex::encode(id),
             chained_inputs,
             run_inputs: vec![String::from("text")],
+            pinned_inputs: vec![PinnedInput {
+                name: String::from("layer"),
+                values: vec![hex::encode([8; 32]), hex::encode([0x1b; 32])],
+            }],
         };
         let input = |name: &str, producers: &[&str], empty_values: Vec<String>| ChainedInput {
             name: name.to_string(),
@@ -2180,7 +2383,21 @@ mod tests {
                     &crate::checkpoint::checkpoint_hashes(&trace).unwrap(),
                 )
                 .unwrap(),
-                availability: Vec::new(),
+                // The run inputs the claim posted: its text and its forms.
+                availability: vec![PostedBlob {
+                    pointer: crate::availability::BlobPointer {
+                        height: 1,
+                        namespace: "00".repeat(29),
+                        commitment: "00".repeat(32),
+                    },
+                    length: 1,
+                    contents: crate::availability::BlobContents {
+                        submitter: NO_ADDRESS.to_string(),
+                        run_inputs: vec![hex::encode([9; 32]), hex::encode([6; 32])],
+                        ..Default::default()
+                    },
+                    proof: crate::availability::AvailabilityProof::host_checked(),
+                }],
             };
             Self {
                 submission,
@@ -2459,14 +2676,8 @@ mod tests {
         assert_eq!(claim.link(2, "activations"), Ok(LinkCheck::Linked));
         // The first check has no check before it: the pinned empty edge.
         assert_eq!(claim.link(2, "prior"), Ok(LinkCheck::Linked));
-        // Model data and run inputs are the stage's own to check.
-        assert_eq!(
-            claim.link(1, "layer"),
-            Err(ChallengeRefusal::NotAChainedInput {
-                stage: 1,
-                input: String::from("layer")
-            })
-        );
+        // Model data is held to the commitments the configuration pins.
+        assert_eq!(claim.link(1, "layer"), Ok(LinkCheck::Linked));
     }
 
     /// The honest claim with the last check's inputs and producers replaced.
@@ -2603,6 +2814,82 @@ mod tests {
                 Ok(LinkCheck::Void(LinkFault::UnreadableInputList))
             );
         }
+    }
+
+    #[test]
+    fn an_input_bound_to_fixed_data_must_name_a_pinned_commitment() {
+        // The layer's weights are the model's: a commitment the
+        // configuration pins.
+        assert_eq!(Claim::honest().link(1, "layer"), Ok(LinkCheck::Linked));
+
+        // The cheat: run the stage on other weights and state a clean output.
+        // The stage's own check would catch it in an honest run, but a
+        // challenger has no such weights to run the stage on, and a replay on
+        // the real ones is not a run on this checkpoint's inputs. So the
+        // checkpoint may name nothing here but a pinned commitment.
+        let honest = Claim::honest();
+        let mut manifests = honest.manifests;
+        manifests[1] = manifest(&[
+            ("activations", &output_commitment(b"bound")),
+            ("layer", &hex::encode([0x66; 32])),
+        ]);
+        let mut checkpoints = honest.trace.checkpoints;
+        checkpoints[1] = checkpoint(
+            "range_p0_l0",
+            LAYER,
+            &manifests[1],
+            &[("activations", 0)],
+            b"layered",
+        );
+        let lying = Claim::of(checkpoints, manifests);
+        assert_eq!(
+            lying.link(1, "layer"),
+            Ok(LinkCheck::Void(LinkFault::NotAPinnedValue {
+                loaded: hex::encode([0x66; 32])
+            }))
+        );
+        // The input beside it is still its producer's output.
+        assert_eq!(lying.link(1, "activations"), Ok(LinkCheck::Linked));
+
+        // A name the program does not list is no input of it.
+        assert!(matches!(
+            Claim::honest().link(0, "nothing"),
+            Err(ChallengeRefusal::NotAChainedInput { .. })
+        ));
+    }
+
+    #[test]
+    fn an_input_the_run_gives_must_be_one_the_claim_posted() {
+        // The text is a value the claim posted.
+        assert_eq!(Claim::honest().link(0, "text"), Ok(LinkCheck::Linked));
+
+        // The cheat: post the real prompt, run a stage on other text, and
+        // state a clean output. A challenger has only the hash of that text,
+        // so it cannot run the stage on it, and its run on the posted text is
+        // not a run on this checkpoint's inputs. So the checkpoint may name
+        // nothing here but a posted value.
+        let honest = Claim::honest();
+        let mut manifests = honest.manifests;
+        manifests[0] = manifest(&[("text", &hex::encode([0x77; 32]))]);
+        let mut checkpoints = honest.trace.checkpoints;
+        checkpoints[0] = checkpoint("prompt_bind_p0", BIND, &manifests[0], &[], b"bound");
+        let lying = Claim::of(checkpoints, manifests);
+        assert_eq!(
+            lying.link(0, "text"),
+            Ok(LinkCheck::Void(LinkFault::NotAPostedInput {
+                loaded: hex::encode([0x77; 32])
+            }))
+        );
+
+        // A claim that posted nothing holds no run input at all.
+        let mut unposted = Claim::honest();
+        unposted.submission.availability.clear();
+        assert_eq!(
+            unposted.link(0, "text"),
+            Ok(LinkCheck::Void(LinkFault::NotAPostedInput {
+                loaded: hex::encode([9; 32])
+            }))
+        );
     }
 
     #[test]
@@ -2804,6 +3091,7 @@ mod tests {
             program_commitment: hex::encode(CONSENSUS),
             chained_inputs: vec![check("first"), check("second")],
             run_inputs: vec![String::from("forms")],
+            pinned_inputs: Vec::new(),
         });
         (programs, [single.models[0].clone(), second])
     }
@@ -3106,7 +3394,7 @@ mod tests {
         assert_eq!(single.mismatch(Pipeline::Single, &[&first]), None);
         // The file says which pipeline it is of and which models, in order.
         let written = serde_json::to_value(&single).unwrap();
-        assert_eq!(written["version"], 4);
+        assert_eq!(written["version"], 5);
         assert_eq!(written["pipeline"], "single");
         assert_eq!(written["models"].as_array().unwrap().len(), 1);
         assert!(written["programs"]["stage_programs"].is_array());

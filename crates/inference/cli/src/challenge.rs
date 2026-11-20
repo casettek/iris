@@ -30,10 +30,10 @@ pub enum ChallengeInput {
         checkpoint_hashes_path: PathBuf,
     },
     /// A submitted claim as `iris claim fetch` read it back from the layer:
-    /// its `claim_submission.json`, with its `checkpoints.txt` beside it.
-    /// Nothing of the claimer's own run is read. The run is prepared from
-    /// `run_spec_path`, which `claim fetch` wrote over the new information
-    /// the claim posted, as a claimer prepares its own.
+    /// its `claim_submission.json`, with its `checkpoints.txt`, its
+    /// checkpoints and the inputs its run was given beside it. Nothing of
+    /// the claimer's own run is read. Every stage is run on the inputs the
+    /// claim posted, under `run_spec_path`, which `claim fetch` wrote.
     Posted {
         submission_path: PathBuf,
     },
@@ -46,8 +46,10 @@ pub struct ChallengeBuildOptions {
     pub current_exe: PathBuf,
     pub staged_backend: StagedExecutionBackend,
     pub input: ChallengeInput,
-    /// For a posted claim: the output ids the challenger's own direct run of
-    /// the spec produced, taken in place of running it again.
+    /// The output ids the challenger's own direct run of the spec produced,
+    /// taken in place of running it again. Not used for a posted claim: its
+    /// stages are run on the ids the claim posted, and the checks say whether
+    /// they are the greedy output.
     pub direct_output_ids: Option<Vec<u32>>,
 }
 
@@ -183,6 +185,56 @@ pub fn build_challenge(options: ChallengeBuildOptions) -> Result<ChallengeBuildR
         );
     }
 
+    // A replay disputes a stage only when it is a run of the claimer's
+    // program on the claimer's inputs. This run is on the inputs the claim
+    // posted, so a checkpoint that differs in more than its output names
+    // another program or other inputs than the chain gives the stage. The
+    // claimer could answer a replay of such a stage with a fault proof, since
+    // the replay is not a run on the inputs its checkpoint names.
+    if let ChallengeInput::Posted { submission_path } = &options.input {
+        use inference_artifacts::contract::{settlement, Settlement};
+        let claimed_trace = read_checkpoint_trace(
+            &submission_path
+                .parent()
+                .context("the claim submission has no parent directory")?
+                .join(inference_artifacts::CHECKPOINT_TRACE_JSON),
+        )?;
+        let claimed = claimed_trace
+            .checkpoints
+            .get(divergence.checkpoint_index)
+            .with_context(|| {
+                format!(
+                    "the claim holds no checkpoint {} (`{}`)",
+                    divergence.checkpoint_index, divergence.stage
+                )
+            })?;
+        let differs = match settlement(claimed, recomputed_checkpoint) {
+            Settlement::Replay => None,
+            Settlement::Nothing => bail!(
+                "checkpoint {} (`{}`) is the one this run made, and its hash is not the one the \
+                 claim lists",
+                divergence.checkpoint_index,
+                divergence.stage
+            ),
+            Settlement::StageOrder => Some("another stage"),
+            Settlement::ProgramCheck => Some("another program"),
+            Settlement::Inputs => Some("other inputs"),
+        };
+        if let Some(differs) = differs {
+            bail!(
+                "checkpoint {} (`{}`) of the claim names {differs} than a run of the chain on \
+                 the inputs the claim posted, so a replay of the stage here would dispute \
+                 nothing the claimer did. Audit the claim (`iris claim audit`): a program \
+                 outside the approved set, or an input that is not an earlier stage's output, a \
+                 pinned commitment or a posted value, voids it with no replay. A claim the \
+                 audit finds nothing in gives its stages inputs in another arrangement than \
+                 the chain's, and replaying a stage on such an arrangement is not built",
+                divergence.checkpoint_index,
+                divergence.stage
+            );
+        }
+    }
+
     let challenge_dir = recomputed_chain_dir
         .join("challenge")
         .join(sanitize_stage_name(&divergence.stage));
@@ -273,9 +325,7 @@ fn challenge_run(
         return Ok((rebuilt.manifest_path, Some(rebuilt.prepared_run)));
     }
 
-    // A bare trace has no frozen metadata. Prepare it from the selected run
-    // spec, just as claim build does, rather than selecting a root template.
-    let prepared = crate::claim::prepare_claim_run(&crate::claim::ClaimBuildOptions {
+    let build = crate::claim::ClaimBuildOptions {
         base_dir: options.base_dir.clone(),
         run_spec_path,
         current_exe: options.current_exe.clone(),
@@ -283,31 +333,36 @@ fn challenge_run(
         claimed_token_ids: None,
         direct_output_ids: options.direct_output_ids.clone(),
         claimer: None,
-    })?;
+    };
     let ChallengeInput::Posted { submission_path } = &options.input else {
-        // A bare trace claims nothing.
+        // A bare trace has no frozen metadata. Prepare it from the selected
+        // run spec, just as claim build does, rather than selecting a root
+        // template. A bare trace claims nothing.
+        let prepared = crate::claim::prepare_claim_run(&build)?;
         return Ok((prepared.manifest_path, None));
     };
-    // The run must be over what the claim posted: its text, or its source.
-    // Any other run differs from the claim at its first stage and disputes
-    // nothing the claimer did.
-    let submission: inference_artifacts::contract::ClaimSubmission =
-        inference_artifacts::read_json(submission_path)?;
-    let prompt = &prepared.prepared_run.first()?.prompt;
-    let text_sha256 = hex::encode(<sha2::Sha256 as sha2::Digest>::digest(
-        prompt.resolved_prompt.as_bytes(),
-    ));
-    let source_sha256 = prompt
-        .source
-        .as_ref()
-        .map(inference_artifacts::contract::source_record_id)
-        .unwrap_or_else(inference_artifacts::inference::no_source_id);
-    anyhow::ensure!(
-        text_sha256.eq_ignore_ascii_case(&submission.input_text_sha256)
-            && source_sha256.eq_ignore_ascii_case(&submission.source_sha256),
-        "the run spec's prompt is not the one the claim names: give --run the spec `iris claim \
-         fetch` wrote beside the submission"
-    );
+    // The run is on the inputs the claim posted: every stage is given what
+    // the claimer's was. A run on inputs prepared here would differ from a
+    // lying claim at the stage whose input the claimer changed, and a replay
+    // of that stage on other inputs than the claimer's disputes nothing the
+    // claimer did.
+    let claim_dir = submission_path
+        .parent()
+        .context("the claim submission has no parent directory")?;
+    let posted = crate::run_inputs::load(claim_dir).with_context(|| {
+        format!(
+            "{} holds no inputs of the claim's run: challenge the directory `iris claim fetch` \
+             wrote",
+            claim_dir.display()
+        )
+    })?;
+    let prepared = crate::claim::prepare_posted_run(
+        &crate::claim::ClaimBuildOptions {
+            direct_output_ids: None,
+            ..build
+        },
+        &posted,
+    )?;
     // A posted claim is a claim: with no checkpoint to dispute it is judged
     // by its own final record.
     Ok((prepared.manifest_path, Some(prepared.prepared_run)))

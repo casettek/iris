@@ -2040,32 +2040,21 @@ fn run_availability_cases(dir: &Path, spec: &Path, submission_path: &Path) -> Re
         check("expires", &honest, None, Some(late))?,
         "submission: data posted",
     )?);
-    // The checkpoints posted with their proof, and no prompt text; then
-    // another prompt text in its place.
+    // A claim that posts its checkpoints and none of its run's inputs is not
+    // refused when it arrives: which inputs a claim must have posted is not
+    // judged there. Every checkpoint of it that names a run input is at
+    // fault, which a challenger shows with no replay
+    // (`CheckpointList::check_link`; the challenge leg's `corrupted-posted`
+    // case is a claim with one such checkpoint).
     let layer = crate::availability::open_layer(None)?;
     let layer = layer.as_ref();
     let mut unavailable = honest.clone();
     unavailable.availability =
         crate::availability::post_claim(layer, claim_dir, &honest.claimer, None)?;
-    cases.push(refused_at(
-        "prompt-not-posted",
-        check("prompt-not-posted", &unavailable, None, None)?,
-        "submission: data posted",
-    )?);
-    let mut other_prompt = honest.clone();
-    other_prompt.availability = crate::availability::post_claim(
-        layer,
-        claim_dir,
-        &honest.claimer,
-        Some(inference_artifacts::availability::BlobEntry::PromptText {
-            text: String::from("another prompt"),
-        }),
-    )?;
-    cases.push(refused_at(
-        "other-prompt-posted",
-        check("other-prompt-posted", &other_prompt, None, None)?,
-        "submission: data posted",
-    )?);
+    ensure!(
+        unavailable.posted_run_inputs().is_empty() && !honest.posted_run_inputs().is_empty(),
+        "the honest claim posted no run inputs, or a posting without them states some"
+    );
     // A proof that states no records: the blobs hold the claim's data, and
     // nothing says what its checkpoints commit to.
     let mut unstated = honest.clone();

@@ -16,22 +16,48 @@ how the Celestia node and the contracts are used.
 
 ## What is posted, and what is not
 
-A challenger reruns everything itself. It has the configuration and the
-models, so it needs only what was given to the pipeline that neither fixes:
-**the new information**. Everything a stage loads is made from it, the same
-way by anyone.
+**The rule.** Every input a stage is given is one of three things, and a
+challenger holds all three:
 
-| Given to the pipeline | Where a challenger gets it |
+| A stage's input is | Where a challenger gets it |
 | --- | --- |
-| A source's documents, with their attestations | Posted |
-| A source's recipe (base prompt, documents, fields) | Posted, until configurations pin it |
-| The prompt text of a run with no source | Posted |
-| The signer's key, the forms, the raw prompt flag and token budget | The configuration |
-| A sourced run's prompt text | Made by the source step from the documents and the recipe |
-| Each prompt range's text and token marks, the run's configuration, schedule and text claim | Made from the text and the model's tokenizer |
-| The claimed output ids | Made by greedy decoding: a claim whose ids are not the greedy output is refuted by its own record |
-| Model data | Pinned by the model id, published elsewhere |
-| Every Raster file's index | Made with the file |
+| An earlier stage's output | Its own run of that stage, which the claim's checkpoint for it either matches or does not |
+| Fixed data the configuration pins: the model's weights and tokenizer, the constants the first stages start from | Published elsewhere, by the commitment the configuration pins |
+| The run's own | Posted with the claim |
+
+So whenever two parties disagree about a stage, they ran it on the same
+inputs, and a replay settles it. A stage input that is none of the three is a
+fault of the checkpoint that names it, which a contract rules on with nothing
+run ([the chains](chains.md#the-ways-to-challenge-a-claim)).
+
+**The run's own inputs** are everything a stage is given that neither an
+earlier stage nor the configuration fixes. A claim posts each as the value the
+stage is given, and anyone writes the file the stage loads from it:
+
+| Run input | Given to | What it is |
+| --- | --- | --- |
+| `documents`, `recipe`, `signer` | `source` | The documents in chunks with their attestations, the recipe, and the key the attestations are checked against |
+| `text` | each `prompt_bind` | That range's slice of the prompt text. The slices concatenate to the prompt, so the text is posted once |
+| `config`, `schedule`, `claim` | each `prompt_bind` | The run's model, flags and token budget; how many prompt and claimed ranges it has; and what it claims of the whole text |
+| `marks` | each `prompt_check` | For each piece of that range, whether a token starts there |
+| `claimed` | each `embed_c` | That range of the claimed output ids |
+| `forms` | `result` | The output texts the result is read by |
+
+A contract does not judge what a posted input says. The stages do, as they
+run: `prompt_bind` hashes the text and holds it to the text claim and the
+source record, `prompt_check` holds the marks to the tokenizer's own merge,
+the first bind checks the schedule, `sequence-check` compares the claimed ids
+with the greedy output, and the statement a contract recomputes binds the
+model, the flags and the text's hash. So a claimer who posts marks that are
+not the tokenizer's is shown false by a replay of that stage on those marks:
+the honest run ends in a record that says so, and the claim stated a clean
+one. The signer's key, the recipe and the forms are the configuration's as
+well, which a contract holds the claim's records to when it arrives.
+
+A run input is posted as its value and not as the Raster file a stage loads,
+because the file's index is several times the value's size and anyone writes
+both from the value. On a 1,209-token prompt the files are about 130 KB of
+data and 620 KB of indexes, and the values are about a tenth of the data.
 
 The claimer also posts what only it can state: **its checkpoints**, the
 checkpoint list, every checkpoint in it, and every input manifest a checkpoint
@@ -65,15 +91,16 @@ own, which the original submitter is ahead of.
 
 | Entry | What the proof states of it |
 | --- | --- |
-| The source: the signer's key, the recipe and the documents with their attestations | The digest of the record the source step gives over them (`source_core::run_source`): the one the claim's statement names. One equality covers the text, the recipe, every document and the signer |
-| Or, for a run with no source, the prompt text as given | Its SHA-256: the statement's input text hash |
+| The run's inputs (`PostedRun`): the source stage's, the forms, and each inference's configuration, schedule, text claim, text slices, marks and claimed ids | The commitment a stage's input list names each one by: the root of the Raster file written from it |
 | The checkpoint list, with every checkpoint and every input manifest a checkpoint commits to | The root of the list, which is the submission's `checkpoints_root`, and that every listed checkpoint and its manifest are there |
 
-The signer's key is the configuration's; it is posted only so that the source
-step can be run over the blob alone.
+A contract keeps one hash of the run inputs' commitments, in the order the
+blobs state them (`posted_inputs_digest`). A challenger that says a stage's
+run input was not posted presents the commitments, and the contract holds
+them to that hash.
 
 Entries are packed in order into blobs of at most 1 MiB, a stand-in for the
-layer's own limit. A blob is `iris/blob/v2\n` followed by the postcard encoding
+layer's own limit. A blob is `iris/blob/v3\n` followed by the postcard encoding
 of the address it is posted for and its entries; a reader refuses any other
 encoding of the same blob.
 
@@ -130,9 +157,9 @@ On a claim, at submission:
    Blobstream has attested to, its proof holds, it was posted for the address
    the claim names as its claimer, and its block's time plus the layer's
    retention reaches past the submission time plus the challenge
-   period. The blobs hold the new information the statement names (a source
-   whose record has the statement's source digest, or a prompt text with the
-   statement's input hash) and the claim's checkpoint list.
+   period. The blobs hold the claim's checkpoint list. The run inputs they
+   hold are recorded by one hash, and not judged: a stage input that was not
+   posted is a fault of the checkpoint that names it.
 
 On a challenge, at submission: it is about the checkpoint the claim lists at
 that stage, the stage names an approved program, Raster admits it, and the
@@ -178,16 +205,17 @@ each blob holds ([the chains](chains.md)).
 
 ## Open
 
-- **A stage input a challenger cannot make the same.** A claimer can feed a
-  stage a run input other than the one the new information makes, such as
-  token marks that are not the tokenizer's, and state a false checkpoint for
-  that stage. The posted manifest shows the challenger which input differs,
-  but not its bytes, so it has no replay to make: a replay starts from the
-  claimer's input. Set aside for now by decision. The step planned for it: the
-  challenger asks for that input, and the claimer must post it, with a proof
-  that it has the Raster root the stage's input manifest names, within a
-  window or the claim is void. The contract pins already list which inputs of
-  each program are run inputs.
+- **A stage given its inputs in another arrangement than the chain's.** Every
+  input a checkpoint names is now one a challenger holds, but a claimer can
+  still give a stage a held input the chain would not give it: another
+  layer's weights, or the configuration posted for another inference. The
+  stage's own checks catch it in an honest run, and a replay of that stage on
+  those inputs shows a claim that stated otherwise. `challenge build` does
+  not make that replay yet: it runs the chain as its template arranges it,
+  and stops with a message when the claim's checkpoint names other inputs
+  than that run's.
+- **A consensus claim posts its text once per inference.** Each model cuts
+  the text into its own slices, and the slices are what is posted.
 - **Reading an output by its index.** The stand-in reads a record out of an
   output with the output's index, given by the claimer, after checking that
   the index and the payload have the same root. A proof program should not

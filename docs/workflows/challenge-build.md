@@ -106,14 +106,15 @@ iris challenge build --run fetched/inference.toml --submission fetched/claim_sub
 ```
 
 `claim fetch` writes the claim's checkpoint list, checkpoints and input
-manifests as it posted them, and a run spec over the prompt text or the
-source documents it posted ([the chains](../internals/chains.md#starting-from-the-chains)).
-`challenge build --submission` prepares its run from that spec the way `claim
-build` does, with the output found by direct inference, or taken from
-`--direct-output-ids` when the challenger has already run `iris infer` on the
-spec. It compares the run with the posted list hash by hash, and from there
-the flow and the outputs are the ones above. It refuses a spec whose prompt is
-not the one the claim names.
+manifests as it posted them, the inputs its run was given (`posted_run.bin`),
+and a run spec over them ([the chains](../internals/chains.md#starting-from-the-chains)).
+`challenge build --submission` runs every stage on those inputs. It tokenizes
+nothing and runs no direct inference: the stages check the marks and the
+claimed ids they are given, and `--direct-output-ids` is not used. It compares
+the run with the posted list hash by hash, and from there the flow and the
+outputs are the ones above. It stops when the first checkpoint that differs
+names another program or other inputs than its run's, which is a claim for
+`iris claim audit`.
 
 `--claim` and `--trace` remain lower-level debug inputs that compare full checkpoint records. `--trace` prepares a run from `--run` because a trace alone has no frozen run metadata. It uses that run spec’s model, prompt, and token count, and discovers the output with direct inference. `challenge locate` remains reserved. See [Fault proving](fault-prove.md) for `challenge corrupt` and `fault prove`.
 

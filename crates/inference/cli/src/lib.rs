@@ -20,6 +20,7 @@ mod parity;
 mod posted;
 #[cfg(feature = "replay-profile")]
 mod replay_profile;
+mod run_inputs;
 mod source;
 mod stage_bindings;
 #[cfg(test)]
@@ -916,7 +917,7 @@ fn execute(cli: Cli) -> Result<ExitCode> {
             })?;
             println!("checkpoints: {}", audit.checkpoints);
             println!("programs approved: {}", audit.programs_approved);
-            println!("chained inputs linked: {}", audit.inputs_linked);
+            println!("inputs held to their origin: {}", audit.inputs_linked);
             println!("faults: {}", audit.faults.len());
             for fault in &audit.faults {
                 let input = fault

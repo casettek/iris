@@ -88,10 +88,11 @@ the chain then checks it.
   is accepted when judged by a registry holding its configuration, and refused
   at the configuration check when the registry does not hold it or the
   submission names another one, and at the availability check when nothing
-  is posted, the blobs expire before the challenge period ends, only the
-  checkpoints are posted, another prompt is posted in place of the one the
-  statement names, or the submission names another address than its blobs;
-  and at the records check when its proof states no records.
+  is posted, the blobs expire before the challenge period ends, or the
+  submission names another address than its blobs; and at the records check
+  when its proof states no records. A claim that posts its checkpoints and
+  none of its run's inputs is not refused there: its checkpoints are at
+  fault, which the challenge leg shows.
 - For each falsified claim whose stage replays: which rule settles the
   difference between the claimed checkpoint and the honest one. Where that is a
   replay, the Raster stage challenge built from the claimer's checkpoint and the
@@ -108,8 +109,10 @@ the chain then checks it.
   byte. For the first of them a challenge is built from that directory alone
   (`challenge build --submission`), and must find and replay the same stage.
   A lying claim is also made of each kind no replay shows, a checkpoint that
-  names an unapproved program and one whose input is not its producer's
-  output: a contract takes each claim, and an audit of it read back
+  names an unapproved program, one whose input is not its producer's output,
+  one that names another tokenizer than the configuration pins, and one that
+  names token marks the claim did not post: a
+  contract takes each claim, and an audit of it read back
   (`iris claim audit`) must find that fault at that checkpoint. An audit of a
   claim that lies only about an output must find none.
   The claim with a source is read back the same way (source leg): the

@@ -328,8 +328,7 @@ library IrisEncoding {
     function contents(BlobContents memory held) internal pure returns (bytes memory) {
         return abi.encodePacked(
             held.submitter,
-            hashes(held.sources),
-            hashes(held.promptTexts),
+            hashes(held.runInputs),
             hashes(held.checkpointLists),
             hashes(held.traceBodies),
             hashes(held.records)
@@ -341,7 +340,7 @@ library IrisEncoding {
     function attestationDigest(PostedBlob memory blob) internal pure returns (bytes32) {
         return sha256(
             abi.encodePacked(
-                "iris/blob-attestation/v1\x00",
+                "iris/blob-attestation/v2\x00",
                 le64(blob.height),
                 blob.namespace,
                 hash(blob.commitment),

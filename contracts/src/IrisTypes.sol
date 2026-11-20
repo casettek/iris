@@ -27,8 +27,8 @@ struct Configuration {
     string pipeline;
     string family;
     // The part of the id's encoding that lists the approved programs: a
-    // count, then each program's stage, id, chained inputs and run inputs.
-    // The registry walks it for each program's stage.
+    // count, then each program's stage, id, chained inputs, run inputs and
+    // pinned inputs. The registry walks it for each program's stage.
     bytes programs;
     Model[] models;
     bool rawPrompt;
@@ -38,6 +38,21 @@ struct Configuration {
     bool hasRecipe;
     bytes32 recipe;
     Form[] forms;
+}
+
+// What a configuration says of one input of one of its programs: where the
+// input may come from. An input can be of more than one kind.
+struct InputRule {
+    // Taken from an earlier stage: the stages that may produce it, each as
+    // the hash of its name, and the empty values it may hold in place of one.
+    bool chained;
+    bytes32[] producers;
+    bytes32[] emptyValues;
+    // Bound to fixed data, such as the model's: the commitments it may hold.
+    bool pinned;
+    bytes32[] pinnedValues;
+    // Given by the run itself.
+    bool run;
 }
 
 // --- a claim: `inference_artifacts::contract::ClaimSubmission` ---
@@ -109,8 +124,9 @@ struct StatedRecords {
 // entry is listed by its digest; a claim gives the one it relies on in full.
 struct BlobContents {
     address submitter;
-    bytes32[] sources;
-    bytes32[] promptTexts;
+    // The commitment of each run input in the blob: what a stage's input
+    // list names it by.
+    bytes32[] runInputs;
     bytes32[] checkpointLists;
     bytes32[] traceBodies;
     bytes32[] records;
@@ -193,10 +209,12 @@ struct ProgramFault {
     bytes32[] path;
 }
 
-// A stage whose input is not what the claim says an earlier stage produced:
+// A stage whose input is not from where the configuration says it comes:
 // the stage's checkpoint, the bytes of the input list it commits to, the
 // input, and the checkpoint its own checkpoint names as the producer, when it
-// names one.
+// names one. For an input the run gives, `posted` is the commitment of every
+// run input the claim posted, in the order its blobs state them: the contract
+// holds their digest.
 struct InputFault {
     bytes32 claimId;
     uint32 stage;
@@ -207,6 +225,7 @@ struct InputFault {
     bool hasProducer;
     Checkpoint producer;
     bytes32[] producerPath;
+    bytes32[] posted;
 }
 
 /// A Raster fault proof of a challenger's trace: the journal of Raster's

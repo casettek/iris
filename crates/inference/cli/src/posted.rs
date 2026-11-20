@@ -4,9 +4,9 @@
 //!
 //! A challenger has the configuration and the models. `fetch_claim` gives it
 //! the rest: the claim's checkpoint list, checkpoints and input manifests,
-//! and a run spec over the new information the claim posted. A defender has
-//! its own run of the disputed stage. `fetch_challenge` gives it the trace
-//! the challenge names.
+//! and the inputs the claim's run was given, with a run spec over them. A
+//! defender has its own run of the disputed stage. `fetch_challenge` gives it
+//! the trace the challenge names.
 //!
 //! `corrupt_claim` is for tests of that path: it makes the claim a lying
 //! claimer would submit, which states another output for one checkpoint and
@@ -21,7 +21,7 @@ use inference_artifacts::availability::{
     check_holds, Blob, BlobContents, BlobEntry, CheckpointPackage, RequiredPosting,
 };
 use inference_artifacts::contract::{
-    is_address, source_record_id, ChallengeSubmission, ClaimSubmission, CLAIM_SUBMISSION_JSON,
+    is_address, ChallengeSubmission, ClaimSubmission, CLAIM_SUBMISSION_JSON,
 };
 use inference_artifacts::{
     checkpoint_hashes, checkpoints_root, read_checkpoint_hashes, read_checkpoint_trace, read_json,
@@ -78,8 +78,10 @@ pub enum CorruptFault {
     Output,
     /// A program outside the approved set.
     Program,
-    /// An input that is not what its producer made. The named input, or the
-    /// first the checkpoint names a producer for.
+    /// An input that is not from where the configuration says it comes: not
+    /// what its producer made, not a pinned commitment, or not a value the
+    /// claim posted, by the kind of input. The named input, or the first the
+    /// checkpoint names a producer for.
     Input(Option<String>),
 }
 
@@ -303,11 +305,11 @@ fn stage_dir_name(stage: &str) -> Result<&str> {
 /// not fix.
 ///
 /// The directory holds the submission, the claim's `checkpoints.txt` and
-/// `checkpoint_trace.json`, every stage's `input_manifest.json`, and
-/// `inference.toml`: the reader's run spec over the prompt text, or the
-/// source's documents, that the claim posted. Nothing is written unless the
-/// blobs are the claimer's and hold the new information the statement names
-/// and the checkpoint list the claim names.
+/// `checkpoint_trace.json`, every stage's `input_manifest.json`, the inputs
+/// the claim's run was given (`posted_run.bin`), and `inference.toml`: the
+/// reader's run spec over the prompt text, or the source's documents, that
+/// those inputs hold. Nothing is written unless the blobs are the claimer's
+/// and hold the checkpoint list the claim names and the inputs of one run.
 pub fn fetch_claim(options: FetchClaimOptions) -> Result<FetchedClaim> {
     let submission: ClaimSubmission = read_json(&options.submission_path)?;
     ensure!(
@@ -385,24 +387,31 @@ pub fn fetch_claim(options: FetchClaimOptions) -> Result<FetchedClaim> {
     spec.prompt = None;
     spec.prompt_file = None;
 
+    // The inputs the claim's run was given. A claim posts those of one run.
+    let mut runs = entries.iter().filter_map(|entry| match entry {
+        BlobEntry::Run(run) => Some(run),
+        _ => None,
+    });
+    let run = runs
+        .next()
+        .context("the claim posted no inputs of its run: there is nothing to run its stages on")?;
+    ensure!(
+        runs.next().is_none(),
+        "the claim posted the inputs of more than one run"
+    );
+    let first = run
+        .inferences
+        .first()
+        .context("the claim posted the inputs of a run of no inference")?;
+
     fresh_dir(&options.out_dir)?;
     let out = fs::canonicalize(&options.out_dir)
         .with_context(|| format!("failed to resolve {}", options.out_dir.display()))?;
-    let sourced = submission.source_sha256 != inference_artifacts::inference::no_source_id();
-    if sourced {
-        let posted = entries
-            .iter()
-            .find_map(|entry| match entry {
-                BlobEntry::Source(source)
-                    if source_record_id(&source.record()) == submission.source_sha256 =>
-                {
-                    Some(source)
-                }
-                _ => None,
-            })
-            .context("the claim's source is not among what it posted")?;
+    crate::run_inputs::save(run, &out)?;
+    if let Some(posted) = &run.source {
         // The recipe and the signer's key are the configuration's, so they
-        // stay the reader's own. The documents are the new information.
+        // stay the reader's own in the spec. The stages run on the posted
+        // ones all the same.
         let source = spec.source.as_mut().with_context(|| {
             format!(
                 "the claim has a source, and {} names none: the recipe and the signer's key \
@@ -413,34 +422,24 @@ pub fn fetch_claim(options: FetchClaimOptions) -> Result<FetchedClaim> {
         source.recipe = absolute(spec_dir, &source.recipe);
         source.signer = absolute(spec_dir, &source.signer);
         source.documents.clear();
-        for (index, document) in posted.documents.iter().enumerate() {
+        for (index, (document, attested)) in crate::run_inputs::documents_of(posted)
+            .into_iter()
+            .enumerate()
+        {
             let body = out.join(format!("posted-document-{index}.bin"));
-            fs::write(&body, &document.body)
+            fs::write(&body, &document)
                 .with_context(|| format!("failed to write {}", body.display()))?;
             let attestation = out.join(format!("posted-attestation-{index}.json"));
-            write_json(&attestation, &document.attestation)?;
+            write_json(&attestation, attested)?;
             source.documents.push(SourceDocumentSpec {
                 document: body,
                 attestation,
             });
         }
     } else {
-        let wanted = &submission.input_text_sha256;
-        let text = entries
-            .iter()
-            .find_map(|entry| match entry {
-                BlobEntry::PromptText { text }
-                    if hex::encode(Sha256::digest(text.as_bytes()))
-                        .eq_ignore_ascii_case(wanted) =>
-                {
-                    Some(text)
-                }
-                _ => None,
-            })
-            .context("the claim's prompt text is not among what it posted")?;
         spec.source = None;
-        // In the spec itself, so that the text is the posted one exactly.
-        spec.prompt = Some(text.clone());
+        // In the spec itself: the text the posted slices concatenate to.
+        spec.prompt = Some(crate::run_inputs::text_of(first));
     }
 
     write_package(&out, package)?;
@@ -576,10 +575,11 @@ pub fn fetch_challenge(options: FetchChallengeOptions) -> Result<FetchedChalleng
 ///
 /// `bytes` is everything posted: the whole of every blob. Each blob's parts
 /// are sized as the blob encodes them, and `framing_bytes` is what is left:
-/// the magic, the submitter and the lengths. A source's size is split into
-/// its documents' bodies and the rest (the attestations, the recipe and the
-/// signer's key), and a claim's checkpoints into the list, the checkpoints
-/// and the input manifests.
+/// the magic, the submitter and the lengths. A run's inputs are split into
+/// the text, the token marks, the claimed ids, the documents' bytes and the
+/// rest (the run's settings, the forms, and a source's attestations, recipe
+/// and signer's key), and a claim's checkpoints into the list, the
+/// checkpoints and the input manifests.
 pub fn measure_posting(submission_path: &Path, da_dir: Option<&Path>) -> Result<serde_json::Value> {
     #[derive(serde::Deserialize)]
     struct Posted {
@@ -615,25 +615,41 @@ pub fn measure_posting(submission_path: &Path, da_dir: Option<&Path>) -> Result<
             let size = encoded(entry)?;
             held += size;
             parts.push(match entry {
-                BlobEntry::Source(source) => {
-                    let bodies: u64 = source
-                        .documents
-                        .iter()
-                        .map(|document| document.body.len() as u64)
-                        .sum();
+                BlobEntry::Run(run) => {
+                    let sized = |value: &dyn Fn() -> postcard::Result<Vec<u8>>| -> Result<u64> {
+                        Ok(value()?.len() as u64)
+                    };
+                    let (mut text, mut marks, mut claimed) = (0u64, 0u64, 0u64);
+                    for inference in &run.inferences {
+                        text += sized(&|| postcard::to_allocvec(&inference.text))?;
+                        marks += sized(&|| postcard::to_allocvec(&inference.marks))?;
+                        claimed += sized(&|| postcard::to_allocvec(&inference.claimed))?;
+                    }
+                    let (documents, bodies) = match &run.source {
+                        Some(source) => (
+                            source.documents.attestations.len(),
+                            source
+                                .documents
+                                .chunks
+                                .iter()
+                                .map(|chunk| chunk.bytes.as_slice().len() as u64)
+                                .sum(),
+                        ),
+                        None => (0, 0u64),
+                    };
                     serde_json::json!({
-                        "kind": "source",
+                        "kind": "run_inputs",
                         "bytes": size,
-                        "documents": source.documents.len(),
+                        "inferences": run.inferences.len(),
+                        "values": run.values().len(),
+                        "text_bytes": text,
+                        "marks_bytes": marks,
+                        "claimed_bytes": claimed,
+                        "documents": documents,
                         "document_bytes": bodies,
-                        "other_bytes": size - bodies,
+                        "other_bytes": size.saturating_sub(text + marks + claimed + bodies),
                     })
                 }
-                BlobEntry::PromptText { text } => serde_json::json!({
-                    "kind": "prompt_text",
-                    "bytes": size,
-                    "text_bytes": text.len(),
-                }),
                 BlobEntry::Checkpoints(package) => serde_json::json!({
                     "kind": "checkpoints",
                     "bytes": size,
@@ -690,6 +706,8 @@ pub struct AuditFault {
 pub struct ClaimAudit {
     pub checkpoints: usize,
     pub programs_approved: usize,
+    /// Inputs that are what the configuration says they must be: an earlier
+    /// stage's output, a pinned commitment, or a value the claim posted.
     pub inputs_linked: usize,
     pub faults: Vec<AuditFault>,
     /// Every question a contract can be asked of the claim with no replay:
@@ -702,7 +720,8 @@ pub struct ClaimAudit {
 
 /// What is wrong with a claim that no replay shows: a checkpoint that names
 /// a program outside the approved set, or an input that is not what an
-/// earlier checkpoint produced.
+/// earlier checkpoint produced, not a pinned commitment, or not a value the
+/// claim posted.
 ///
 /// A replay runs the program a checkpoint names on the inputs it names, so a
 /// challenger asks these two things first, of every checkpoint, from the
@@ -743,6 +762,7 @@ pub fn audit_claim(options: AuditClaimOptions) -> Result<ClaimAudit> {
         trace.checkpoints.len()
     );
     let claim = claim_id(&submission)?;
+    let posted = submission.posted_run_inputs();
 
     let mut audit = ClaimAudit {
         checkpoints: hashes.len(),
@@ -787,7 +807,21 @@ pub fn audit_claim(options: AuditClaimOptions) -> Result<ClaimAudit> {
             continue;
         };
         audit.programs_approved += 1;
-        if program.chained_inputs.is_empty() {
+        // Every input of the program: the ones taken from an earlier stage,
+        // the ones bound to fixed data, and the ones the run gives.
+        let held: std::collections::BTreeSet<&str> = program
+            .chained_inputs
+            .iter()
+            .map(|input| input.name.as_str())
+            .chain(
+                program
+                    .pinned_inputs
+                    .iter()
+                    .map(|input| input.name.as_str()),
+            )
+            .chain(program.run_inputs.iter().map(String::as_str))
+            .collect();
+        if held.is_empty() {
             continue;
         }
         let manifest_path = dir
@@ -799,20 +833,17 @@ pub fn audit_claim(options: AuditClaimOptions) -> Result<ClaimAudit> {
                 manifest_path.display()
             )
         })?;
-        for chained in &program.chained_inputs {
-            let producer = checkpoint
-                .input_sources
-                .get(&chained.name)
-                .and_then(|producer| {
-                    let listed = trace.checkpoints.get(*producer as usize)?;
-                    Some((*producer as usize, listed))
-                });
+        for input in held {
+            let producer = checkpoint.input_sources.get(input).and_then(|producer| {
+                let listed = trace.checkpoints.get(*producer as usize)?;
+                Some((*producer as usize, listed))
+            });
             let verdict = list.check_link(
                 pins,
                 position,
                 checkpoint,
                 &manifest,
-                &chained.name,
+                input,
                 producer.map(|(_, listed)| listed),
             );
             let producer_opening = producer
@@ -829,15 +860,16 @@ pub fn audit_claim(options: AuditClaimOptions) -> Result<ClaimAudit> {
                     checkpoint,
                     &path,
                     &manifest,
-                    &chained.name,
+                    input,
                     producer_opening
                         .as_ref()
                         .map(|(listed, path)| (*listed, path.as_slice())),
+                    &posted,
                 )?),
             );
             asked["checkpoint"] = serde_json::json!(position);
             asked["stage"] = serde_json::json!(checkpoint.stage);
-            asked["input"] = serde_json::json!(chained.name);
+            asked["input"] = serde_json::json!(input);
             asked["expected"] = match &verdict {
                 Ok(LinkCheck::Linked) => {
                     audit.inputs_linked += 1;
@@ -848,7 +880,7 @@ pub fn audit_claim(options: AuditClaimOptions) -> Result<ClaimAudit> {
                         call: audit.calls.len(),
                         checkpoint: position,
                         stage: checkpoint.stage.clone(),
-                        input: Some(chained.name.clone()),
+                        input: Some(input.to_string()),
                         fault: fault.name().to_string(),
                     });
                     serde_json::json!({ "void": fault.name() })
