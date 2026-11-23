@@ -4,9 +4,11 @@ A claim's data goes to Celestia, and the claim itself to a contract on an EVM
 chain. This page says what iris does on each, what the contracts check, and
 which parts are still a trusted host in place of a proof.
 
-It is the baseline integration: a claim arrives and is accepted or refused, a
-challenge arrives and is admitted or refused. What happens after arrival (the
-defence, the clocks, bonds, finality) is not built.
+What is built: a claim arrives and is accepted or refused, a claim with a
+fault a contract can read is void on the spot, a challenge arrives and is
+admitted or refused, and a fault proof dismisses a challenge whose trace is
+wrong. What follows from any of those (clocks, bonds, finality) is not built
+([what is open](open.md)).
 
 Both chains run locally from [`devstack/`](../../devstack/README.md).
 
@@ -69,22 +71,33 @@ blob the submission names back from the layer and says what each holds:
 
 ```json
 {
-  "bytes": 182482,
+  "bytes": 216927,
   "blobs": [
     {
-      "height": 40003,
-      "commitment": "da10...",
-      "bytes": 182482,
+      "height": 19220,
+      "commitment": "149f...",
+      "bytes": 216927,
       "framing_bytes": 57,
       "parts": [
-        { "kind": "prompt_text", "bytes": 11, "text_bytes": 9 },
+        {
+          "kind": "run_inputs",
+          "bytes": 187,
+          "inferences": 1,
+          "values": 7,
+          "text_bytes": 12,
+          "marks_bytes": 27,
+          "claimed_bytes": 5,
+          "documents": 0,
+          "document_bytes": 0,
+          "other_bytes": 143
+        },
         {
           "kind": "checkpoints",
-          "bytes": 182414,
-          "list_bytes": 9490,
-          "trace_bytes": 70459,
-          "input_manifests": 146,
-          "input_manifest_bytes": 102165
+          "bytes": 216683,
+          "list_bytes": 11310,
+          "trace_bytes": 83462,
+          "input_manifests": 174,
+          "input_manifest_bytes": 121555
         }
       ]
     }
@@ -101,8 +114,10 @@ rest) and its checkpoints: the list, the checkpoints and every input manifest.
 A challenge
 posts the challenger's trace of the stage (`kind: "trace_body"`).
 
-The numbers above are a one-token claim of Gemma 4 E2B: 146 checkpoints, and
-the input manifests are over half of it.
+The numbers above are a one-token claim of Gemma 4 E4B: 174 checkpoints. The
+input manifests are over half of it, and the run's inputs are 187 bytes. On
+the local chains that claim took about 1,074,000 gas to submit, and a
+challenge of it, with a 38 KB trace posted, about 278,000.
 
 ## The contracts
 
@@ -154,52 +169,12 @@ source record's digest, the forms and their result, the stated records.
 
 ### The ways to challenge a claim
 
-A claim can be wrong in these ways, and each has its call.
-
-| What is wrong | The call | How it is settled |
-| --- | --- | --- |
-| A stage's execution: its program on its inputs gives another output | `submitChallenge` | The challenger posts its trace of the stage. The claimer can answer with a fault proof (`submitFaultProof`) |
-| A stage's program: it is outside the approved set | `voidClaim` | On the spot: the claim is void |
-| A stage's input from an earlier stage: it is not what that stage produced | `voidClaim` | On the spot: the claim is void |
-| A stage's input from fixed data, such as the model's: it is not a commitment the configuration pins | `voidClaim` | On the spot: the claim is void |
-| A stage's input from the run itself: it is not a value the claim posted | `voidClaim` | On the spot: the claim is void |
-
-The first is an assertion that can itself be false, which is why it has an
-answer. The next four are facts the contract reads from the claim's own
-checkpoints, its configuration and what it posted, so there is nothing to
-answer and nothing to wait for. A replay cannot stand in for them: it runs the program a
-checkpoint names on the inputs it names, and so says nothing of whether that
-is the right program or where the inputs came from.
-
-**Why the inputs are compared, when the stages check them.** A stage checks
-what it loads against a pinned identity as it runs: the model's data against
-the model id, for one. That makes a wrong input show in an honest run. But a
-challenger shows a lie about a stage by running the stage on the same inputs,
-and a dispute is settled against the inputs the claimer's checkpoint names.
-A claimer that ran a stage on other weights and stated a clean output could
-answer an honest challenger with a real fault proof, since the challenger's
-trace is not a run on those weights, and the challenger has no such weights
-to run on. So a checkpoint may name, for every input, only something a
-challenger also holds: an earlier checkpoint's output, a commitment the
-configuration pins, or a value the claim posted. Then whenever two parties
-disagree about a stage they ran it on the same inputs, and a replay settles
-it.
-
-The contract does not judge what a posted input says. A claimer can post
-token marks that are not the tokenizer's. The stage checks them as it runs,
-so an honest run on those marks ends in a record that says so, and a claim
-that stated a clean record for that stage is shown false by a replay on the
-marks it posted ([availability](availability.md#what-is-posted-and-what-is-not)).
-
-**A value in the wrong place is a lie about execution.** The comparison asks
-where an input comes from, not whether it is the one the chain gives that
-stage: a layer's weights may be any layer's, a posted value any posted value,
-an earlier stage's output that of any earlier stage of the right kind. Which
-belongs where is the schedule's, checked inside the stages. A stage given
-the wrong one says so in its output, so a claim that states a clean output
-for it is false about what its program does on the inputs it names, and
-`submitChallenge` is the call: the challenger replays the stage on exactly
-those inputs ([availability](availability.md#what-is-posted-and-what-is-not)).
+[How iris works](overview.md#what-catches-each-way-a-claim-can-be-wrong) has
+the table: a claim that names an unapproved program or an input nobody else
+holds is void on the spot (`voidClaim`), and a claim whose stage output is
+wrong is challenged with a replay (`submitChallenge`), which the claimer can
+answer with a fault proof (`submitFaultProof`). The sections below say what
+each call checks.
 
 `iris claim audit --submission <fetched>/claim_submission.json --run <spec>`
 asks these of every checkpoint of a claim and every input its program has,
@@ -342,7 +317,7 @@ inputs, is true of every trace.
 
 The challenge is then marked dismissed, with the time. Anyone may send the
 proof: it says the same whoever holds it. No clock is read, and nothing
-follows from a dismissal yet (see [Not built](#not-built)).
+follows from a dismissal yet (see [what is open](open.md)).
 
 **The journal.** A fault proof's journal is Raster's `TransitionJournal` as
 RISC Zero wrote it, and it begins with the window's opening state, whose size
@@ -527,42 +502,7 @@ same stage. The claim with a source is read back too: its documents must be
 the posted ones, and the run spec written over them must give the source
 record the claim names.
 
-## Not built
+## What is open
 
-The contract covers the two cases Raster covers today, a claim challenged
-with a replayed checkpoint and a challenge shown false with a fault proof of
-its trace, and the faults of a claim that no replay shows. What is around
-them is open, and each is its own piece of work:
-
-- **What follows.** Nothing reads a dismissal, or the lack of one. A claim
-  with an unanswered challenge and a claim with none are held the same way.
-  The clocks that close a claim or a challenge, bonds, and what a claim nobody
-  successfully challenged becomes are not built. `submitFaultProof` reads no
-  clock: the fault-proof window is used only for how long a challenge's trace
-  must stay retrievable.
-- **Several challenges of one claim.** Each is admitted and dismissed alone.
-  How they are settled together belongs with the clocks and bonds.
-- **A true trace with a false label.** Raster has a second defence: the
-  challenger's trace is an honest run, and ends in another output than the
-  challenger stated for it (`TerminalMatch`). The contract does not take it,
-  so such a challenge cannot be dismissed on chain yet. It needs the stated
-  output compared with the one the window ends in.
-- **`iris fault prove` and the contract ask slightly different things.**
-  `fault prove` holds its proof to the checkpoint of the claim bundle it is
-  given, which in a staged dispute is the honest claim's, while the challenge
-  on chain is of the lying claim's checkpoint. The two have the same program
-  and inputs, which is all a fault proof names, so the proof serves both.
-  `fault prove` also does not ask which authorization program the journal
-  names; `iris evm fault-proof` and the contract do.
-- **Upgrades.** A deployment takes proofs of one build of Raster and one
-  release of RISC Zero's circuits.
-- **The proof program.** See the trusted parts above.
-- **Raster's admission of a challenge.** `iris challenge check` asks Raster
-  whether it admits the challenge (`verify_challenge`). The contract does not,
-  and neither does the attester, who signs only that the posted body is a
-  well-formed trace with the header the challenge names. Nothing acts on an
-  admitted challenge yet, so this belongs with the defence: the program that
-  proves availability can make the same check.
-- **Everything [availability](availability.md#open) and
-  [the contract page](contract.md) list as open.** This work changes none of
-  it.
+What is not built around these contracts, and every other known gap, is in
+[one list](open.md).

@@ -217,34 +217,6 @@ commitment. The last two rows stay stand-ins there, in another form: a trusted
 relayer posts block roots to a contract, and a trusted attester signs what
 each blob holds ([the chains](chains.md)).
 
-## Open
+## What is open
 
-- **A stage that cannot run on what it is given.** A replay shows a lie only
-  when the stage finishes. The stages are written to state a fault and
-  finish, and the parity gate replays each kind of misplaced value on the
-  small model: another layer's weights, another range's marks, another
-  stage's output. No test gives every stage every held value, so a value
-  that stops a stage instead would leave a challenger with no trace. This is
-  the short-stage gap's neighbour: a stage with nothing to replay.
-- **A claim whose list is not the chain's.** `challenge build` runs a claim
-  whose every stage is one the chain of its run has, each named once. A
-  claim that repeats a stage name, or names one the chain lacks, is refused
-  by the command with a message. The stages' schedule checks refuse such a
-  run, so its final record is not valid, but no command shows that yet.
-- **A consensus claim posts its text once per inference.** Each model cuts
-  the text into its own slices, and the slices are what is posted.
-- **Reading an output by its index.** The stand-in reads a record out of an
-  output with the output's index, given by the claimer, after checking that
-  the index and the payload have the same root. A proof program should not
-  rest on an index the prover chose: Raster's selection proofs
-  (`raster_core::input::verify_selection_proof`) tie a selected value to the
-  payload's own root, and the record can be compared by encoding the submitted
-  one, with no decoding at all.
-- **The proof program.** The stand-in proof runs host code (the source step,
-  the checkpoint package check, the reading of records, and `raster_prover`'s
-  trace header). A receipt
-  needs that code in a guest-buildable crate, as Raster's settlement proposal
-  plans for its body guest. The source step is already `no_std`, in
-  `source-core`.
-- **Two commitments to one output** (see [the contract page](contract.md)) is
-  set aside for now and unchanged by this work.
+What is not built here, and every other known gap, is in [one list](open.md).

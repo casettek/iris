@@ -108,5 +108,4 @@ but cannot produce a verified claim package.
 All component roles are checked by their consuming stages. Imports include separate
 reusable membership witnesses for tokenizer buckets, embedding pages, auxiliary
 embedding pages, and decoder tokens. Sparse reads verify their selected objects;
-dense projections and transformer weights use bounded complete sweeps. See the
-[validation report](../proposals/model-identity-validation.md) for test coverage and costs.
+dense projections and transformer weights use bounded complete sweeps.

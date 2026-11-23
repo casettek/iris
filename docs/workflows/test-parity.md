@@ -507,7 +507,3 @@ Every checkpoint must agree between Raster and native execution, and final claim
 acceptance must nevertheless reject the committed model fault. This is distinct
 from the existing tests that deliberately falsify a checkpoint and require a
 replay divergence.
-
-Explicit guest and complete authored finalization sequence checks are listed in
-[model identity validation](../proposals/model-identity-validation.md), together
-with sparse witness storage/cycle measurements and the independent pipeline gaps.

@@ -1,8 +1,10 @@
 # What a contract holds and checks
 
-No contract exists yet. This page describes what one would pin, what a claimer
-would submit, and the checks it would make, as the code states them today in
-`inference_artifacts::contract`. `iris claim check` runs those checks on the host.
+This page is the rules a contract holds a claim to: what it pins, what a
+claimer submits, and each check it makes, as `inference_artifacts::contract`
+states them in Rust. The contracts in `contracts/src` make the same checks on
+chain ([the chains](chains.md)), and `iris claim check` runs them on the host.
+[How iris works](overview.md) is the short version.
 
 The contract verifies no proof and runs no stage. It makes one statement about a
 claim:
@@ -15,7 +17,7 @@ claim:
 A contract may require two more things of a claim, and then the statement grows
 by them: that the input was built from documents a signer it names vouches for,
 by a recipe it names, and that the plaintext is read by forms it names into a
-result code. See [the authenticated prompt](../proposals/authenticated-prompt.md).
+result code. See [the design note](../proposals/authenticated-prompt.md).
 
 ## What the contract pins
 
@@ -280,8 +282,8 @@ when the field is empty. Everything is SHA-256. The code is
   and every field in the order it is declared.
 
 A stage's input manifest stays Raster's canonical JSON, which a contract
-cannot read. The link comparison over it is for a receipt, not for contract
-code ([the integration proposal](../proposals/blockchain-integration.md)).
+cannot read as JSON. The contract reads it byte by byte in its one canonical
+form ([the chains](chains.md#what-voidclaim-checks)).
 Records are read out of stage outputs by the claim's availability proof, and a
 contract only compares them.
 
@@ -380,63 +382,6 @@ each with Raster's program id, input manifest commitment, producers and output
 commitments. The [parity gate](../workflows/test-parity.md) does this on every
 honest case.
 
-## Known gaps
+## What is open
 
-These are open. None is closed by anything on this page.
-
-- **A stage that cannot run.** A claimer can give a stage a run input of the
-  wrong shape, so that the honest program stops before it reaches its end, and
-  write any output for it. As Raster's stage challenge is designed, a trace that
-  does not reach the program's end is refuted as a misstated one, so a challenger
-  has nothing to win with. Read from the design, not run.
-- **Two commitments to one output.** A checkpoint holds the hash of a stage's
-  output bytes, which a dispute is about, and its structural commitment, which
-  the link comparison uses. Raster's proof guest checks the output's bytes
-  against both at the end of a stage and publishes only the byte hash. So a
-  claimer can list a true byte hash beside the structural commitment of a made-up
-  value, feed that value to a later stage, and pass the link comparison. Closing
-  it needs a proof: either Raster publishes the structural commitment in the
-  window's journal, or a proof of this repository's own ties the two.
-- **Short stages.** A stage whose trace is shorter than a replay window cannot be
-  disputed. The claimer chooses the input, so it can make one occur.
-- **No real dispute has been run end to end against a native claim**, and no
-  proof of a full-size stage has been produced. The dispute rules above are
-  tested on Raster's own admission and defence functions with real traces and
-  made-up journals, and on one real proof of a small fixture.
-- **`challenge build` replays a stage on the inputs its checkpoint names.**
-  For a posted claim it runs every stage on those, so a stage given a held
-  value the chain would not give it is replayed on that value. `iris claim
-  audit` rules on a program outside the approved set and on an input that is
-  none a challenger holds, with nothing run. What is left is a stage that
-  cannot run on what it is given, and a claim whose list of stages is not
-  the chain's ([availability](availability.md#open)).
-
-- **The signer's key is a run input.** The `source` stage checks attestations
-  against the key the run gives it and states that key in its record. No stage
-  input pins the key. The contract compares the key in the submitted record
-  with the one it requires, which holds as long as the `source` checkpoint is
-  true.
-- **A small source is a short stage.** With documents of a few hundred bytes
-  the `source` stage is under the trace length a replay needs, as some check
-  stages are, and its checkpoint cannot be disputed.
-- **`claim build` checks its own consensus claim against pins made at that
-  moment.** A contract's are the file it was given. The two differ only if a
-  stage was re-locked in between.
-- **The result stage is short at every size.** It is three steps and one per
-  form, so a false `result` checkpoint cannot be disputed by a replay. A
-  challenger's recomputation still finds it. The contract does not rest on it:
-  it takes the result on the submitted plaintext itself, and for a consensus
-  the agreement on the two. A result step that
-  grows past what a contract can recompute, such as one that weighs several
-  answers, has to be a stage long enough to replay.
-- **The source's host choices are not checked.** Which documents to fetch, and
-  that they were the server's answer, rest on the signer. The signer today is
-  the host itself.
-
-## Not here
-
-- Bonds, the clock that runs the challenge window, and verifying a defence.
-  These are the contract's and the settlement layer's. What is posted, and for
-  how long it must stay retrievable, is in [availability](availability.md).
-- Any check of the input beyond its hash and the source it names. What a
-  source record stands for is in `docs/proposals/authenticated-prompt.md`.
+Every known gap in these rules and around them is in [one list](open.md).

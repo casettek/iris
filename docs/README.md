@@ -1,40 +1,61 @@
 # Documentation
 
-Start with the workflow docs when you want to run the repo, and the internals docs when you need to change how the workflows are built.
+Three kinds of page. Start with [how iris works](internals/overview.md).
 
-## Workflows
+## How it works
+
+- [How iris works](internals/overview.md): the whole of it from the top: what
+  is pinned, what a claim is, the one rule, and what catches each way a claim
+  can be wrong.
+- [The pipeline](internals/raster-chain.md): the stages a run is made of,
+  what each checks, and the schedule that holds them in order.
+- [Pipelines](internals/pipelines.md): a run of one model, and a consensus of
+  two.
+- [What a contract holds and checks](internals/contract.md): the rules, as
+  the Rust states them.
+- [The chains](internals/chains.md): Celestia and the EVM contracts: what
+  each call checks, what it costs, and which parts are a trusted host.
+- [Data availability](internals/availability.md): what a claim and a
+  challenge post, and the configuration registry.
+- [Formats and versions](internals/formats.md): every versioned format and
+  hash tag, in one table.
+- [What is open](internals/open.md): every known gap, in one list.
+
+## How to run it
 
 - [Model import](workflows/model-import.md)
 - [Infer](workflows/infer.md)
 - [Claim build](workflows/claim-build.md)
 - [Challenge build](workflows/challenge-build.md)
+- [Fault proving](workflows/fault-prove.md)
+- [The local chains](../devstack/README.md): a claim and a challenge taken
+  through Celestia and the contracts.
+- [Testing](workflows/testing.md): the tiers, and what a pass of each check
+  means.
+- [The parity gate](workflows/test-parity.md)
 - [Replay profiling](workflows/replay-profile.md)
-- [Testing](workflows/testing.md): the three tiers, and what each check shows
-- [Three-path parity](workflows/test-parity.md)
+- [Native Windows inference](workflows/windows.md)
 
-## Internals
+The [README](../README.md) lists every command by who runs it.
 
-- [Pipelines](internals/pipelines.md)
-- [Raster chain](internals/raster-chain.md)
-- [What a contract holds and checks](internals/contract.md)
-- [Data availability and the configuration registry](internals/availability.md)
-- [The chains: Celestia and the EVM contracts](internals/chains.md)
+## Working on it
+
+- [Development](internals/development.md): workspace commands and the checks
+  a stage program has to pass.
+- [Model families](internals/model-families.md): what a new model family
+  needs.
 - [Numerics](internals/numerics.md)
-- [Artifacts](internals/artifacts.md)
-- [Model families](internals/model-families.md)
-- [Development](internals/development.md)
+- [Artifacts](internals/artifacts.md): the files a run leaves.
+- [Raster issues](issues/README.md): gaps that are Raster's to close.
 
-## Design History
+## Design notes
 
-- [Issues](issues/README.md)
-- [Proposals](proposals/)
-- [Checking claimed prompt tokens instead of recomputing them](proposals/claimed-prompt-tokens.md): implemented; token boundaries as an input, one checking stage per range, the argument for why a pair check is enough, and the stage design.
-- [Pipeline version 11: one re-lock for the shared changes](proposals/pipeline-v11.md): implemented; the bind stage per range, a model with no per-layer inputs, the chat template as tokenizer data, and two tile fixes, with the E4B numbers before and after.
-- [Binding the prompt one range at a time](proposals/paged-prompt-bind.md): implemented in version 11; one `prompt_bind` stage per prompt range with the hash and scanner state carried between them, whole-text facts as a checked claim, and `prompt_check` reading only its own range.
-- [Verifying the stage schedule inside the Raster stages](proposals/verified-stage-implementation.md): implementation order, code targets, and completion checks.
-- [Enforcing the right stage](proposals/stage-progression.md): one check per stage execution, authenticated progression, and persistent faults.
-- [Claim protocol Phase 1 specification](proposals/claim-protocol-phase-one-spec.md): review draft defining the statement, registered pipeline, package, and acceptance rules.
-- [Contract claim pipeline implementation plan](proposals/contract-claim-pipeline-plan.md): phased work for canonical preparation, portable claims, anchored disputes, and verifier contracts.
-- [Model identity implementation plan](proposals/model-identity.md): bind consumed model data to component commitments inside Iris stages.
-- [Ranked BPE validation](validation/ranked-bpe-2026-09-10.md): reference and parity
-  results, authenticated tokenizer audits and costs.
+Two designs are kept because the stage programs' source cites them, and that
+source cannot be edited without re-locking the stages:
+
+- [A prompt built from authenticated data](proposals/authenticated-prompt.md)
+- [Checking claimed prompt tokens](proposals/claimed-prompt-tokens.md): with
+  the argument for why a pair check is enough.
+
+Everything else that was a proposal is built, and is described by the pages
+above. The repository's history has the proposals themselves.

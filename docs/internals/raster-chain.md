@@ -76,7 +76,7 @@ the chunks for the value at the field's path, stopping where the value ends, and
 field's lead and value to the text hash. Its record states the text's hash and length, a
 hash over the recipe, the number of documents and a hash over their attested facts, the
 signer's key, and the first fault. See
-[the proposal](../proposals/authenticated-prompt.md). The text claim
+[the design note](../proposals/authenticated-prompt.md). The text claim
 is what the first range needs and only the last can know: the whole text's SHA-256,
 its length, and the first and last bytes the template's trim keeps. Every range
 scans with the claimed values, and the range the text ends in compares them with
@@ -97,7 +97,7 @@ The check rests on one fact about the ranked merge: a tokenization is the
 merge's result exactly when every token, merged together with its left neighbour
 in the segment on those two tokens' pieces alone, comes back as those two tokens,
 and a token with no left neighbour merges alone to one piece. The argument and
-its tests are in [the proposal](../proposals/claimed-prompt-tokens.md).
+its tests are in [the design note](../proposals/claimed-prompt-tokens.md).
 `prompt_check` runs those small merges without building them: tokens are paired
 (0,1), (2,3), … in one pass and (1,2), (3,4), … in another, a piece may merge
 only inside its pair and segment, and each pass is 152 rounds that merge at most

@@ -149,5 +149,4 @@ hits do not bypass current witness checks. The tokenizer witness is kept for
 the run beside the tokenizer, keyed by its commitment. Within one stage a merge
 bucket is checked against the witness the first time it is read, and later
 reads of that bucket in the same stage reuse the answer. Dense projections and transformer
-weights retain complete sweeps. See the
-[validation report](../proposals/model-identity-validation.md).
+weights retain complete sweeps.
