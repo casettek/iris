@@ -30,7 +30,11 @@ decided. The last is what Raster would have to change.
   The claimer chooses the input, so it can make one occur. Three cases are
   short whatever the claimer does: the result stage, which is three steps and
   one per form; a source of a few hundred bytes; and, on small prompts, the
-  bind and check stages. The contract does not rest on the result stage: it
+  bind and check stages. A layer stage of the mistral family that is given
+  another layer's weights states the fault and passes no rows on, so what is
+  left of it is short too: under the window on the small test model, and long
+  enough to replay on Ministral 3B, where the chain tier challenges it. The
+  contract does not rest on the result stage: it
   takes the result on the submitted text itself, and for a consensus the
   agreement on the two. A result step that grows past what a contract can
   recompute has to be a stage long enough to replay.

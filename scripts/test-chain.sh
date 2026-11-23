@@ -26,8 +26,11 @@
 #                  GPU build for a short prompt; no proof is made.
 #
 # Needs the local chains up (`just devstack-up`), the contracts deployed, and
-# a parity run for the small model's claims (`just test-parity`); reads the
-# newest under target/parity, or the one IRIS_PARITY_RUN names. Every run
+# a parity run of the gemma family's small model for the small claims (`just
+# test-parity`); reads the newest such run under target/parity, or the one
+# IRIS_PARITY_RUN names. The cases are written for that model: on the other
+# family's small model a layer stage given another layer's weights is under
+# the replay window, which `--real-model` covers at full size. Every run
 # makes its claims for fresh addresses, so it can be repeated on one
 # deployment. Everything is kept under target/chain-test/<run>.
 # See docs/workflows/testing.md.
@@ -84,10 +87,19 @@ if ! deployed; then
     exit 1
 fi
 
-parity_run="$(latest_parity_run)"
+# The newest parity run of the gemma family's small model.
+parity_run="${IRIS_PARITY_RUN:-}"
+if [ -z "$parity_run" ]; then
+    for run in $(ls -td "$repo_root"/target/parity/*/ 2> /dev/null); do
+        if [ -d "$run/model-artifacts/parity-gemma" ]; then
+            parity_run="${run%/}"
+            break
+        fi
+    done
+fi
 small_spec="$parity_run/over-window/inference.toml"
-if [ ! -f "$small_spec" ]; then
-    echo "no parity run with a run spec at '$small_spec': run the parity gate first (\`just test-parity\`)" >&2
+if [ -z "$parity_run" ] || [ ! -f "$small_spec" ]; then
+    echo "no parity run of the gemma family's small model under target/parity: run the parity gate first (\`just test-parity\`)" >&2
     exit 1
 fi
 

@@ -1101,7 +1101,9 @@ fn contract_challenge(
 /// model's: its last check states a valid record, and the result stage is
 /// run on that. It arrives with a valid record. The challenger differs at
 /// the check. The check of the pinned model is under the replay window, so
-/// the leg checks only that the challenger goes to replay it.
+/// the leg checks only that the challenger goes to replay it. The same holds
+/// of the layer stage given another layer's weights on the small model of a
+/// family with no auxiliary stages.
 fn posted_lies(
     leg: &Leg,
     spec: &Path,
@@ -1270,11 +1272,23 @@ fn posted_lies(
             "audit_faults": 0,
             "replayed": false,
         });
-        if !long_enough_to_challenge(stage) {
+        // Two stages are under the replay window on the pinned models, so
+        // their replay does not commit: the last check, and the layer stage
+        // of a family with no auxiliary stages when it is given another
+        // layer's weights. That stage states the fault and passes no rows
+        // on, and what is left of it on a model this small is a few dozen
+        // steps. On a real model of that family the same stage is long
+        // enough, and the chain tier replays it there.
+        let short_here = !long_enough_to_challenge(stage)
+            || (name == "arranged-pinned" && !leg.model.family()?.has_auxiliary_stages());
+        if let Err(error) = built {
+            ensure!(
+                short_here && text.contains("trace length outside commitment limits"),
+                "`{name}`: challenge of the posted claim: {error:#}"
+            );
             outcomes.push(outcome);
             continue;
         }
-        built.with_context(|| format!("`{name}`: challenge of the posted claim"))?;
         ensure!(
             has_line(&text, &format!("divergence found: {stage}")),
             "`{name}`: the challenge is not of `{stage}`"

@@ -78,8 +78,9 @@ of the newest parity run's small model, for addresses no earlier run used, so
 it can be repeated on one deployment. `--deploy` deploys the contracts first.
 Everything it makes is kept under `target/chain-test/<run>`.
 
-The small model's check stage is under the replay window, so there the forged
-verdict is followed only as far as the replay. `--real-model <run spec>` adds a
+The small model is the gemma family's, from the newest parity run of it. Its
+check stage is under the replay window, so there the forged verdict is
+followed only as far as the replay. `--real-model <run spec>` adds a
 claim of that spec's model, another layer's weights given to one of its
 stages, and the forged verdict, each of which must end in a challenge the
 contract accepts. With a short prompt on a GPU build that adds a few minutes.
