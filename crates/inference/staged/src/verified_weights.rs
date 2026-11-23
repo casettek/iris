@@ -88,7 +88,10 @@ impl VerifiedSelections {
                 && !witness.is_reference_only()
                 && witness.proof.path == path
                 && witness.proof.root_hash.as_slice() == self.reference.commitment
-                && witness.bytes.first().is_some_and(|tag| *tag != LIST_METADATA_TAG)
+                && witness
+                    .bytes
+                    .first()
+                    .is_some_and(|tag| *tag != LIST_METADATA_TAG)
                 && selected.bytes == witness.bytes
                 && verify_selection_proof(&witness.bytes, &witness.proof)
                 && verify_bytes_page_geometry(&witness),

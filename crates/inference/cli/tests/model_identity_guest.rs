@@ -548,8 +548,7 @@ fn a_bind_opens_and_continues_in_guest_as_it_does_natively() {
     use model_identity::pipeline_core::{Step, MAX_RANGES};
     use sequence_check::prompt::{
         open_bind_range, text_claim_of, BindCarry, BindOpen, PromptContext, RunConfig, RunSchedule,
-        SourceRecord,
-        TokenizerProfile,
+        SourceRecord, TokenizerProfile,
     };
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../../raster-stages/prompt-bind")

@@ -26,11 +26,17 @@ pub enum StageKind {
     PromptBind,
     PromptCheck,
     InputEmbedding,
-    PrefillPrepareAux { layer: usize },
-    PrefillRange { layer: usize },
+    PrefillPrepareAux {
+        layer: usize,
+    },
+    PrefillRange {
+        layer: usize,
+    },
     /// A `mistral-dense` layer over one range. Its stages are named as
     /// `PrefillRange`'s are: the project tells the two apart.
-    LayerMistral { layer: usize },
+    LayerMistral {
+        layer: usize,
+    },
     SequenceCheck,
     /// What the claim's output stands for: the last stage of a chain of one
     /// inference.

@@ -79,7 +79,11 @@ impl ConsensusOutcome {
     /// What the consensus result step states of two inferences' results, as
     /// direct inference computes it: the same functions the chain's result
     /// stage runs, over the same values.
-    pub fn of(forms: &[source_core::Form], first: &InferenceResult, second: InferenceResult) -> Self {
+    pub fn of(
+        forms: &[source_core::Form],
+        first: &InferenceResult,
+        second: InferenceResult,
+    ) -> Self {
         let matched = source_core::run_consensus(
             forms,
             &first.generated_text,

@@ -186,12 +186,15 @@ impl InferenceRunSpec {
 
     /// The model manifest of one inference.
     pub fn model_manifest_of(&self, inference: usize) -> Result<&Path> {
-        self.model_manifests().get(inference).copied().with_context(|| {
-            format!(
-                "the `{}` pipeline has no inference {inference}",
-                self.pipeline
-            )
-        })
+        self.model_manifests()
+            .get(inference)
+            .copied()
+            .with_context(|| {
+                format!(
+                    "the `{}` pipeline has no inference {inference}",
+                    self.pipeline
+                )
+            })
     }
 
     pub fn validate(&self) -> Result<()> {

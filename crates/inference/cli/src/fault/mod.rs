@@ -248,9 +248,7 @@ pub fn prove(args: ProveArgs) -> Result<()> {
         disputed.header(),
         &baseline.output_sha256,
     )
-    .context(
-        "the claimer's checkpoint names no program, so no proof can be held to it",
-    )?;
+    .context("the claimer's checkpoint names no program, so no proof can be held to it")?;
     let original = commitment(&reference(&challenge_path, &bundle.raster_commit_path))?;
     ensure!(
         disputed.len() == original.len() && disputed.window_size() == original.window_size(),
@@ -499,13 +497,18 @@ fn defends(
     journal: &TransitionJournal,
     transition_image_id: &[u8],
 ) -> Result<()> {
-    inference_artifacts::contract::check_defence(checkpoint, challenge, journal, transition_image_id)
-        .map(|_| ())
-        .map_err(|rejection| {
-            anyhow::anyhow!(
-                "the proof does not dismiss the challenge to the claimer's checkpoint: {rejection}"
-            )
-        })
+    inference_artifacts::contract::check_defence(
+        checkpoint,
+        challenge,
+        journal,
+        transition_image_id,
+    )
+    .map(|_| ())
+    .map_err(|rejection| {
+        anyhow::anyhow!(
+            "the proof does not dismiss the challenge to the claimer's checkpoint: {rejection}"
+        )
+    })
 }
 
 // The transition guest binds to Raster's canonical header digest, not the

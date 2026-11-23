@@ -113,7 +113,9 @@ impl Pipeline {
             .result_inputs()
             .iter()
             .zip(&labels)
-            .map(|(input, label)| format!("inputs.{input} = {{ from = \"{}\" }}\n", last_check(label)))
+            .map(|(input, label)| {
+                format!("inputs.{input} = {{ from = \"{}\" }}\n", last_check(label))
+            })
             .collect();
         let result = format!(
             "\n[[chain.stage]]\nname = \"{RESULT_STAGE}\"\n{}{checks}{}",
@@ -206,7 +208,10 @@ fn labelled(part: &str, label: &str) -> String {
         let mut line = if let Some(name) = trimmed.strip_prefix("[chain.input.") {
             format!("{indent}[chain.input.{label}{name}")
         } else if table != "[chain]" && trimmed.starts_with("name = \"") {
-            format!("{indent}{}", trimmed.replacen("name = \"", &format!("name = \"{label}"), 1))
+            format!(
+                "{indent}{}",
+                trimmed.replacen("name = \"", &format!("name = \"{label}"), 1)
+            )
         } else if trimmed.starts_with("inputs.") {
             let mut line = line.to_string();
             for key in ["from = \"", "first = \"", "input = \""] {
@@ -423,7 +428,9 @@ inputs.prompt = { from = "prompt_bind_p@LAST_PROMPT_RANGE@" }
             )));
         }
         // The first inference's stages all come before the second's.
-        assert!(template.find("m0_check_c0").unwrap() < template.find("m1_prompt_bind_p0").unwrap());
+        assert!(
+            template.find("m0_check_c0").unwrap() < template.find("m1_prompt_bind_p0").unwrap()
+        );
     }
 
     #[test]
@@ -440,7 +447,10 @@ inputs.prompt = { from = "prompt_bind_p@LAST_PROMPT_RANGE@" }
         ] {
             assert_eq!(unlabelled(stage), name);
         }
-        assert_eq!(unlabelled(&format!("{}result", inference_label(3))), "result");
+        assert_eq!(
+            unlabelled(&format!("{}result", inference_label(3))),
+            "result"
+        );
         assert_eq!(labelled_name("m12_range_p3_l0"), Some((12, "range_p3_l0")));
         assert_eq!(labelled_name("range_p3_l0"), None);
     }
@@ -504,7 +514,10 @@ inputs.prompt = { from = "prompt_bind_p@LAST_PROMPT_RANGE@" }
             result["inputs"]["second"]["from"].as_str(),
             Some("m1_check_c@m1_LAST_CLAIMED_RANGE@")
         );
-        assert_eq!(result["inputs"]["forms"]["run"].as_str(), Some("result_forms"));
+        assert_eq!(
+            result["inputs"]["forms"]["run"].as_str(),
+            Some("result_forms")
+        );
         // Both inferences are held to the one source.
         for bind in [&stages[1], &stages[3]] {
             assert_eq!(bind["inputs"]["source"]["from"].as_str(), Some("source"));

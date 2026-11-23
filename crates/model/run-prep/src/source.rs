@@ -207,9 +207,12 @@ pub fn source_terms(spec_dir: &Path, spec: &SourceSpec) -> Result<SourceTerms> {
     let signer: SignerKey = read_json(&beside(spec_dir, &spec.signer), "signer key")?;
     // The recipe's hash is over the recipe alone, so the source step over no
     // documents states it.
-    let record =
-        source_core::run_source_steps(&signer, &recipe.recipe(), &source_core::source_documents(&[]))
-            .record;
+    let record = source_core::run_source_steps(
+        &signer,
+        &recipe.recipe(),
+        &source_core::source_documents(&[]),
+    )
+    .record;
     Ok(SourceTerms {
         signer: signer.key,
         recipe_sha256: record.recipe_sha256,

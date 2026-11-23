@@ -548,12 +548,18 @@ impl std::fmt::Display for SubmissionRejection {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ChallengeRefusal {
     /// The list presented is not the checkpoint list the submission stored.
-    AnotherCheckpointList { stored: String, presented: String },
+    AnotherCheckpointList {
+        stored: String,
+        presented: String,
+    },
     /// The list is not one 32-byte hash per line.
     MalformedCheckpointList,
     /// The list has no checkpoints, so no stage and no last output.
     EmptyCheckpointList,
-    UnknownStage { challenged: u32, stages: usize },
+    UnknownStage {
+        challenged: u32,
+        stages: usize,
+    },
     /// The checkpoint presented for a stage is not the one the list holds.
     NotTheCheckpoint {
         stage: u32,
@@ -569,11 +575,19 @@ pub enum ChallengeRefusal {
     },
     /// The stage names a program outside the approved set, so its inputs are
     /// not defined here. That is its own challenge, and it voids the claim.
-    UnapprovedStage { stage: u32 },
+    UnapprovedStage {
+        stage: u32,
+    },
     /// The input is not one the configuration lists for the stage's program.
-    NotAChainedInput { stage: u32, input: String },
+    NotAChainedInput {
+        stage: u32,
+        input: String,
+    },
     /// The checkpoint names a producer for the input and none was presented.
-    ProducerNotPresented { stage: u32, producer: u32 },
+    ProducerNotPresented {
+        stage: u32,
+        producer: u32,
+    },
 }
 
 impl ChallengeRefusal {
@@ -681,7 +695,10 @@ pub enum LinkFault {
     /// The checkpoint names itself or a later checkpoint as the producer.
     ProducerNotEarlier { producer: u32 },
     /// The producer is not a stage program that may produce this input.
-    ProducerOfWrongKind { producer: u32, program_commitment: String },
+    ProducerOfWrongKind {
+        producer: u32,
+        program_commitment: String,
+    },
     /// The input the stage loaded is not what the producer committed.
     NotTheProducersOutput {
         producer: u32,
@@ -1122,7 +1139,11 @@ pub fn pipeline_run_inputs(template: &str) -> Result<BTreeMap<PathBuf, BTreeSet<
         let inputs = stage.get("inputs").and_then(toml::Value::as_table);
         for (param, binding) in inputs.into_iter().flatten() {
             let from_run = binding.get("run").is_some()
-                || placeholder(binding.get("external").and_then(|external| external.get("path")))
+                || placeholder(
+                    binding
+                        .get("external")
+                        .and_then(|external| external.get("path")),
+                )
                 || binding
                     .get("input")
                     .and_then(toml::Value::as_str)
@@ -1274,8 +1295,9 @@ impl ClaimSubmission {
         chain_dir: &Path,
     ) -> Result<Self> {
         let first = results.first().context("a claim holds an inference")?;
-        let checkpoints =
-            crate::checkpoint::read_checkpoint_hashes(&chain_dir.join(crate::checkpoint::CHECKPOINTS_TXT))?;
+        let checkpoints = crate::checkpoint::read_checkpoint_hashes(
+            &chain_dir.join(crate::checkpoint::CHECKPOINTS_TXT),
+        )?;
         Ok(Self {
             version: CLAIM_SUBMISSION_VERSION,
             pipeline,
@@ -1810,7 +1832,6 @@ impl CheckpointList {
         }
         Ok(LinkCheck::Linked)
     }
-
 }
 
 /// The first stage of a claim that names a program outside the approved set,
@@ -1827,7 +1848,10 @@ pub fn first_unapproved_stage(pins: &PipelinePins, trace: &CheckpointTrace) -> O
 /// the same claim committed, or `None` when every one is: the same stages in
 /// the same order, each with Raster's program id, input manifest commitment,
 /// producers and output commitments.
-pub fn raster_boundary_mismatch(trace: &CheckpointTrace, chain: &ChainCommitment) -> Option<String> {
+pub fn raster_boundary_mismatch(
+    trace: &CheckpointTrace,
+    chain: &ChainCommitment,
+) -> Option<String> {
     if trace.checkpoints.len() != chain.stages.len() {
         return Some(format!(
             "the claim has {} checkpoints, the Raster run {} stages",
@@ -2011,7 +2035,10 @@ impl std::fmt::Display for DefenceRejection {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::MalformedCheckpoint => {
-                write!(f, "the checkpoint's fields are not the hashes a dispute names")
+                write!(
+                    f,
+                    "the checkpoint's fields are not the hashes a dispute names"
+                )
             }
             Self::AnotherCheckpoint => {
                 write!(f, "the challenge is not about this checkpoint")
@@ -2043,8 +2070,7 @@ pub fn check_defence(
     journal: &TransitionJournal,
     transition_image_id: &[u8],
 ) -> std::result::Result<DefenceJournal, DefenceRejection> {
-    let commitment =
-        dispute_commitment(checkpoint).ok_or(DefenceRejection::MalformedCheckpoint)?;
+    let commitment = dispute_commitment(checkpoint).ok_or(DefenceRejection::MalformedCheckpoint)?;
     if challenge.chain_commitment_bytes != commitment || challenge.challenged_stage != 0 {
         return Err(DefenceRejection::AnotherCheckpoint);
     }
@@ -2452,7 +2478,11 @@ mod tests {
 
         /// The link check as a challenger pointing at `stage` and `input`
         /// would have a contract make it.
-        fn link(&self, stage: u32, input: &str) -> std::result::Result<LinkCheck, ChallengeRefusal> {
+        fn link(
+            &self,
+            stage: u32,
+            input: &str,
+        ) -> std::result::Result<LinkCheck, ChallengeRefusal> {
             let checkpoint = &self.trace.checkpoints[stage as usize];
             let producer = checkpoint
                 .input_sources
@@ -2579,19 +2609,26 @@ mod tests {
             checkpoints[1].program_commitment = program.clone();
             let swapped = Claim::of(checkpoints, claim.manifests.clone());
             assert_eq!(
-                swapped
-                    .opened()
-                    .admit_stage_challenge(&pins().programs, 1, &swapped.trace.checkpoints[1]),
+                swapped.opened().admit_stage_challenge(
+                    &pins().programs,
+                    1,
+                    &swapped.trace.checkpoints[1]
+                ),
                 Ok(StageAdmission::UnapprovedProgram {
                     program_commitment: program
                 })
             );
-            assert_eq!(first_unapproved_stage(&pins().programs, &swapped.trace), Some(1));
+            assert_eq!(
+                first_unapproved_stage(&pins().programs, &swapped.trace),
+                Some(1)
+            );
             // The stages around it are still ordinary disputes.
             assert!(matches!(
-                swapped
-                    .opened()
-                    .admit_stage_challenge(&pins().programs, 2, &swapped.trace.checkpoints[2]),
+                swapped.opened().admit_stage_challenge(
+                    &pins().programs,
+                    2,
+                    &swapped.trace.checkpoints[2]
+                ),
                 Ok(StageAdmission::Disputed { .. })
             ));
             // Its inputs are not defined, so a link challenge is refused: the
@@ -2784,9 +2821,12 @@ mod tests {
             entry(&empty_edge())
         );
         // Honest content, another spelling.
-        let respaced = String::from_utf8(manifest(&[("activations", &real), ("prior", &empty_edge())]))
-            .unwrap()
-            .replace("\n  \"prior\"", "\n\n  \"prior\"");
+        let respaced = String::from_utf8(manifest(&[
+            ("activations", &real),
+            ("prior", &empty_edge()),
+        ]))
+        .unwrap()
+        .replace("\n  \"prior\"", "\n\n  \"prior\"");
         // Canonical, but with text a reader would have to unescape or decode:
         // a contract reads the list byte by byte and takes only plain text.
         let escaped = manifest(&[("activations", &real), ("pri\"r", &empty_edge())]);
@@ -2911,7 +2951,14 @@ mod tests {
         ));
         // The named producer withheld, or another checkpoint in its place.
         assert_eq!(
-            opened.check_link(&pins().programs, 2, check, &claim.manifests[2], "activations", None),
+            opened.check_link(
+                &pins().programs,
+                2,
+                check,
+                &claim.manifests[2],
+                "activations",
+                None
+            ),
             Err(ChallengeRefusal::ProducerNotPresented {
                 stage: 2,
                 producer: 1
@@ -2982,7 +3029,10 @@ mod tests {
         );
         let mut another_list = honest.clone();
         another_list.checkpoints_root = hex::encode([9; 32]);
-        assert_eq!(check(&another_list), Err(SubmissionRejection::RecordsNotStated));
+        assert_eq!(
+            check(&another_list),
+            Err(SubmissionRejection::RecordsNotStated)
+        );
 
         // The check committed a record the claimer did not submit.
         let mut other = honest.clone();
@@ -3048,7 +3098,11 @@ mod tests {
         );
         let claim = Claim::of(checkpoints, honest.manifests.clone());
         assert_eq!(
-            check_stated_records(&programs, &claim.submission, &posted(stated_records(&claim))),
+            check_stated_records(
+                &programs,
+                &claim.submission,
+                &posted(stated_records(&claim))
+            ),
             Err(SubmissionRejection::NotACheck { inference: 0 })
         );
 
@@ -3057,7 +3111,11 @@ mod tests {
         checkpoints[3] = checkpoint("result", RESULT, &honest.manifests[3], &[], b"result");
         let claim = Claim::of(checkpoints, honest.manifests.clone());
         assert_eq!(
-            check_stated_records(&programs, &claim.submission, &posted(stated_records(&claim))),
+            check_stated_records(
+                &programs,
+                &claim.submission,
+                &posted(stated_records(&claim))
+            ),
             Err(SubmissionRejection::NoCheck { inference: 0 })
         );
     }
@@ -3080,7 +3138,9 @@ mod tests {
             range_size: 512,
         };
         let mut programs = single.programs;
-        programs.stage_programs.retain(|program| program.stage != "claim-result");
+        programs
+            .stage_programs
+            .retain(|program| program.stage != "claim-result");
         let check = |name: &str| ChainedInput {
             name: name.to_string(),
             producers: vec![String::from("sequence-check")],
@@ -3110,7 +3170,10 @@ mod tests {
             ("forms", &hex::encode([6; 32])),
         ]));
         let mut checkpoints = single.trace.checkpoints[..3].to_vec();
-        for (stage, name) in ["prompt_bind_p0", "range_p0_l0", "check_c0"].iter().enumerate() {
+        for (stage, name) in ["prompt_bind_p0", "range_p0_l0", "check_c0"]
+            .iter()
+            .enumerate()
+        {
             checkpoints[stage].stage = format!("m0_{name}");
         }
         checkpoints.extend([
@@ -3144,8 +3207,7 @@ mod tests {
             .submission
             .inferences
             .push(inference(&models[1], &input, second_output));
-        claim.submission.consensus =
-            Some(no_source(forms()).consensus_of("ZK", second_output));
+        claim.submission.consensus = Some(no_source(forms()).consensus_of("ZK", second_output));
         claim
     }
 
@@ -3280,7 +3342,11 @@ mod tests {
         };
         assert_eq!(check(&honest), Ok(()));
         assert_eq!(
-            honest.checks.iter().map(|check| check.checkpoint).collect::<Vec<_>>(),
+            honest
+                .checks
+                .iter()
+                .map(|check| check.checkpoint)
+                .collect::<Vec<_>>(),
             vec![2, 5]
         );
 
@@ -3418,7 +3484,10 @@ mod tests {
             models: models.to_vec(),
         };
         let second = manifest(&models[1]);
-        assert_eq!(consensus.mismatch(Pipeline::Consensus, &[&first, &second]), None);
+        assert_eq!(
+            consensus.mismatch(Pipeline::Consensus, &[&first, &second]),
+            None
+        );
         // Another pipeline, the models the other way round, one model, or a
         // file of another version: not this contract's pins.
         for (pipeline, models) in [
@@ -3484,7 +3553,10 @@ inputs.layer = { input = "transformer_layer_{l}" }
                 .map(|names| names.iter().map(String::as_str).collect::<Vec<_>>())
         };
         assert_eq!(of("raster-stages/prompt-source"), Some(vec!["recipe"]));
-        assert_eq!(of("raster-stages/prompt-bind"), Some(vec!["config", "text"]));
+        assert_eq!(
+            of("raster-stages/prompt-bind"),
+            Some(vec!["config", "text"])
+        );
         assert_eq!(of("raster-stages/prefill-range"), None);
     }
 
@@ -3871,7 +3943,11 @@ inputs.second = { from = "m1_check_c@m1_LAST_CLAIMED_RANGE@" }
 
     /// The journal of a window proven against `trace_header()` over this
     /// checkpoint's program and inputs, ending in `state` with `output`.
-    fn journal(checkpoint: &Checkpoint, state: TransitionState, output: &[u8]) -> TransitionJournal {
+    fn journal(
+        checkpoint: &Checkpoint,
+        state: TransitionState,
+        output: &[u8],
+    ) -> TransitionJournal {
         let frontier = || SerializableFrontier {
             position: 0,
             leaf: vec![0; 32],
@@ -3937,7 +4013,10 @@ inputs.second = { from = "m1_check_c@m1_LAST_CLAIMED_RANGE@" }
         // dispute code reads it.
         let chain: ChainCommitment = postcard::from_bytes(&bytes).unwrap();
         assert_eq!(chain.stages.len(), 1);
-        assert_eq!(hex::encode(&chain.stages[0].program_commitment), checkpoint.program_commitment);
+        assert_eq!(
+            hex::encode(&chain.stages[0].program_commitment),
+            checkpoint.program_commitment
+        );
 
         // Each of the three things a dispute reads moves the digest; where the
         // inputs came from does not, since the input manifest hash covers them.
@@ -3947,7 +4026,10 @@ inputs.second = { from = "m1_check_c@m1_LAST_CLAIMED_RANGE@" }
             dispute_digest(&changed)
         };
         let base = digest(|_| {});
-        assert_ne!(digest(|c| c.program_commitment = hex::encode([3; 32])), base);
+        assert_ne!(
+            digest(|c| c.program_commitment = hex::encode([3; 32])),
+            base
+        );
         assert_ne!(digest(|c| c.input_commitment = hex::encode([3; 32])), base);
         assert_ne!(digest(|c| c.output_sha256 = hex::encode([3; 32])), base);
         assert_eq!(digest(|c| c.input_sources.clear()), base);
@@ -3988,14 +4070,18 @@ inputs.second = { from = "m1_check_c@m1_LAST_CLAIMED_RANGE@" }
         other_inputs.input_manifest_commitment = vec![9; 32];
         assert_eq!(
             defence(&other_inputs),
-            Err(DefenceRejection::Refused(DefenceRefusal::AnotherInputManifest))
+            Err(DefenceRejection::Refused(
+                DefenceRefusal::AnotherInputManifest
+            ))
         );
         // Nor does a window proven against another trace commitment.
         let mut another_trace = journal(&checkpoint, TransitionState::Finished, &[]);
         another_trace.refuted_trace_commitment = vec![9; 32];
         assert_eq!(
             defence(&another_trace),
-            Err(DefenceRejection::Refused(DefenceRefusal::AnotherTraceCommitment))
+            Err(DefenceRejection::Refused(
+                DefenceRefusal::AnotherTraceCommitment
+            ))
         );
         // Nor one verified against a guest other than the pinned one.
         assert_eq!(
@@ -4013,8 +4099,12 @@ inputs.second = { from = "m1_check_c@m1_LAST_CLAIMED_RANGE@" }
         // An honest trace that ends in another output than the challenger
         // stated: a mislabel, which also dismisses the challenge.
         let committed = hex::decode(&checkpoint.output_sha256).unwrap();
-        let mislabelled =
-            defence(&journal(&checkpoint, TransitionState::TerminalMatch, &committed)).unwrap();
+        let mislabelled = defence(&journal(
+            &checkpoint,
+            TransitionState::TerminalMatch,
+            &committed,
+        ))
+        .unwrap();
         assert_eq!(mislabelled.reason, DefenceReason::Mislabelled);
         assert_eq!(mislabelled.attested_output, Some(committed));
         // An honest trace that ends where the challenger said: the challenge
@@ -4025,7 +4115,9 @@ inputs.second = { from = "m1_check_c@m1_LAST_CLAIMED_RANGE@" }
                 TransitionState::TerminalMatch,
                 &hex::decode(&stated).unwrap()
             )),
-            Err(DefenceRejection::Refused(DefenceRefusal::OutputIsTheClaimed))
+            Err(DefenceRejection::Refused(
+                DefenceRefusal::OutputIsTheClaimed
+            ))
         );
 
         // A challenge built for another checkpoint is not this one's to

@@ -590,13 +590,7 @@ fn finish_import(
     let stage_count = stages.len();
     let (template_path, template) = save_model_template(
         args,
-        &chain_template(
-            chain,
-            layout,
-            decoder_commitment,
-            &identity_inputs,
-            stages,
-        )?,
+        &chain_template(chain, layout, decoder_commitment, &identity_inputs, stages)?,
     )?;
     let model_manifest_path = direct_manifest::write_model_manifest(
         args,
@@ -866,9 +860,9 @@ fn chain_template(
     // `previous` binds what the bind, the check and the embedding continue.
     let prompt_stages =
         |header: &str, j: &str, bind_source: &str, previous: [String; 3]| -> String {
-        let [bind_previous, check_previous, embed_previous] = previous;
-        format!(
-            "\n{header}\n\
+            let [bind_previous, check_previous, embed_previous] = previous;
+            format!(
+                "\n{header}\n\
              name = \"prompt_bind_p{j}\"\n\
              project = \"raster-stages/prompt-bind\"\n\
              {descriptor_line}\n\
@@ -893,12 +887,12 @@ fn chain_template(
              {no_claim_line}\
              {embed_previous}\
              {embedding_line}",
-            run_external("config"),
-            run_external("schedule"),
-            run_external("claim"),
-            bind_source,
-        )
-    };
+                run_external("config"),
+                run_external("schedule"),
+                run_external("claim"),
+                bind_source,
+            )
+        };
     // What a bind is given as its source record when nothing produced one.
     // The template gives it to every bind. A pipeline with a source stage
     // gives the first bind that stage's record in its place, and every later

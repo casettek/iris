@@ -678,7 +678,10 @@ mod tests {
                     .iter()
                     .filter(|atom| atom.part == ATOM_WHOLE && raw(atom) == *word)
                     .count();
-                assert!(word.len() <= 4 || whole_atoms == 0, "{text:?}: {word:?} is whole");
+                assert!(
+                    word.len() <= 4 || whole_atoms == 0,
+                    "{text:?}: {word:?} is whole"
+                );
             }
         });
     }
@@ -758,9 +761,10 @@ mod tests {
     fn a_word_is_one_piece_when_it_is_a_token_and_its_bytes_otherwise() {
         let profile = words_profile(&["<s>"], 6);
         let known = ["Say", "\u{120}ciao"];
-        let pieces = prompt_check::input::split_rendered("<s>Say ciao. abcdefgh", &profile, |text| {
-            known.contains(&text)
-        });
+        let pieces =
+            prompt_check::input::split_rendered("<s>Say ciao. abcdefgh", &profile, |text| {
+                known.contains(&text)
+            });
         let shown: Vec<(&str, u32)> = pieces
             .iter()
             .map(|piece| (piece.text.as_str(), piece.segment))
@@ -837,7 +841,9 @@ mod tests {
             let (_, ids) = tekken.encode(&text).unwrap();
             checked += 1;
             if staged_ids(&text, &tokenizer, &committed) != ids {
-                wrong.push(format!("{file}: the prompt stages' pieces merge to other ids"));
+                wrong.push(format!(
+                    "{file}: the prompt stages' pieces merge to other ids"
+                ));
             }
             if ids != expected {
                 let at = ids

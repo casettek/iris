@@ -1,9 +1,7 @@
 //! Output finalization, natively: the record a check states with its edge,
 //! and direct inference's output.
 use anyhow::Result;
-use sequence_check::input::{
-    ClaimRecord, DecodeEdge, DecoderTable, DecoderWitness, OutputRecord,
-};
+use sequence_check::input::{ClaimRecord, DecodeEdge, DecoderTable, DecoderWitness, OutputRecord};
 use sequence_check::prompt::PromptContext;
 
 /// What finalization reads besides the edge.

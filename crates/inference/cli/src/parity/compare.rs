@@ -468,10 +468,7 @@ mod tests {
         };
         // A model with no per-layer inputs has half the layer stages.
         assert_eq!(teacher_forced_names(plain).len(), 3 * 7 + 2 * 6 + 1);
-        assert_eq!(
-            RangedShape::from_names(&teacher_forced_names(plain)),
-            plain
-        );
+        assert_eq!(RangedShape::from_names(&teacher_forced_names(plain)), plain);
         let names = teacher_forced_names(shape);
         // 3 × (bind + check + embed + 8 layer stages),
         // 2 × (embed + 8 layer stages + check), and the result.

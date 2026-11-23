@@ -709,7 +709,10 @@ fn two_outputs_agree_when_they_are_the_same_form() {
     // The same form, whatever whitespace is around each output.
     let record = run(&forms, "yes", " yes\n", true, honest);
     assert!(record.agree && record.same_input);
-    assert_eq!((record.code, record.first.code, record.second.code), (1, 1, 1));
+    assert_eq!(
+        (record.code, record.first.code, record.second.code),
+        (1, 1, 1)
+    );
     assert_eq!(record.first.forms_sha256, record.second.forms_sha256);
     assert_eq!(record.first.forms_sha256, forms_id(&run_forms(&forms, "")));
     assert_eq!(consensus_description(&record), "agree");
@@ -717,7 +720,10 @@ fn two_outputs_agree_when_they_are_the_same_form() {
     // Two forms, and one output that is no form.
     let record = run(&forms, "yes", "no", true, honest);
     assert!(!record.agree);
-    assert_eq!((record.code, record.first.code, record.second.code), (0, 1, 2));
+    assert_eq!(
+        (record.code, record.first.code, record.second.code),
+        (0, 1, 2)
+    );
     assert_eq!(consensus_description(&record), "disagree");
     let record = run(&forms, "yes", "yes, probably", true, honest);
     assert_eq!((record.agree, record.second.code), (false, 0));
@@ -732,7 +738,10 @@ fn two_outputs_agree_when_they_are_the_same_form() {
 
     // Agreement is of two valid records over one input.
     let record = run(&forms, "yes", "yes", false, honest);
-    assert_eq!((record.agree, record.same_input, record.code), (false, false, 0));
+    assert_eq!(
+        (record.agree, record.same_input, record.code),
+        (false, false, 0)
+    );
     assert_eq!(
         consensus_description(&record),
         "no consensus: the inferences name different inputs"
@@ -740,7 +749,10 @@ fn two_outputs_agree_when_they_are_the_same_form() {
     for valid in [[false, true], [true, false]] {
         let record = run(&forms, "yes", "yes", true, valid);
         assert_eq!((record.agree, record.code), (false, 0));
-        assert_eq!((record.first.valid, record.second.valid), (valid[0], valid[1]));
+        assert_eq!(
+            (record.first.valid, record.second.valid),
+            (valid[0], valid[1])
+        );
         assert_eq!(
             consensus_description(&record),
             "no consensus: a claim record is not valid"
