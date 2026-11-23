@@ -219,7 +219,7 @@ pub(super) fn run_challenge_leg(leg: &Leg) -> Result<Value> {
             (
                 crate::posted::CorruptFault::Input(None),
                 "corrupted-input",
-                "NotTheProducersOutput",
+                "NotAnEarlierOutput",
             ),
             // An input the program is given from fixed data, here the
             // model's tokenizer: the stage checks it as it runs, but a
@@ -235,7 +235,7 @@ pub(super) fn run_challenge_leg(leg: &Leg) -> Result<Value> {
             (
                 crate::posted::CorruptFault::Input(Some(String::from("marks"))),
                 "corrupted-posted",
-                "NotAPostedInput",
+                "NotAPostedValue",
             ),
         ] {
             let lie = crate::posted::corrupt_claim(crate::posted::CorruptClaimOptions {

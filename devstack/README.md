@@ -209,7 +209,7 @@ With `IRIS_CELESTIA_RPC` set and no `--da-dir`, every iris command uses the
 Celestia node in place of the stand-in directory. That includes the gate:
 
 ```bash
-IRIS_CELESTIA_RPC=http://127.0.0.1:26658 just test-parity
+IRIS_TEST_CELESTIA=1 just test-parity
 ```
 
 ## Files

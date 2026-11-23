@@ -112,7 +112,7 @@ Four contracts, in [`contracts/src`](../../contracts/src):
 | --- | --- | --- |
 | `IrisRegistry` | Each registered configuration, under its id | `register(bytes)`, by the owner |
 | `DataRootOracle` | Each Celestia block's data root and time, by height | `post(height, dataRoot, time)`, by the relayer |
-| `IrisClaims` | Each accepted claim, whether a challenger showed it void, each admitted challenge, and whether a fault proof dismissed it | `submitClaim(bytes)`, `voidForProgram(bytes)`, `voidForInput(bytes)`, `submitChallenge(bytes)`, `submitFaultProof(bytes)` |
+| `IrisClaims` | Each accepted claim, whether a challenger showed it void, each admitted challenge, and whether a fault proof dismissed it | `submitClaim(bytes)`, `voidClaim(bytes)`, `submitChallenge(bytes)`, `submitFaultProof(bytes)` |
 | `RasterVerifier` | Nothing: RISC Zero's verifier of a Groth16 proof | `verify(seal, imageId, journalDigest)`, called by `IrisClaims` |
 
 Each entry point takes one `bytes` argument, the ABI encoding of one struct
@@ -159,10 +159,10 @@ A claim can be wrong in these ways, and each has its call.
 | What is wrong | The call | How it is settled |
 | --- | --- | --- |
 | A stage's execution: its program on its inputs gives another output | `submitChallenge` | The challenger posts its trace of the stage. The claimer can answer with a fault proof (`submitFaultProof`) |
-| A stage's program: it is outside the approved set | `voidForProgram` | On the spot: the claim is void |
-| A stage's input from an earlier stage: it is not what that stage produced | `voidForInput` | On the spot: the claim is void |
-| A stage's input from fixed data, such as the model's: it is not a commitment the configuration pins | `voidForInput` | On the spot: the claim is void |
-| A stage's input from the run itself: it is not a value the claim posted | `voidForInput` | On the spot: the claim is void |
+| A stage's program: it is outside the approved set | `voidClaim` | On the spot: the claim is void |
+| A stage's input from an earlier stage: it is not what that stage produced | `voidClaim` | On the spot: the claim is void |
+| A stage's input from fixed data, such as the model's: it is not a commitment the configuration pins | `voidClaim` | On the spot: the claim is void |
+| A stage's input from the run itself: it is not a value the claim posted | `voidClaim` | On the spot: the claim is void |
 
 The first is an assertion that can itself be false, which is why it has an
 answer. The next four are facts the contract reads from the claim's own
@@ -208,46 +208,47 @@ from its files and the configuration alone, with nothing run. A challenger does 
 the contract is expected to answer, and the ones that point at a fault are
 the ones to send (`iris devstack submit fault --calls <file> --call <n>`).
 
-### What `voidForProgram` and `voidForInput` check
+### What `voidClaim` checks
 
-Both open the claim's own checkpoint at a stage against the claim's
-checkpoint root, as a challenge does. Nothing in either is the challenger's
-word.
+The call takes the claim's own checkpoint at a stage, opened against the
+claim's checkpoint root as a challenge opens it, and one question about it.
+Nothing in it is the challenger's word. It reverts with `NoFault` when the
+checkpoint is as it should be, and otherwise the claim is void of one of five
+faults.
 
-`voidForProgram` looks the checkpoint's program up in the claim's
-configuration. Approved, the call reverts with `ProgramApproved`. Otherwise
-the claim is void (`UnapprovedProgram`).
+With no input named, the question is the stage's program. It must be one the
+claim's configuration approves, or the claim is void (`UnapprovedProgram`).
 
-`voidForInput` takes the bytes of the stage's input list, which the
-checkpoint commits to by hash, the name of one input, and the checkpoint the
-stage's own checkpoint names as that input's producer. Its checks and their
-order are `CheckpointList::check_link`'s:
+With an input named, the question is where that input comes from. The caller
+gives the bytes of the stage's input list, which the checkpoint commits to by
+hash, and the checkpoint the stage's own checkpoint names as the input's
+producer. The checks and their order are `CheckpointList::check_link`'s:
 
 1. The list is the one the checkpoint commits to, the stage's program is
    approved, and the input is one the configuration lists for that program.
-   Otherwise the call reverts: it is not this call's to judge.
-2. The list is in its one canonical form, or the claim is void
-   (`UnreadableInputList`).
-3. The list holds the input, or the claim is void (`InputMissing`).
-4. An input the program is given from fixed data holds a commitment the
-   configuration pins for it, and the call reverts with `Linked`, or the
-   claim is void (`NotAPinnedValue`). An input the run gives holds the
-   commitment of a value the claim posted, and the call reverts with
-   `Linked`, or the claim is void (`NotAPostedInput`). For that the caller
-   presents the commitments of every run input the claim posted, which the
-   contract holds to the hash it kept when the claim arrived
-   (`NotThePostedInputs`). An input that may be either, such as the claimed
-   ids, which are a pinned empty value in a prompt range, is linked by
-   either.
-5. For an input from an earlier stage: if it holds an empty value the
-   configuration allows it, the call reverts with `Linked`. Otherwise the
-   checkpoint names a producer for the input (`NoProducer`), and the
-   producer is an earlier checkpoint (`ProducerNotEarlier`).
-6. The producer's program is one that may produce this input
-   (`ProducerOfWrongKind`).
-7. The commitment the stage loaded the input by is the producer's output
-   commitment (`NotTheProducersOutput`). If it is, the call reverts with
-   `Linked`.
+   Otherwise the call reverts: it is not this question's to judge.
+2. The list is in its one canonical form and holds the input, or the claim
+   is void (`UnreadableInputs`).
+3. An input the program is given from fixed data holds a commitment the
+   configuration pins for it, or the claim is void (`NotAPinnedValue`).
+4. An input the run gives holds the commitment of a value the claim posted,
+   or the claim is void (`NotAPostedValue`). For that the caller presents the
+   commitments of every run input the claim posted, which the contract holds
+   to the hash it kept when the claim arrived (`NotThePostedInputs`). An
+   input that may be either, such as the claimed ids, which are a pinned
+   empty value in a prompt range, is held by either.
+5. An input from an earlier stage holds an empty value the configuration
+   allows, or the output commitment of the checkpoint its own checkpoint
+   names as the producer, which must be an earlier one whose program may
+   produce this input. Otherwise the claim is void (`NotAnEarlierOutput`).
+
+`iris claim audit` says more than the contract records: for an input that is
+not an earlier output, whether no producer was named, it was not earlier, it
+was of the wrong kind, or it produced something else.
+
+A commitment is 32 bytes. An input list writes it as 64 lowercase hex digits,
+and the contract reads it back to bytes once and compares bytes. Text that is
+not 64 lowercase hex digits is no commitment and equals none.
 
 A void claim is recorded with its fault, the stage and the time
 (`voided(claimId)`), and cannot be voided again. Nothing reads that record
@@ -272,11 +273,12 @@ model. An input bound per layer may hold any of its commitments: which layer
 belongs at which stage is the schedule's, checked inside the stages, and a
 challenger has every layer.
 
-**Cost.** On a 146-checkpoint claim, `voidForProgram` used about 104,000 gas
-with 1.5 KB of call data. `voidForInput` used about 650,000 gas with 3 KB for
-an input with one or two allowed values, and about 1,640,000 gas for a
-layer's weights, where it compares against 35 pinned commitments. Neither has
-been made cheaper.
+**Cost.** On the small model's 87-checkpoint claim, voiding for a program
+used about 112,000 gas, for an input from an earlier stage about 686,000, for a
+pinned input about 646,000, and for an input the run gives, held against 18
+posted values, about 651,000. On gemma E2B, a layer stage held against the
+35 pinned weight commitments used about 888,000. Most of what is left is
+reading the input list byte by byte and opening the checkpoints.
 
 ### What `submitChallenge` checks
 
@@ -284,7 +286,7 @@ been made cheaper.
 2. The checkpoint the challenge gives is the claim's at that stage: its hash,
    with the Merkle path given, makes the claim's checkpoint root.
 3. The stage names a program the configuration approves. A stage that does
-   not is `voidForProgram`'s, and no replay of it is admitted.
+   not is `voidClaim`'s, and no replay of it is admitted.
 4. The challenge disputes that checkpoint's output.
 5. The challenger's trace is in the one shape the protocol fixes for its
    length: Raster's own admission of a challenge

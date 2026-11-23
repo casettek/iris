@@ -200,28 +200,23 @@ struct Challenge {
 
 // --- a fault a challenger points at, with no replay ---
 
-// A stage that names a program outside the approved set: the claim's own
-// checkpoint at that stage, opened.
-struct ProgramFault {
+// A checkpoint that is not one the configuration allows: the claim's own
+// checkpoint at a stage, opened, and what is asked of it.
+//
+// With `input` empty the question is the stage's program, and nothing after
+// `path` is read. With an input named the question is where that input comes
+// from: `manifest` is the bytes of the input list the checkpoint commits to,
+// and `producer` the checkpoint its own checkpoint names as the input's
+// producer, when it names one. For an input the run gives, `posted` is the
+// commitment of every run input the claim posted, in the order its blobs
+// state them: the contract holds their digest.
+struct CheckpointFault {
     bytes32 claimId;
     uint32 stage;
     Checkpoint checkpoint;
     bytes32[] path;
-}
-
-// A stage whose input is not from where the configuration says it comes:
-// the stage's checkpoint, the bytes of the input list it commits to, the
-// input, and the checkpoint its own checkpoint names as the producer, when it
-// names one. For an input the run gives, `posted` is the commitment of every
-// run input the claim posted, in the order its blobs state them: the contract
-// holds their digest.
-struct InputFault {
-    bytes32 claimId;
-    uint32 stage;
-    Checkpoint checkpoint;
-    bytes32[] path;
-    bytes manifest;
     string input;
+    bytes manifest;
     bool hasProducer;
     Checkpoint producer;
     bytes32[] producerPath;

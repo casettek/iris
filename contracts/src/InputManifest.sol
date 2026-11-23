@@ -83,6 +83,34 @@ library InputManifest {
         }
     }
 
+    /// The commitment the list holds for `input`, as the 32 bytes its text
+    /// writes. `is32` is false when the text is not a commitment's.
+    function valueOf(bytes memory manifest, bytes memory input)
+        public
+        pure
+        returns (bool readable, bool found, bool is32, bytes32 value)
+    {
+        bytes memory text;
+        (readable, found, text) = commitmentOf(manifest, input);
+        if (readable && found) (is32, value) = asCommitment(text);
+    }
+
+    /// The 32 bytes a commitment's text writes: 64 lowercase hex digits and
+    /// nothing else. Any other text is no commitment, and `ok` is false.
+    function asCommitment(bytes memory text) public pure returns (bool ok, bytes32 value) {
+        if (text.length != 64) return (false, 0);
+        uint256 read;
+        for (uint256 i = 0; i < 64; i++) {
+            uint8 char = uint8(text[i]);
+            uint8 digit;
+            if (char >= 0x30 && char <= 0x39) digit = char - 0x30;
+            else if (char >= 0x61 && char <= 0x66) digit = char - 0x57;
+            else return (false, 0);
+            read = (read << 4) | digit;
+        }
+        return (true, bytes32(read));
+    }
+
     /// Whether `expected` is at `at`, and where what follows it begins.
     function _literal(bytes memory manifest, uint256 at, bytes memory expected)
         private

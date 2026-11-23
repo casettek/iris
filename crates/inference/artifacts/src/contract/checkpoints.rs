@@ -49,7 +49,7 @@ pub enum ChallengeRefusal {
         stage: u32,
     },
     /// The input is not one the configuration lists for the stage's program.
-    NotAChainedInput {
+    NotAnInput {
         stage: u32,
         input: String,
     },
@@ -73,7 +73,7 @@ impl ChallengeRefusal {
             | Self::NotTheCheckpoint { .. } => "NotTheCheckpoint",
             Self::NotTheInputManifest { .. } => "NotTheInputManifest",
             Self::UnapprovedStage { .. } => "UnapprovedStage",
-            Self::NotAChainedInput { .. } => "NotAChainedInput",
+            Self::NotAnInput { .. } => "NotAnInput",
             Self::ProducerNotPresented { .. } => "ProducerNotPresented",
         }
     }
@@ -117,7 +117,7 @@ impl std::fmt::Display for ChallengeRefusal {
                 "stage {stage} names a program outside the approved set, so it has no inputs \
                  to check"
             ),
-            Self::NotAChainedInput { stage, input } => write!(
+            Self::NotAnInput { stage, input } => write!(
                 f,
                 "`{input}` is not an input the configuration lists for stage {stage}'s program"
             ),
@@ -180,22 +180,23 @@ pub enum LinkFault {
     NotAPinnedValue { loaded: String },
     /// The input is one the run gives the program, and the stage loaded a
     /// commitment that is none of the run inputs the claim posted.
-    NotAPostedInput { loaded: String },
+    NotAPostedValue { loaded: String },
 }
 
 impl LinkFault {
-    /// The fault a contract records for the claim: `IrisClaims.ClaimFault`.
-    /// One of [`CLAIM_FAULTS`].
+    /// The fault a contract records for the claim: `IrisClaims.ClaimFault`,
+    /// one of [`CLAIM_FAULTS`]. A contract keeps one fault for each place an
+    /// input may come from, and one for a list it cannot read. The variants
+    /// here say more, for whoever reads the audit.
     pub fn name(&self) -> &'static str {
         match self {
-            Self::UnreadableInputList => "UnreadableInputList",
-            Self::InputMissing => "InputMissing",
-            Self::NoProducer { .. } => "NoProducer",
-            Self::ProducerNotEarlier { .. } => "ProducerNotEarlier",
-            Self::ProducerOfWrongKind { .. } => "ProducerOfWrongKind",
-            Self::NotTheProducersOutput { .. } => "NotTheProducersOutput",
+            Self::UnreadableInputList | Self::InputMissing => "UnreadableInputs",
+            Self::NoProducer { .. }
+            | Self::ProducerNotEarlier { .. }
+            | Self::ProducerOfWrongKind { .. }
+            | Self::NotTheProducersOutput { .. } => "NotAnEarlierOutput",
             Self::NotAPinnedValue { .. } => "NotAPinnedValue",
-            Self::NotAPostedInput { .. } => "NotAPostedInput",
+            Self::NotAPostedValue { .. } => "NotAPostedValue",
         }
     }
 }
@@ -238,7 +239,7 @@ impl std::fmt::Display for LinkFault {
                 f,
                 "it loaded {loaded}, which is no commitment the configuration pins for it"
             ),
-            Self::NotAPostedInput { loaded } => write!(
+            Self::NotAPostedValue { loaded } => write!(
                 f,
                 "it loaded {loaded}, which is none of the run inputs the claim posted"
             ),
@@ -423,7 +424,7 @@ impl CheckpointList {
         let from_run = program.run_inputs.iter().any(|run| run == input);
         // A name the program's entry does not list is not an input of it.
         if chained.is_none() && pinned.is_none() && !from_run {
-            return Err(ChallengeRefusal::NotAChainedInput {
+            return Err(ChallengeRefusal::NotAnInput {
                 stage,
                 input: input.to_string(),
             });
@@ -453,7 +454,7 @@ impl CheckpointList {
                 if self.posted.contains(loaded) {
                     return Ok(LinkCheck::Linked);
                 }
-                return void(LinkFault::NotAPostedInput {
+                return void(LinkFault::NotAPostedValue {
                     loaded: loaded.clone(),
                 });
             }
@@ -512,18 +513,14 @@ pub fn first_unapproved_stage(pins: &PipelinePins, trace: &CheckpointTrace) -> O
 /// `IrisClaims.ClaimFault` in the contract's order: the number the contract
 /// holds for a void claim names the fault at that place. The first is no
 /// fault. The second is [`StageAdmission::UnapprovedProgram`], and the rest
-/// are the [`LinkFault`]s by [`LinkFault::name`].
-pub const CLAIM_FAULTS: [&str; 10] = [
+/// are what [`LinkFault::name`] gives.
+pub const CLAIM_FAULTS: [&str; 6] = [
     "None",
     "UnapprovedProgram",
-    "UnreadableInputList",
-    "InputMissing",
-    "NoProducer",
-    "ProducerNotEarlier",
-    "ProducerOfWrongKind",
-    "NotTheProducersOutput",
+    "UnreadableInputs",
+    "NotAnEarlierOutput",
     "NotAPinnedValue",
-    "NotAPostedInput",
+    "NotAPostedValue",
 ];
 
 /// Which rule settles a difference between a claimed checkpoint and the one a

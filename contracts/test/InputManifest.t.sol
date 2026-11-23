@@ -97,6 +97,54 @@ contract InputManifestTest {
         _unreadable(_replace(LIST, "aa11", "aa\t11"));
         _unreadable(_replace(LIST, "ple", unicode"plé"));
     }
+
+    /// A commitment is read as the 32 bytes its text writes, and text that
+    /// is not 64 lowercase hex digits is no commitment: it equals none.
+    function test_a_commitment_is_64_lowercase_hex_digits() public pure {
+        bytes memory text = "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff";
+        (bool ok, bytes32 value) = InputManifest.asCommitment(text);
+        assert(ok);
+        assert(value == 0x00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff);
+
+        (ok,) = InputManifest.asCommitment("00112233445566778899AABBCCDDEEFF00112233445566778899aabbccddeeff");
+        assert(!ok);
+        (ok,) = InputManifest.asCommitment("0x112233445566778899aabbccddeeff00112233445566778899aabbccddeeff");
+        assert(!ok);
+        (ok,) = InputManifest.asCommitment("00112233445566778899aabbccddeeff00112233445566778899aabbccddeef");
+        assert(!ok);
+        (ok,) = InputManifest.asCommitment("00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff0");
+        assert(!ok);
+        (ok,) = InputManifest.asCommitment("");
+        assert(!ok);
+    }
+
+    function test_an_input_is_read_as_its_commitment() public pure {
+        bytes memory list = bytes(
+            string.concat(
+                "{\n",
+                '  "layer": {\n',
+                '    "commitment": "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff",\n',
+                '    "encoding": "raster",\n',
+                '    "type": "sha256"\n',
+                "  },\n",
+                '  "marks": {\n',
+                '    "commitment": "not a commitment",\n',
+                '    "encoding": "raster",\n',
+                '    "type": "sha256"\n',
+                "  }\n",
+                "}"
+            )
+        );
+        (bool readable, bool found, bool is32, bytes32 value) = InputManifest.valueOf(list, "layer");
+        assert(readable && found && is32);
+        assert(value == 0x00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff);
+        (readable, found, is32,) = InputManifest.valueOf(list, "marks");
+        assert(readable && found && !is32);
+        (readable, found, is32,) = InputManifest.valueOf(list, "absent");
+        assert(readable && !found && !is32);
+        (readable,,,) = InputManifest.valueOf("{", "layer");
+        assert(!readable);
+    }
 }
 
 /// The shape the protocol fixes for a trace: `protocol_window_size` and

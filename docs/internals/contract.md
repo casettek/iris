@@ -247,8 +247,8 @@ so that no two readers can take one input list for different inputs. Its names
 and fields must also be plain text, printable ASCII with no quote and no
 backslash: the EVM contract reads the list byte by byte and unescapes nothing.
 
-Both comparisons are on the EVM contract as `voidForProgram` and
-`voidForInput` ([the chains](chains.md#the-ways-to-challenge-a-claim)).
+Both comparisons are on the EVM contract as one call, `voidClaim`
+([the chains](chains.md#the-ways-to-challenge-a-claim)).
 
 Which earlier stage is the right producer is not the contract's to judge. Every
 output says which step produced it, and the consuming stage checks that against

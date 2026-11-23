@@ -77,15 +77,20 @@ contract IrisClaims {
     /// `LinkFault`. The first stands for no fault.
     enum ClaimFault {
         None,
+        // The stage's program is outside the configuration's approved set.
         UnapprovedProgram,
-        UnreadableInputList,
-        InputMissing,
-        NoProducer,
-        ProducerNotEarlier,
-        ProducerOfWrongKind,
-        NotTheProducersOutput,
+        // The stage's input list is not in its canonical form, or lacks an
+        // input its program takes.
+        UnreadableInputs,
+        // An input the program takes from an earlier stage is not an earlier
+        // stage's output: no producer is named, it is not earlier, it is not
+        // of a kind that makes this input, or it made something else.
+        NotAnEarlierOutput,
+        // An input the program is given from fixed data is no commitment
+        // the configuration pins for it.
         NotAPinnedValue,
-        NotAPostedInput
+        // An input the run gives is no value the claim posted.
+        NotAPostedValue
     }
 
     /// A claim a challenger showed void, the stage it pointed at and when.
@@ -154,12 +159,11 @@ contract IrisClaims {
     error WindowSizeNotProtocol();
     error NonCanonicalBitsPerItem();
     // A fault pointed at with no replay. The first two say there is none.
-    error ProgramApproved();
-    error Linked();
+    error NoFault();
     error AlreadyVoided(bytes32 id);
     error NotTheInputManifest();
     error UnapprovedStage();
-    error NotAChainedInput();
+    error NotAnInput();
     error NotThePostedInputs();
     error ProducerNotPresented();
     // A fault proof.
@@ -338,7 +342,7 @@ contract IrisClaims {
     /// `posted_inputs_digest`: the digest of the run inputs they hold. Which
     /// inputs a claim must have posted is not judged here: a stage input
     /// that was not posted is a fault of the checkpoint that names it
-    /// (`voidForInput`).
+    /// (`voidClaim`).
     function _checkHolds(Claim memory claim) private pure returns (bytes32) {
         bool checkpoints;
         bytes memory posted;
@@ -437,7 +441,7 @@ contract IrisClaims {
         _open(claim, challenge.stage, challenge.checkpoint, challenge.path);
         // A stage that names a program outside the approved set is not a
         // matter for a replay: it voids the claim by itself, and
-        // `voidForProgram` is how a challenger says so.
+        // `voidClaim` is how a challenger says so.
         if (registry.stageOf(claim.configuration, challenge.checkpoint.program) == bytes32(0)) {
             revert UnapprovedProgram(challenge.checkpoint.program);
         }
@@ -509,106 +513,79 @@ contract IrisClaims {
         if (voided[claimId].voidedAt != 0) revert AlreadyVoided(claimId);
     }
 
-    /// Show that a stage of a claim names a program outside the approved set:
-    /// `encoded` is a `ProgramFault`. Reverts with `ProgramApproved` when the
-    /// program is one the configuration approves.
-    function voidForProgram(bytes calldata encoded) external {
-        ProgramFault memory fault = abi.decode(encoded, (ProgramFault));
-        Accepted memory claim = _held(fault.claimId);
-        _open(claim, fault.stage, fault.checkpoint, fault.path);
-        if (registry.stageOf(claim.configuration, fault.checkpoint.program) != bytes32(0)) revert ProgramApproved();
-        _void(fault.claimId, fault.stage, ClaimFault.UnapprovedProgram);
-    }
-
-    /// Show that an input of a stage is not from where the configuration
-    /// says it comes: `encoded` is an `InputFault`. An input a program takes
-    /// from an earlier stage must be that stage's output; an input bound to
-    /// fixed data, such as the model's, must be a commitment the
-    /// configuration pins; an input the run gives must be one the claim
-    /// posted. The checks and their order are
-    /// `CheckpointList::check_link`'s. Reverts with `Linked` when the input
-    /// is what it should be, or an empty value the configuration allows.
+    /// Show that a checkpoint of a claim is not one the configuration
+    /// allows: `encoded` is a `CheckpointFault`, the claim's own checkpoint at
+    /// a stage, opened, and what is asked of it.
+    ///
+    /// With no input named, the question is the stage's program: it must be
+    /// one the configuration approves. With an input named, the question is
+    /// where that input comes from. An input the program takes from an
+    /// earlier stage must be that stage's output; an input bound to fixed
+    /// data, such as the model's, must be a commitment the configuration
+    /// pins; an input the run gives must be one the claim posted. The checks
+    /// and their order are `CheckpointList::check_link`'s. Reverts with
+    /// `NoFault` when the checkpoint is as it should be.
     ///
     /// So a stage's inputs are always ones a challenger also holds, and two
     /// parties that disagree about a stage ran it on the same inputs. What a
-    /// posted input says is not judged: the stage checks it as it runs, and
-    /// a replay on the posted input shows a stage that said otherwise.
+    /// posted input says is not judged, nor whether a held value is the one
+    /// the chain gives that stage: the stage checks both as it runs, and a
+    /// replay on the same inputs shows a stage that said otherwise.
     ///
     /// Nothing here is the challenger's word. The stage's checkpoint says
     /// which checkpoint produced the input, the input list it commits to says
-    /// what the stage loaded, and the configuration says which programs may
-    /// produce it. Which earlier stage is the right one is not judged: every
-    /// output says which step produced it, and the consuming stage checks
-    /// that.
-    function voidForInput(bytes calldata encoded) external {
-        InputFault memory fault = abi.decode(encoded, (InputFault));
+    /// what the stage loaded, and the configuration says where the input may
+    /// come from.
+    function voidClaim(bytes calldata encoded) external {
+        CheckpointFault memory fault = abi.decode(encoded, (CheckpointFault));
         Accepted memory claim = _held(fault.claimId);
         _open(claim, fault.stage, fault.checkpoint, fault.path);
-        if (sha256(fault.manifest) != fault.checkpoint.inputCommitment) revert NotTheInputManifest();
-        if (registry.stageOf(claim.configuration, fault.checkpoint.program) == bytes32(0)) revert UnapprovedStage();
+        bool approved = registry.stageOf(claim.configuration, fault.checkpoint.program) != bytes32(0);
+        ClaimFault found;
+        if (bytes(fault.input).length == 0) {
+            found = approved ? ClaimFault.None : ClaimFault.UnapprovedProgram;
+        } else {
+            if (sha256(fault.manifest) != fault.checkpoint.inputCommitment) revert NotTheInputManifest();
+            // What an unapproved program takes is not defined: ask of its
+            // program instead.
+            if (!approved) revert UnapprovedStage();
+            found = _inputFault(claim, fault);
+        }
+        if (found == ClaimFault.None) revert NoFault();
+        _void(fault.claimId, fault.stage, found);
+    }
+
+    /// What is wrong with where a stage's input comes from, or `None`.
+    function _inputFault(Accepted memory claim, CheckpointFault memory fault) private view returns (ClaimFault) {
         InputRule memory rule = registry.inputOf(claim.configuration, fault.checkpoint.program, fault.input);
         // A name the program's entry does not list is not an input of it.
-        if (!rule.chained && !rule.pinned && !rule.run) revert NotAChainedInput();
+        if (!rule.chained && !rule.pinned && !rule.run) revert NotAnInput();
 
-        (bool readable, bool found, bytes memory loaded) =
-            InputManifest.commitmentOf(fault.manifest, bytes(fault.input));
-        if (!readable) {
-            _void(fault.claimId, fault.stage, ClaimFault.UnreadableInputList);
-            return;
-        }
-        if (!found) {
-            _void(fault.claimId, fault.stage, ClaimFault.InputMissing);
-            return;
-        }
-        bytes32 loadedText = keccak256(loaded);
+        // A commitment is 32 bytes, written in the list as 64 lowercase hex
+        // digits. Text that is not that is no commitment, and equals none.
+        (bool readable, bool found, bool is32, bytes32 loaded) =
+            InputManifest.valueOf(fault.manifest, bytes(fault.input));
+        if (!readable || !found) return ClaimFault.UnreadableInputs;
         if (!rule.chained) {
             // Bound to fixed data: the model's, or another pinned identity.
             // The stage checks what it loads against that identity as it
             // runs, and that holds only for an input a challenger also has,
             // so the stage may name nothing but a pinned commitment.
-            if (_holds(rule.pinnedValues, loadedText)) revert Linked();
+            if (is32 && _has(rule.pinnedValues, loaded)) return ClaimFault.None;
+            if (!rule.run) return ClaimFault.NotAPinnedValue;
             // Given by the run: the claimer posted it, or a challenger has
             // nothing to run the stage on.
-            if (rule.run) {
-                if (sha256(abi.encodePacked(fault.posted)) != claim.postedInputs) revert NotThePostedInputs();
-                if (_holds(fault.posted, loadedText)) revert Linked();
-                _void(fault.claimId, fault.stage, ClaimFault.NotAPostedInput);
-                return;
-            }
-            _void(fault.claimId, fault.stage, ClaimFault.NotAPinnedValue);
-            return;
+            if (sha256(abi.encodePacked(fault.posted)) != claim.postedInputs) revert NotThePostedInputs();
+            return is32 && _has(fault.posted, loaded) ? ClaimFault.None : ClaimFault.NotAPostedValue;
         }
-        if (_holds(rule.emptyValues, loadedText)) revert Linked();
+        if (is32 && _has(rule.emptyValues, loaded)) return ClaimFault.None;
         (bool named, uint32 producer) = _producerOf(fault.checkpoint, fault.input);
-        if (!named) {
-            _void(fault.claimId, fault.stage, ClaimFault.NoProducer);
-            return;
-        }
-        if (producer >= fault.stage) {
-            _void(fault.claimId, fault.stage, ClaimFault.ProducerNotEarlier);
-            return;
-        }
+        if (!named || producer >= fault.stage) return ClaimFault.NotAnEarlierOutput;
         if (!fault.hasProducer) revert ProducerNotPresented();
         _open(claim, producer, fault.producer, fault.producerPath);
         bytes32 kind = registry.stageOf(claim.configuration, fault.producer.program);
-        if (kind == bytes32(0) || !_has(rule.producers, kind)) {
-            _void(fault.claimId, fault.stage, ClaimFault.ProducerOfWrongKind);
-            return;
-        }
-        if (keccak256(bytes(IrisEncoding.hexText(fault.producer.outputCommitment))) != loadedText) {
-            _void(fault.claimId, fault.stage, ClaimFault.NotTheProducersOutput);
-            return;
-        }
-        revert Linked();
-    }
-
-    /// Whether one of `values`, as the hex text an input list holds a
-    /// commitment in, is the text with this hash.
-    function _holds(bytes32[] memory values, bytes32 loadedText) private pure returns (bool) {
-        for (uint256 i = 0; i < values.length; i++) {
-            if (keccak256(bytes(IrisEncoding.hexText(values[i]))) == loadedText) return true;
-        }
-        return false;
+        if (kind == bytes32(0) || !_has(rule.producers, kind)) return ClaimFault.NotAnEarlierOutput;
+        return is32 && fault.producer.outputCommitment == loaded ? ClaimFault.None : ClaimFault.NotAnEarlierOutput;
     }
 
     /// The checkpoint a stage's own checkpoint names as the producer of one

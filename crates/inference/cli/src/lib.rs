@@ -290,10 +290,10 @@ struct ClaimAuditArgs {
     pins: Option<PathBuf>,
 
     /// Write every call a contract can be asked of the claim with no replay,
-    /// as a JSON list: `voidForProgram` for each checkpoint and
-    /// `voidForInput` for each input taken from an earlier stage, each with
-    /// what the contract is expected to answer. The calls that point at a
-    /// fault are the ones to send.
+    /// as a JSON list: a `voidClaim` for each checkpoint's program and for
+    /// each input its program takes, each with what the contract is
+    /// expected to answer. The calls that point at a fault are the ones to
+    /// send.
     #[arg(long)]
     calls: Option<PathBuf>,
 }

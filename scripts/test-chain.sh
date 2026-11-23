@@ -271,11 +271,11 @@ stage=prompt_check_p1
 step chain-void-program "unapproved program: voided on the spot" \
     voided_lie void-program honest "$small_spec" UnapprovedProgram --stage $stage --fault program
 step chain-void-chained "input not its producer's output: voided on the spot" \
-    voided_lie void-chained honest "$small_spec" NotTheProducersOutput --stage $stage --fault input
+    voided_lie void-chained honest "$small_spec" NotAnEarlierOutput --stage $stage --fault input
 step chain-void-pinned "input not a pinned commitment: voided on the spot" \
     voided_lie void-pinned honest "$small_spec" NotAPinnedValue --stage $stage --fault input --input tokenizer
 step chain-void-posted "input not a posted value: voided on the spot" \
-    voided_lie void-posted honest "$small_spec" NotAPostedInput --stage $stage --fault input --input marks
+    voided_lie void-posted honest "$small_spec" NotAPostedValue --stage $stage --fault input --input marks
 
 step chain-arranged-pinned "another layer's weights: challenged by a replay" \
     replayed_lie arranged-pinned honest "$small_spec" range_p1_l2 yes yes --fault arrangement --input layer

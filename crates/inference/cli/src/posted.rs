@@ -938,11 +938,11 @@ pub struct ClaimAudit {
 /// A replay runs the program a checkpoint names on the inputs it names, so a
 /// challenger asks these two things first, of every checkpoint, from the
 /// claim's own files and the configuration alone. Nothing is run. A fault
-/// found here is pointed at with `voidForProgram` or `voidForInput`, and the
+/// found here is pointed at with `voidClaim`, and the
 /// claim is void: there is no challenge to post and nothing to answer.
 pub fn audit_claim(options: AuditClaimOptions) -> Result<ClaimAudit> {
     use inference_artifacts::contract::{CheckpointList, LinkCheck, StageAdmission};
-    use inference_artifacts::evm::{abi_encode, claim_id, input_fault_token, program_fault_token};
+    use inference_artifacts::evm::{abi_encode, checkpoint_fault_token, claim_id, InputQuestion};
 
     let submission: ClaimSubmission = read_json(&options.submission_path)?;
     let configuration =
@@ -994,14 +994,16 @@ pub fn audit_claim(options: AuditClaimOptions) -> Result<ClaimAudit> {
             StageAdmission::Disputed { .. }
         );
         let mut asked = crate::evm::call(
-            "voidForProgram",
-            &abi_encode(&program_fault_token(&claim, position, checkpoint, &path)?),
+            "voidClaim",
+            &abi_encode(&checkpoint_fault_token(
+                &claim, position, checkpoint, &path, None,
+            )?),
         );
         asked["checkpoint"] = serde_json::json!(position);
         asked["stage"] = serde_json::json!(checkpoint.stage);
         asked["input"] = serde_json::Value::Null;
         asked["expected"] = if approved {
-            serde_json::json!({ "revert": "ProgramApproved" })
+            serde_json::json!({ "revert": "NoFault" })
         } else {
             serde_json::json!({ "void": "UnapprovedProgram" })
         };
@@ -1065,18 +1067,20 @@ pub fn audit_claim(options: AuditClaimOptions) -> Result<ClaimAudit> {
                 })
                 .transpose()?;
             let mut asked = crate::evm::call(
-                "voidForInput",
-                &abi_encode(&input_fault_token(
+                "voidClaim",
+                &abi_encode(&checkpoint_fault_token(
                     &claim,
                     position,
                     checkpoint,
                     &path,
-                    &manifest,
-                    input,
-                    producer_opening
-                        .as_ref()
-                        .map(|(listed, path)| (*listed, path.as_slice())),
-                    &posted,
+                    Some(&InputQuestion {
+                        input,
+                        input_manifest: &manifest,
+                        producer: producer_opening
+                            .as_ref()
+                            .map(|(listed, path)| (*listed, path.as_slice())),
+                        posted: &posted,
+                    }),
                 )?),
             );
             asked["checkpoint"] = serde_json::json!(position);
@@ -1085,7 +1089,7 @@ pub fn audit_claim(options: AuditClaimOptions) -> Result<ClaimAudit> {
             asked["expected"] = match &verdict {
                 Ok(LinkCheck::Linked) => {
                     audit.inputs_linked += 1;
-                    serde_json::json!({ "revert": "Linked" })
+                    serde_json::json!({ "revert": "NoFault" })
                 }
                 Ok(LinkCheck::Void(fault)) => {
                     audit.faults.push(AuditFault {

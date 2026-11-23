@@ -721,63 +721,54 @@ pub fn trace_header_token(
 // A fault pointed at, with no replay
 // ---------------------------------------------------------------------------
 
-/// A stage that names a program outside the approved set, as
-/// `IrisClaims.voidForProgram` takes it: the claim's own checkpoint at that
-/// stage, with the path that opens it.
-pub fn program_fault_token(
-    claim_id: &[u8; 32],
-    stage: u32,
-    checkpoint: &Checkpoint,
-    path: &[String],
-) -> Result<Token> {
-    Ok(Token::Tuple(vec![
-        Token::Word(*claim_id),
-        Token::number(u64::from(stage)),
-        checkpoint_token(checkpoint)?,
-        hashes_token(path)?,
-    ]))
+/// What is asked of where a stage's input comes from: the input, the bytes
+/// of the input list the stage's checkpoint commits to, the checkpoint that
+/// checkpoint names as the input's producer, when it names one, with the
+/// path that opens it, and the commitment of every run input the claim
+/// posted.
+pub struct InputQuestion<'a> {
+    pub input: &'a str,
+    pub input_manifest: &'a [u8],
+    pub producer: Option<(&'a Checkpoint, &'a [String])>,
+    pub posted: &'a [String],
 }
 
-/// A stage whose input is not what the claim says an earlier stage produced,
-/// as `IrisClaims.voidForInput` takes it: the stage's checkpoint, the bytes
-/// of the input list it commits to, the input, and the checkpoint the stage's
-/// own checkpoint names as the producer, when it names one.
-pub fn input_fault_token(
+/// A checkpoint that is not one the configuration allows, as
+/// `IrisClaims.voidClaim` takes it: the claim's own checkpoint at a stage,
+/// with the path that opens it, and what is asked of it. With no question of
+/// an input, the question is the stage's program.
+pub fn checkpoint_fault_token(
     claim_id: &[u8; 32],
     stage: u32,
     checkpoint: &Checkpoint,
     path: &[String],
-    input_manifest: &[u8],
-    input: &str,
-    producer: Option<(&Checkpoint, &[String])>,
-    posted: &[String],
+    question: Option<&InputQuestion>,
 ) -> Result<Token> {
-    let (has_producer, producer, producer_path) = match producer {
-        Some((producer, path)) => (true, checkpoint_token(producer)?, hashes_token(path)?),
-        None => (
-            false,
-            Token::Tuple(vec![
-                Token::text(""),
-                Token::Word([0; 32]),
-                Token::Word([0; 32]),
-                Token::Array(Vec::new()),
-                Token::Word([0; 32]),
-                Token::Word([0; 32]),
-            ]),
+    let no_checkpoint = || {
+        Token::Tuple(vec![
+            Token::text(""),
+            Token::Word([0; 32]),
+            Token::Word([0; 32]),
             Token::Array(Vec::new()),
-        ),
+            Token::Word([0; 32]),
+            Token::Word([0; 32]),
+        ])
+    };
+    let (has_producer, producer, producer_path) = match question.and_then(|asked| asked.producer) {
+        Some((producer, path)) => (true, checkpoint_token(producer)?, hashes_token(path)?),
+        None => (false, no_checkpoint(), Token::Array(Vec::new())),
     };
     Ok(Token::Tuple(vec![
         Token::Word(*claim_id),
         Token::number(u64::from(stage)),
         checkpoint_token(checkpoint)?,
         hashes_token(path)?,
-        Token::Bytes(input_manifest.to_vec()),
-        Token::text(input),
+        Token::text(question.map_or("", |asked| asked.input)),
+        Token::Bytes(question.map_or(Vec::new(), |asked| asked.input_manifest.to_vec())),
         Token::flag(has_producer),
         producer,
         producer_path,
-        hashes_token(posted)?,
+        hashes_token(question.map_or(&[], |asked| asked.posted))?,
     ]))
 }
 
@@ -907,8 +898,7 @@ mod tests {
             ("submitClaim", "ddfdfbb0"),
             ("submitChallenge", "5e9c0523"),
             ("submitFaultProof", "f8389708"),
-            ("voidForProgram", "592cf381"),
-            ("voidForInput", "8cd1e035"),
+            ("voidClaim", "f2c235bf"),
         ] {
             assert_eq!(hex::encode(&call_with_bytes(name, b"")[..4]), selector);
         }

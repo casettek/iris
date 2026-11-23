@@ -307,7 +307,7 @@ fn an_input_bound_to_fixed_data_must_name_a_pinned_commitment() {
     // A name the program does not list is no input of it.
     assert!(matches!(
         Claim::honest().link(0, "nothing"),
-        Err(ChallengeRefusal::NotAChainedInput { .. })
+        Err(ChallengeRefusal::NotAnInput { .. })
     ));
 }
 
@@ -329,7 +329,7 @@ fn an_input_the_run_gives_must_be_one_the_claim_posted() {
     let lying = Claim::of(checkpoints, manifests);
     assert_eq!(
         lying.link(0, "text"),
-        Ok(LinkCheck::Void(LinkFault::NotAPostedInput {
+        Ok(LinkCheck::Void(LinkFault::NotAPostedValue {
             loaded: hex::encode([0x77; 32])
         }))
     );
@@ -339,7 +339,7 @@ fn an_input_the_run_gives_must_be_one_the_claim_posted() {
     unposted.submission.availability.clear();
     assert_eq!(
         unposted.link(0, "text"),
-        Ok(LinkCheck::Void(LinkFault::NotAPostedInput {
+        Ok(LinkCheck::Void(LinkFault::NotAPostedValue {
             loaded: hex::encode([9; 32])
         }))
     );

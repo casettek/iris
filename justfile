@@ -79,9 +79,9 @@ test-ignored *args:
 test-real-model *args:
     bash scripts/test-real-model.sh {{args}}
 
-# Full local host parity gate; all logs and outputs are kept under target/parity.
-test-parity:
-    cargo run --release --locked -p iris-cli -- test-parity
+# The parity gate alone; all logs and outputs are kept under target/parity: [gate arguments]
+test-parity *args:
+    bash scripts/test-parity.sh {{args}}
 
 # Refresh proof guest identities after Raster, guest, dependency or toolchain changes.
 build-raster-stages:
