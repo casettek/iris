@@ -38,7 +38,7 @@ struct Case {
 pub fn run(skip_challenges: bool, bundle: &str) -> Result<()> {
     ensure!(
         !cfg!(debug_assertions),
-        "test-parity requires a release build; run `just test-parity`"
+        "the parity gate requires a release build; run `just test-parity`"
     );
     let root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../..")

@@ -49,7 +49,7 @@ Windows paths and cannot simply be reused by the Linux worker. Raster's Linux
 CLI (`cargo raster`) must be installed in the worker's PATH as well.
 
 ```sh
-iris challenge corrupt --challenge /path/to/challenge_bundle.json --output /path/to/fault-attempt
+iris test corrupt-challenge --challenge /path/to/challenge_bundle.json --output /path/to/fault-attempt
 iris fault prove --claim-context /path/to/claim_bundle.json \
   --challenge /path/to/challenge_bundle.json \
   --commitment /path/to/fault-attempt/corrupted_commit.bin \

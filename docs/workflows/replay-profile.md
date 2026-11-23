@@ -14,7 +14,7 @@ can overlap.
    native execution finishes.
 
 ```sh
-iris challenge profile --challenge /path/challenge_bundle.json --claim-context /path/claim_bundle.json --output /path/profile --top-tiles 3 --calls-per-tile 1 --sample-max-bytes 8589934592
+iris test profile --challenge /path/challenge_bundle.json --claim-context /path/claim_bundle.json --output /path/profile --top-tiles 3 --calls-per-tile 1 --sample-max-bytes 8589934592
 ```
 
 Defaults select three tile IDs by their slowest observed native invocation, then
@@ -79,7 +79,7 @@ profile for bounded native-guided profiling.
 ## Teacher-forced stage costs (2026-11-05)
 
 Gemma 4 E2B Q8, one claim of 47 prompt tokens and 16 claimed tokens, 151 stages.
-Each row is that stage's trace and the heaviest tile call `challenge profile`
+Each row is that stage's trace and the heaviest tile call `test profile`
 measured in the guest. These are the selected calls, not a guaranteed maximum.
 
 | stage | trace steps | heaviest measured tile | user cycles |

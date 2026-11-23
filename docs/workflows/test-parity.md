@@ -5,7 +5,7 @@ Run the local regression gate from the repository root:
 ```sh
 just test-parity
 # Equivalent:
-cargo run --release --locked -p iris-cli -- test-parity
+cargo run --release --locked -p iris-cli -- test parity
 ```
 
 Add `--skip-challenges` to leave out the [challenge leg](#challenge-leg), whose
@@ -134,7 +134,7 @@ the chain then checks it.
   give the source record the claim names.
   Run against a Celestia node
   (`IRIS_CELESTIA_RPC`), the gate leaves both posted there, and
-  `iris devstack replay` takes them to the contracts
+  `iris test devstack replay` takes them to the contracts
   ([the chains](../internals/chains.md)).
 - Over wrong token marks, on the templated case: the prompt stages finish through
   both Raster and native-staged, agree byte for byte, and record the expected fault.

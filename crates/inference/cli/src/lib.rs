@@ -54,13 +54,13 @@ pub use replay_profile::{run_replay_profile, ReplayProfileOptions};
 use commands::challenge::ChallengeCommand;
 use commands::claim::ClaimCommand;
 use commands::da::DaCommand;
-use commands::devstack::DevstackCommand;
 use commands::evm::EvmCommand;
 use commands::fault::FaultCommand;
 use commands::infer::InferArgs;
 use commands::model::ModelCommand;
 use commands::registry::RegistryCommand;
 use commands::stage::*;
+use commands::testing::TestCommand;
 
 #[derive(Debug, Parser)]
 #[command(name = "iris")]
@@ -89,17 +89,17 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Commands {
-    /// Model preparation workflows.
+    /// Set up a model: convert a GGUF model, import a bundle.
     Model {
         #[command(subcommand)]
         command: ModelCommand,
     },
-    /// Proposer claim workflows.
+    /// A claim: build, post and check one, or read one back and audit it.
     Claim {
         #[command(subcommand)]
         command: ClaimCommand,
     },
-    /// Fast unconstrained deterministic inference.
+    /// Fast deterministic inference: the output a claim then states.
     Infer(InferArgs),
     /// The host signer: a trusted stand-in for a notary.
     Attest {
@@ -114,16 +114,6 @@ enum Commands {
     /// Measure the heaviest tile replays in one exact stage instance.
     #[cfg(feature = "replay-profile")]
     ReplayProfile(ReplayProfileArgs),
-    /// Run the pinned three-path end-to-end parity suite.
-    TestParity {
-        /// Leave out the challenge leg, whose authenticated replays take about an
-        /// hour. The report records that it was skipped.
-        #[arg(long)]
-        skip_challenges: bool,
-        /// The bundle under `model-bundles` to run: one family's small model.
-        #[arg(long, default_value = "parity-gemma")]
-        bundle: String,
-    },
     /// Compare a chain run with direct generation of the same prompt and
     /// output, position by position.
     #[command(hide = true)]
@@ -142,7 +132,7 @@ enum Commands {
         #[arg(long)]
         direct: bool,
     },
-    /// Challenge workflows reserved for the verifier path.
+    /// A challenge of a claim: build, post and check one, or read one back.
     Challenge {
         #[command(subcommand)]
         command: ChallengeCommand,
@@ -162,15 +152,14 @@ enum Commands {
         #[command(subcommand)]
         command: EvmCommand,
     },
-    /// Drive the local chains (devstack/README.md): send iris's calls to the
-    /// contracts deployed there, and hold the contracts to iris. For the
-    /// local stack and its tests only: transactions go out through an
-    /// account the development node keeps unlocked.
-    Devstack {
+    /// The tools a test stages a dispute with, and the test suites
+    /// themselves: lying claims and challenges, what catching them costs,
+    /// the parity gate, and the local chains. Nothing an honest party runs.
+    Test {
         #[command(subcommand)]
-        command: DevstackCommand,
+        command: TestCommand,
     },
-    /// Fault proof workflows reserved for the proof path.
+    /// A fault proof: what answers a challenge whose trace is wrong.
     Fault {
         #[command(subcommand)]
         command: FaultCommand,
@@ -244,13 +233,6 @@ fn execute(cli: Cli) -> Result<ExitCode> {
             })?;
             Ok(ExitCode::SUCCESS)
         }
-        Some(Commands::TestParity {
-            skip_challenges,
-            bundle,
-        }) => {
-            parity::run(skip_challenges, &bundle)?;
-            Ok(ExitCode::SUCCESS)
-        }
         Some(Commands::CompareTeacherForced {
             teacher_forced,
             direct,
@@ -295,7 +277,7 @@ fn execute(cli: Cli) -> Result<ExitCode> {
         }
         Some(Commands::Challenge { command }) => commands::challenge::run(command),
         Some(Commands::Da { command }) => commands::da::run(command),
-        Some(Commands::Devstack { command }) => commands::devstack::run(command),
+        Some(Commands::Test { command }) => commands::testing::run(command),
         Some(Commands::Evm { command }) => commands::evm::run(command),
         Some(Commands::Registry { command }) => commands::registry::run(command),
         Some(Commands::Fault { command }) => commands::fault::run(command),
@@ -326,14 +308,45 @@ mod tests {
         parse_for_test(["iris", "claim", "build", "--run", "inference.toml"]).unwrap();
         parse_for_test([
             "iris",
-            "claim",
-            "corrupt",
+            "test",
+            "corrupt-checkpoints",
             "--checkpoints",
             "checkpoints.txt",
             "--index",
             "1",
         ])
         .unwrap();
+        parse_for_test([
+            "iris",
+            "test",
+            "corrupt-claim",
+            "--submission",
+            "claim_submission.json",
+            "--output",
+            "lying",
+            "--stage",
+            "range_p0_l1",
+            "--fault",
+            "arrangement",
+        ])
+        .unwrap();
+        parse_for_test(["iris", "test", "claim", "--ids", "1,2,3"]).unwrap();
+        parse_for_test(["iris", "test", "parity", "--skip-challenges"]).unwrap();
+        // The test tools are under `iris test` and nowhere else.
+        for moved in [
+            vec![
+                "iris",
+                "claim",
+                "corrupt",
+                "--checkpoints",
+                "checkpoints.txt",
+            ],
+            vec!["iris", "challenge", "corrupt", "--challenge", "bundle.json"],
+            vec!["iris", "test-parity"],
+            vec!["iris", "claim", "build", "--claimed-ids", "1,2,3"],
+        ] {
+            assert!(parse_for_test(moved).is_err());
+        }
         parse_for_test([
             "iris",
             "challenge",

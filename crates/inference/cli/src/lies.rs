@@ -24,7 +24,7 @@ use crate::claim::{corrupt_hash, select_checkpoint_index, CorruptCheckpointSelec
 use crate::posted::{fresh_dir, parent, stage_dir_name, INPUT_MANIFEST_JSON};
 
 /// The file `corrupt_claim` writes beside the lying claim: which checkpoint
-/// it changed, in the form `claim corrupt --checkpoints` writes.
+/// it changed, in the form `test corrupt-checkpoints --checkpoints` writes.
 pub const CORRUPTION_JSON: &str = "checkpoints.corruption.json";
 
 /// What a lying claim says falsely of the checkpoint it lies about.

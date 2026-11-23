@@ -99,7 +99,7 @@ Raster derives `bits_per_item = ceil(128 / window_size)`, and its closed
 `fraud-window-trace-ends` issue treats sizing the window as a proof-size choice, so a
 smaller window should not weaken detection. Retrying a too-short replay at
 `--fraud-proof-window-size 2` needed no Raster or stage change: every stage above then
-replayed and matched its native checkpoint on the real model, and `challenge profile`
+replayed and matched its native checkpoint on the real model, and `test profile`
 accepted the result. It was not carried through a fault proof, and was removed so that
 this can be designed as a whole.
 

@@ -18,7 +18,7 @@ use std::{
 
 #[derive(Debug, clap::Args)]
 pub struct CorruptArgs {
-    /// Frozen challenge profile selecting an interior window endpoint.
+    /// Frozen test profile selecting an interior window endpoint.
     #[arg(long)]
     pub profile: Option<PathBuf>,
     #[arg(long)]

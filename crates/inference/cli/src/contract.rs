@@ -602,7 +602,7 @@ pub struct ChallengePostOptions {
     pub da_dir: Option<PathBuf>,
     pub submitted_at: Option<u64>,
     /// The trace commitment to post, in place of the bundle's own: a copy of
-    /// it that `challenge corrupt` changed.
+    /// it that `test corrupt-challenge` changed.
     pub commitment_path: Option<PathBuf>,
     /// Where to write the submission. Default: beside the bundle.
     pub out_path: Option<PathBuf>,

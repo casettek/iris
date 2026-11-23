@@ -1,4 +1,4 @@
-//! The local chains: `iris devstack`.
+//! The local chains: `iris test devstack`, under the test tools.
 
 use crate::*;
 

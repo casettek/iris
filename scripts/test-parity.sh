@@ -9,7 +9,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/test-env.sh"
 
 echo "== parity gate"
 step parity-gate "parity gate: honest runs agree, cheating is caught" \
-    cargo run --release --locked -p iris-cli "${features[@]}" -- test-parity "$@"
+    cargo run --release --locked -p iris-cli "${features[@]}" -- test parity "$@"
 # The gate's own summary: what it covered, by outcome.
 sed -n '/^PASS: [0-9]* cases/,$p' "$logs/parity-gate.log" | sed 's/^/      /'
 

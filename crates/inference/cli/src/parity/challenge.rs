@@ -149,7 +149,7 @@ pub(super) fn run_challenge_leg(leg: &Leg) -> Result<Value> {
         replays.push(outcome);
     }
 
-    // The command that stages such a claim (`claim corrupt --submission`)
+    // The command that stages such a claim (`test corrupt-claim --submission`)
     // writes one a contract takes: the honest list with one hash changed,
     // posted for the liar. A lie about the result is refused there, since
     // the claim's records are read from that output and no proof would

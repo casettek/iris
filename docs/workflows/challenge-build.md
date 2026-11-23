@@ -122,7 +122,7 @@ same inputs. From there the flow and the outputs are the ones above. It
 stops when a checkpoint names a value nobody holds or another program than
 the chain's, which is a claim for `iris claim audit`.
 
-See [Fault proving](fault-prove.md) for `challenge corrupt` and `fault prove`.
+See [Fault proving](fault-prove.md) for `test corrupt-challenge` and `fault prove`.
 
 A stage whose trace is 128 steps or fewer cannot be replayed at this window, so a
 challenge that lands on one fails at the replay. See

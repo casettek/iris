@@ -93,7 +93,7 @@ the same claim built with and without the feature, then run the gate with the
 GPU forced on:
 
 ```bash
-IRIS_GPU_MIN_WORK=0 cargo run --release --locked -p iris-cli --features gpu-kernels -- test-parity --skip-challenges
+IRIS_GPU_MIN_WORK=0 cargo run --release --locked -p iris-cli --features gpu-kernels -- test parity --skip-challenges
 ```
 
 ## Lower-Level Surfaces

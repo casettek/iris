@@ -37,7 +37,7 @@ pub(crate) struct ChallengePostArgs {
     submitted_at: Option<u64>,
 
     /// Post this trace commitment in place of the bundle's own: the copy
-    /// `iris challenge corrupt` wrote, for a challenge a defender can refute.
+    /// `iris test corrupt-challenge` wrote, for a challenge a defender can refute.
     #[arg(long)]
     commitment: Option<PathBuf>,
 
@@ -97,10 +97,6 @@ pub(crate) struct ChallengeCheckArgs {
 pub(crate) enum ChallengeCommand {
     /// Build a challenge bundle for a divergent claim.
     Build(ChallengeBuildArgs),
-    /// Flip an interior fingerprint bit in a challenge copy.
-    Corrupt(fault::CorruptArgs),
-    /// Measure guest cycles and select a heavy fault window from a completed challenge.
-    Profile(challenge_profile::ProfileArgs),
     /// Post a challenge's trace body to the data-availability layer, write
     /// the challenge submission, and make the checks a contract would make
     /// on it.
@@ -250,14 +246,6 @@ impl ChallengeBuildArgs {
 
 pub(crate) fn run(command: ChallengeCommand) -> Result<ExitCode> {
     match command {
-        ChallengeCommand::Profile(args) => {
-            challenge_profile::run(args)?;
-            Ok(ExitCode::SUCCESS)
-        }
-        ChallengeCommand::Corrupt(args) => {
-            fault::corrupt(args)?;
-            Ok(ExitCode::SUCCESS)
-        }
         ChallengeCommand::Build(args) => {
             warn_if_debug_build("challenge build");
             let result = build_challenge(args.into_options()?)?;

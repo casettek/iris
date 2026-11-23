@@ -143,7 +143,7 @@ pub fn build_claim(options: ClaimBuildOptions) -> Result<ClaimBuildResult> {
             // bit-identical: an honest claimer would convict itself.
             anyhow::bail!("{reason}; direct and teacher-forced inference are not in parity");
         }
-        eprintln!("warning: {reason}; writing the claim anyway because --claimed-ids was given");
+        eprintln!("warning: {reason}; writing the claim anyway because its ids were given (`iris test claim`)");
     }
     let result = write_claim_result(
         checkpointed,
@@ -189,7 +189,7 @@ pub fn build_claim(options: ClaimBuildOptions) -> Result<ClaimBuildResult> {
             }
             eprintln!(
                 "warning: a contract would not accept this claim: {reason}; it was written \
-                 anyway because --claimed-ids was given"
+                 anyway because its ids were given (`iris test claim`)"
             );
         }
     }

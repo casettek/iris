@@ -73,7 +73,7 @@ for contract in DataRootOracle IrisRegistry IrisClaims RasterJournal InputManife
   foundry forge inspect "$contract" errors --json 2> /dev/null
 done > "$errors"
 
-"$iris" devstack deployment --out "$here/deployment.json" --errors "$errors" \
+"$iris" test devstack deployment --out "$here/deployment.json" --errors "$errors" \
   --set "rpc=$IRIS_EVM_RPC" \
   --set "oracle=$oracle" \
   --set "registry=$registry" \

@@ -24,7 +24,7 @@ Both chains run locally from [`devstack/`](../../devstack/README.md).
 | Read a submitted claim's data back, as a challenger | iris | `iris claim fetch` |
 | Ask of a claim what no replay shows, and write the call for each fault | iris | `iris claim audit` |
 | Read a submitted challenge's trace back, as a defender | iris | `iris challenge fetch` |
-| Send the transactions, relay the roots, keep the results | the caller | `iris devstack submit`, or iris-backend |
+| Send the transactions, relay the roots, keep the results | the caller | `iris test devstack submit`, or iris-backend |
 
 iris holds no account and sends nothing to the EVM. Each command does one
 thing, given the addresses it needs, and can be run again. Keys for sending,
@@ -206,7 +206,7 @@ asks these of every checkpoint of a claim and every input its program has,
 from its files and the configuration alone, with nothing run. A challenger does this first. With
 `--calls <file>` it writes every call a contract can be asked, each with what
 the contract is expected to answer, and the ones that point at a fault are
-the ones to send (`iris devstack submit fault --calls <file> --call <n>`).
+the ones to send (`iris test devstack submit fault --calls <file> --call <n>`).
 
 ### What `voidClaim` checks
 
@@ -420,7 +420,7 @@ the file `iris fault prove --commitment` takes.
 Two commands make the wrong submissions a test needs. Neither is anything an
 honest party runs.
 
-- `iris claim corrupt --submission <claim_submission.json> --stage <stage> --claimer <address> --output <dir>`
+- `iris test corrupt-claim --submission <claim_submission.json> --stage <stage> --claimer <address> --output <dir>`
   writes the claim a lying claimer submits: the honest claim with another
   output stated for one checkpoint, under its own list and root, with the
   honest claim's blobs carrying that list. A changed hash alone is no claim,
@@ -447,7 +447,7 @@ honest party runs.
   claim arrives with a valid record, and a replay of the check shows it.
   Built for a pipeline of one inference.
 - `iris challenge post --commitment <corrupted_commit.bin> --out <file>` posts
-  a challenge over the copy of a trace that `iris challenge corrupt` changed,
+  a challenge over the copy of a trace that `iris test corrupt-challenge` changed,
   in place of the bundle's own.
 
 A contract takes both, as it must: nothing at arrival tells them from honest
@@ -473,7 +473,7 @@ than its blob holds is refused, not signed.
 
 ## The contracts are held to iris
 
-`iris devstack replay` is the contracts' test. It asks `iris claim check` (or
+`iris test devstack replay` is the contracts' test. It asks `iris claim check` (or
 `iris challenge check`) and the contract about the same submission, then
 about one changed copy after another, and fails unless the two give the same
 answer: both take it, or both refuse it at the same check.
@@ -499,7 +499,7 @@ program or other inputs, under other pinned programs, and with its journal or
 its seal changed. The proof names its own programs, so it stays one whatever
 Raster's current programs are.
 
-`iris devstack replay faults` holds the two on-the-spot calls to iris. It takes a claim
+`iris test devstack replay faults` holds the two on-the-spot calls to iris. It takes a claim
 in the directory `iris claim fetch` wrote, asks the contract every question
 `iris claim audit` asks (of each checkpoint whether its program is approved,
 of each chained input whether it is its producer's output), and fails unless

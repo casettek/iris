@@ -124,15 +124,17 @@ expect() {
     }
 }
 
-# build_claim <name> <run spec> [claim build arguments]: an honest build in
-# its own directory; writes the submission's path to <name>.submission.
+# build_claim <name> <run spec> [ids]: a claim built in its own directory,
+# of the model's own output or of the ids given; writes the submission's path
+# to <name>.submission.
 build_claim() (
     set -euo pipefail
-    local name=$1 spec=$2
-    shift 2
+    local name=$1 spec=$2 ids=${3:-}
+    local build=(claim build)
+    [ -n "$ids" ] && build=(test claim --ids "$ids")
     mkdir -p "$out/$name"
     cd "$out/$name"
-    "$iris" claim build --run "$spec" --claimer "$(address "$name")" "$@" > build.log 2>&1 || {
+    "$iris" "${build[@]}" --run "$spec" --claimer "$(address "$name")" > build.log 2>&1 || {
         tail -5 build.log >&2
         exit 1
     }
@@ -157,14 +159,14 @@ last_check() {
 # contract.
 submitted() {
     "$iris" claim post --submission "$1"
-    "$iris" devstack submit claim --run "$2" --submission "$1" > "$1.arrival.json"
+    "$iris" test devstack submit claim --run "$2" --submission "$1" > "$1.arrival.json"
     expect "$1.arrival.json" '"accepted": true'
 }
 
 # audited <fetched dir> <faults>: every on-the-spot question asked of the
 # contract, which answers each as iris does and holds this many faults.
 audited() {
-    "$iris" devstack replay faults --run "$1/inference.toml" \
+    "$iris" test devstack replay faults --run "$1/inference.toml" \
         --submission "$1/claim_submission.json" | tee "$1.faults.log"
     if [ "$2" = none ]; then
         expect "$1.faults.log" '"faults": 0}'
@@ -181,7 +183,7 @@ honest_claim() (
     "$iris" claim post --submission "$claim"
     # iris and the contract on the claim and on changed copies of it, then
     # the claim itself submitted.
-    "$iris" devstack replay claim --run "$spec" --submission "$claim"
+    "$iris" test devstack replay claim --run "$spec" --submission "$claim"
     "$iris" claim fetch --submission "$claim" --run "$spec" --out "$out/$1-fetched"
     audited "$out/$1-fetched" none
 )
@@ -192,7 +194,7 @@ voided_lie() (
     local name=$1 claim spec=$3 fault=$4
     claim=$(cat "$out/$2.submission")
     shift 4
-    "$iris" claim corrupt --submission "$claim" --claimer "$(address "$name")" --output "$out/$name-lie" "$@"
+    "$iris" test corrupt-claim --submission "$claim" --claimer "$(address "$name")" --output "$out/$name-lie" "$@"
     submitted "$out/$name-lie/claim_submission.json" "$spec"
     "$iris" claim fetch --submission "$out/$name-lie/claim_submission.json" --run "$spec" --out "$out/$name"
     audited "$out/$name" "$fault"
@@ -205,7 +207,7 @@ replayed_lie() (
     local name=$1 claim spec=$3 stage=$4 must_replay=$5 held=$6
     claim=$(cat "$out/$2.submission")
     shift 6
-    "$iris" claim corrupt --submission "$claim" --claimer "$(address "$name")" --output "$out/$name-lie" \
+    "$iris" test corrupt-claim --submission "$claim" --claimer "$(address "$name")" --output "$out/$name-lie" \
         --stage "$stage" "$@"
     # A lie a replay shows arrives as any claim does, here with a valid record.
     expect "$out/$name-lie/claim_submission.json" '"valid": true'
@@ -243,10 +245,10 @@ replayed_lie() (
     if [ "$held" = yes ]; then
         # iris and the contract on the challenge and on changed copies of
         # it, then the challenge itself submitted.
-        "$iris" devstack replay challenge --run "$spec" \
+        "$iris" test devstack replay challenge --run "$spec" \
             --submission "$out/$name/claim_submission.json" --challenge "$challenge"
     else
-        "$iris" devstack submit challenge \
+        "$iris" test devstack submit challenge \
             --submission "$out/$name/claim_submission.json" --challenge "$challenge" | tee challenge.json
         expect challenge.json '"accepted": true'
     fi
@@ -260,7 +262,7 @@ step chain-contracts "contracts' own tests, with a real fault proof" \
 build_claims() (
     set -euo pipefail
     build_claim "$1honest" "$2"
-    build_claim "$1other-ids" "$2" --claimed-ids "$(other_ids "$2")"
+    build_claim "$1other-ids" "$2" "$(other_ids "$2")"
 )
 step chain-claims "small model: an honest claim and one of other ids built" \
     build_claims "" "$small_spec"

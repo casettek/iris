@@ -91,7 +91,7 @@ pub fn run_replay_profile(options: ReplayProfileOptions) -> Result<PathBuf> {
     summary["stage"] = prefix.stage.into();
     summary["complete"] = profile.complete.into();
     summary["run_dir"] = serde_json::to_value(&run)?;
-    // Standalone measurements are not authorized targets for challenge corruption.
+    // Standalone measurements are not authorized targets for test corrupt-challengeion.
     summary.as_object_mut().unwrap().remove("target");
     summary.as_object_mut().unwrap().remove("target_reason");
     fs::copy(raw, output.join("raster-replay-profile.json"))?;

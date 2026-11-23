@@ -181,7 +181,7 @@ Fault proving stays outside the gate, as it is today.
 
 - All eleven programs are rebuilt, re-locked and verified against their locks. Imports and prepared runs are version 7, so every existing import must be re-imported.
 - All seven guest tests pass in RISC Zero with the new checks, including the production `sequence-check` and `output-finalize` tiles against their native rules.
-- `iris test-parity --skip-challenges` (a new option) passes: exact parity on all three cases, and three new chain-fault cases whose schedule names one more prompt range, merge batch or claimed range than the run. Each finishes through Raster and native-staged, agrees byte for byte, and ends with a model fault.
+- `iris test parity --skip-challenges` (a new option) passes: exact parity on all three cases, and three new chain-fault cases whose schedule names one more prompt range, merge batch or claimed range than the run. Each finishes through Raster and native-staged, agrees byte for byte, and ends with a model fault.
 - `raster-chain.md` has a "Stage schedule" section, and `test-parity.md` lists the new cases and the option.
 
 - The full gate, with its challenge leg, passes in 81 minutes: exact parity on all three cases, and 49 challenge cases found at their first divergent stage. The new `other-schedule` case, whose claimed schedule names one more merge batch than the run, first differs at `prompt_bind` and is replayed there. The ten cases that are not replayed are the same ten short stages as before this work.

@@ -83,14 +83,14 @@ are the same steps by hand.
 source devstack/env.sh
 iris claim build --run spec.toml --claimer 0x...   # builds the claim, posts nothing
 iris claim post --submission <dir>/claim_submission.json   # posts its data to Celestia
-iris devstack submit claim --run spec.toml --submission <dir>/claim_submission.json
+iris test devstack submit claim --run spec.toml --submission <dir>/claim_submission.json
 ```
 
-`iris devstack submit` attests the blobs, relays their block roots, registers the run's
+`iris test devstack submit` attests the blobs, relays their block roots, registers the run's
 configuration if it is not registered, and submits the claim. It prints
 whether the contract took it, or the error it refused it with.
 
-A challenge goes the same way: `iris challenge post`, then `iris devstack
+A challenge goes the same way: `iris challenge post`, then `iris test devstack
 submit challenge --submission <claim_submission.json> --challenge
 <dir>/challenge_submission.json`.
 
@@ -110,7 +110,7 @@ iris challenge build --run fetched/inference.toml --submission fetched/claim_sub
 # Post the trace, then submit.
 iris challenge post --challenge <challenge_bundle.json> \
   --submission fetched/claim_submission.json --run fetched/inference.toml --challenger 0x...
-iris devstack submit challenge --run spec.toml \
+iris test devstack submit challenge --run spec.toml \
   --submission fetched/claim_submission.json --challenge <dir>/challenge_submission.json
 ```
 
@@ -118,10 +118,10 @@ An honest claim has nothing to challenge. To have one, make the claim a lying
 claimer would submit, and submit it as a claim of its own:
 
 ```bash
-iris claim corrupt --submission <claim_submission.json> --stage <stage> \
+iris test corrupt-claim --submission <claim_submission.json> --stage <stage> \
   --claimer 0x... --output lying
 iris claim post --submission lying/claim_submission.json
-iris devstack submit claim --run spec.toml --submission lying/claim_submission.json
+iris test devstack submit claim --run spec.toml --submission lying/claim_submission.json
 ```
 
 A defender reads a challenge's trace back the same way: `iris challenge fetch
@@ -142,7 +142,7 @@ takes from an earlier one is that stage's output:
 ```bash
 iris claim audit --submission fetched/claim_submission.json \
   --run fetched/inference.toml --calls calls.json
-iris devstack submit fault --calls calls.json --call <n>
+iris test devstack submit fault --calls calls.json --call <n>
 ```
 
 The audit runs nothing and prints each fault with the number of the call that
@@ -150,7 +150,7 @@ points at it. The contract checks the call against the claim's own
 checkpoints and holds the claim void (`voided(claimId)`); there is no
 challenge to post and nothing for the claimer to answer.
 
-To have such a claim, make the lie with `iris claim corrupt --submission ...
+To have such a claim, make the lie with `iris test corrupt-claim --submission ...
 --fault program` or `--fault input`, then post and submit it as above.
 
 Two more lies are ones a replay shows, and an audit finds nothing in them.
@@ -167,7 +167,7 @@ A challenge is shown false with a Raster fault proof of its trace, as `iris
 fault prove` writes it:
 
 ```bash
-iris devstack submit fault-proof --submission <claim_submission.json> \
+iris test devstack submit fault-proof --submission <claim_submission.json> \
   --challenge <challenge_submission.json> --receipt <fault.receipt>
 ```
 
@@ -187,16 +187,16 @@ kept in `contracts/test/fault_proof.json`. It needs Docker and no chain.
 ## Check the contracts against iris
 
 ```bash
-iris devstack replay claim --run spec.toml --submission <dir>/claim_submission.json
-iris devstack replay challenge --run spec.toml \
+iris test devstack replay claim --run spec.toml --submission <dir>/claim_submission.json
+iris test devstack replay challenge --run spec.toml \
   --submission <dir>/claim_submission.json --challenge <dir>/challenge_submission.json
 ```
 
-`iris devstack replay faults --run fetched/inference.toml --submission
+`iris test devstack replay faults --run fetched/inference.toml --submission
 fetched/claim_submission.json` does the same for the two on-the-spot calls:
 every question the audit asks, asked of the contract.
 
-`iris devstack replay` is the contracts' test. It asks `iris claim check` (or `iris
+`iris test devstack replay` is the contracts' test. It asks `iris claim check` (or `iris
 challenge check`) and the contract about the same submission, then about one
 changed copy after another, and fails unless the two give the same answer:
 both take it, or both refuse it at the same check. A few cases are the
@@ -223,7 +223,7 @@ IRIS_TEST_CELESTIA=1 just test-parity
 | `deploy.sh` | Deploys the contracts and writes `deployment.json`. |
 
 Two commands of the iris binary drive the stack
-(`crates/inference/cli/src/devstack/`): `iris devstack submit` sends a claim,
-a challenge, a fault proof or a fault, and `iris devstack replay` compares
+(`crates/inference/cli/src/devstack/`): `iris test devstack submit` sends a claim,
+a challenge, a fault proof or a fault, and `iris test devstack replay` compares
 the contracts with iris, case by case. `deploy.sh` writes `deployment.json`
-with `iris devstack deployment`.
+with `iris test devstack deployment`.

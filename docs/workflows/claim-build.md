@@ -27,9 +27,9 @@ without a second direct pass. Nothing else changes. The ids must still fill
 `tokens` unless the last is EOS, the chain re-derives every token, and ids that
 are not the run's greedy output fail the build at step 7.
 
-The hidden debug flag `--claimed-ids 1,2,3` claims the given ids instead of
-discovering them. A rejection is then a warning, and the claim is written anyway.
-This builds deliberately false claims for challenge tests.
+`iris test claim --ids 1,2,3 --run inference.toml` builds a claim of the given
+ids instead of discovering them. A rejection is then a warning, and the claim is
+written anyway. This builds deliberately false claims for challenge tests.
 
 Per-stage checkpoint files live under `target/staged-infer/runs/<run>/<stage>/`:
 
@@ -51,7 +51,7 @@ Claim files live beside the generated checkpoint tree:
 `checkpoints.txt` is the compact public checkpoint reference used by the hash-based challenge flow. For manual challenge testing, copy and corrupt one hash:
 
 ```bash
-cargo run --release -p iris-cli -- claim corrupt \
+cargo run --release -p iris-cli -- test corrupt-checkpoints \
   --checkpoints target/staged-infer/runs/.../checkpoints.txt \
   --random
 # or
@@ -61,7 +61,7 @@ just corrupt target/staged-infer/runs/.../checkpoints.txt
 The helper writes a corrupted hash list plus a local `*.corruption.json` manifest that records the selected checkpoint for debugging. Stage-based selection is also available when `checkpoint_trace.json` is beside the hash list:
 
 ```bash
-cargo run --release -p iris-cli -- claim corrupt \
+cargo run --release -p iris-cli -- test corrupt-checkpoints \
   --checkpoints target/staged-infer/runs/.../checkpoints.txt \
   --stage range_p0_l3
 ```

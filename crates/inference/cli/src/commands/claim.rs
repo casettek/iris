@@ -7,10 +7,6 @@ use crate::*;
 pub(crate) enum ClaimCommand {
     /// Build a staged-infer checkpoint claim.
     Build(ClaimBuildArgs),
-    /// Copy and corrupt one claimed checkpoint hash for manual challenge
-    /// tests. With `--submission`, write the claim a lying claimer would
-    /// submit: another output stated for one checkpoint, with its own list.
-    Corrupt(ClaimCorruptHashesArgs),
     /// Read a submitted claim's data back from the data-availability layer
     /// into a new directory, with a run spec over what it posted: what a
     /// challenger starts from.
@@ -63,24 +59,6 @@ pub(crate) struct ClaimAuditArgs {
     /// send.
     #[arg(long)]
     calls: Option<PathBuf>,
-}
-
-/// What a lying claim says falsely of its checkpoint.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
-pub(crate) enum ClaimFaultArg {
-    /// Another output than the stage's.
-    Output,
-    /// A program outside the approved set.
-    Program,
-    /// An input that is not what its producer made.
-    Input,
-    /// An input the claim may name, in a place the chain does not give it:
-    /// the value an earlier stage of the same program is given.
-    Arrangement,
-    /// The check's record stated valid where the check does not find it so,
-    /// with the result stage run on that record. Of a claim whose claimed
-    /// output is not the model's.
-    Verdict,
 }
 
 #[derive(Debug, Args)]
@@ -166,21 +144,12 @@ pub(crate) struct ClaimCheckArgs {
 pub(crate) struct ClaimBuildArgs {
     /// Run spec to execute.
     #[arg(long, default_value = inference_artifacts::INFERENCE_RUN_SPEC_TOML)]
-    run: PathBuf,
-
-    /// Debug: claim these comma-separated output ids
-    /// instead of discovering them, to build claims that should be refuted.
-    #[arg(long = "claimed-ids", value_delimiter = ',', hide = true)]
-    claimed_ids: Option<Vec<u32>>,
+    pub(crate) run: PathBuf,
 
     /// The comma-separated output ids `iris infer` printed for this same run
     /// spec. The claim is built from them without running direct inference
     /// again; the chain still re-derives every token and rejects any other ids.
-    #[arg(
-        long = "direct-output-ids",
-        value_delimiter = ',',
-        conflicts_with = "claimed_ids"
-    )]
+    #[arg(long = "direct-output-ids", value_delimiter = ',')]
     direct_output_ids: Option<Vec<u32>>,
 
     /// Use the previous per-stage child-process staged-infer runner.
@@ -194,60 +163,6 @@ pub(crate) struct ClaimBuildArgs {
     claimer: Option<String>,
 }
 
-#[derive(Debug, Args)]
-pub(crate) struct ClaimCorruptHashesArgs {
-    /// Checkpoints hash list to copy and corrupt.
-    #[arg(long = "checkpoints", required_unless_present = "submission")]
-    checkpoints: Option<PathBuf>,
-
-    /// An honest claim's `claim_submission.json`, in its directory. The
-    /// lying claim is written to `--output`, a new directory, ready for
-    /// `iris claim post`.
-    #[arg(long, conflicts_with_all = ["checkpoints", "trace"], requires = "output")]
-    submission: Option<PathBuf>,
-
-    /// With `--submission`: the address the lying claim is attributed to.
-    /// Default: the honest claim's.
-    #[arg(long, requires = "submission")]
-    claimer: Option<String>,
-
-    /// With `--submission`: what the lying claim says falsely of the
-    /// checkpoint. An output is a lie a replay shows. A program or an input
-    /// is one a challenger points at (`iris claim audit`).
-    #[arg(long, value_enum, default_value = "output", requires = "submission")]
-    fault: ClaimFaultArg,
-
-    /// With `--fault input`: the input to lie about. Default: the first the
-    /// checkpoint names a producer for.
-    #[arg(long, requires = "submission")]
-    input: Option<String>,
-
-    /// Optional output path for the corrupted hash list. With
-    /// `--submission`, the lying claim's directory.
-    #[arg(long)]
-    output: Option<PathBuf>,
-
-    /// Optional checkpoint trace used only to resolve --stage to an index.
-    #[arg(long)]
-    trace: Option<PathBuf>,
-
-    /// Corrupt this zero-based checkpoint index.
-    #[arg(long)]
-    index: Option<usize>,
-
-    /// Corrupt the checkpoint with this stage name.
-    #[arg(long)]
-    stage: Option<String>,
-
-    /// Pick a checkpoint to corrupt. This is the default when no selector is supplied.
-    #[arg(long)]
-    random: bool,
-
-    /// Seed for reproducible random selection.
-    #[arg(long)]
-    seed: Option<String>,
-}
-
 impl ClaimBuildArgs {
     pub(crate) fn into_options(self) -> Result<ClaimBuildOptions> {
         let current_exe = std::env::current_exe().context("failed to locate current executable")?;
@@ -258,81 +173,51 @@ impl ClaimBuildArgs {
         };
         let mut options =
             ClaimBuildOptions::from_current_dir(current_exe, staged_backend, self.run)?;
-        options.claimed_token_ids = self.claimed_ids;
         options.direct_output_ids = self.direct_output_ids;
         options.claimer = self.claimer.or_else(|| std::env::var("IRIS_CLAIMER").ok());
         Ok(options)
     }
 }
 
-impl ClaimCorruptHashesArgs {
-    pub(crate) fn selection(&self) -> Result<CorruptCheckpointSelection> {
-        let selector_count = usize::from(self.index.is_some())
-            + usize::from(self.stage.is_some())
-            + usize::from(self.random);
-        if selector_count > 1 {
-            anyhow::bail!("claim corrupt accepts only one of --index, --stage, or --random");
-        }
-        Ok(if let Some(index) = self.index {
-            CorruptCheckpointSelection::Index(index)
-        } else if let Some(stage) = self.stage.clone() {
-            CorruptCheckpointSelection::Stage(stage)
-        } else {
-            CorruptCheckpointSelection::Random {
-                seed: self.seed.clone(),
+/// Build a claim and print what it states and where it is.
+pub(crate) fn build(options: ClaimBuildOptions, run_spec_path: PathBuf) -> Result<ExitCode> {
+    warn_if_debug_build("claim build");
+    let result = build_claim(options)?;
+    println!("pipeline: {}", result.pipeline);
+    match (result.final_result.as_ref(), result.consensus.as_ref()) {
+        (Some(first), Some(consensus)) => {
+            print_consensus(first, consensus);
+            for (inference, result) in [first, &consensus.second].into_iter().enumerate() {
+                println!("inference: {inference}");
+                print_infer_result(result, Some(&run_spec_path), inference);
             }
-        })
+        }
+        (Some(final_result), None) => print_infer_result(final_result, Some(&run_spec_path), 0),
+        (None, _) => {}
     }
-
-    pub(crate) fn into_options(self) -> Result<CorruptCheckpointHashesOptions> {
-        let selection = self.selection()?;
-        Ok(CorruptCheckpointHashesOptions {
-            hashes_path: self
-                .checkpoints
-                .context("claim corrupt requires --checkpoints or --submission")?,
-            trace_path: self.trace,
-            output_path: self.output,
-            selection,
-        })
+    println!(
+        "checkpoint trace: {}",
+        result.checkpoint_trace_path.display()
+    );
+    println!("checkpoints: {}", result.checkpoint_hashes_path.display());
+    println!("claim bundle: {}", result.claim_bundle_path.display());
+    if let Some(path) = result.claim_submission_path.as_ref() {
+        println!("claim submission: {}", path.display());
+        if path
+            .with_file_name(availability::POSTING_OUTPUTS_JSON)
+            .exists()
+        {
+            println!("posting: prepared, not posted (`iris claim post`)");
+        }
     }
+    Ok(ExitCode::SUCCESS)
 }
 
 pub(crate) fn run(command: ClaimCommand) -> Result<ExitCode> {
     match command {
         ClaimCommand::Build(args) => {
-            warn_if_debug_build("claim build");
             let run_spec_path = args.run.clone();
-            let result = build_claim(args.into_options()?)?;
-            println!("pipeline: {}", result.pipeline);
-            match (result.final_result.as_ref(), result.consensus.as_ref()) {
-                (Some(first), Some(consensus)) => {
-                    print_consensus(first, consensus);
-                    for (inference, result) in [first, &consensus.second].into_iter().enumerate() {
-                        println!("inference: {inference}");
-                        print_infer_result(result, Some(&run_spec_path), inference);
-                    }
-                }
-                (Some(final_result), None) => {
-                    print_infer_result(final_result, Some(&run_spec_path), 0)
-                }
-                (None, _) => {}
-            }
-            println!(
-                "checkpoint trace: {}",
-                result.checkpoint_trace_path.display()
-            );
-            println!("checkpoints: {}", result.checkpoint_hashes_path.display());
-            println!("claim bundle: {}", result.claim_bundle_path.display());
-            if let Some(path) = result.claim_submission_path.as_ref() {
-                println!("claim submission: {}", path.display());
-                if path
-                    .with_file_name(availability::POSTING_OUTPUTS_JSON)
-                    .exists()
-                {
-                    println!("posting: prepared, not posted (`iris claim post`)");
-                }
-            }
-            Ok(ExitCode::SUCCESS)
+            build(args.into_options()?, run_spec_path)
         }
         ClaimCommand::Post(args) => {
             let base_dir =
@@ -439,63 +324,6 @@ pub(crate) fn run(command: ClaimCommand) -> Result<ExitCode> {
                 inference_artifacts::write_json(&calls, &audit.calls)?;
                 println!("calls: {}", calls.display());
             }
-            Ok(ExitCode::SUCCESS)
-        }
-        ClaimCommand::Corrupt(args) if args.submission.is_some() => {
-            let base_dir =
-                std::env::current_dir().context("failed to resolve current directory")?;
-            let selection = args.selection()?;
-            anyhow::ensure!(
-                args.input.is_none()
-                    || matches!(
-                        args.fault,
-                        ClaimFaultArg::Input | ClaimFaultArg::Arrangement
-                    ),
-                "--input names the input of a `--fault input` or `--fault arrangement` lie"
-            );
-            let lying = lies::corrupt_claim(lies::CorruptClaimOptions {
-                submission_path: absolute(&base_dir, &args.submission.expect("checked above")),
-                selection,
-                fault: match args.fault {
-                    ClaimFaultArg::Output => lies::CorruptFault::Output,
-                    ClaimFaultArg::Program => lies::CorruptFault::Program,
-                    ClaimFaultArg::Input => lies::CorruptFault::Input(args.input),
-                    ClaimFaultArg::Arrangement => lies::CorruptFault::Arrangement(args.input),
-                    ClaimFaultArg::Verdict => lies::CorruptFault::Verdict,
-                },
-                claimer: args.claimer,
-                out_dir: absolute(&base_dir, &args.output.expect("clap requires it")),
-            })?;
-            println!("corrupted checkpoints: {}", lying.hashes_path.display());
-            println!("corruption manifest: {}", lying.manifest_path.display());
-            println!("corrupted checkpoint index: {}", lying.checkpoint_index);
-            println!(
-                "corrupted checkpoint number: {}",
-                lying.checkpoint_index + 1
-            );
-            println!("corrupted stage: {}", lying.stage);
-            println!("original hash: {}", lying.original_hash);
-            println!("corrupted hash: {}", lying.corrupted_hash);
-            println!("claim submission: {}", lying.submission_path.display());
-            Ok(ExitCode::SUCCESS)
-        }
-        ClaimCommand::Corrupt(args) => {
-            let result = corrupt_checkpoint_hashes(args.into_options()?)?;
-            println!(
-                "corrupted checkpoints: {}",
-                result.corrupted_hashes_path.display()
-            );
-            println!(
-                "corruption manifest: {}",
-                result.corruption_manifest_path.display()
-            );
-            println!("corrupted checkpoint index: {}", result.checkpoint_index);
-            println!("corrupted checkpoint number: {}", result.checkpoint_number);
-            if let Some(stage) = result.stage.as_ref() {
-                println!("corrupted stage: {stage}");
-            }
-            println!("original hash: {}", result.original_hash);
-            println!("corrupted hash: {}", result.corrupted_hash);
             Ok(ExitCode::SUCCESS)
         }
     }

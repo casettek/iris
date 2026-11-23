@@ -16,7 +16,7 @@ replay-profile stage top_n="3" run="inference.toml":
     cargo run --release -p iris-cli --features replay-profile -- replay-profile --run "{{run}}" --stage "{{stage}}" --top-n "{{top_n}}"
 
 corrupt checkpoints:
-    cargo run --release -p iris-cli -- claim corrupt --checkpoints "{{checkpoints}}"
+    cargo run --release -p iris-cli -- test corrupt-checkpoints --checkpoints "{{checkpoints}}"
 
 challenge claim_context checkpoints run="inference.toml":
     cargo run --release -p iris-cli -- challenge build --claim-context "{{claim_context}}" --checkpoints "{{checkpoints}}" --run "{{run}}"
@@ -102,4 +102,4 @@ contracts-test:
 
 # Hold the contracts to iris on one posted claim: <run spec> <claim_submission.json>
 devstack-replay run submission:
-    cargo run --release -p iris-cli -- devstack replay claim --run "{{run}}" --submission "{{submission}}"
+    cargo run --release -p iris-cli -- test devstack replay claim --run "{{run}}" --submission "{{submission}}"

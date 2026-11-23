@@ -240,7 +240,7 @@ for the contract. Solidity re-implements only what is a hash or a comparison.
    receipt verification. Each contract test replays a case the Rust model
    already decides, and both must agree. Built: the registry, the two entry
    points with their arrival checks, a root oracle fed by a trusted relayer,
-   and the replay (`iris devstack replay`). Not built: the state machine and
+   and the replay (`iris test devstack replay`). Not built: the state machine and
    receipt verification.
 6. **End to end** on the parity model: an honest claim that finalizes, a false
    checkpoint that is challenged and voided, a false challenge that is defended.

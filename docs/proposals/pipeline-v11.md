@@ -223,7 +223,7 @@ unchanged, not improved.
 On a prompt twice as long (about 2,400 tokens, five ranges) the fourth range's bind is
 27,620 steps and its check 2,727,347: a range is the same size wherever it is in the prompt.
 
-The step counts and cycles are from `challenge build` and `challenge profile` on each stage.
+The step counts and cycles are from `challenge build` and `test profile` on each stage.
 The 128-step fault-window figures of the baseline were not measured again.
 
 Two things the measurements showed that the baseline had not:
