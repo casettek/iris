@@ -339,6 +339,8 @@ pub(super) fn run_challenge_leg(leg: &Leg) -> Result<Value> {
         "a non-greedy claim was not rejected on its final record"
     );
 
+    replays.extend(posted_lies(leg, &spec, &honest, &refuted)?);
+
     // An honest claimer that ran a different model. Nothing of that model is
     // available to the challenger, and the run differs at the first stage that
     // names it.
@@ -1079,6 +1081,259 @@ fn contract_challenge(
     outcome["contract_admits"] = json!(true);
     outcome["trace_body_bytes"] = json!(submission.availability[0].length);
     Ok(outcome)
+}
+
+/// The lying claims that no comparison voids and that a challenger's run of
+/// the chain as the template arranges it would not dispute: each is settled
+/// by a replay of one stage on the inputs the claim's own checkpoint names.
+///
+/// Four give a stage a value the claim is allowed to name, in a place the
+/// chain does not give it: another layer's weights, another range's marks,
+/// another stage's output, and the empty value where an earlier stage's
+/// output belongs. Each states the output of a run that was given the right
+/// value. A contract takes the claim and an audit finds nothing, since every
+/// input is one a challenger holds. The challenger runs every stage on what
+/// its checkpoint names, differs at the stage that lies, and replays that
+/// stage on those inputs: Raster admits the challenge as one about the
+/// liar's checkpoint, and so does a contract.
+///
+/// The fifth is the lie of a claimer whose claimed output is not the
+/// model's: its last check states a valid record, and the result stage is
+/// run on that. It arrives with a valid record. The challenger differs at
+/// the check. The check of the pinned model is under the replay window, so
+/// the leg checks only that the challenger goes to replay it.
+fn posted_lies(
+    leg: &Leg,
+    spec: &Path,
+    honest: &ClaimBuildResult,
+    not_greedy: &ClaimBuildResult,
+) -> Result<Vec<Value>> {
+    use crate::posted::CorruptFault;
+    use inference_artifacts::contract::ClaimSubmission;
+
+    let layer = crate::availability::open_layer(None)?;
+    let layer = layer.as_ref();
+    let configuration = crate::contract::spec_configuration(spec, None)?;
+    let now = crate::availability::now()?;
+    let liar = "0x00000000000000000000000000000000000011a3";
+    let challenger = "0x000000000000000000000000000000000000c4a2";
+    let submission_of = |claim: &ClaimBuildResult, what: &str| {
+        claim
+            .claim_submission_path
+            .clone()
+            .with_context(|| format!("the {what} claim wrote no submission"))
+    };
+    let honest_submission = submission_of(honest, "honest")?;
+    let not_greedy_submission = submission_of(not_greedy, "not-greedy")?;
+    let unforged: ClaimSubmission = read_json(&not_greedy_submission)?;
+    ensure!(
+        unforged
+            .inferences
+            .iter()
+            .all(|inference| !inference.record.valid),
+        "a claim of ids that are not the greedy output states a valid record as it is"
+    );
+    // The check the result stage reads.
+    let last_check = {
+        let trace = read_checkpoint_trace(&not_greedy.checkpoint_trace_path)?;
+        let result = trace
+            .checkpoints
+            .last()
+            .context("the not-greedy claim has no checkpoints")?;
+        let position = *result
+            .input_sources
+            .values()
+            .next()
+            .context("the not-greedy claim's last stage reads no check")?;
+        trace.checkpoints[position as usize].stage.clone()
+    };
+    let arranged = |input: &str| CorruptFault::Arrangement(Some(input.to_string()));
+    let cases = [
+        (
+            "arranged-pinned",
+            &honest_submission,
+            "range_p1_l2",
+            arranged("layer"),
+        ),
+        (
+            "arranged-posted",
+            &honest_submission,
+            "prompt_check_p1",
+            arranged("marks"),
+        ),
+        (
+            "arranged-chained",
+            &honest_submission,
+            "prompt_check_p1",
+            arranged("bound"),
+        ),
+        (
+            "arranged-empty",
+            &honest_submission,
+            "prompt_check_p1",
+            arranged("previous"),
+        ),
+        (
+            "forged-verdict",
+            &not_greedy_submission,
+            last_check.as_str(),
+            CorruptFault::Verdict,
+        ),
+    ];
+
+    let mut outcomes = Vec::new();
+    for (name, source, stage, fault) in cases {
+        let forged = fault == CorruptFault::Verdict;
+        let dir = leg.dir.join(name);
+        let lie = crate::posted::corrupt_claim(crate::posted::CorruptClaimOptions {
+            submission_path: source.clone(),
+            selection: CorruptCheckpointSelection::Stage(stage.to_string()),
+            fault,
+            claimer: Some(liar.to_string()),
+            out_dir: dir.join("claim"),
+        })
+        .with_context(|| format!("`{name}`: writing the lying claim"))?;
+        let mut claim: ClaimSubmission = read_json(&lie.submission_path)?;
+        claim.availability = crate::availability::PreparedPosting::read(&dir.join("claim"))?
+            .post(layer)
+            .with_context(|| format!("`{name}`: posting the lying claim's data"))?;
+        inference_artifacts::write_json(&lie.submission_path, &claim)?;
+        let posted = inference_artifacts::availability::check_claim_availability(
+            layer,
+            inference_artifacts::availability::AvailabilityParameters::default(),
+            &claim.availability,
+            &inference_artifacts::availability::RequiredPosting::of(&claim),
+            now,
+        )
+        .map_err(|rejection| {
+            anyhow::anyhow!(
+                "`{name}`: a contract does not take the lying claim's data: {rejection}"
+            )
+        })?;
+        inference_artifacts::contract::check_stated_records(
+            &configuration.programs,
+            &claim,
+            &posted,
+        )
+        .map_err(|rejection| {
+            anyhow::anyhow!("`{name}`: a contract does not take the lying claim: {rejection}")
+        })?;
+        ensure!(
+            !forged
+                || claim
+                    .inferences
+                    .iter()
+                    .all(|inference| inference.record.valid),
+            "`{name}`: the forged claim does not arrive with a valid record"
+        );
+
+        let fetched = crate::posted::fetch_claim(crate::posted::FetchClaimOptions {
+            submission_path: lie.submission_path.clone(),
+            run_spec_path: spec.to_path_buf(),
+            pins_path: None,
+            da_dir: None,
+            out_dir: dir.join("fetched"),
+        })
+        .with_context(|| format!("`{name}`: reading the lying claim back from the layer"))?;
+        let audit = crate::posted::audit_claim(crate::posted::AuditClaimOptions {
+            submission_path: fetched.submission_path.clone(),
+            run_spec_path: fetched.run_spec_path.clone(),
+            pins_path: None,
+        })?;
+        ensure!(
+            audit.faults.is_empty(),
+            "`{name}`: an audit voids a claim whose every input is one a challenger holds: {} at \
+             checkpoint {}",
+            audit.faults[0].fault,
+            audit.faults[0].checkpoint
+        );
+
+        let challenge_dir = dir.join("challenge");
+        fs::create_dir_all(&challenge_dir)?;
+        let log = challenge_dir.join("challenge.log");
+        let mut run = command(leg.exe, leg.root);
+        run.current_dir(&challenge_dir)
+            .args(["challenge", "build", "--run"])
+            .arg(&fetched.run_spec_path)
+            .arg("--submission")
+            .arg(&fetched.submission_path);
+        let built = logged(run, &log);
+        let text = fs::read_to_string(&log)?;
+        ensure!(
+            has_line(&text, &format!("stage to replay: {stage}")),
+            "`{name}`: the challenger did not go to replay `{stage}`"
+        );
+        let mut outcome = json!({
+            "case": name,
+            "stage": stage,
+            "contract_takes_the_lying_claim": true,
+            "audit_faults": 0,
+            "replayed": false,
+        });
+        if !long_enough_to_challenge(stage) {
+            outcomes.push(outcome);
+            continue;
+        }
+        built.with_context(|| format!("`{name}`: challenge of the posted claim"))?;
+        ensure!(
+            has_line(&text, &format!("divergence found: {stage}")),
+            "`{name}`: the challenge is not of `{stage}`"
+        );
+        let lying = read_checkpoint_trace(
+            &dir.join("claim")
+                .join(inference_artifacts::CHECKPOINT_TRACE_JSON),
+        )?;
+        let claimed = &lying.checkpoints[lie.checkpoint_index];
+        let replay = replay_stage_dir(leg, name, stage)?;
+        let output_sha256 = file_sha256(&replay.join("output.bin"))?;
+        // The replay ran on the input list the liar's checkpoint commits to.
+        ensure!(
+            file_sha256(&replay.join("input_manifest.json"))? == claimed.input_commitment,
+            "`{name}`: the replay is not on the inputs the lying checkpoint names"
+        );
+        let commitment = CommitmentFile::read_memory(&replay.join("commit.bin"))?;
+        let challenge = stage_challenge(claimed, commitment.header(), &output_sha256)
+            .with_context(|| {
+                format!("`{name}`: no Raster challenge can be built from the lying checkpoint")
+            })?;
+        let admitted =
+            raster_prover::challenge::verify_challenge(&challenge).map_err(|refusal| {
+                anyhow::anyhow!("`{name}`: Raster refuses the challenge: {refusal}")
+            })?;
+        ensure!(
+            Some(admitted.chain_digest) == dispute_digest(claimed)
+                && hex::encode(&admitted.stage.program_commitment) == claimed.program_commitment
+                && hex::encode(&admitted.stage.input_manifest_commitment)
+                    == claimed.input_commitment,
+            "`{name}`: the admitted challenge is not about the lying checkpoint"
+        );
+        let submission = crate::contract::challenge_submission(
+            &claim.checkpoints_root,
+            lie.checkpoint_index as u32,
+            claimed,
+            &replay.join("commit.bin"),
+            &output_sha256,
+            challenger,
+            layer,
+        )?;
+        let rejection = crate::contract::check_challenge(
+            &configuration,
+            &lie.submission_path,
+            &submission,
+            layer,
+            now,
+        )?
+        .rejection();
+        ensure!(
+            rejection.is_none(),
+            "`{name}`: a contract refuses the challenge: {rejection:?}"
+        );
+        outcome["replayed"] = json!(true);
+        outcome["raster_admits"] = json!(true);
+        outcome["contract_admits"] = json!(true);
+        outcomes.push(outcome);
+    }
+    Ok(outcomes)
 }
 
 /// What the honest claim binds: the same text, configuration, cuts and ids a

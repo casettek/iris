@@ -115,6 +115,20 @@ the chain then checks it.
   contract takes each claim, and an audit of it read back
   (`iris claim audit`) must find that fault at that checkpoint. An audit of a
   claim that lies only about an output must find none.
+  Four lying claims give a stage a value the claim is allowed to name, in a
+  place the chain does not give it: another layer's weights
+  (`arranged-pinned`), another range's marks (`arranged-posted`), another
+  stage's output (`arranged-chained`) and the empty value where an earlier
+  stage's output belongs (`arranged-empty`). A contract takes each, an audit
+  of it must find nothing, and `challenge build --submission` must replay
+  that stage on the input list the lying checkpoint commits to: Raster's
+  admission and a contract's must both accept the challenge as one about
+  that checkpoint.
+  A fifth is a claim of ids that are not the model's with its verdict forged
+  (`forged-verdict`): it must arrive with a valid record, an audit must find
+  nothing, and the challenger must go to replay the last check. That check
+  is under the replay window on the pinned model, so the replay itself is
+  not run here.
   The claim with a source is read back the same way (source leg): the
   documents must be the posted ones, and the run spec written over them must
   give the source record the claim names.

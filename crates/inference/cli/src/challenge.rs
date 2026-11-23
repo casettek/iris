@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use anyhow::{bail, Context, Result};
+use anyhow::{bail, ensure, Context, Result};
 use staged_infer::chain_runner::StagedExecutionBackend;
 use staged_infer::{
     CheckpointHashChallengeConfig, CheckpointedInferenceConfig, CheckpointedInferenceExecutor,
@@ -33,7 +33,9 @@ pub enum ChallengeInput {
     /// its `claim_submission.json`, with its `checkpoints.txt`, its
     /// checkpoints and the inputs its run was given beside it. Nothing of
     /// the claimer's own run is read. Every stage is run on the inputs the
-    /// claim posted, under `run_spec_path`, which `claim fetch` wrote.
+    /// claim's checkpoint names for it, each of which the claim posted, the
+    /// configuration pins or an earlier stage made, under `run_spec_path`,
+    /// which `claim fetch` wrote.
     Posted {
         submission_path: PathBuf,
     },
@@ -88,6 +90,19 @@ pub fn build_challenge(options: ChallengeBuildOptions) -> Result<ChallengeBuildR
     challenge_progress("checkpoint-trace", None, None)?;
     let claimed_input = load_claimed_input(&options.input)?;
     let (manifest_path, prepared_run) = challenge_run(&options, &claimed_input)?;
+    // A posted claim's chain is run as the claim arranges it, so that every
+    // stage is a run on the inputs its checkpoint names.
+    let posted_claim = match &options.input {
+        ChallengeInput::Posted { submission_path } => Some(arrange_posted_claim(
+            &manifest_path,
+            submission_path,
+            &claimed_input,
+        )?),
+        _ => None,
+    };
+    let manifest_path = posted_claim
+        .as_ref()
+        .map_or(manifest_path, |posted| posted.manifest_path.clone());
     let executor = CheckpointedInferenceExecutor;
     let (recomputed_chain_dir, recomputed_trace, divergence, final_result, consensus) =
         match &claimed_input.checkpoints {
@@ -100,6 +115,14 @@ pub fn build_challenge(options: ChallengeBuildOptions) -> Result<ChallengeBuildR
                         staged_backend: options.staged_backend,
                         claimed_hashes_path: path.clone(),
                         claimed_hashes: hashes.clone(),
+                        claimed_sources: posted_claim.as_ref().map(|posted| {
+                            posted
+                                .trace
+                                .checkpoints
+                                .iter()
+                                .map(|checkpoint| checkpoint.input_sources.clone())
+                                .collect()
+                        }),
                     })?;
                 (
                     recomputed.chain_dir,
@@ -186,20 +209,16 @@ pub fn build_challenge(options: ChallengeBuildOptions) -> Result<ChallengeBuildR
     }
 
     // A replay disputes a stage only when it is a run of the claimer's
-    // program on the claimer's inputs. This run is on the inputs the claim
-    // posted, so a checkpoint that differs in more than its output names
-    // another program or other inputs than the chain gives the stage. The
+    // program on the claimer's inputs. This run gave every stage the inputs
+    // its checkpoint names, so a checkpoint that differs in more than its
+    // output names another program than the chain runs the stage with. The
     // claimer could answer a replay of such a stage with a fault proof, since
-    // the replay is not a run on the inputs its checkpoint names.
-    if let ChallengeInput::Posted { submission_path } = &options.input {
+    // the replay is not a run of the program its checkpoint names.
+    let mut disputed = None;
+    if let Some(posted) = &posted_claim {
         use inference_artifacts::contract::{settlement, Settlement};
-        let claimed_trace = read_checkpoint_trace(
-            &submission_path
-                .parent()
-                .context("the claim submission has no parent directory")?
-                .join(inference_artifacts::CHECKPOINT_TRACE_JSON),
-        )?;
-        let claimed = claimed_trace
+        let claimed = posted
+            .trace
             .checkpoints
             .get(divergence.checkpoint_index)
             .with_context(|| {
@@ -222,23 +241,22 @@ pub fn build_challenge(options: ChallengeBuildOptions) -> Result<ChallengeBuildR
         };
         if let Some(differs) = differs {
             bail!(
-                "checkpoint {} (`{}`) of the claim names {differs} than a run of the chain on \
-                 the inputs the claim posted, so a replay of the stage here would dispute \
+                "checkpoint {} (`{}`) of the claim names {differs} than a run of that stage on \
+                 the inputs its checkpoint names, so a replay of the stage here would dispute \
                  nothing the claimer did. Audit the claim (`iris claim audit`): a program \
-                 outside the approved set, or an input that is not an earlier stage's output, a \
-                 pinned commitment or a posted value, voids it with no replay. A claim the \
-                 audit finds nothing in gives its stages inputs in another arrangement than \
-                 the chain's, and replaying a stage on such an arrangement is not built",
+                 outside the approved set voids it with no replay",
                 divergence.checkpoint_index,
                 divergence.stage
             );
         }
+        disputed = Some(claimed.clone());
     }
 
     let challenge_dir = recomputed_chain_dir
         .join("challenge")
         .join(sanitize_stage_name(&divergence.stage));
     let replay_run_dir = challenge_dir.join("raster-replay");
+    println!("stage to replay: {}", divergence.stage);
     challenge_progress("replay-preparing", Some(checkpoint_trace_duration), None)?;
     seed_replay_directory(
         &recomputed_chain_dir,
@@ -255,6 +273,27 @@ pub fn build_challenge(options: ChallengeBuildOptions) -> Result<ChallengeBuildR
         &divergence.stage,
     )?;
     let raster_replay_duration = raster_replay_started.elapsed();
+    // The replay is what the challenge states. It must be a run on the
+    // inputs the claimer's checkpoint names, or the claimer answers it, and
+    // it must end in another output than the claim's, or it disputes
+    // nothing.
+    if let Some(claimed) = &disputed {
+        let replayed_inputs = file_sha256_hex(&replay_package.input_manifest_path)?;
+        ensure!(
+            replayed_inputs == claimed.input_commitment,
+            "the replay of `{}` ran on the input list {replayed_inputs}, and the claim's \
+             checkpoint names {}",
+            divergence.stage,
+            claimed.input_commitment
+        );
+        ensure!(
+            file_sha256_hex(&replay_package.output_path)? != claimed.output_sha256,
+            "the replay of `{}` on the inputs its checkpoint names ends in the output the \
+             claim states, and this run's own execution of the stage ended in another: the two \
+             engines disagree, so there is no challenge to make of it",
+            divergence.stage
+        );
+    }
     challenge_progress(
         "validating",
         Some(checkpoint_trace_duration),
@@ -293,6 +332,54 @@ pub fn build_challenge(options: ChallengeBuildOptions) -> Result<ChallengeBuildR
             challenge_bundle,
         },
     })
+}
+
+/// A posted claim, with the chain its checkpoints describe.
+struct PostedClaim {
+    trace: CheckpointTrace,
+    manifest_path: PathBuf,
+}
+
+/// Write the chain a posted claim's checkpoints describe beside the manifest
+/// of the run prepared from its inputs.
+fn arrange_posted_claim(
+    run_manifest_path: &Path,
+    submission_path: &Path,
+    claimed: &ClaimedInput,
+) -> Result<PostedClaim> {
+    let claim_dir = submission_path
+        .parent()
+        .context("the claim submission has no parent directory")?;
+    let trace = read_checkpoint_trace(&claim_dir.join(inference_artifacts::CHECKPOINT_TRACE_JSON))?;
+    if let ClaimedCheckpoints::Hashes { path, hashes } = &claimed.checkpoints {
+        ensure!(
+            &checkpoint_hashes(&trace)? == hashes,
+            "the checkpoints in {} are not the ones {} lists",
+            claim_dir.display(),
+            path.display()
+        );
+    }
+    let arranged = crate::arrangement::arrange(run_manifest_path, &trace, claim_dir)?;
+    for found in &arranged.rearranged {
+        println!(
+            "checkpoint {} (`{}`) gives `{}` another value than the chain does",
+            found.checkpoint, found.stage, found.input
+        );
+    }
+    let manifest_path = run_manifest_path.with_file_name(crate::arrangement::ARRANGED_MANIFEST);
+    fs::write(&manifest_path, &arranged.manifest)
+        .with_context(|| format!("failed to write {}", manifest_path.display()))?;
+    Ok(PostedClaim {
+        trace,
+        manifest_path,
+    })
+}
+
+fn file_sha256_hex(path: &Path) -> Result<String> {
+    use sha2::{Digest, Sha256};
+    Ok(hex::encode(Sha256::digest(fs::read(path).with_context(
+        || format!("failed to read {}", path.display()),
+    )?)))
 }
 
 fn challenge_progress(

@@ -403,13 +403,13 @@ These are open. None is closed by anything on this page.
   proof of a full-size stage has been produced. The dispute rules above are
   tested on Raster's own admission and defence functions with real traces and
   made-up journals, and on one real proof of a small fixture.
-- **`challenge build` replays only a stage that differs in its output.** For
-  a posted claim it runs every stage on the inputs the claim posted, and
-  stops when the first checkpoint that differs names another program or
-  other inputs than its run's. `iris claim audit` rules on the first and on
-  an input that is none a challenger holds, with nothing run. What is left
-  is a stage given a held input the chain would not give it, which needs a
-  replay on that arrangement ([availability](availability.md#open)).
+- **`challenge build` replays a stage on the inputs its checkpoint names.**
+  For a posted claim it runs every stage on those, so a stage given a held
+  value the chain would not give it is replayed on that value. `iris claim
+  audit` rules on a program outside the approved set and on an input that is
+  none a challenger holds, with nothing run. What is left is a stage that
+  cannot run on what it is given, and a claim whose list of stages is not
+  the chain's ([availability](availability.md#open)).
 
 - **The signer's key is a run input.** The `source` stage checks attestations
   against the key the run gives it and states that key in its record. No stage

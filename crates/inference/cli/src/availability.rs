@@ -358,6 +358,12 @@ impl OutputReader for HostReader {
     }
 }
 
+/// What a result stage's output states of its claim, as a contract reads it.
+/// `None` when the output is no result record.
+pub fn stated_results(payload: &[u8], index: &[u8]) -> Option<ResultInOutput> {
+    HostReader.results(payload, index)
+}
+
 /// The digest of the header of a Raster trace commitment body, as a stage
 /// challenge names it. `None` unless the body decodes and is well formed.
 pub fn trace_header_digest(bytes: &[u8]) -> Option<String> {

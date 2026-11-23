@@ -108,13 +108,19 @@ iris challenge build --run fetched/inference.toml --submission fetched/claim_sub
 `claim fetch` writes the claim's checkpoint list, checkpoints and input
 manifests as it posted them, the inputs its run was given (`posted_run.bin`),
 and a run spec over them ([the chains](../internals/chains.md#starting-from-the-chains)).
-`challenge build --submission` runs every stage on those inputs. It tokenizes
-nothing and runs no direct inference: the stages check the marks and the
-claimed ids they are given, and `--direct-output-ids` is not used. It compares
-the run with the posted list hash by hash, and from there the flow and the
-outputs are the ones above. It stops when the first checkpoint that differs
-names another program or other inputs than its run's, which is a claim for
-`iris claim audit`.
+`challenge build --submission` runs every stage on the inputs the claim's
+checkpoint names for it, each of which the claim posted, the configuration
+pins or an earlier stage made. It tokenizes nothing and runs no direct
+inference: the stages check the marks and the claimed ids they are given,
+and `--direct-output-ids` is not used. It writes the chain the checkpoints
+describe as `claim_arranged.toml` beside the run's manifest and prints a
+line for each input the claim gives a stage otherwise than the chain does
+(`checkpoint 61 (range_p1_l2) gives layer another value than the chain
+does`). It compares the run with the posted list hash by hash, prints `stage
+to replay: <stage>` for the first that differs, and replays that stage on the
+same inputs. From there the flow and the outputs are the ones above. It
+stops when a checkpoint names a value nobody holds or another program than
+the chain's, which is a claim for `iris claim audit`.
 
 `--claim` and `--trace` remain lower-level debug inputs that compare full checkpoint records. `--trace` prepares a run from `--run` because a trace alone has no frozen run metadata. It uses that run spec’s model, prompt, and token count, and discovers the output with direct inference. `challenge locate` remains reserved. See [Fault proving](fault-prove.md) for `challenge corrupt` and `fault prove`.
 

@@ -83,6 +83,23 @@ pub enum CorruptFault {
     /// claim posted, by the kind of input. The named input, or the first the
     /// checkpoint names a producer for.
     Input(Option<String>),
+    /// An input the claim is allowed to name, in a place the chain does not
+    /// give it: the value an earlier stage of the same program is given for
+    /// that input, such as another layer's weights, another range's marks or
+    /// another stage's output. Every such value is one a challenger holds,
+    /// so no comparison voids the claim. The stage's own checks say what it
+    /// was given, and the checkpoint states the output of a run that was
+    /// given the right value: a replay of the stage on the inputs the
+    /// checkpoint names shows it. The named input, or the first that an
+    /// earlier stage of the program is given another value for.
+    Arrangement(Option<String>),
+    /// The verdict: the check's record states that every claimed token is
+    /// the greedy selection and that the record is valid, where the check
+    /// run on the claim's own inputs does not, and the last stage is run on
+    /// that record. It is the lie of a claimer whose claimed output is not
+    /// the model's: every other stage is run as it is, so the claim arrives
+    /// with a valid record, and a replay of the check shows it.
+    Verdict,
 }
 
 #[derive(Debug, Clone)]
@@ -136,10 +153,27 @@ pub fn corrupt_claim(options: CorruptClaimOptions) -> Result<CorruptedClaim> {
     );
     let index = select_checkpoint_index(&options.selection, &honest_hashes, Some(&trace))?;
     let stage = trace.checkpoints[index].stage.clone();
-    // Input lists the lying claim posts beside the honest ones, with the
-    // input each one lies about.
-    let mut lying_manifests: Vec<Vec<u8>> = Vec::new();
+    // Input lists the lying claim posts beside the honest ones, each with
+    // its stage, and the input the lie is about.
+    let mut lying_manifests: Vec<(String, Vec<u8>)> = Vec::new();
     let mut lied_input = None;
+    // Outputs the lying claim's records are read from, in place of the
+    // honest ones at those checkpoints.
+    let mut forged_outputs: Vec<(usize, staged_infer::artifact_io::EncodedArtifact)> = Vec::new();
+    let read_list = |checkpoint: &inference_artifacts::Checkpoint,
+                     position: usize|
+     -> Result<BTreeMap<String, BTreeMap<String, String>>> {
+        let path = dir
+            .join(stage_dir_name(&checkpoint.stage)?)
+            .join(INPUT_MANIFEST_JSON);
+        let list = fs::read(&path).with_context(|| format!("failed to read {}", path.display()))?;
+        ensure!(
+            hex::encode(Sha256::digest(&list)) == checkpoint.input_commitment,
+            "{} is not the input list checkpoint {position} commits to",
+            path.display()
+        );
+        serde_json::from_slice(&list).with_context(|| format!("failed to parse {}", path.display()))
+    };
     match &options.fault {
         CorruptFault::Output => {
             trace.checkpoints[index].output_sha256 =
@@ -183,8 +217,104 @@ pub fn corrupt_claim(options: CorruptClaimOptions) -> Result<CorruptedClaim> {
             *loaded = corrupt_hash(loaded);
             let lying = serde_json::to_vec_pretty(&entries)?;
             checkpoint.input_commitment = hex::encode(Sha256::digest(&lying));
-            lying_manifests.push(lying);
+            lying_manifests.push((stage.clone(), lying));
             lied_input = Some(input);
+        }
+        CorruptFault::Arrangement(named) => {
+            let mut entries = read_list(&trace.checkpoints[index], index)?;
+            let program = &trace.checkpoints[index].program_commitment;
+            // The nearest earlier stage of the same program that is given
+            // another value for an input.
+            let mut found = None;
+            'donors: for donor in (0..index).rev() {
+                if &trace.checkpoints[donor].program_commitment != program {
+                    continue;
+                }
+                let given = read_list(&trace.checkpoints[donor], donor)?;
+                for (input, entry) in &entries {
+                    if named.as_ref().is_some_and(|named| named != input) {
+                        continue;
+                    }
+                    let other = given.get(input).and_then(|entry| entry.get("commitment"));
+                    if other.is_some() && other != entry.get("commitment") {
+                        found = Some((donor, input.clone(), other.cloned().expect("checked")));
+                        break 'donors;
+                    }
+                }
+            }
+            let (donor, input, value) = found.with_context(|| {
+                format!(
+                    "no earlier stage of the program of checkpoint {index} (`{stage}`) is given \
+                     another value for {}: pick a later stage, or another input",
+                    named
+                        .as_ref()
+                        .map_or(String::from("any input"), |input| format!("`{input}`"))
+                )
+            })?;
+            *entries
+                .get_mut(&input)
+                .and_then(|entry| entry.get_mut("commitment"))
+                .expect("found above") = value;
+            // The pointer goes with the value: the stage the donor took it
+            // from, or none for a value no stage made.
+            let pointer = trace.checkpoints[donor].input_sources.get(&input).copied();
+            let checkpoint = &mut trace.checkpoints[index];
+            match pointer {
+                Some(producer) => checkpoint.input_sources.insert(input.clone(), producer),
+                None => checkpoint.input_sources.remove(&input),
+            };
+            let lying = serde_json::to_vec_pretty(&entries)?;
+            checkpoint.input_commitment = hex::encode(Sha256::digest(&lying));
+            lying_manifests.push((stage.clone(), lying));
+            lied_input = Some(input);
+        }
+        CorruptFault::Verdict => {
+            let last = trace.checkpoints.len() - 1;
+            let reads: Vec<String> = trace.checkpoints[last]
+                .input_sources
+                .iter()
+                .filter(|(_, producer)| **producer as usize == index)
+                .map(|(input, _)| input.clone())
+                .collect();
+            ensure!(
+                index != last && !reads.is_empty(),
+                "checkpoint {index} (`{stage}`) is not a check the claim's last stage reads: \
+                 pick the last check"
+            );
+            ensure!(
+                trace.checkpoints[..last].iter().all(|checkpoint| checkpoint
+                    .input_sources
+                    .values()
+                    .all(|producer| *producer as usize != index)),
+                "a stage before the last reads the output of checkpoint {index} (`{stage}`), \
+                 and only the last stage is run again here"
+            );
+            let result_stage = trace.checkpoints[last].stage.clone();
+            let forged = forge_valid_verdict(
+                &dir.join(stage_dir_name(&stage)?),
+                &dir.join(stage_dir_name(&result_stage)?),
+            )?;
+            let mut entries = read_list(&trace.checkpoints[last], last)?;
+            for input in &reads {
+                *entries
+                    .get_mut(input)
+                    .and_then(|entry| entry.get_mut("commitment"))
+                    .with_context(|| format!("stage `{result_stage}` has no input `{input}`"))? =
+                    forged.check.structural_commitment.clone();
+            }
+            let lying = serde_json::to_vec_pretty(&entries)?;
+            let stated =
+                |checkpoint: &mut inference_artifacts::Checkpoint,
+                 output: &staged_infer::artifact_io::EncodedArtifact| {
+                    checkpoint.output_commitment = output.structural_commitment.clone();
+                    checkpoint.output_sha256 = hex::encode(Sha256::digest(&output.data));
+                };
+            stated(&mut trace.checkpoints[index], &forged.check);
+            stated(&mut trace.checkpoints[last], &forged.result);
+            trace.checkpoints[last].input_commitment = hex::encode(Sha256::digest(&lying));
+            lying_manifests.push((result_stage, lying));
+            forged_outputs.push((index, forged.check));
+            forged_outputs.push((last, forged.result));
         }
     }
     let hashes = checkpoint_hashes(&trace)?;
@@ -205,15 +335,48 @@ pub fn corrupt_claim(options: CorruptClaimOptions) -> Result<CorruptedClaim> {
     write_checkpoint_hashes(&hashes_path, &hashes)?;
     let trace_path = options.out_dir.join(CHECKPOINT_TRACE_JSON);
     write_json(&trace_path, &trace)?;
-    for manifest in &lying_manifests {
-        let stage_dir = options.out_dir.join(stage_dir_name(&stage)?);
+    for (stage, manifest) in &lying_manifests {
+        let stage_dir = options.out_dir.join(stage_dir_name(stage)?);
         fs::create_dir_all(&stage_dir)
             .with_context(|| format!("failed to create {}", stage_dir.display()))?;
         fs::write(stage_dir.join(INPUT_MANIFEST_JSON), manifest)?;
     }
-    let posting = PreparedPosting::read(dir)?
+    let mut posting = PreparedPosting::read(dir)?
         .with_checkpoints(&claimer, &fs::read(&hashes_path)?, &fs::read(&trace_path)?)?
-        .with_input_manifests(lying_manifests)?;
+        .with_input_manifests(
+            lying_manifests
+                .into_iter()
+                .map(|(_, manifest)| manifest)
+                .collect(),
+        )?;
+    // A forged output is given to the proof in place of the honest one, and
+    // the submission states what it holds.
+    for (position, output) in &forged_outputs {
+        let given = posting
+            .outputs
+            .iter_mut()
+            .find(|given| given.checkpoint as usize == *position)
+            .with_context(|| {
+                format!("the claim's records are not read from checkpoint {position}")
+            })?;
+        given.payload = hex::encode(&output.data);
+        given.index = hex::encode(&output.index);
+    }
+    if let Some((_, result)) = forged_outputs.last() {
+        let stated = crate::availability::stated_results(&result.data, &result.index)
+            .context("the forged result is not a result record")?;
+        ensure!(
+            stated.inferences.len() == claim.inferences.len(),
+            "the forged result states {} inferences, and the claim has {}",
+            stated.inferences.len(),
+            claim.inferences.len()
+        );
+        for (inference, stated) in claim.inferences.iter_mut().zip(stated.inferences) {
+            inference.record = stated.record;
+            inference.result = stated.result;
+        }
+        claim.consensus = stated.consensus;
+    }
     // The proof of a claim's checkpoints reads its records out of the last
     // stage's output and the checks', each held to its checkpoint's hash. A
     // lie about one of those has no output behind it, so no proof states it
@@ -246,6 +409,8 @@ pub fn corrupt_claim(options: CorruptClaimOptions) -> Result<CorruptedClaim> {
                 CorruptFault::Output => "output",
                 CorruptFault::Program => "program",
                 CorruptFault::Input(_) => "input",
+                CorruptFault::Arrangement(_) => "arrangement",
+                CorruptFault::Verdict => "verdict",
             },
             "input": lied_input,
             "original_hash": honest_hashes[index],
@@ -261,6 +426,53 @@ pub fn corrupt_claim(options: CorruptClaimOptions) -> Result<CorruptedClaim> {
         original_hash: honest_hashes[index].clone(),
         corrupted_hash: hashes[index].clone(),
     })
+}
+
+/// The outputs of a claimer who states a valid verdict its check did not
+/// reach: the check's own output with nothing claimed differing and the
+/// record valid, and the last stage's output on that.
+struct ForgedVerdict {
+    check: staged_infer::artifact_io::EncodedArtifact,
+    result: staged_infer::artifact_io::EncodedArtifact,
+}
+
+/// Run the check in `check_dir` on its own inputs and state its verdict as
+/// valid, then run the result stage in `result_dir` on that record. Both
+/// directories are the claimer's own, with the files each stage was given.
+fn forge_valid_verdict(check_dir: &Path, result_dir: &Path) -> Result<ForgedVerdict> {
+    use staged_infer::artifact_io::encode_output;
+    use staged_infer::routines::{claim_result, sequence_check, StageKind};
+
+    ensure!(
+        StageKind::from_stage_dir(result_dir)? == StageKind::ClaimResult,
+        "{} is not the result stage of a pipeline of one inference: a forged verdict is built \
+         for that pipeline only",
+        result_dir.display()
+    );
+    let files = |dir: &Path| (dir.join("input.json"), dir.join(INPUT_MANIFEST_JSON));
+    let cached = staged_infer::cache::CachedInputs::new();
+    let (input, list) = files(check_dir);
+    let mut edge = sequence_check::run_direct(&sequence_check::load_inputs_from_paths(
+        &input, &list, &cached,
+    )?)?;
+    ensure!(
+        !edge.claim.valid,
+        "the check in {} states a valid record as it is, so there is no verdict to forge: \
+         corrupt a claim whose claimed output is not the model's",
+        check_dir.display()
+    );
+    edge.claim_mismatches = 0;
+    edge.first_claim_mismatch_position = 0;
+    edge.claim.valid = true;
+    let check = encode_output(&edge)?;
+
+    let (input, list) = files(result_dir);
+    let mut inputs = claim_result::load_inputs_from_paths_with_cache(&input, &list, &cached, None)?;
+    // The two stages declare the edge field for field: one encoding.
+    inputs.check = postcard::from_bytes(&postcard::to_allocvec(&edge)?)
+        .context("the check's output is not the result stage's input")?;
+    let result = encode_output(&claim_result::run_direct(&inputs)?)?;
+    Ok(ForgedVerdict { check, result })
 }
 
 #[derive(Debug, Clone)]

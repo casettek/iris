@@ -1582,7 +1582,7 @@ fn plain(text: &str) -> bool {
 /// spacing is refused. So is a name or a field that is not plain text: a
 /// contract reads the list byte by byte (`InputManifest.sol`) and unescapes
 /// nothing.
-fn read_input_manifest(bytes: &[u8]) -> Option<BTreeMap<String, String>> {
+pub fn read_input_manifest(bytes: &[u8]) -> Option<BTreeMap<String, String>> {
     let entries: BTreeMap<String, ManifestEntry> = serde_json::from_slice(bytes).ok()?;
     let canonical = serde_json::to_vec_pretty(&serde_json::to_value(&entries).ok()?).ok()?;
     let all_plain = entries.iter().all(|(name, entry)| {

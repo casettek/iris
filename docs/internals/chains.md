@@ -191,6 +191,16 @@ so an honest run on those marks ends in a record that says so, and a claim
 that stated a clean record for that stage is shown false by a replay on the
 marks it posted ([availability](availability.md#what-is-posted-and-what-is-not)).
 
+**A value in the wrong place is a lie about execution.** The comparison asks
+where an input comes from, not whether it is the one the chain gives that
+stage: a layer's weights may be any layer's, a posted value any posted value,
+an earlier stage's output that of any earlier stage of the right kind. Which
+belongs where is the schedule's, checked inside the stages. A stage given
+the wrong one says so in its output, so a claim that states a clean output
+for it is false about what its program does on the inputs it names, and
+`submitChallenge` is the call: the challenger replays the stage on exactly
+those inputs ([availability](availability.md#what-is-posted-and-what-is-not)).
+
 `iris claim audit --submission <fetched>/claim_submission.json --run <spec>`
 asks these of every checkpoint of a claim and every input its program has,
 from its files and the configuration alone, with nothing run. A challenger does this first. With
@@ -384,14 +394,19 @@ claim with that id (`claims(bytes32)`), as iris-backend does.
 
 **`iris challenge build --run <dir>/inference.toml --submission <dir>/claim_submission.json`**
 builds the challenge from that directory alone. Every stage is run on the
-inputs the claim posted: nothing is tokenized and no output is found by
-direct inference, since the stages check what they are given. The run is
-compared with the posted list hash by hash, and the first stage whose output
-differs is replayed. The command stops when the claim's checkpoint for that
-stage names another program or other inputs than this run's: a replay of it
-here would not be a run on the claimer's inputs, and such a claim is one
-`iris claim audit` rules on. `iris challenge post` and `iris evm challenge`
-then take the same directory as the claim's.
+inputs the claim's checkpoint names for it: nothing is tokenized and no
+output is found by direct inference, since the stages check what they are
+given. The command writes the chain the checkpoints describe
+(`claim_arranged.toml`, beside the run's own manifest) and prints each input
+the claim gives a stage otherwise than the chain does. For a claim arranged
+as the chain it is the chain. The run is compared with the posted list hash
+by hash, and the first stage whose output differs is replayed on those same
+inputs; the command checks that the replay ran on the input list the
+checkpoint commits to and ended in another output. It stops when a
+checkpoint names a value that is no earlier stage's output and none the chain
+holds, or another program than the chain runs that stage with: such a claim
+is one `iris claim audit` rules on. `iris challenge post` and `iris evm
+challenge` then take the same directory as the claim's.
 
 **`iris challenge fetch --challenge <challenge_submission.json> --out <commit.bin>`**
 reads the trace the challenge names. It is written only when it was posted
@@ -416,6 +431,19 @@ honest party runs.
   program outside the approved set, and one that commits to an input list in
   which one input is not its producer's output. The second posts its own
   input list beside the honest ones.
+- `--fault arrangement [--input <name>]` writes a lie a replay shows on other
+  inputs than the chain's: the stage is given, for one input, the value an
+  earlier stage of the same program is given (another layer's weights,
+  another range's marks, another stage's output), and its checkpoint still
+  states the output of a run that was given the right one. An audit finds
+  nothing in it.
+- `--fault verdict --stage <the last check>` writes the lie of a claimer
+  whose claimed output is not the model's. Give it a claim built with such
+  ids (`claim build --direct-output-ids`), whose own record is not valid. The
+  check is run on the claim's inputs and its record stated valid, with no
+  claimed token differing, and the result stage is run on that record. The
+  claim arrives with a valid record, and a replay of the check shows it.
+  Built for a pipeline of one inference.
 - `iris challenge post --commitment <corrupted_commit.bin> --out <file>` posts
   a challenge over the copy of a trace that `iris challenge corrupt` changed,
   in place of the bundle's own.
@@ -503,14 +531,6 @@ The contract covers the two cases Raster covers today, a claim challenged
 with a replayed checkpoint and a challenge shown false with a fault proof of
 its trace, and the faults of a claim that no replay shows. What is around
 them is open, and each is its own piece of work:
-
-- **A stage given its inputs in another arrangement than the chain's.** Every
-  input a checkpoint names is one a challenger holds, so every stage can be
-  replayed on the claimer's inputs. `challenge build` makes that replay for
-  a claim whose stages are given their inputs as the chain arranges them. A
-  claim that gives a stage another held input, such as another layer's
-  weights, is not replayed by it yet
-  ([availability's open list](availability.md#open)).
 
 - **What follows.** Nothing reads a dismissal, or the lack of one. A claim
   with an unanswered challenge and a claim with none are held the same way.

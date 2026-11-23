@@ -135,6 +135,14 @@ challenge to post and nothing for the claimer to answer.
 To have such a claim, make the lie with `iris claim corrupt --submission ...
 --fault program` or `--fault input`, then post and submit it as above.
 
+Two more lies are ones a replay shows, and an audit finds nothing in them.
+`--fault arrangement [--input <name>]` gives a stage a value the claim may
+name in a place the chain does not give it, such as another layer's weights.
+`--fault verdict --stage <the last check>`, on a claim built with claimed
+ids that are not the model's (`claim build --direct-output-ids`), states its
+record valid. Post and submit each as above, fetch it, and `challenge build
+--submission` replays the stage on the inputs its checkpoint names.
+
 ## Answer a challenge with a fault proof
 
 A challenge is shown false with a Raster fault proof of its trace, as `iris

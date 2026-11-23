@@ -6,6 +6,7 @@ use std::process::{Command as ProcessCommand, ExitCode, ExitStatus};
 use anyhow::{bail, Context, Result};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 
+mod arrangement;
 mod availability;
 mod celestia;
 mod challenge;
@@ -297,6 +298,13 @@ enum ClaimFaultArg {
     Program,
     /// An input that is not what its producer made.
     Input,
+    /// An input the claim may name, in a place the chain does not give it:
+    /// the value an earlier stage of the same program is given.
+    Arrangement,
+    /// The check's record stated valid where the check does not find it so,
+    /// with the result stage run on that record. Of a claim whose claimed
+    /// output is not the model's.
+    Verdict,
 }
 
 #[derive(Debug, Args)]
@@ -944,8 +952,12 @@ fn execute(cli: Cli) -> Result<ExitCode> {
                 std::env::current_dir().context("failed to resolve current directory")?;
             let selection = args.selection()?;
             anyhow::ensure!(
-                args.input.is_none() || args.fault == ClaimFaultArg::Input,
-                "--input names the input of a `--fault input` lie"
+                args.input.is_none()
+                    || matches!(
+                        args.fault,
+                        ClaimFaultArg::Input | ClaimFaultArg::Arrangement
+                    ),
+                "--input names the input of a `--fault input` or `--fault arrangement` lie"
             );
             let lying = posted::corrupt_claim(posted::CorruptClaimOptions {
                 submission_path: absolute(&base_dir, &args.submission.expect("checked above")),
@@ -954,6 +966,8 @@ fn execute(cli: Cli) -> Result<ExitCode> {
                     ClaimFaultArg::Output => posted::CorruptFault::Output,
                     ClaimFaultArg::Program => posted::CorruptFault::Program,
                     ClaimFaultArg::Input => posted::CorruptFault::Input(args.input),
+                    ClaimFaultArg::Arrangement => posted::CorruptFault::Arrangement(args.input),
+                    ClaimFaultArg::Verdict => posted::CorruptFault::Verdict,
                 },
                 claimer: args.claimer,
                 out_dir: absolute(&base_dir, &args.output.expect("clap requires it")),

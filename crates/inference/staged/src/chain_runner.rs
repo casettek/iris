@@ -50,6 +50,62 @@ pub struct StagePrefixRun {
 pub struct CheckpointHashVerifier {
     pub claimed_hashes_path: PathBuf,
     pub claimed_hashes: Vec<String>,
+    /// For each checkpoint of the claim, the producers it points at. A run
+    /// of the chain as a claim arranges it states these as the claim does:
+    /// a pointer is the claim's own statement, which the link comparison
+    /// judges, and a run reproduces only what a stage loads and makes. With
+    /// none, each checkpoint's pointers are the ones its bindings give.
+    pub claimed_sources: Option<Vec<BTreeMap<String, u32>>>,
+}
+
+/// A stage of a manifest with its repeats expanded: the stage as it runs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExpandedStage {
+    pub name: String,
+    pub project: String,
+    pub inputs: BTreeMap<String, ExpandedInput>,
+}
+
+/// What an expanded stage's input is bound to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ExpandedInput {
+    /// The output of the stage with this name.
+    From(String),
+    /// A file, with the commitment it is held to.
+    External {
+        path: String,
+        index_path: Option<String>,
+        commitment: String,
+    },
+}
+
+/// The stages a manifest runs, in order, each with what its inputs are bound
+/// to. This is the expansion a run executes.
+pub fn expanded_stages(manifest_path: &Path) -> Result<Vec<ExpandedStage>> {
+    Ok(read_manifest(manifest_path)?
+        .chain
+        .stage
+        .into_iter()
+        .map(|stage| ExpandedStage {
+            name: stage.name,
+            project: stage.project,
+            inputs: stage
+                .inputs
+                .into_iter()
+                .map(|(name, binding)| {
+                    let binding = match binding {
+                        InputBinding::From(from) => ExpandedInput::From(from),
+                        InputBinding::External(external) => ExpandedInput::External {
+                            path: external.path,
+                            index_path: external.index_path,
+                            commitment: external.commitment,
+                        },
+                    };
+                    (name, binding)
+                })
+                .collect(),
+        })
+        .collect())
 }
 
 #[derive(Debug)]
@@ -300,6 +356,7 @@ impl ChainRunState {
 struct CheckpointVerifierState {
     claimed_hashes_path: PathBuf,
     claimed_hashes: Vec<String>,
+    claimed_sources: Option<Vec<BTreeMap<String, u32>>>,
     recomputed_checkpoints: Vec<Checkpoint>,
     divergence: Option<Divergence>,
 }
@@ -309,6 +366,7 @@ impl CheckpointVerifierState {
         Self {
             claimed_hashes_path: verifier.claimed_hashes_path,
             claimed_hashes: verifier.claimed_hashes,
+            claimed_sources: verifier.claimed_sources,
             recomputed_checkpoints: Vec::new(),
             divergence: None,
         }
@@ -331,7 +389,14 @@ impl CheckpointVerifierState {
             );
         }
 
-        let checkpoint = read_checkpoint_from_stage_dir(stage_name, stage_dir)?;
+        let mut checkpoint = read_checkpoint_from_stage_dir(stage_name, stage_dir)?;
+        if let Some(sources) = self
+            .claimed_sources
+            .as_ref()
+            .and_then(|sources| sources.get(checkpoint_index))
+        {
+            checkpoint.input_sources = sources.clone();
+        }
         let recomputed_hash = checkpoint_hash(&checkpoint)?;
         let claimed_hash = self.claimed_hashes.get(checkpoint_index).cloned();
         let reason = match claimed_hash.as_ref() {
@@ -2516,6 +2581,7 @@ inputs.edge = { from = "claimed.edge" }
         let mut verifier = CheckpointVerifierState::new(CheckpointHashVerifier {
             claimed_hashes_path: base.join("checkpoints.txt"),
             claimed_hashes: vec![claimed_hash.clone()],
+            claimed_sources: None,
         });
 
         assert!(verifier
@@ -2542,6 +2608,7 @@ inputs.edge = { from = "claimed.edge" }
         let mut verifier = CheckpointVerifierState::new(CheckpointHashVerifier {
             claimed_hashes_path: base.join("checkpoints.txt"),
             claimed_hashes: Vec::new(),
+            claimed_sources: None,
         });
 
         assert!(verifier
@@ -2569,6 +2636,7 @@ inputs.edge = { from = "claimed.edge" }
         let mut verifier = CheckpointVerifierState::new(CheckpointHashVerifier {
             claimed_hashes_path: base.join("checkpoints.txt"),
             claimed_hashes: vec![expected_hash, extra_hash.clone()],
+            claimed_sources: None,
         });
 
         assert!(!verifier

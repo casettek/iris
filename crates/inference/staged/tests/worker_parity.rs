@@ -772,6 +772,7 @@ fn challenge_cleanup_child() {
             staged_backend: staged_infer::chain_runner::StagedExecutionBackend::InProcess,
             claimed_hashes_path: path,
             claimed_hashes: hashes,
+            claimed_sources: None,
         })
         .unwrap();
     assert_eq!(result.divergence.unwrap().checkpoint_index, stop);

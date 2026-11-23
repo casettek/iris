@@ -54,6 +54,20 @@ the honest run ends in a record that says so, and the claim stated a clean
 one. The signer's key, the recipe and the forms are the configuration's as
 well, which a contract holds the claim's records to when it arrives.
 
+**A value in the wrong place.** A checkpoint may name any value a challenger
+holds, and the comparison does not ask whether it is the one the chain gives
+that stage. So a claimer can give a stage another layer's weights, the marks
+of another range, the configuration posted for another inference, or the
+output of another earlier stage of the right kind. Nothing voids such a
+claim. The stage's own checks say what it was given: its output carries the
+fault, and every later stage carries it into the final record. A claim that
+states a clean output for that stage is shown false as any other lie about a
+stage is, by a replay of the stage on the inputs its checkpoint names.
+`challenge build` runs every stage on exactly those: it binds each input to
+the earlier stage the checkpoint points at when that stage's output is what
+the input list loads, and otherwise to the file the chain holds under that
+commitment, a pinned one or a posted one.
+
 A run input is posted as its value and not as the Raster file a stage loads,
 because the file's index is several times the value's size and anyone writes
 both from the value. On a 1,209-token prompt the files are about 130 KB of
@@ -205,15 +219,18 @@ each blob holds ([the chains](chains.md)).
 
 ## Open
 
-- **A stage given its inputs in another arrangement than the chain's.** Every
-  input a checkpoint names is now one a challenger holds, but a claimer can
-  still give a stage a held input the chain would not give it: another
-  layer's weights, or the configuration posted for another inference. The
-  stage's own checks catch it in an honest run, and a replay of that stage on
-  those inputs shows a claim that stated otherwise. `challenge build` does
-  not make that replay yet: it runs the chain as its template arranges it,
-  and stops with a message when the claim's checkpoint names other inputs
-  than that run's.
+- **A stage that cannot run on what it is given.** A replay shows a lie only
+  when the stage finishes. The stages are written to state a fault and
+  finish, and the parity gate replays each kind of misplaced value on the
+  small model: another layer's weights, another range's marks, another
+  stage's output. No test gives every stage every held value, so a value
+  that stops a stage instead would leave a challenger with no trace. This is
+  the short-stage gap's neighbour: a stage with nothing to replay.
+- **A claim whose list is not the chain's.** `challenge build` runs a claim
+  whose every stage is one the chain of its run has, each named once. A
+  claim that repeats a stage name, or names one the chain lacks, is refused
+  by the command with a message. The stages' schedule checks refuse such a
+  run, so its final record is not valid, but no command shows that yet.
 - **A consensus claim posts its text once per inference.** Each model cuts
   the text into its own slices, and the slices are what is posted.
 - **Reading an output by its index.** The stand-in reads a record out of an

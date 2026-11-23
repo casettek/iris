@@ -41,6 +41,10 @@ pub struct CheckpointHashChallengeConfig {
     pub staged_backend: StagedExecutionBackend,
     pub claimed_hashes_path: PathBuf,
     pub claimed_hashes: Vec<String>,
+    /// The producers each of the claim's checkpoints points at, for a run of
+    /// the chain as the claim arranges it (see
+    /// [`CheckpointHashVerifier::claimed_sources`]).
+    pub claimed_sources: Option<Vec<std::collections::BTreeMap<String, u32>>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -115,6 +119,7 @@ impl CheckpointedInferenceExecutor {
             CheckpointHashVerifier {
                 claimed_hashes_path: config.claimed_hashes_path,
                 claimed_hashes: config.claimed_hashes,
+                claimed_sources: config.claimed_sources,
             },
         )?;
         let (final_result, consensus) =
