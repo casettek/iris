@@ -40,7 +40,7 @@ work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 guest_list="$work/guest-files"
 {
-    git ls-files -- "${guest_dirs[@]}" | while read -r file; do
+    git ls-files --cached --others --exclude-standard -- "${guest_dirs[@]}" | while read -r file; do
         # A link to a directory brings in every file under it.
         if [ -d "$file" ]; then
             find -L "$file" -name '*.rs' -type f
@@ -74,7 +74,7 @@ while read -r file; do
         echo "formatted: $file"
         formatted=$((formatted + 1))
     fi
-done < <(git ls-files -- '*.rs')
+done < <(git ls-files --cached --others --exclude-standard -- "*.rs")
 
 if [ $check -eq 1 ]; then
     if [ $unformatted -gt 0 ]; then

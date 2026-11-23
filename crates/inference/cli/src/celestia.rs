@@ -194,9 +194,9 @@ impl AvailabilityLayer for CelestiaLayer {
 
 /// POST a JSON body to `host:port` and return the response's body. Plain
 /// HTTP/1.1 to a local node: no TLS, no redirects, one request a connection.
-fn http_post(address: &str, body: &str) -> Result<Vec<u8>> {
+pub(crate) fn http_post(address: &str, body: &str) -> Result<Vec<u8>> {
     let mut stream = TcpStream::connect(address)
-        .with_context(|| format!("failed to reach the Celestia node at {address}"))?;
+        .with_context(|| format!("failed to reach the node at {address}"))?;
     stream.set_read_timeout(Some(Duration::from_secs(120)))?;
     write!(
         stream,
@@ -207,7 +207,7 @@ fn http_post(address: &str, body: &str) -> Result<Vec<u8>> {
     let mut response = Vec::new();
     stream
         .read_to_end(&mut response)
-        .with_context(|| format!("the Celestia node at {address} did not answer"))?;
+        .with_context(|| format!("the node at {address} did not answer"))?;
     http_body(&response)
 }
 

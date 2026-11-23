@@ -105,4 +105,4 @@ contracts-test:
 
 # Hold the contracts to iris on one posted claim: <run spec> <claim_submission.json>
 devstack-replay run submission:
-    python3 devstack/replay.py claim --run "{{run}}" --submission "{{submission}}"
+    cargo run --release -p iris-cli -- devstack replay claim --run "{{run}}" --submission "{{submission}}"

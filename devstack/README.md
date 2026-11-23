@@ -15,9 +15,9 @@ its own: it is given the addresses below and connects to them.
 | `celestia-bridge` | celestia-node 0.35.0 | `http://127.0.0.1:26658` | Takes and serves blobs. This is the address iris uses (`IRIS_CELESTIA_RPC`). |
 | `evm` | Foundry 1.9.0 (anvil) | `http://127.0.0.1:8545` | Holds the contracts. |
 
-The images are pinned by digest in `docker-compose.yml`. Foundry's tools
-(`forge`, `cast`) run from the same image through `foundry.sh`, so nothing is
-installed on the host besides Docker and Python 3.
+The images are pinned by digest in `docker-compose.yml`. Foundry's `forge`
+runs from the same image through `foundry.sh`, so nothing is installed on the
+host besides Docker.
 
 ## Start it
 
@@ -48,10 +48,11 @@ are run by the same host here.
   under a root the oracle holds. The oracle has the shape of a Blobstream
   contract, so a bridge that proves the roots can take its place.
 
-iris holds no account on either chain and sends nothing to the EVM. It posts
-blobs to Celestia, signs as the attester, and writes the bytes of each
-contract call (`iris evm ...`). Whoever runs it sends them: `submit.py` here,
-iris-backend for a service.
+iris holds no key of an account on either chain. It posts blobs to Celestia,
+signs as the attester, and writes the bytes of each contract call (`iris evm
+...`). Whoever runs it sends them: iris-backend for a service. Here, `iris
+devstack submit` sends them itself through the account the local EVM node
+keeps unlocked, which works against a development node and nothing else.
 
 ## Accounts
 
@@ -82,15 +83,20 @@ are the same steps by hand.
 source devstack/env.sh
 iris claim build --run spec.toml --claimer 0x...   # builds the claim, posts nothing
 iris claim post --submission <dir>/claim_submission.json   # posts its data to Celestia
-python3 devstack/submit.py claim --run spec.toml --submission <dir>/claim_submission.json
+iris devstack submit claim --run spec.toml --submission <dir>/claim_submission.json
 ```
 
-`submit.py` attests the blobs, relays their block roots, registers the run's
+`iris devstack submit` attests the blobs, relays their block roots, registers the run's
 configuration if it is not registered, and submits the claim. It prints
 whether the contract took it, or the error it refused it with.
 
-A challenge goes the same way: `iris challenge post`, then `submit.py
-challenge --challenge <dir>/challenge_submission.json`.
+A challenge goes the same way: `iris challenge post`, then `iris devstack
+submit challenge --submission <claim_submission.json> --challenge
+<dir>/challenge_submission.json`.
+
+The commands read where the contracts are from `devstack/deployment.json`.
+Run them from the repository's root, or name that file with
+`IRIS_CHAIN_DEPLOYMENT`.
 
 ## Challenge a claim from the chains
 
@@ -104,7 +110,7 @@ iris challenge build --run fetched/inference.toml --submission fetched/claim_sub
 # Post the trace, then submit.
 iris challenge post --challenge <challenge_bundle.json> \
   --submission fetched/claim_submission.json --run fetched/inference.toml --challenger 0x...
-python3 devstack/submit.py challenge --run spec.toml \
+iris devstack submit challenge --run spec.toml \
   --submission fetched/claim_submission.json --challenge <dir>/challenge_submission.json
 ```
 
@@ -115,7 +121,7 @@ claimer would submit, and submit it as a claim of its own:
 iris claim corrupt --submission <claim_submission.json> --stage <stage> \
   --claimer 0x... --output lying
 iris claim post --submission lying/claim_submission.json
-python3 devstack/submit.py claim --run spec.toml --submission lying/claim_submission.json
+iris devstack submit claim --run spec.toml --submission lying/claim_submission.json
 ```
 
 A defender reads a challenge's trace back the same way: `iris challenge fetch
@@ -136,7 +142,7 @@ takes from an earlier one is that stage's output:
 ```bash
 iris claim audit --submission fetched/claim_submission.json \
   --run fetched/inference.toml --calls calls.json
-python3 devstack/submit.py fault --calls calls.json --call <n>
+iris devstack submit fault --calls calls.json --call <n>
 ```
 
 The audit runs nothing and prints each fault with the number of the call that
@@ -161,7 +167,7 @@ A challenge is shown false with a Raster fault proof of its trace, as `iris
 fault prove` writes it:
 
 ```bash
-python3 devstack/submit.py fault-proof --submission <claim_submission.json> \
+iris devstack submit fault-proof --submission <claim_submission.json> \
   --challenge <challenge_submission.json> --receipt <fault.receipt>
 ```
 
@@ -181,16 +187,16 @@ kept in `contracts/test/fault_proof.json`. It needs Docker and no chain.
 ## Check the contracts against iris
 
 ```bash
-python3 devstack/replay.py claim --run spec.toml --submission <dir>/claim_submission.json
-python3 devstack/replay.py challenge --run spec.toml \
+iris devstack replay claim --run spec.toml --submission <dir>/claim_submission.json
+iris devstack replay challenge --run spec.toml \
   --submission <dir>/claim_submission.json --challenge <dir>/challenge_submission.json
 ```
 
-`python3 devstack/replay.py faults --run fetched/inference.toml --submission
+`iris devstack replay faults --run fetched/inference.toml --submission
 fetched/claim_submission.json` does the same for the two on-the-spot calls:
 every question the audit asks, asked of the contract.
 
-`replay.py` is the contracts' test. It asks `iris claim check` (or `iris
+`iris devstack replay` is the contracts' test. It asks `iris claim check` (or `iris
 challenge check`) and the contract about the same submission, then about one
 changed copy after another, and fails unless the two give the same answer:
 both take it, or both refuse it at the same check. A few cases are the
@@ -215,5 +221,9 @@ IRIS_CELESTIA_RPC=http://127.0.0.1:26658 just test-parity
 | `env.sh` | Addresses, accounts and time parameters. Source it. |
 | `foundry.sh` | Runs a Foundry tool from the pinned image. |
 | `deploy.sh` | Deploys the contracts and writes `deployment.json`. |
-| `submit.py` | Sends a claim or a challenge. |
-| `replay.py` | Compares the contracts with iris, case by case. |
+
+Two commands of the iris binary drive the stack
+(`crates/inference/cli/src/devstack/`): `iris devstack submit` sends a claim,
+a challenge, a fault proof or a fault, and `iris devstack replay` compares
+the contracts with iris, case by case. `deploy.sh` writes `deployment.json`
+with `iris devstack deployment`.

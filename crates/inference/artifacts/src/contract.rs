@@ -715,6 +715,7 @@ pub enum LinkFault {
 
 impl LinkFault {
     /// The fault a contract records for the claim: `IrisClaims.ClaimFault`.
+    /// One of [`CLAIM_FAULTS`].
     pub fn name(&self) -> &'static str {
         match self {
             Self::UnreadableInputList => "UnreadableInputList",
@@ -2187,6 +2188,23 @@ pub fn check_fault_proof(
     }
     Ok(())
 }
+
+/// `IrisClaims.ClaimFault` in the contract's order: the number the contract
+/// holds for a void claim names the fault at that place. The first is no
+/// fault. The second is [`StageAdmission::UnapprovedProgram`], and the rest
+/// are the [`LinkFault`]s by [`LinkFault::name`].
+pub const CLAIM_FAULTS: [&str; 10] = [
+    "None",
+    "UnapprovedProgram",
+    "UnreadableInputList",
+    "InputMissing",
+    "NoProducer",
+    "ProducerNotEarlier",
+    "ProducerOfWrongKind",
+    "NotTheProducersOutput",
+    "NotAPinnedValue",
+    "NotAPostedInput",
+];
 
 /// Which rule settles a difference between a claimed checkpoint and the one a
 /// challenger recomputed for the same stage. Only a differing output is a

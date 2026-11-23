@@ -1,8 +1,9 @@
 //! What iris hands to whoever sends transactions: the calldata of the calls
 //! its contracts take, and the attester's signature over each posted blob.
 //!
-//! iris sends nothing itself and holds no wallet. Every command here reads
-//! files and prints bytes; iris-backend (or a script with `cast`) sends them.
+//! iris holds no wallet. Every command here reads files and prints bytes;
+//! iris-backend sends them, or `iris devstack submit` on the local stack,
+//! through an account the development node keeps unlocked.
 //! The one key iris uses is the attester's, read from `IRIS_ATTESTER_KEY`: the
 //! trusted host's, standing in for an availability proof.
 

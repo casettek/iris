@@ -62,6 +62,9 @@ if ! rpc_answers; then
     echo "the local chains do not answer at $IRIS_EVM_RPC and $IRIS_CELESTIA_RPC: run \`just devstack-up\`" >&2
     exit 1
 fi
+# The deployment file is written by the binary, so it is built first.
+step chain-build "release binary built" \
+    cargo build --release --locked -p iris-cli --bin iris "${features[@]}"
 if [ $deploy -eq 1 ]; then
     step chain-deploy "contracts built and deployed" bash "$repo_root/devstack/deploy.sh"
 fi
@@ -94,6 +97,8 @@ mkdir -p "$out"
 echo "   kept under target/chain-test/$run_id"
 iris="$repo_root/target/release/iris"
 export IRIS_BINARY="$iris"
+# The cases run in directories of their own.
+export IRIS_CHAIN_DEPLOYMENT="$repo_root/devstack/deployment.json"
 
 # A fresh address per run and name: twenty bytes of the hash of both.
 address() {
@@ -152,14 +157,14 @@ last_check() {
 # contract.
 submitted() {
     "$iris" claim post --submission "$1"
-    python3 "$repo_root/devstack/submit.py" claim --run "$2" --submission "$1" > "$1.arrival.json"
+    "$iris" devstack submit claim --run "$2" --submission "$1" > "$1.arrival.json"
     expect "$1.arrival.json" '"accepted": true'
 }
 
 # audited <fetched dir> <faults>: every on-the-spot question asked of the
 # contract, which answers each as iris does and holds this many faults.
 audited() {
-    python3 "$repo_root/devstack/replay.py" faults --run "$1/inference.toml" \
+    "$iris" devstack replay faults --run "$1/inference.toml" \
         --submission "$1/claim_submission.json" | tee "$1.faults.log"
     if [ "$2" = none ]; then
         expect "$1.faults.log" '"faults": 0}'
@@ -176,7 +181,7 @@ honest_claim() (
     "$iris" claim post --submission "$claim"
     # iris and the contract on the claim and on changed copies of it, then
     # the claim itself submitted.
-    python3 "$repo_root/devstack/replay.py" claim --run "$spec" --submission "$claim"
+    "$iris" devstack replay claim --run "$spec" --submission "$claim"
     "$iris" claim fetch --submission "$claim" --run "$spec" --out "$out/$1-fetched"
     audited "$out/$1-fetched" none
 )
@@ -238,10 +243,10 @@ replayed_lie() (
     if [ "$held" = yes ]; then
         # iris and the contract on the challenge and on changed copies of
         # it, then the challenge itself submitted.
-        python3 "$repo_root/devstack/replay.py" challenge --run "$spec" \
+        "$iris" devstack replay challenge --run "$spec" \
             --submission "$out/$name/claim_submission.json" --challenge "$challenge"
     else
-        python3 "$repo_root/devstack/submit.py" challenge --run "$spec" \
+        "$iris" devstack submit challenge \
             --submission "$out/$name/claim_submission.json" --challenge "$challenge" | tee challenge.json
         expect challenge.json '"accepted": true'
     fi
@@ -249,8 +254,6 @@ replayed_lie() (
 
 step chain-contracts "contracts' own tests, with a real fault proof" \
     bash "$repo_root/devstack/foundry.sh" forge test
-step chain-build "release binary built" \
-    cargo build --release --locked -p iris-cli --bin iris "${features[@]}"
 
 # build_claims <prefix> <run spec>: an honest claim, and a claim of ids that
 # are not the model's output.

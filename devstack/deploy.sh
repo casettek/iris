@@ -40,7 +40,7 @@ programs=$("$iris" evm proof-programs) || {
   echo "could not read Raster's proof programs from $iris: build iris first" >&2
   exit 1
 }
-program() { python3 -c 'import json, sys; print(json.loads(sys.argv[1])[sys.argv[2]])' "$programs" "$1"; }
+program() { sed -n "s/.*\"$1\": *\"\([^\"]*\)\".*/\1/p" <<< "$programs" | head -1; }
 transition=$(program transition_image_id)
 authorization=$(program authorization_image_id)
 
@@ -67,38 +67,23 @@ claims=$(deploy IrisClaims "$registry" "$oracle" "$IRIS_ATTESTER_ADDRESS" \
 
 # The contracts' errors by selector, so that whoever sends a transaction can
 # name the error a refused one reverted with.
-errors=$(
-  for contract in DataRootOracle IrisRegistry IrisClaims RasterJournal InputManifest; do
-    foundry forge inspect "$contract" errors --json 2> /dev/null
-  done | python3 -c '
-import json, sys
-decoder, text, errors = json.JSONDecoder(), sys.stdin.read(), {}
-at = 0
-while at < len(text):
-    if text[at].isspace():
-        at += 1
-        continue
-    listed, at = decoder.raw_decode(text, at)
-    errors.update({selector: name for name, selector in listed.items()})
-print(json.dumps(errors, indent=4, sort_keys=True))'
-)
+errors=$(mktemp)
+trap 'rm -f "$errors"' EXIT
+for contract in DataRootOracle IrisRegistry IrisClaims RasterJournal InputManifest; do
+  foundry forge inspect "$contract" errors --json 2> /dev/null
+done > "$errors"
 
-cat > "$here/deployment.json" <<EOF
-{
-  "rpc": "$IRIS_EVM_RPC",
-  "oracle": "$oracle",
-  "registry": "$registry",
-  "claims": "$claims",
-  "verifier": "$verifier",
-  "transition_image_id": "$transition",
-  "authorization_image_id": "$authorization",
-  "relayer": "$IRIS_SENDER_ADDRESS",
-  "owner": "$IRIS_SENDER_ADDRESS",
-  "attester": "$IRIS_ATTESTER_ADDRESS",
-  "retention_secs": $IRIS_RETENTION_SECS,
-  "challenge_period_secs": $IRIS_CHALLENGE_PERIOD_SECS,
-  "fault_proof_window_secs": $IRIS_FAULT_PROOF_WINDOW_SECS,
-  "errors": $errors
-}
-EOF
-python3 -c 'import json, sys; d = json.load(open(sys.argv[1])); print({k: v for k, v in d.items() if k != "errors"}, len(d["errors"]), "errors")' "$here/deployment.json"
+"$iris" devstack deployment --out "$here/deployment.json" --errors "$errors" \
+  --set "rpc=$IRIS_EVM_RPC" \
+  --set "oracle=$oracle" \
+  --set "registry=$registry" \
+  --set "claims=$claims" \
+  --set "verifier=$verifier" \
+  --set "transition_image_id=$transition" \
+  --set "authorization_image_id=$authorization" \
+  --set "relayer=$IRIS_SENDER_ADDRESS" \
+  --set "owner=$IRIS_SENDER_ADDRESS" \
+  --set "attester=$IRIS_ATTESTER_ADDRESS" \
+  --set "retention_secs=$IRIS_RETENTION_SECS" \
+  --set "challenge_period_secs=$IRIS_CHALLENGE_PERIOD_SECS" \
+  --set "fault_proof_window_secs=$IRIS_FAULT_PROOF_WINDOW_SECS"

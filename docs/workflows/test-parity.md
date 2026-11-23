@@ -134,7 +134,7 @@ the chain then checks it.
   give the source record the claim names.
   Run against a Celestia node
   (`IRIS_CELESTIA_RPC`), the gate leaves both posted there, and
-  `devstack/replay.py` takes them to the contracts
+  `iris devstack replay` takes them to the contracts
   ([the chains](../internals/chains.md)).
 - Over wrong token marks, on the templated case: the prompt stages finish through
   both Raster and native-staged, agree byte for byte, and record the expected fault.
