@@ -64,6 +64,18 @@ use them anywhere else.
 | `0xf39F...2266` | Deploys, owns the registry, relays block roots, sends every transaction. |
 | `0x7099...79C8` | The attester. |
 
+## Run all of it as a test
+
+```bash
+just test-chain                              # about 3 minutes
+just test-chain --real-model inference.toml  # with a real model's claim, a few minutes more
+```
+
+The chain tier makes an honest claim and a claim of each known lie, and holds
+the contracts to what iris says of each
+([testing](../docs/workflows/testing.md#the-chain-tier)). The sections below
+are the same steps by hand.
+
 ## Submit a claim
 
 ```bash

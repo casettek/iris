@@ -42,7 +42,15 @@ test-artifacts:
 stage-check stage:
     cargo check --manifest-path "raster-stages/{{stage}}/Cargo.toml" --no-default-features
 
-# The three test tiers; docs/workflows/testing.md says what each one shows.
+# Format the host code. Never `cargo fmt --all`: it rewrites Raster and the stage programs' sources (scripts/fmt.sh).
+fmt:
+    bash scripts/fmt.sh
+
+# List the host files that are not formatted; the fast tier runs this.
+fmt-check:
+    bash scripts/fmt.sh --check
+
+# The test tiers; docs/workflows/testing.md says what each one shows.
 # Fast (minutes): unit tests, the stage schema check, and every Raster.lock against its sources.
 test-fast:
     bash scripts/test-fast.sh
@@ -54,6 +62,10 @@ test-full:
 # Release (about an hour): full, the ignored tests (guests, a real fault proof) and the real-model check.
 test-release *args:
     bash scripts/test-release.sh {{args}}
+
+# Chain (a few minutes, needs the local chains): lying claims against the contracts: [--deploy] [--real-model <run spec>]
+test-chain *args:
+    bash scripts/test-chain.sh {{args}}
 
 # The Raster check ladder for stage programs, on the newest parity run's inputs: [program ...]
 stage-ladder *args:

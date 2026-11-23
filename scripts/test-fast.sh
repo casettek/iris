@@ -5,6 +5,7 @@
 source "$(dirname "${BASH_SOURCE[0]}")/test-env.sh"
 
 echo "== fast tier"
+step fmt-check "host code is formatted" bash "$repo_root/scripts/fmt.sh" --check
 # Includes the schema check: no tile reads a value its program does not pin.
 step unit-tests "unit tests and stage schema check" \
     cargo test --workspace --no-fail-fast

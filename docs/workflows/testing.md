@@ -5,7 +5,7 @@ not tell you.
 
 ## What has to hold
 
-Iris makes three promises, and every check here is about one of them.
+Iris makes four promises, and every check here is about one of them.
 
 1. **An honest claimer is never convicted.** The fast native code that builds a
    claim and the Raster stage programs that judge it give the same bytes at every
@@ -15,19 +15,24 @@ Iris makes three promises, and every check here is about one of them.
    through authenticated Raster.
 3. **The catch can be proven.** The stage runs in the zkVM guest as it does
    natively, and a fault proof of it verifies.
+4. **The contracts say what iris says.** A claim iris would take the contracts
+   take, a claim that lies is void or challenged on the chains as the Rust
+   rules say it is, and a challenge iris would refuse the contracts refuse.
 
-## The three tiers
+## The tiers
 
 ```sh
 just test-fast      # minutes
 just test-full      # about half an hour
 just test-release   # about an hour; add --skip-proof to leave out the fault proof
+just test-chain     # about 3 minutes; needs the local chains
 ```
 
-Each tier runs the one before it. Every check prints one line, `PASS` or `FAIL`
-with what a pass means and how long it took, and keeps its log under
-`target/test-logs/`. A tier runs all of its checks even after a failure and
-exits nonzero if any failed.
+Each of the first three runs the one before it. The chain tier stands apart,
+because it needs the local chains running (see [The chain tier](#the-chain-tier)).
+Every check prints one line, `PASS` or `FAIL` with what a pass means and how
+long it took, and keeps its log under `target/test-logs/`. A tier runs all of
+its checks even after a failure and exits nonzero if any failed.
 
 Set `IRIS_FEATURES=cuda,gpu-kernels` to keep `target/release/iris` a GPU build;
 without it a tier rebuilds that binary for the CPU. Variables such as
@@ -35,6 +40,7 @@ without it a tier rebuilds that binary for the CPU. Variables such as
 
 | Tier | Check | A pass means | Promise |
 | --- | --- | --- | --- |
+| fast | Formatting | Every host file is as `just fmt` leaves it. See [Formatting](#formatting). | none |
 | fast | Unit tests | The pieces behave: fixed-point arithmetic against independent vectors, the tokenizer against independent references, weight loading that refuses corrupted or forged data, worker and cache reuse. | 1 |
 | fast | Stage schema check (one of the unit tests) | No tile reads a value its program does not pin. See [Raster stage checks](../internals/development.md#raster-stage-checks). | 2 |
 | fast | Stage locks | Every `Raster.lock` matches its stage's sources, the Raster checkout and the guest compiler. | 2, 3 |
@@ -42,6 +48,11 @@ without it a tier rebuilds that binary for the CPU. Variables such as
 | full | Stage ladder | Each stage program a family runs compiles with and without `std`, gives the native output when run as Raster, and its authenticated trace commits and audits. Run after each family's gate, on that run's inputs. | 1, 2 |
 | release | Ignored tests | Native loaders match authenticated Raster stage binaries on multi-page weights; the real tokenizer's references hold; tiles run in the zkVM guest as they do natively; a fault proof of a small fixture is produced and verifies. | 1, 3 |
 | release | Real-model check | On an imported Gemma model: an honest claim builds with no fault, every checkpoint matches the reference in `tests/real-model/`, and one stage of each program gives the native output when run as Raster. | 1 |
+| chain | Contracts' own tests | The Solidity tests pass, among them a real fault proof against `submitFaultProof`. | 3, 4 |
+| chain | Honest claim | The contract takes it, agrees with `iris claim check` on changed copies of it, and refuses every on-the-spot question as `iris claim audit` does. | 4 |
+| chain | Four voided lies | A claim whose checkpoint names an unapproved program, or an input that is not its producer's output, a pinned commitment or a posted value, is taken, and voided with that fault when the contract is pointed at the checkpoint. | 2, 4 |
+| chain | Four rearranged lies | A claim that gives a stage a value from the wrong place (another layer's weights, another range's marks, another stage's output, the empty value) is taken and survives every on-the-spot question. The challenger's replay of that stage on the inputs its checkpoint names is a challenge the contract admits. | 2, 4 |
+| chain | Forged verdict | A claim of ids that are not the model's, with its check's record stated valid, arrives with a valid record and survives every question, and the challenger goes to replay the last check. | 2, 4 |
 
 The gate replays a falsified stage through authenticated Raster only when the
 stage is longer than its replay window. On the synthetic model that is
@@ -51,6 +62,57 @@ with a smaller window. That includes `prompt-source` and `claim-result`, on the
 claim the gate's source leg builds, and `consensus-result`, on the claim its
 consensus leg builds. The two result programs are a handful of steps and are
 committed at a window of two.
+
+## The chain tier
+
+```sh
+just devstack-up        # the local chains, once
+just devstack-deploy    # the contracts, once per restart of the chains and after any contract change
+just test-chain
+just test-chain --real-model inference.toml
+```
+
+The tier sends real transactions to the local EVM node and posts to the local
+Celestia node ([devstack](../../devstack/README.md)). It builds its own claims
+of the newest parity run's small model, for addresses no earlier run used, so
+it can be repeated on one deployment. `--deploy` deploys the contracts first.
+Everything it makes is kept under `target/chain-test/<run>`.
+
+The small model's check stage is under the replay window, so there the forged
+verdict is followed only as far as the replay. `--real-model <run spec>` adds a
+claim of that spec's model, another layer's weights given to one of its
+stages, and the forged verdict, each of which must end in a challenge the
+contract accepts. With a short prompt on a GPU build that adds a few minutes.
+No proof is made.
+
+To have the other tiers post to the local Celestia node in place of the
+stand-in directory, set `IRIS_TEST_CELESTIA=1`:
+
+```sh
+IRIS_TEST_CELESTIA=1 just test-parity
+```
+
+## Formatting
+
+```sh
+just fmt          # format the host code
+just fmt-check    # list what is not formatted; the fast tier runs this
+```
+
+Never run `cargo fmt --all` here. It follows path dependencies into the
+Raster checkout and rewrites it, and it rewrites the code the stage programs
+are built from. A stage program's identity covers its sources down to the
+line numbers in their panic messages, so formatting that code changes every
+program id: a re-lock of every stage, new contract pins and a new real-model
+reference.
+
+`just fmt` formats what no stage program is built from: every Rust file
+except the stage crates (`raster-stages/`), the crates they depend on
+(`det-num`, `model-identity`, `pipeline-core`), and the six files of
+`prompt-core` and `source-core` they take by symbolic link. The stage code is
+formatted only together with a re-lock. If a stage crate gains a dependency
+inside this repository, add it to `guest_dirs` in `scripts/fmt.sh`; the stage
+lock check fails if that is forgotten and the crate is then formatted.
 
 ## The pieces on their own
 
@@ -100,6 +162,11 @@ intend is a regression: the check names the first stage that differs.
   judged.
 - **Nothing here runs the backend.** Its own checks are `pnpm typecheck`,
   `pnpm test` and `pnpm validate:gpu` in `iris-backend`.
+- **No fault proof of a real dispute goes to the contracts.** The chain tier
+  ends each dispute at the admitted challenge. The contract's own tests take
+  one real proof, of the small fixture.
+- **The chain tier runs against trusted stand-ins**: a host's signature for
+  what a blob holds, and a relayer for Celestia's block roots.
 - **None of this runs automatically.** There is no CI; a tier runs when someone
   runs it.
 
@@ -108,5 +175,8 @@ intend is a regression: the check names the first stage that differs.
 - Any change: `just test-fast`.
 - A change to a stage program, to code a tile reaches, to the chain or to the
   native kernels: `just test-full`.
+- A change to the contracts, to what a claim or a challenge posts, to the rules
+  a claim or a challenge is checked by, or to how a challenge is built:
+  `just test-chain`, after `just devstack-deploy` if a contract changed.
 - Before a version is committed, after a Raster or toolchain update, and after a
   re-lock: `just test-release`.

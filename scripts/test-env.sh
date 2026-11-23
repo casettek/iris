@@ -25,6 +25,14 @@ if [ -n "${IRIS_FEATURES:-}" ]; then
     export NVCC_PREPEND_FLAGS="${NVCC_PREPEND_FLAGS:--include $CUDA_HOME/include/cuda.h -arch=native}"
 fi
 
+# IRIS_TEST_CELESTIA=1 has every tier post to the local Celestia node
+# (devstack/README.md) in place of the stand-in directory. Only the node is
+# named here: no tier but the chain tier sends a transaction.
+if [ -n "${IRIS_TEST_CELESTIA:-}" ]; then
+    IRIS_CELESTIA_RPC="$(source "$repo_root/devstack/env.sh" && echo "$IRIS_CELESTIA_RPC")"
+    export IRIS_CELESTIA_RPC
+fi
+
 logs="$repo_root/target/test-logs"
 mkdir -p "$logs"
 failed=0
