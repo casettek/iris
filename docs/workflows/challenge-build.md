@@ -122,7 +122,7 @@ same inputs. From there the flow and the outputs are the ones above. It
 stops when a checkpoint names a value nobody holds or another program than
 the chain's, which is a claim for `iris claim audit`.
 
-`--claim` and `--trace` remain lower-level debug inputs that compare full checkpoint records. `--trace` prepares a run from `--run` because a trace alone has no frozen run metadata. It uses that run spec’s model, prompt, and token count, and discovers the output with direct inference. `challenge locate` remains reserved. See [Fault proving](fault-prove.md) for `challenge corrupt` and `fault prove`.
+See [Fault proving](fault-prove.md) for `challenge corrupt` and `fault prove`.
 
 A stage whose trace is 128 steps or fewer cannot be replayed at this window, so a
 challenge that lands on one fails at the replay. See

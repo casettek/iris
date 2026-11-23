@@ -95,8 +95,6 @@ pub(crate) struct ChallengeCheckArgs {
 
 #[derive(Debug, Subcommand)]
 pub(crate) enum ChallengeCommand {
-    /// Locate the first divergent checkpoint in a claim.
-    Locate,
     /// Build a challenge bundle for a divergent claim.
     Build(ChallengeBuildArgs),
     /// Flip an interior fingerprint bit in a challenge copy.
@@ -121,27 +119,22 @@ pub(crate) struct ChallengeBuildArgs {
     #[arg(long, default_value = inference_artifacts::INFERENCE_RUN_SPEC_TOML)]
     run: PathBuf,
 
-    /// Claim bundle to challenge. Preferred over --trace because it carries frozen run metadata.
-    #[arg(long)]
-    claim: Option<PathBuf>,
-
-    /// Existing checkpoint trace to challenge.
-    #[arg(long)]
-    trace: Option<PathBuf>,
-
-    /// Public claimed checkpoints hash list to challenge.
-    #[arg(long = "checkpoints")]
+    /// For a test that has the claimer's own directory: the claim's
+    /// checkpoint list. A challenger of a submitted claim gives
+    /// `--submission`.
+    #[arg(long = "checkpoints", requires = "claim_context")]
     checkpoint_hashes: Option<PathBuf>,
 
-    /// Claim bundle used only as frozen run context for --checkpoints.
-    #[arg(long = "claim-context")]
+    /// With `--checkpoints`: the claimer's `claim_bundle.json`, for the run
+    /// the claim was built from.
+    #[arg(long = "claim-context", requires = "checkpoint_hashes")]
     claim_context: Option<PathBuf>,
 
     /// A submitted claim as `iris claim fetch` wrote it: its
     /// `claim_submission.json`, with its checkpoint list beside it. Give
     /// `--run` the spec that command wrote there. Nothing of the claimer's
     /// own run is read.
-    #[arg(long, conflicts_with_all = ["claim", "trace", "checkpoint_hashes", "claim_context"])]
+    #[arg(long, conflicts_with_all = ["checkpoint_hashes", "claim_context"])]
     submission: Option<PathBuf>,
 
     /// With `--submission`: the comma-separated output ids your own `iris
@@ -228,32 +221,18 @@ impl ChallengeBuildArgs {
                     ),
                 })
             });
-        let input = match (
-            self.claim,
-            self.trace,
-            self.checkpoint_hashes,
-            self.claim_context,
-        ) {
-            (None, None, None, None) if posted.is_some() => posted.expect("checked")?,
-            (Some(claim), None, None, None) => ChallengeInput::Claim(claim),
-            (None, Some(trace), None, None) => ChallengeInput::Trace(trace),
-            (None, None, Some(checkpoint_hashes_path), Some(claim_context_path)) => {
+        let input = match (posted, self.checkpoint_hashes, self.claim_context) {
+            (Some(posted), None, None) => posted?,
+            (None, Some(checkpoint_hashes_path), Some(claim_context_path)) => {
                 ChallengeInput::CheckpointHashes {
                     claim_context_path,
                     checkpoint_hashes_path,
                 }
             }
-            (None, None, Some(_), None) => {
-                anyhow::bail!("challenge build --checkpoints requires --claim-context")
-            }
-            (None, None, None, Some(_)) => {
-                anyhow::bail!("challenge build --claim-context requires --checkpoints")
-            }
-            (None, None, None, None) => anyhow::bail!(
-                "challenge build requires --claim <claim_bundle.json> or --checkpoints <checkpoints.txt> --claim-context <claim_bundle.json>"
-            ),
             _ => anyhow::bail!(
-                "challenge build accepts only one input mode: --claim, --trace, or --checkpoints with --claim-context"
+                "challenge build requires --submission <claim_submission.json>, or for a claim \
+                 in its claimer's directory --checkpoints <checkpoints.txt> --claim-context \
+                 <claim_bundle.json>"
             ),
         };
         let current_exe = std::env::current_exe().context("failed to locate current executable")?;
@@ -278,9 +257,6 @@ pub(crate) fn run(command: ChallengeCommand) -> Result<ExitCode> {
         ChallengeCommand::Corrupt(args) => {
             fault::corrupt(args)?;
             Ok(ExitCode::SUCCESS)
-        }
-        ChallengeCommand::Locate => {
-            bail!("iris challenge locate is not implemented yet")
         }
         ChallengeCommand::Build(args) => {
             warn_if_debug_build("challenge build");

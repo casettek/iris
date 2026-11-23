@@ -338,10 +338,15 @@ mod tests {
             "iris",
             "challenge",
             "build",
-            "--trace",
-            "checkpoint_trace.json",
+            "--submission",
+            "claim_submission.json",
         ])
         .unwrap();
+        // The inputs that read a claimer's own trace or bundle are gone.
+        for removed in ["--trace", "--claim"] {
+            assert!(parse_for_test(["iris", "challenge", "build", removed, "file.json"]).is_err());
+        }
+        assert!(parse_for_test(["iris", "challenge", "locate"]).is_err());
         parse_for_test([
             "iris",
             "challenge",
@@ -367,7 +372,13 @@ mod tests {
     #[test]
     fn challenge_run_spec_defaults_and_overrides_reach_options() {
         for run in [None, Some("specs/model-b.toml")] {
-            let mut argv = vec!["iris", "challenge", "build", "--claim", "claim_bundle.json"];
+            let mut argv = vec![
+                "iris",
+                "challenge",
+                "build",
+                "--submission",
+                "claim_submission.json",
+            ];
             if let Some(path) = run {
                 argv.extend(["--run", path]);
             }

@@ -6,14 +6,11 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{bail, ensure, Context, Result};
 use staged_infer::chain_runner::StagedExecutionBackend;
-use staged_infer::{
-    CheckpointHashChallengeConfig, CheckpointedInferenceConfig, CheckpointedInferenceExecutor,
-    ParityPolicy,
-};
+use staged_infer::{CheckpointHashChallengeConfig, CheckpointedInferenceExecutor};
 
 use inference_artifacts::{
-    build_checkpoint_trace, checkpoint_hashes, read_challenge_bundle, read_checkpoint_hashes,
-    read_checkpoint_trace, read_claim_bundle, verify_file_sha256, write_challenge_artifacts,
+    checkpoint_hashes, read_challenge_bundle, read_checkpoint_hashes, read_checkpoint_trace,
+    read_claim_bundle, verify_file_sha256, write_challenge_artifacts,
     write_checkpoint_trace_artifact, ChallengeBundle, ChallengeSourcePath, Checkpoint,
     CheckpointTrace, Divergence, DivergenceReason, InferenceRunSpec, PreparedRun, ReplayPackage,
 };
@@ -23,8 +20,10 @@ use crate::parity::compare::value_json;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ChallengeInput {
-    Claim(PathBuf),
-    Trace(PathBuf),
+    /// A claim's checkpoint list, with the bundle of the claimer's own build
+    /// beside it for the run it was built from. Both are read from the
+    /// claimer's directory, so this is for a test that has one: a challenger
+    /// of a submitted claim starts from [`ChallengeInput::Posted`].
     CheckpointHashes {
         claim_context_path: PathBuf,
         checkpoint_hashes_path: PathBuf,
@@ -36,9 +35,7 @@ pub enum ChallengeInput {
     /// claim's checkpoint names for it, each of which the claim posted, the
     /// configuration pins or an earlier stage made, under `run_spec_path`,
     /// which `claim fetch` wrote.
-    Posted {
-        submission_path: PathBuf,
-    },
+    Posted { submission_path: PathBuf },
 }
 
 #[derive(Debug, Clone)]
@@ -104,58 +101,29 @@ pub fn build_challenge(options: ChallengeBuildOptions) -> Result<ChallengeBuildR
         .as_ref()
         .map_or(manifest_path, |posted| posted.manifest_path.clone());
     let executor = CheckpointedInferenceExecutor;
-    let (recomputed_chain_dir, recomputed_trace, divergence, final_result, consensus) =
-        match &claimed_input.checkpoints {
-            ClaimedCheckpoints::Hashes { path, hashes } => {
-                let recomputed =
-                    executor.run_until_hash_divergence(CheckpointHashChallengeConfig {
-                        base_dir: options.base_dir.clone(),
-                        manifest_path: manifest_path.clone(),
-                        current_exe: options.current_exe.clone(),
-                        staged_backend: options.staged_backend,
-                        claimed_hashes_path: path.clone(),
-                        claimed_hashes: hashes.clone(),
-                        claimed_sources: posted_claim.as_ref().map(|posted| {
-                            posted
-                                .trace
-                                .checkpoints
-                                .iter()
-                                .map(|checkpoint| checkpoint.input_sources.clone())
-                                .collect()
-                        }),
-                    })?;
-                (
-                    recomputed.chain_dir,
-                    recomputed.recomputed_trace,
-                    recomputed.divergence,
-                    recomputed.final_result,
-                    recomputed.consensus,
-                )
-            }
-            ClaimedCheckpoints::Trace { .. } => {
-                let recomputed = executor.run(CheckpointedInferenceConfig {
-                    base_dir: options.base_dir.clone(),
-                    manifest_path: manifest_path.clone(),
-                    current_exe: options.current_exe.clone(),
-                    staged_backend: options.staged_backend,
-                    parity_policy: ParityPolicy::Skip,
-                })?;
-                let recomputed_trace =
-                    build_checkpoint_trace(&recomputed.chain_dir, &manifest_path)?;
-                let recomputed_trace_path = recomputed
-                    .chain_dir
-                    .join(inference_artifacts::CHECKPOINT_TRACE_JSON);
-                let divergence =
-                    claimed_input.locate_divergence(&recomputed_trace_path, &recomputed_trace)?;
-                (
-                    recomputed.chain_dir,
-                    recomputed_trace,
-                    divergence,
-                    recomputed.final_result,
-                    recomputed.consensus,
-                )
-            }
-        };
+    let recomputed = executor.run_until_hash_divergence(CheckpointHashChallengeConfig {
+        base_dir: options.base_dir.clone(),
+        manifest_path: manifest_path.clone(),
+        current_exe: options.current_exe.clone(),
+        staged_backend: options.staged_backend,
+        claimed_hashes_path: claimed_input.hashes_path.clone(),
+        claimed_hashes: claimed_input.hashes.clone(),
+        claimed_sources: posted_claim.as_ref().map(|posted| {
+            posted
+                .trace
+                .checkpoints
+                .iter()
+                .map(|checkpoint| checkpoint.input_sources.clone())
+                .collect()
+        }),
+    })?;
+    let (recomputed_chain_dir, recomputed_trace, divergence, final_result, consensus) = (
+        recomputed.chain_dir,
+        recomputed.recomputed_trace,
+        recomputed.divergence,
+        recomputed.final_result,
+        recomputed.consensus,
+    );
     let recomputed_trace_path =
         write_checkpoint_trace_artifact(&recomputed_chain_dir, &recomputed_trace)?;
     let checkpoint_trace_duration = checkpoint_trace_started.elapsed();
@@ -163,7 +131,7 @@ pub fn build_challenge(options: ChallengeBuildOptions) -> Result<ChallengeBuildR
     let Some(divergence) = divergence else {
         // Every checkpoint agrees, so there is no stage to dispute. A claim can
         // still be refuted by its own final record: honest execution over
-        // non-greedy ids commits a non-zero verdict. A bare trace claims nothing.
+        // non-greedy ids commits a non-zero verdict.
         if let Some(prepared_run) = &prepared_run {
             // A claim of several inferences is refuted by any one's record.
             let mut rejection = claimed_output_rejection(final_result.as_ref())?;
@@ -178,7 +146,7 @@ pub fn build_challenge(options: ChallengeBuildOptions) -> Result<ChallengeBuildR
                 return Ok(ChallengeBuildResult {
                     outcome: ChallengeBuildOutcome::ClaimedOutputRejected {
                         reason,
-                        claimed_reference_path: claimed_input.reference_path().to_path_buf(),
+                        claimed_reference_path: claimed_input.hashes_path.clone(),
                         recomputed_trace_path,
                         recomputed_chain_dir,
                     },
@@ -187,7 +155,7 @@ pub fn build_challenge(options: ChallengeBuildOptions) -> Result<ChallengeBuildR
         }
         return Ok(ChallengeBuildResult {
             outcome: ChallengeBuildOutcome::NoDivergence {
-                claimed_reference_path: claimed_input.reference_path().to_path_buf(),
+                claimed_reference_path: claimed_input.hashes_path.clone(),
                 recomputed_trace_path,
                 recomputed_chain_dir,
             },
@@ -302,7 +270,7 @@ pub fn build_challenge(options: ChallengeBuildOptions) -> Result<ChallengeBuildR
     let (divergence_path, replay_package_path, challenge_trace_path, challenge_bundle_path) =
         write_challenge_artifacts(
             &challenge_dir,
-            claimed_input.source_path(),
+            ChallengeSourcePath::CheckpointHashes(&claimed_input.hashes_path),
             &recomputed_trace_path,
             &divergence,
             &replay_package,
@@ -351,14 +319,12 @@ fn arrange_posted_claim(
         .parent()
         .context("the claim submission has no parent directory")?;
     let trace = read_checkpoint_trace(&claim_dir.join(inference_artifacts::CHECKPOINT_TRACE_JSON))?;
-    if let ClaimedCheckpoints::Hashes { path, hashes } = &claimed.checkpoints {
-        ensure!(
-            &checkpoint_hashes(&trace)? == hashes,
-            "the checkpoints in {} are not the ones {} lists",
-            claim_dir.display(),
-            path.display()
-        );
-    }
+    ensure!(
+        checkpoint_hashes(&trace)? == claimed.hashes,
+        "the checkpoints in {} are not the ones {} lists",
+        claim_dir.display(),
+        claimed.hashes_path.display()
+    );
     let arranged = crate::arrangement::arrange(run_manifest_path, &trace, claim_dir)?;
     for found in &arranged.rearranged {
         println!(
@@ -422,11 +388,9 @@ fn challenge_run(
         claimer: None,
     };
     let ChallengeInput::Posted { submission_path } = &options.input else {
-        // A bare trace has no frozen metadata. Prepare it from the selected
-        // run spec, just as claim build does, rather than selecting a root
-        // template. A bare trace claims nothing.
-        let prepared = crate::claim::prepare_claim_run(&build)?;
-        return Ok((prepared.manifest_path, None));
+        // The other input is a claimer's own build, which is read with its
+        // prepared run and has returned above.
+        bail!("the claim to challenge carries no prepared run")
     };
     // The run is on the inputs the claim posted: every stage is given what
     // the claimer's was. A run on inputs prepared here would differ from a
@@ -613,41 +577,6 @@ pub fn locate_divergence(
     None
 }
 
-pub fn locate_hash_divergence(
-    claimed_hashes_path: &Path,
-    claimed_hashes: &[String],
-    recomputed_trace_path: &Path,
-    recomputed: &CheckpointTrace,
-) -> Result<Option<Divergence>> {
-    let recomputed_hashes = checkpoint_hashes(recomputed)?;
-    let checkpoint_count = claimed_hashes.len().max(recomputed_hashes.len());
-    for index in 0..checkpoint_count {
-        let claimed_hash = claimed_hashes.get(index);
-        let recomputed_hash = recomputed_hashes.get(index);
-        let Some(reason) = hash_divergence_reason(claimed_hash, recomputed_hash) else {
-            continue;
-        };
-        let recomputed_checkpoint = recomputed.checkpoints.get(index);
-        let stage = recomputed_checkpoint
-            .map(|checkpoint| checkpoint.stage.clone())
-            .unwrap_or_else(|| format!("<checkpoint-{index}>"));
-        return Ok(Some(Divergence {
-            version: 1,
-            checkpoint_index: index,
-            stage,
-            reason,
-            claimed_trace_path: None,
-            claimed_checkpoint_hashes_path: Some(claimed_hashes_path.to_path_buf()),
-            recomputed_trace_path: recomputed_trace_path.to_path_buf(),
-            claimed_hash: claimed_hash.cloned(),
-            recomputed_hash: recomputed_hash.cloned(),
-            claimed: None,
-            recomputed: recomputed_checkpoint.cloned(),
-        }));
-    }
-    Ok(None)
-}
-
 fn divergence_reason(
     claimed: Option<&Checkpoint>,
     recomputed: Option<&Checkpoint>,
@@ -681,115 +610,16 @@ fn divergence_reason(
     }
 }
 
-fn hash_divergence_reason(
-    claimed: Option<&String>,
-    recomputed: Option<&String>,
-) -> Option<DivergenceReason> {
-    match (claimed, recomputed) {
-        (None, None) => None,
-        (None, Some(_)) => Some(DivergenceReason::MissingClaimedHash),
-        (Some(_), None) => Some(DivergenceReason::MissingRecomputedHash),
-        (Some(claimed), Some(recomputed)) if claimed != recomputed => {
-            Some(DivergenceReason::CheckpointHash)
-        }
-        _ => None,
-    }
-}
-
+/// The claim's checkpoint list, and the run the claimer built it from when
+/// that is in hand.
 struct ClaimedInput {
-    checkpoints: ClaimedCheckpoints,
+    hashes_path: PathBuf,
+    hashes: Vec<String>,
     prepared_run: Option<PreparedRun>,
-}
-
-enum ClaimedCheckpoints {
-    Trace {
-        path: PathBuf,
-        trace: CheckpointTrace,
-    },
-    Hashes {
-        path: PathBuf,
-        hashes: Vec<String>,
-    },
-}
-
-impl ClaimedInput {
-    fn reference_path(&self) -> &Path {
-        self.checkpoints.path()
-    }
-
-    fn source_path(&self) -> ChallengeSourcePath<'_> {
-        match &self.checkpoints {
-            ClaimedCheckpoints::Trace { path, .. } => ChallengeSourcePath::Trace(path),
-            ClaimedCheckpoints::Hashes { path, .. } => ChallengeSourcePath::CheckpointHashes(path),
-        }
-    }
-
-    fn locate_divergence(
-        &self,
-        recomputed_trace_path: &Path,
-        recomputed_trace: &CheckpointTrace,
-    ) -> Result<Option<Divergence>> {
-        match &self.checkpoints {
-            ClaimedCheckpoints::Trace { path, trace } => Ok(locate_divergence(
-                path,
-                trace,
-                recomputed_trace_path,
-                recomputed_trace,
-            )),
-            ClaimedCheckpoints::Hashes { path, hashes } => {
-                locate_hash_divergence(path, hashes, recomputed_trace_path, recomputed_trace)
-            }
-        }
-    }
-}
-
-impl ClaimedCheckpoints {
-    fn path(&self) -> &Path {
-        match self {
-            ClaimedCheckpoints::Trace { path, .. } => path,
-            ClaimedCheckpoints::Hashes { path, .. } => path,
-        }
-    }
 }
 
 fn load_claimed_input(input: &ChallengeInput) -> Result<ClaimedInput> {
     match input {
-        ChallengeInput::Claim(path) => {
-            let bundle = read_claim_bundle(path)?;
-            let bundle_dir = path
-                .parent()
-                .ok_or_else(|| anyhow::anyhow!("claim bundle has no parent directory"))?;
-            let trace_path = resolve_bundle_path(bundle_dir, &bundle.checkpoint_trace_path);
-            let trace = read_checkpoint_trace(&trace_path)?;
-            let prepared_run = bundle
-                .prepared_run_path
-                .as_ref()
-                .map(|path| read_prepared_run(&resolve_bundle_path(bundle_dir, path)))
-                .transpose()?
-                .ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "claim bundle has no prepared_run_path; rebuild the claim with --run"
-                    )
-                })?;
-            verify_prepared_run(&prepared_run)?;
-            Ok(ClaimedInput {
-                checkpoints: ClaimedCheckpoints::Trace {
-                    path: trace_path,
-                    trace,
-                },
-                prepared_run: Some(prepared_run),
-            })
-        }
-        ChallengeInput::Trace(path) => {
-            let trace = read_checkpoint_trace(path)?;
-            Ok(ClaimedInput {
-                checkpoints: ClaimedCheckpoints::Trace {
-                    path: path.clone(),
-                    trace,
-                },
-                prepared_run: None,
-            })
-        }
         ChallengeInput::Posted { submission_path } => {
             let path = submission_path
                 .parent()
@@ -797,7 +627,8 @@ fn load_claimed_input(input: &ChallengeInput) -> Result<ClaimedInput> {
                 .join(inference_artifacts::CHECKPOINTS_TXT);
             let hashes = read_checkpoint_hashes(&path)?;
             Ok(ClaimedInput {
-                checkpoints: ClaimedCheckpoints::Hashes { path, hashes },
+                hashes_path: path,
+                hashes,
                 prepared_run: None,
             })
         }
@@ -822,10 +653,8 @@ fn load_claimed_input(input: &ChallengeInput) -> Result<ClaimedInput> {
             verify_prepared_run(&prepared_run)?;
             let hashes = read_checkpoint_hashes(checkpoint_hashes_path)?;
             Ok(ClaimedInput {
-                checkpoints: ClaimedCheckpoints::Hashes {
-                    path: checkpoint_hashes_path.clone(),
-                    hashes,
-                },
+                hashes_path: checkpoint_hashes_path.clone(),
+                hashes,
                 prepared_run: Some(prepared_run),
             })
         }
@@ -1123,36 +952,6 @@ mod tests {
     }
 
     #[test]
-    fn bare_trace_prepares_the_run_spec_model() {
-        let base = temp_dir("trace-model");
-        crate::test_support::model_fixture(&base, "selected");
-        fs::write(base.join("Raster.toml"), "stale root template").unwrap();
-        let options = ChallengeBuildOptions {
-            base_dir: base.clone(),
-            run_spec_path: crate::test_support::run_spec(&base, "selected"),
-            current_exe: PathBuf::from("unused"),
-            staged_backend: StagedExecutionBackend::InProcess,
-            input: ChallengeInput::Trace(base.join("trace.json")),
-            direct_output_ids: None,
-        };
-        let claimed = ClaimedInput {
-            checkpoints: ClaimedCheckpoints::Trace {
-                path: base.join("trace.json"),
-                trace: trace(Vec::new()),
-            },
-            prepared_run: None,
-        };
-        // A bare trace has no claimed ids, so it discovers them from the run
-        // spec's model; this fixture has no weights to discover them with.
-        let error = challenge_run(&options, &claimed).err().unwrap();
-        assert!(
-            format!("{error:#}").contains("direct inference"),
-            "{error:#}"
-        );
-        fs::remove_dir_all(base).unwrap();
-    }
-
-    #[test]
     fn identical_traces_have_no_divergence() {
         let trace = trace(vec![checkpoint("stage_a", "aaa", "111")]);
 
@@ -1235,68 +1034,6 @@ mod tests {
             divergence.reason,
             DivergenceReason::MissingClaimedCheckpoint
         );
-    }
-
-    #[test]
-    fn hash_mismatch_is_first_divergence() {
-        let recomputed = trace(vec![
-            checkpoint("stage_a", "aaa", "111"),
-            checkpoint("stage_b", "bbb", "222"),
-        ]);
-        let mut claimed_hashes = checkpoint_hashes(&recomputed).unwrap();
-        let replacement = if claimed_hashes[1].starts_with('0') {
-            "1"
-        } else {
-            "0"
-        };
-        claimed_hashes[1].replace_range(0..1, replacement);
-
-        let divergence = locate_hash_divergence(
-            Path::new("checkpoints.txt"),
-            &claimed_hashes,
-            Path::new("recomputed.json"),
-            &recomputed,
-        )
-        .unwrap()
-        .unwrap();
-
-        assert_eq!(divergence.checkpoint_index, 1);
-        assert_eq!(divergence.stage, "stage_b");
-        assert_eq!(divergence.reason, DivergenceReason::CheckpointHash);
-        assert_eq!(
-            divergence.claimed_checkpoint_hashes_path,
-            Some(PathBuf::from("checkpoints.txt"))
-        );
-        assert!(divergence.claimed_trace_path.is_none());
-        assert_eq!(
-            divergence.recomputed,
-            Some(checkpoint("stage_b", "bbb", "222"))
-        );
-    }
-
-    #[test]
-    fn missing_claimed_hash_is_divergence_at_recomputed_stage() {
-        let recomputed = trace(vec![
-            checkpoint("stage_a", "aaa", "111"),
-            checkpoint("stage_b", "bbb", "222"),
-        ]);
-        let claimed_hashes =
-            checkpoint_hashes(&trace(vec![checkpoint("stage_a", "aaa", "111")])).unwrap();
-
-        let divergence = locate_hash_divergence(
-            Path::new("checkpoints.txt"),
-            &claimed_hashes,
-            Path::new("recomputed.json"),
-            &recomputed,
-        )
-        .unwrap()
-        .unwrap();
-
-        assert_eq!(divergence.checkpoint_index, 1);
-        assert_eq!(divergence.stage, "stage_b");
-        assert_eq!(divergence.reason, DivergenceReason::MissingClaimedHash);
-        assert_eq!(divergence.claimed_hash, None);
-        assert!(divergence.recomputed_hash.is_some());
     }
 
     #[test]
@@ -1512,10 +1249,8 @@ mod tests {
 
         let run_spec_path = run_spec(&base, "challengers-model");
         let claimed = ClaimedInput {
-            checkpoints: ClaimedCheckpoints::Trace {
-                path: base.join("trace.json"),
-                trace: trace(Vec::new()),
-            },
+            hashes_path: base.join("checkpoints.txt"),
+            hashes: Vec::new(),
             prepared_run: Some(frozen.clone()),
         };
         let options = ChallengeBuildOptions {
@@ -1523,7 +1258,10 @@ mod tests {
             run_spec_path,
             current_exe: PathBuf::from("unused"),
             staged_backend: StagedExecutionBackend::InProcess,
-            input: ChallengeInput::Trace(base.join("trace.json")),
+            input: ChallengeInput::CheckpointHashes {
+                claim_context_path: base.join("claim_bundle.json"),
+                checkpoint_hashes_path: base.join("checkpoints.txt"),
+            },
             direct_output_ids: None,
         };
         // The claimer's model files are not needed to challenge the claim.
@@ -1584,14 +1322,15 @@ mod tests {
             run_spec_path: crate::test_support::run_spec(&base, "model"),
             current_exe: PathBuf::from("unused"),
             staged_backend: StagedExecutionBackend::InProcess,
-            input: ChallengeInput::Trace(base.join("trace.json")),
+            input: ChallengeInput::CheckpointHashes {
+                claim_context_path: base.join("claim_bundle.json"),
+                checkpoint_hashes_path: base.join("checkpoints.txt"),
+            },
             direct_output_ids: None,
         };
         let claimed = ClaimedInput {
-            checkpoints: ClaimedCheckpoints::Trace {
-                path: base.join("trace.json"),
-                trace: trace(Vec::new()),
-            },
+            hashes_path: base.join("checkpoints.txt"),
+            hashes: Vec::new(),
             prepared_run: Some(frozen),
         };
         // The run spec's own prompt plays no part.
