@@ -48,7 +48,7 @@ pub struct ClaimCheckOptions {
     /// the one the run spec and the pins describe.
     pub registry_path: Option<PathBuf>,
     /// The stand-in data-availability layer's directory. Without it, the
-    /// default one (`crate::availability::da_dir`).
+    /// default one (`crate::posting::da_dir`).
     pub da_dir: Option<PathBuf>,
     /// When the claim is taken to be submitted, in Unix seconds. Without it,
     /// now.
@@ -280,8 +280,8 @@ pub fn post_claim_submission(
     submitted_at: Option<u64>,
 ) -> Result<ClaimPosted> {
     let mut submission: ClaimSubmission = read_json(submission_path)?;
-    let layer = crate::availability::open_layer(da_dir)?;
-    let prepared = crate::availability::PreparedPosting::read(claim_dir(submission_path)?)?;
+    let layer = crate::posting::open_layer(da_dir)?;
+    let prepared = crate::posting::PreparedPosting::read(claim_dir(submission_path)?)?;
     submission.availability = prepared
         .post(layer.as_ref())
         .context("posting the claim's data")?;
@@ -293,7 +293,7 @@ pub fn post_claim_submission(
         &RequiredPosting::of(&submission),
         match submitted_at {
             Some(at) => at,
-            None => crate::availability::now()?,
+            None => crate::posting::now()?,
         },
     )
     .err()
@@ -343,13 +343,13 @@ pub fn check_claim(options: ClaimCheckOptions) -> Result<ClaimCheckReport> {
         .da_dir
         .as_ref()
         .map(|dir| absolute(&options.base_dir, dir));
-    let layer = crate::availability::open_layer(da_dir.as_deref())?;
+    let layer = crate::posting::open_layer(da_dir.as_deref())?;
     let availability = Posting::Posted(Availability {
         layer: layer.as_ref(),
         parameters: AvailabilityParameters::default(),
         submitted_at: match options.submitted_at {
             Some(at) => at,
-            None => crate::availability::now()?,
+            None => crate::posting::now()?,
         },
     });
     let mut report = check_claim_dir(&contract, unregistered, &submission_path, &availability)?;
@@ -630,10 +630,10 @@ pub fn check_challenge_submission(options: ChallengeCheckOptions) -> Result<Clai
     let configuration = spec_configuration(&options.run_spec_path, options.pins_path.as_deref())?;
     let submission: inference_artifacts::contract::ChallengeSubmission =
         read_json(&options.challenge_path)?;
-    let layer = crate::availability::open_layer(options.da_dir.as_deref())?;
+    let layer = crate::posting::open_layer(options.da_dir.as_deref())?;
     let submitted_at = match options.submitted_at {
         Some(at) => at,
-        None => crate::availability::now()?,
+        None => crate::posting::now()?,
     };
     check_challenge(
         &configuration,
@@ -657,7 +657,7 @@ pub fn post_challenge(options: ChallengePostOptions) -> Result<ChallengePosted> 
         .iter()
         .position(|checkpoint| checkpoint.stage == bundle.stage)
         .with_context(|| format!("the claim has no stage `{}`", bundle.stage))?;
-    let layer = crate::availability::open_layer(options.da_dir.as_deref())?;
+    let layer = crate::posting::open_layer(options.da_dir.as_deref())?;
     let layer = layer.as_ref();
     let challenger = options
         .challenger
@@ -687,7 +687,7 @@ pub fn post_challenge(options: ChallengePostOptions) -> Result<ChallengePosted> 
     inference_artifacts::write_json(&submission_path, &submission)?;
     let submitted_at = match options.submitted_at {
         Some(at) => at,
-        None => crate::availability::now()?,
+        None => crate::posting::now()?,
     };
     let report = check_challenge(
         &configuration,
@@ -714,7 +714,7 @@ pub(crate) fn challenge_submission(
     commit_path: &Path,
     output_sha256: &str,
     challenger: &str,
-    layer: &dyn crate::availability::PostingLayer,
+    layer: &dyn crate::posting::PostingLayer,
 ) -> Result<inference_artifacts::contract::ChallengeSubmission> {
     let commitment = raster_prover::commitment_file::CommitmentFile::read_memory(commit_path)
         .with_context(|| format!("{} is not a Raster trace commitment", commit_path.display()))?;
@@ -734,7 +734,7 @@ pub(crate) fn challenge_submission(
         checkpoints_root: checkpoints_root.to_string(),
         stage,
         challenge,
-        availability: crate::availability::post_trace_body(layer, challenger, body)
+        availability: crate::posting::post_trace_body(layer, challenger, body)
             .context("posting the trace body")?,
     })
 }

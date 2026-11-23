@@ -23,7 +23,7 @@ use inference_artifacts::{
 };
 use sha2::{Digest, Sha256};
 
-use crate::availability::{contents_of, open_layer, trace_header_digest};
+use crate::posting::{contents_of, open_layer, trace_header_digest};
 
 /// A stage's input list, in the stage's directory.
 pub(crate) const INPUT_MANIFEST_JSON: &str = "input_manifest.json";
@@ -112,7 +112,7 @@ pub fn fetch_claim(options: FetchClaimOptions) -> Result<FetchedClaim> {
         options.submission_path.display()
     );
     let configuration =
-        crate::contract::spec_configuration(&options.run_spec_path, options.pins_path.as_deref())?;
+        crate::checks::spec_configuration(&options.run_spec_path, options.pins_path.as_deref())?;
     ensure!(
         configuration.id() == submission.configuration,
         "the claim is of configuration {}, and {} describes {}",

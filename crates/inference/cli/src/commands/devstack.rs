@@ -132,7 +132,7 @@ pub(crate) fn run(command: DevstackCommand) -> Result<ExitCode> {
                 no_register,
             } => {
                 let node = devstack::Node::open()?;
-                let layer = availability::open_layer(None)?;
+                let layer = posting::open_layer(None)?;
                 let before = devstack::submit::Before {
                     attest: !no_attest,
                     relay: !no_relay,
@@ -184,7 +184,7 @@ pub(crate) fn run(command: DevstackCommand) -> Result<ExitCode> {
                 challenge,
             } => {
                 let node = devstack::Node::open()?;
-                let layer = availability::open_layer(None)?;
+                let layer = posting::open_layer(None)?;
                 let (run, submission) = (at(&run), at(&submission));
                 match what {
                     ReplayWhat::Claim => {

@@ -50,7 +50,7 @@ pub(crate) fn run(command: EvmCommand) -> Result<ExitCode> {
         let base_dir = std::env::current_dir().context("failed to resolve current directory")?;
         let call = match command {
             EvmCommand::Configuration { run, pins } => {
-                evm::configuration_call(&contract::spec_configuration(
+                evm::configuration_call(&checks::spec_configuration(
                     &absolute(&base_dir, &run),
                     pins.map(|path| absolute(&base_dir, &path)).as_deref(),
                 )?)?

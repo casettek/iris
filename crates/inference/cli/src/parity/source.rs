@@ -289,7 +289,7 @@ fn run_honest(
 
     // What a contract would check, and every native checkpoint against the
     // boundary the Raster run committed.
-    let contract = crate::contract::check_claim(crate::contract::ClaimCheckOptions {
+    let contract = crate::checks::check_claim(crate::checks::ClaimCheckOptions {
         base_dir: dir.to_path_buf(),
         run_spec_path: spec.clone(),
         submission_path: native_dir.join(inference_artifacts::contract::CLAIM_SUBMISSION_JSON),

@@ -41,12 +41,12 @@ pub(crate) fn run(command: DaCommand) -> Result<ExitCode> {
         match command {
             DaCommand::BlockRoot { height, da_dir } => {
                 let da_dir = da_dir.map(|dir| absolute(&base_dir, &dir));
-                let root = availability::open_layer(da_dir.as_deref())?.block_root(height)?;
+                let root = posting::open_layer(da_dir.as_deref())?.block_root(height)?;
                 println!("{}", serde_json::to_string_pretty(&root)?);
             }
             DaCommand::Attest { submission, da_dir } => {
                 let da_dir = da_dir.map(|dir| absolute(&base_dir, &dir));
-                let layer = availability::open_layer(da_dir.as_deref())?;
+                let layer = posting::open_layer(da_dir.as_deref())?;
                 let path = absolute(&base_dir, &submission);
                 let attested = evm::attest_submission(&path, layer.as_ref())?;
                 println!("attested blobs: {attested}");

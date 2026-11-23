@@ -22,7 +22,7 @@ use inference_artifacts::{
 };
 use serde_json::{json, Value};
 
-use crate::availability::PostingLayer;
+use crate::posting::PostingLayer;
 
 /// The attester's secret key: 32 bytes of hex, with or without `0x`.
 pub const ATTESTER_KEY_ENV: &str = "IRIS_ATTESTER_KEY";

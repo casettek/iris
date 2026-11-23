@@ -8,13 +8,12 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 
 mod arrangement;
 mod audit;
-mod availability;
 mod celestia;
 mod challenge;
 mod challenge_profile;
+mod checks;
 mod claim;
 mod commands;
-mod contract;
 mod convert;
 mod devstack;
 mod evm;
@@ -24,6 +23,7 @@ mod lies;
 mod measure;
 mod parity;
 mod posted;
+mod posting;
 #[cfg(feature = "replay-profile")]
 mod replay_profile;
 mod run_inputs;
@@ -36,11 +36,11 @@ pub use challenge::{
     build_challenge, ChallengeBuildOptions, ChallengeBuildOutcome, ChallengeBuildResult,
     ChallengeInput,
 };
+pub use checks::{check_claim, CheckLine, ClaimCheckOptions, ClaimCheckReport};
 pub use claim::{
     build_claim, corrupt_checkpoint_hashes, ClaimBuildOptions, ClaimBuildResult,
     CorruptCheckpointHashesOptions, CorruptCheckpointHashesResult, CorruptCheckpointSelection,
 };
-pub use contract::{check_claim, CheckLine, ClaimCheckOptions, ClaimCheckReport};
 pub use infer::run_infer;
 pub use inference_artifacts::{
     build_checkpoint_trace, write_claim_artifacts, ChallengeBundle, ChallengeTrace, Checkpoint,
@@ -415,5 +415,57 @@ mod tests {
         let error = execute_from(["iris", "infer"]).unwrap_err();
 
         assert!(format!("{error:#}").contains("failed to load run spec"));
+    }
+
+    /// The one table of formats and versions says what the code says. The
+    /// weight file's two versions are `detwgt`'s, which this crate does not
+    /// link: its row is checked by its presence alone.
+    #[test]
+    fn the_formats_table_is_current() {
+        use inference_artifacts::availability::BLOB_MAGIC;
+        use inference_artifacts::contract::{
+            CHALLENGE_SUBMISSION_VERSION, CLAIM_SUBMISSION_VERSION, CONTRACT_PINS_VERSION,
+        };
+        use inference_artifacts::registry::{CONFIGURATION_VERSION, REGISTRY_VERSION};
+        use inference_artifacts::{MODEL_MANIFEST_VERSION, PREPARED_RUN_VERSION};
+        use model_identity::pipeline_core::EXECUTION_VERSION;
+        use model_identity::DESCRIPTOR_VERSION;
+
+        let table = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../../docs/internals/formats.md"
+        ));
+        let blob = std::str::from_utf8(BLOB_MAGIC).unwrap().trim_end();
+        let blob_version: u32 = blob.rsplit("/v").next().unwrap().parse().unwrap();
+        assert!(table.contains(&format!("`{blob}`")), "{blob} is not named");
+        for (constant, version) in [
+            ("DESCRIPTOR_VERSION", DESCRIPTOR_VERSION),
+            ("MODEL_MANIFEST_VERSION", MODEL_MANIFEST_VERSION),
+            ("PREPARED_RUN_VERSION", PREPARED_RUN_VERSION),
+            ("EXECUTION_VERSION", EXECUTION_VERSION),
+            ("CONTRACT_PINS_VERSION", CONTRACT_PINS_VERSION),
+            ("CONFIGURATION_VERSION", CONFIGURATION_VERSION),
+            ("REGISTRY_VERSION", REGISTRY_VERSION),
+            ("CLAIM_SUBMISSION_VERSION", CLAIM_SUBMISSION_VERSION),
+            ("CHALLENGE_SUBMISSION_VERSION", CHALLENGE_SUBMISSION_VERSION),
+            ("BLOB_MAGIC", blob_version),
+        ] {
+            let row = table
+                .lines()
+                .find(|line| line.starts_with('|') && line.contains(&format!("`{constant}`")))
+                .unwrap_or_else(|| panic!("the formats table has no row for {constant}"));
+            let cells: Vec<&str> = row.split('|').map(str::trim).collect();
+            assert_eq!(
+                cells.get(3).copied(),
+                Some(version.to_string().as_str()),
+                "the formats table gives {constant} another version than the code: {row}"
+            );
+        }
+        for constant in ["DETWGT_VERSION", "DET_NUM_SPEC_VERSION"] {
+            assert!(
+                table.contains(&format!("`{constant}`")),
+                "no row for {constant}"
+            );
+        }
     }
 }

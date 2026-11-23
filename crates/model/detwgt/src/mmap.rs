@@ -6,9 +6,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use anyhow::{bail, Context, Result};
 use memmap2::Mmap;
 
-const MAGIC: &[u8; 8] = b"DNWGTV0\0";
-const DETWGT_VERSION: u32 = 3;
-const DET_NUM_SPEC_VERSION: u32 = 1;
+use crate::{DETWGT_VERSION, DET_NUM_SPEC_VERSION, MAGIC};
 const PAYLOAD_ALIGNMENT: usize = 64;
 
 /// The `element_width` of a tensor stored as `Q8_0` blocks (detwgt v3): rows

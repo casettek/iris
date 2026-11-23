@@ -203,10 +203,7 @@ pub(crate) fn build(options: ClaimBuildOptions, run_spec_path: PathBuf) -> Resul
     println!("claim bundle: {}", result.claim_bundle_path.display());
     if let Some(path) = result.claim_submission_path.as_ref() {
         println!("claim submission: {}", path.display());
-        if path
-            .with_file_name(availability::POSTING_OUTPUTS_JSON)
-            .exists()
-        {
+        if path.with_file_name(posting::POSTING_OUTPUTS_JSON).exists() {
             println!("posting: prepared, not posted (`iris claim post`)");
         }
     }
@@ -224,7 +221,7 @@ pub(crate) fn run(command: ClaimCommand) -> Result<ExitCode> {
                 std::env::current_dir().context("failed to resolve current directory")?;
             let submission = absolute(&base_dir, &args.submission);
             let da_dir = args.da_dir.map(|dir| absolute(&base_dir, &dir));
-            let posted = contract::post_claim_submission(&submission, da_dir.as_deref(), None)?;
+            let posted = checks::post_claim_submission(&submission, da_dir.as_deref(), None)?;
             for blob in &posted.blobs {
                 println!(
                     "blob: height {} commitment {} ({} bytes)",
@@ -269,7 +266,7 @@ pub(crate) fn run(command: ClaimCommand) -> Result<ExitCode> {
         ClaimCommand::Pins(args) => {
             let base_dir =
                 std::env::current_dir().context("failed to resolve current directory")?;
-            let pins = contract::run_pins(&base_dir, &args.run)?;
+            let pins = checks::run_pins(&base_dir, &args.run)?;
             inference_artifacts::write_json(&args.out, &pins)?;
             println!("pipeline: {}", pins.pipeline);
             for model in &pins.models {

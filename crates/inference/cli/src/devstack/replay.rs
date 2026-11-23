@@ -29,11 +29,11 @@ use serde_json::{json, Value};
 
 use super::submit::{heights_of, register, relay};
 use super::{bytes_of, call_with_words, returned_u64, word_of_hex, Node};
-use crate::availability::PostingLayer;
-use crate::contract::{
+use crate::checks::{
     check_challenge_submission, check_claim, ChallengeCheckOptions, ClaimCheckOptions,
     ClaimCheckReport,
 };
+use crate::posting::PostingLayer;
 
 /// The check of iris's that each contract error belongs to: the start of the
 /// check's name in a [`ClaimCheckReport`].

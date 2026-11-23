@@ -12,9 +12,7 @@ use anyhow::{bail, ensure, Context, Result};
 
 use crate::Q8_0_WIDTH;
 
-const MAGIC: &[u8; 8] = b"DNWGTV0\0";
-const DETWGT_VERSION: u32 = 3;
-const DET_NUM_SPEC_VERSION: u32 = 1;
+use crate::{DETWGT_VERSION, DET_NUM_SPEC_VERSION, MAGIC};
 const PAYLOAD_ALIGNMENT: u64 = 64;
 
 pub struct DetwgtWriter {

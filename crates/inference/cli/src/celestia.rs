@@ -23,7 +23,7 @@ use inference_artifacts::availability::{
 use inference_artifacts::celestia::blob_commitment;
 use serde_json::{json, Value};
 
-use crate::availability::{contents_of, BlockRoot, PostingLayer};
+use crate::posting::{contents_of, BlockRoot, PostingLayer};
 
 /// The node's JSON-RPC address, as `http://host:port`. When set, iris posts
 /// to and reads from that node instead of the stand-in directory.
@@ -374,7 +374,7 @@ mod tests {
         let layer = CelestiaLayer::open(&std::env::var(CELESTIA_RPC_ENV).unwrap()).unwrap();
         let blobs = vec![b"a blob of iris's".to_vec(), vec![7u8; 5_000]];
         let pointers = layer
-            .post(&crate::availability::CLAIM_NAMESPACE, &blobs)
+            .post(&crate::posting::CLAIM_NAMESPACE, &blobs)
             .unwrap();
         assert_eq!(pointers.len(), 2);
         for (pointer, bytes) in pointers.iter().zip(&blobs) {

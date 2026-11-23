@@ -160,8 +160,7 @@ pub fn build_claim(options: ClaimBuildOptions) -> Result<ClaimBuildResult> {
     // is tried again without the claim being built again.
     // Without pins there is no configuration to name, and nothing to check.
     if let Some(path) = result.claim_submission_path.as_ref() {
-        let Some(configuration) = crate::contract::run_configuration(&prepared.prepared_run)?
-        else {
+        let Some(configuration) = crate::checks::run_configuration(&prepared.prepared_run)? else {
             return Ok(result);
         };
         let mut submission: ClaimSubmission = inference_artifacts::read_json(path)?;
@@ -174,15 +173,15 @@ pub fn build_claim(options: ClaimBuildOptions) -> Result<ClaimBuildResult> {
             submission.claimer = claimer;
         }
         inference_artifacts::write_json(path, &submission)?;
-        let posting = crate::availability::claim_blobs(
+        let posting = crate::posting::claim_blobs(
             &result.chain_dir,
             &submission.claimer,
-            Some(crate::availability::posted_run(&prepared.prepared_run)?),
+            Some(crate::posting::posted_run(&prepared.prepared_run)?),
         )
         .context("preparing the claim's data")?;
         posting.write(&result.chain_dir)?;
         if let Some(reason) =
-            crate::contract::claim_rejection(&configuration, path, posting.contents()?)?
+            crate::checks::claim_rejection(&configuration, path, posting.contents()?)?
         {
             if options.claimed_token_ids.is_none() {
                 anyhow::bail!("a contract would not accept this claim: {reason}");
@@ -202,10 +201,10 @@ pub fn build_posted_claim(options: ClaimBuildOptions) -> Result<ClaimBuildResult
     if let Some(path) = result.claim_submission_path.as_ref() {
         // A claim with no configuration prepared nothing to post.
         if path
-            .with_file_name(crate::availability::POSTING_OUTPUTS_JSON)
+            .with_file_name(crate::posting::POSTING_OUTPUTS_JSON)
             .exists()
         {
-            let posted = crate::contract::post_claim_submission(path, None, None)?;
+            let posted = crate::checks::post_claim_submission(path, None, None)?;
             if let Some(reason) = posted.rejection {
                 anyhow::bail!("a contract would not take what the claim posted: {reason}");
             }

@@ -704,7 +704,7 @@ fn run_case(
     // What a contract would check on the native claim, and that each of its
     // checkpoints is the boundary the Raster run of the same chain committed:
     // the program id, the input manifest and the output.
-    let contract = crate::contract::check_claim(crate::contract::ClaimCheckOptions {
+    let contract = crate::checks::check_claim(crate::checks::ClaimCheckOptions {
         base_dir: dir.to_path_buf(),
         run_spec_path: spec.clone(),
         submission_path: native_dir.join(inference_artifacts::contract::CLAIM_SUBMISSION_JSON),
@@ -1961,14 +1961,14 @@ fn validate_model_bundle(
 /// the checkpoints posted and not the prompt the statement names, and another
 /// prompt posted in its place.
 fn run_availability_cases(dir: &Path, spec: &Path, submission_path: &Path) -> Result<Value> {
-    use crate::contract::{check_claim, ClaimCheckOptions};
+    use crate::checks::{check_claim, ClaimCheckOptions};
     use inference_artifacts::contract::ClaimSubmission;
 
     let claim_dir = submission_path
         .parent()
         .context("the submission has no directory")?;
     let honest: ClaimSubmission = read_json(submission_path)?;
-    let configuration = crate::contract::spec_configuration(spec, None)?;
+    let configuration = crate::checks::spec_configuration(spec, None)?;
     let registry_path = dir.join("registry.json");
     let mut registry = inference_artifacts::registry::Registry::default();
     ensure!(
@@ -2033,8 +2033,7 @@ fn run_availability_cases(dir: &Path, spec: &Path, submission_path: &Path) -> Re
         "submission: data posted",
     )?);
     // Submitted so late that the blobs are gone before the period ends.
-    let late =
-        crate::availability::now()? + inference_artifacts::availability::DEFAULT_RETENTION_SECS;
+    let late = crate::posting::now()? + inference_artifacts::availability::DEFAULT_RETENTION_SECS;
     cases.push(refused_at(
         "expires",
         check("expires", &honest, None, Some(late))?,
@@ -2046,11 +2045,10 @@ fn run_availability_cases(dir: &Path, spec: &Path, submission_path: &Path) -> Re
     // fault, which a challenger shows with no replay
     // (`CheckpointList::check_link`; the challenge leg's `corrupted-posted`
     // case is a claim with one such checkpoint).
-    let layer = crate::availability::open_layer(None)?;
+    let layer = crate::posting::open_layer(None)?;
     let layer = layer.as_ref();
     let mut unavailable = honest.clone();
-    unavailable.availability =
-        crate::availability::post_claim(layer, claim_dir, &honest.claimer, None)?;
+    unavailable.availability = crate::posting::post_claim(layer, claim_dir, &honest.claimer, None)?;
     ensure!(
         unavailable.posted_run_inputs().is_empty() && !honest.posted_run_inputs().is_empty(),
         "the honest claim posted no run inputs, or a posting without them states some"

@@ -210,7 +210,7 @@ pub(super) fn run_consensus_leg(
     // The contract's pins are a file: the consensus pipeline's programs and
     // both models, as `iris claim pins` writes them.
     let pins_path = claim_dir.join(inference_artifacts::contract::CONTRACT_PINS_JSON);
-    let pins = crate::contract::run_pins(&claim_dir, &spec).context("the contract's pins")?;
+    let pins = crate::checks::run_pins(&claim_dir, &spec).context("the contract's pins")?;
     ensure!(
         pins.pipeline == Pipeline::Consensus
             && pins.models.len() == 2
@@ -221,7 +221,7 @@ pub(super) fn run_consensus_leg(
     );
     inference_artifacts::write_json(&pins_path, &pins)?;
     let check = |submission: &Path, raster_run: Option<PathBuf>| {
-        crate::contract::check_claim(crate::contract::ClaimCheckOptions {
+        crate::checks::check_claim(crate::checks::ClaimCheckOptions {
             base_dir: claim_dir.clone(),
             run_spec_path: spec.clone(),
             submission_path: submission.to_path_buf(),

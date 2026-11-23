@@ -8,7 +8,7 @@ use anyhow::{bail, Context, Result};
 use serde_json::{json, Value};
 
 use super::{bytes_of, call_with_words, returned_u64, word_of_hex, word_of_u64, Node};
-use crate::availability::PostingLayer;
+use crate::posting::PostingLayer;
 
 /// What to do before a submission is sent. All of it by default.
 #[derive(Debug, Clone, Copy)]
@@ -62,7 +62,7 @@ pub(crate) fn heights_of(call: &Value) -> Vec<u64> {
 
 /// Register the run's configuration unless it is registered. Its id.
 pub fn register(node: &Node, run_spec: &Path) -> Result<String> {
-    let configuration = crate::contract::spec_configuration(run_spec, None)?;
+    let configuration = crate::checks::spec_configuration(run_spec, None)?;
     let call = crate::evm::configuration_call(&configuration)?;
     let id = call["configuration"]
         .as_str()

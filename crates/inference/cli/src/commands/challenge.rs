@@ -255,7 +255,7 @@ pub(crate) fn run(command: ChallengeCommand) -> Result<ExitCode> {
         ChallengeCommand::Post(args) => {
             let base_dir =
                 std::env::current_dir().context("failed to resolve current directory")?;
-            let posted = contract::post_challenge(contract::ChallengePostOptions {
+            let posted = checks::post_challenge(checks::ChallengePostOptions {
                 run_spec_path: absolute(&base_dir, &args.run),
                 pins_path: args.pins.map(|path| absolute(&base_dir, &path)),
                 challenge_bundle_path: absolute(&base_dir, &args.challenge),
@@ -300,7 +300,7 @@ pub(crate) fn run(command: ChallengeCommand) -> Result<ExitCode> {
         ChallengeCommand::Check(args) => {
             let base_dir =
                 std::env::current_dir().context("failed to resolve current directory")?;
-            let report = contract::check_challenge_submission(contract::ChallengeCheckOptions {
+            let report = checks::check_challenge_submission(checks::ChallengeCheckOptions {
                 run_spec_path: absolute(&base_dir, &args.run),
                 pins_path: args.pins.map(|path| absolute(&base_dir, &path)),
                 challenge_path: absolute(&base_dir, &args.challenge),

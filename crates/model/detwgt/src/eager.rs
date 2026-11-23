@@ -22,9 +22,7 @@ use std::collections::BTreeMap;
 use std::error::Error;
 use std::path::Path;
 
-const MAGIC: &[u8; 8] = b"DNWGTV0\0";
-const DETWGT_VERSION: u32 = 3;
-const DET_NUM_SPEC_VERSION: u32 = 1;
+use crate::{DETWGT_VERSION, DET_NUM_SPEC_VERSION, MAGIC};
 const PAYLOAD_ALIGNMENT: usize = 64;
 
 /// One tensor: its shape and its canonical Q16.16 values, row-major.

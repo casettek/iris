@@ -6,7 +6,7 @@ use anyhow::{ensure, Context, Result};
 use inference_artifacts::availability::{Blob, BlobEntry};
 use inference_artifacts::read_json;
 
-use crate::availability::open_layer;
+use crate::posting::open_layer;
 
 /// What a submission put on the layer, measured there: each blob it names is
 /// read back, and its size is split among what it holds.

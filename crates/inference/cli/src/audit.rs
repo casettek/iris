@@ -70,7 +70,7 @@ pub fn audit_claim(options: AuditClaimOptions) -> Result<ClaimAudit> {
 
     let submission: ClaimSubmission = read_json(&options.submission_path)?;
     let configuration =
-        crate::contract::spec_configuration(&options.run_spec_path, options.pins_path.as_deref())?;
+        crate::checks::spec_configuration(&options.run_spec_path, options.pins_path.as_deref())?;
     ensure!(
         configuration.id() == submission.configuration,
         "the claim is of configuration {}, and {} describes {}: give the run spec of the \

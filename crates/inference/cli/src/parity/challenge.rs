@@ -186,7 +186,7 @@ pub(super) fn run_challenge_leg(leg: &Leg) -> Result<Value> {
         );
         let claim: inference_artifacts::contract::ClaimSubmission =
             read_json(&lying.submission_path)?;
-        let posting = crate::availability::PreparedPosting::read(&leg.dir.join("corrupted-claim"))?;
+        let posting = crate::posting::PreparedPosting::read(&leg.dir.join("corrupted-claim"))?;
         ensure!(
             claim.claimer == liar
                 && inference_artifacts::availability::check_holds(
@@ -208,8 +208,8 @@ pub(super) fn run_challenge_leg(leg: &Leg) -> Result<Value> {
         // each claim, since nothing at arrival reads that checkpoint. A challenger who reads the claim back finds the
         // fault by auditing it, with nothing run, at the checkpoint that
         // lies.
-        let layer = crate::availability::open_layer(None)?;
-        let configuration = crate::contract::spec_configuration(&spec, None)?;
+        let layer = crate::posting::open_layer(None)?;
+        let configuration = crate::checks::spec_configuration(&spec, None)?;
         for (fault, out, expected) in [
             (
                 crate::lies::CorruptFault::Program,
@@ -247,7 +247,7 @@ pub(super) fn run_challenge_leg(leg: &Leg) -> Result<Value> {
             })?;
             let mut claim: inference_artifacts::contract::ClaimSubmission =
                 read_json(&lie.submission_path)?;
-            claim.availability = crate::availability::PreparedPosting::read(&leg.dir.join(out))?
+            claim.availability = crate::posting::PreparedPosting::read(&leg.dir.join(out))?
                 .post(layer.as_ref())
                 .with_context(|| format!("`{out}`: posting the lying claim's data"))?;
             inference_artifacts::write_json(&lie.submission_path, &claim)?;
@@ -256,7 +256,7 @@ pub(super) fn run_challenge_leg(leg: &Leg) -> Result<Value> {
                 inference_artifacts::availability::AvailabilityParameters::default(),
                 &claim.availability,
                 &inference_artifacts::availability::RequiredPosting::of(&claim),
-                crate::availability::now()?,
+                crate::posting::now()?,
             )
             .map_err(|rejection| {
                 anyhow::anyhow!(
@@ -905,14 +905,14 @@ fn contract_challenge(
     claim.checkpoint_count = lying.checkpoints.len() as u32;
     claim.checkpoints_root = inference_artifacts::checkpoints_root(&checkpoint_hashes(lying)?)?;
     let claim_path = dir.join(CLAIM_SUBMISSION_JSON);
-    let configuration = crate::contract::spec_configuration(spec, None)?;
-    let layer = crate::availability::open_layer(None)?;
+    let configuration = crate::checks::spec_configuration(spec, None)?;
+    let layer = crate::posting::open_layer(None)?;
     let layer = layer.as_ref();
-    let now = crate::availability::now()?;
+    let now = crate::posting::now()?;
 
     // What the liar posts: the honest claim's data, with the lying list and
     // checkpoints in place of the honest ones.
-    let posting = crate::availability::PreparedPosting::read(&honest.chain_dir)?.with_checkpoints(
+    let posting = crate::posting::PreparedPosting::read(&honest.chain_dir)?.with_checkpoints(
         &claim.claimer,
         &fs::read(&list_path)?,
         &fs::read(dir.join(inference_artifacts::CHECKPOINT_TRACE_JSON))?,
@@ -943,7 +943,7 @@ fn contract_challenge(
         .with_context(|| format!("the lying claim has no `{stage}`"))?;
     let replay = replay_stage_dir(leg, name, stage)?;
     let challenger = "0x000000000000000000000000000000000000c4a1";
-    let submission = crate::contract::challenge_submission(
+    let submission = crate::checks::challenge_submission(
         &claim.checkpoints_root,
         index as u32,
         &lying.checkpoints[index],
@@ -957,7 +957,7 @@ fn contract_challenge(
         &submission,
     )?;
     let check = |submission: &inference_artifacts::contract::ChallengeSubmission, at: u64| {
-        crate::contract::check_challenge(&configuration, &claim_path, submission, layer, at)
+        crate::checks::check_challenge(&configuration, &claim_path, submission, layer, at)
             .map(|report| report.rejection())
     };
     if let Some(rejection) = check(&submission, now)? {
@@ -1111,10 +1111,10 @@ fn posted_lies(
     use crate::lies::CorruptFault;
     use inference_artifacts::contract::ClaimSubmission;
 
-    let layer = crate::availability::open_layer(None)?;
+    let layer = crate::posting::open_layer(None)?;
     let layer = layer.as_ref();
-    let configuration = crate::contract::spec_configuration(spec, None)?;
-    let now = crate::availability::now()?;
+    let configuration = crate::checks::spec_configuration(spec, None)?;
+    let now = crate::posting::now()?;
     let liar = "0x00000000000000000000000000000000000011a3";
     let challenger = "0x000000000000000000000000000000000000c4a2";
     let submission_of = |claim: &ClaimBuildResult, what: &str| {
@@ -1194,7 +1194,7 @@ fn posted_lies(
         })
         .with_context(|| format!("`{name}`: writing the lying claim"))?;
         let mut claim: ClaimSubmission = read_json(&lie.submission_path)?;
-        claim.availability = crate::availability::PreparedPosting::read(&dir.join("claim"))?
+        claim.availability = crate::posting::PreparedPosting::read(&dir.join("claim"))?
             .post(layer)
             .with_context(|| format!("`{name}`: posting the lying claim's data"))?;
         inference_artifacts::write_json(&lie.submission_path, &claim)?;
@@ -1307,7 +1307,7 @@ fn posted_lies(
                     == claimed.input_commitment,
             "`{name}`: the admitted challenge is not about the lying checkpoint"
         );
-        let submission = crate::contract::challenge_submission(
+        let submission = crate::checks::challenge_submission(
             &claim.checkpoints_root,
             lie.checkpoint_index as u32,
             claimed,
@@ -1316,7 +1316,7 @@ fn posted_lies(
             challenger,
             layer,
         )?;
-        let rejection = crate::contract::check_challenge(
+        let rejection = crate::checks::check_challenge(
             &configuration,
             &lie.submission_path,
             &submission,

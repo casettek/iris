@@ -19,9 +19,9 @@ use inference_artifacts::{
 };
 use sha2::{Digest, Sha256};
 
-use crate::availability::PreparedPosting;
 use crate::claim::{corrupt_hash, select_checkpoint_index, CorruptCheckpointSelection};
 use crate::posted::{fresh_dir, parent, stage_dir_name, INPUT_MANIFEST_JSON};
+use crate::posting::PreparedPosting;
 
 /// The file `corrupt_claim` writes beside the lying claim: which checkpoint
 /// it changed, in the form `test corrupt-checkpoints --checkpoints` writes.
@@ -321,7 +321,7 @@ pub fn corrupt_claim(options: CorruptClaimOptions) -> Result<CorruptedClaim> {
         given.index = hex::encode(&output.index);
     }
     if let Some((_, result)) = forged_outputs.last() {
-        let stated = crate::availability::stated_results(&result.data, &result.index)
+        let stated = crate::posting::stated_results(&result.data, &result.index)
             .context("the forged result is not a result record")?;
         ensure!(
             stated.inferences.len() == claim.inferences.len(),
