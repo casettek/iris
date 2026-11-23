@@ -57,6 +57,8 @@ formatted=0
 while read -r file; do
     # A tracked link is the file it leads to, listed under its own path.
     [ -L "$file" ] && continue
+    # Deleted here and not yet committed.
+    [ -f "$file" ] || continue
     grep -qxF "$file" "$guest_list" && continue
     if ! rustfmt --edition 2021 < "$file" > "$work/formatted.rs" 2> "$work/rustfmt.err"; then
         echo "rustfmt failed on $file:" >&2
