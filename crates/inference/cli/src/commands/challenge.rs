@@ -1,0 +1,360 @@
+//! A challenge: `iris challenge`.
+
+use crate::*;
+
+#[derive(Debug, Args)]
+pub(crate) struct ChallengePostArgs {
+    /// The `challenge_bundle.json` that `challenge build` wrote.
+    #[arg(long)]
+    challenge: PathBuf,
+
+    /// The claim's `claim_submission.json`. The claim's checkpoints are read
+    /// from the directory it is in.
+    #[arg(long)]
+    submission: PathBuf,
+
+    /// Run spec naming the pipeline and models of the contract.
+    #[arg(long, default_value = inference_artifacts::INFERENCE_RUN_SPEC_TOML)]
+    run: PathBuf,
+
+    /// The pins the contract holds. As for `iris claim check`.
+    #[arg(long)]
+    pins: Option<PathBuf>,
+
+    /// The address the challenge is attributed to, as `claim build
+    /// --claimer`. Default: `IRIS_CHALLENGER`, or the zero address.
+    #[arg(long)]
+    challenger: Option<String>,
+
+    /// The stand-in data-availability layer's directory. As for `iris claim
+    /// check`.
+    #[arg(long = "da-dir")]
+    da_dir: Option<PathBuf>,
+
+    /// When the challenge is taken to be submitted, in Unix seconds. Default:
+    /// now.
+    #[arg(long = "submitted-at")]
+    submitted_at: Option<u64>,
+
+    /// Post this trace commitment in place of the bundle's own: the copy
+    /// `iris challenge corrupt` wrote, for a challenge a defender can refute.
+    #[arg(long)]
+    commitment: Option<PathBuf>,
+
+    /// Where to write the challenge submission. Default:
+    /// `challenge_submission.json` beside the bundle.
+    #[arg(long)]
+    out: Option<PathBuf>,
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct ChallengeFetchArgs {
+    /// The `challenge_submission.json` as it was submitted, with where its
+    /// trace body is.
+    #[arg(long)]
+    challenge: PathBuf,
+
+    /// The stand-in data-availability layer's directory. As for `iris claim
+    /// check`.
+    #[arg(long = "da-dir")]
+    da_dir: Option<PathBuf>,
+
+    /// The file to write the trace commitment to (a `commit.bin`).
+    #[arg(long)]
+    out: PathBuf,
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct ChallengeCheckArgs {
+    /// The `challenge_submission.json` that `challenge post` wrote.
+    #[arg(long)]
+    challenge: PathBuf,
+
+    /// The disputed claim's `claim_submission.json`, in its directory.
+    #[arg(long)]
+    submission: PathBuf,
+
+    /// Run spec naming the pipeline and models of the contract.
+    #[arg(long, default_value = inference_artifacts::INFERENCE_RUN_SPEC_TOML)]
+    run: PathBuf,
+
+    /// The pins the contract holds. As for `iris claim check`.
+    #[arg(long)]
+    pins: Option<PathBuf>,
+
+    /// The stand-in data-availability layer's directory. As for `iris claim
+    /// check`.
+    #[arg(long = "da-dir")]
+    da_dir: Option<PathBuf>,
+
+    /// When the challenge is taken to be submitted, in Unix seconds. Default:
+    /// now.
+    #[arg(long = "submitted-at")]
+    submitted_at: Option<u64>,
+}
+
+#[derive(Debug, Subcommand)]
+pub(crate) enum ChallengeCommand {
+    /// Locate the first divergent checkpoint in a claim.
+    Locate,
+    /// Build a challenge bundle for a divergent claim.
+    Build(ChallengeBuildArgs),
+    /// Flip an interior fingerprint bit in a challenge copy.
+    Corrupt(fault::CorruptArgs),
+    /// Measure guest cycles and select a heavy fault window from a completed challenge.
+    Profile(challenge_profile::ProfileArgs),
+    /// Post a challenge's trace body to the data-availability layer, write
+    /// the challenge submission, and make the checks a contract would make
+    /// on it.
+    Post(ChallengePostArgs),
+    /// Read the trace a submitted challenge names back from the
+    /// data-availability layer: what a defender audits its own run against.
+    Fetch(ChallengeFetchArgs),
+    /// Make the checks a contract would make on a challenge's submission as
+    /// it is. Nothing is posted.
+    Check(ChallengeCheckArgs),
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct ChallengeBuildArgs {
+    /// Run spec selecting the model to verify against the claim.
+    #[arg(long, default_value = inference_artifacts::INFERENCE_RUN_SPEC_TOML)]
+    run: PathBuf,
+
+    /// Claim bundle to challenge. Preferred over --trace because it carries frozen run metadata.
+    #[arg(long)]
+    claim: Option<PathBuf>,
+
+    /// Existing checkpoint trace to challenge.
+    #[arg(long)]
+    trace: Option<PathBuf>,
+
+    /// Public claimed checkpoints hash list to challenge.
+    #[arg(long = "checkpoints")]
+    checkpoint_hashes: Option<PathBuf>,
+
+    /// Claim bundle used only as frozen run context for --checkpoints.
+    #[arg(long = "claim-context")]
+    claim_context: Option<PathBuf>,
+
+    /// A submitted claim as `iris claim fetch` wrote it: its
+    /// `claim_submission.json`, with its checkpoint list beside it. Give
+    /// `--run` the spec that command wrote there. Nothing of the claimer's
+    /// own run is read.
+    #[arg(long, conflicts_with_all = ["claim", "trace", "checkpoint_hashes", "claim_context"])]
+    submission: Option<PathBuf>,
+
+    /// With `--submission`: the comma-separated output ids your own `iris
+    /// infer` printed for the fetched run spec, taken in place of running
+    /// direct inference again.
+    #[arg(
+        long = "direct-output-ids",
+        value_delimiter = ',',
+        requires = "submission"
+    )]
+    direct_output_ids: Option<Vec<u32>>,
+
+    /// Use the previous per-stage child-process staged-infer runner.
+    #[arg(long = "staged-subprocess", alias = "direct-subprocess", hide = true)]
+    staged_subprocess: bool,
+}
+
+pub(crate) fn print_challenge_result(result: &ChallengeBuildResult) {
+    match &result.outcome {
+        ChallengeBuildOutcome::NoDivergence {
+            claimed_reference_path,
+            recomputed_trace_path,
+            recomputed_chain_dir,
+        } => {
+            println!("no divergence found");
+            println!("claimed reference: {}", claimed_reference_path.display());
+            println!("recomputed trace: {}", recomputed_trace_path.display());
+            println!("recomputed chain: {}", recomputed_chain_dir.display());
+        }
+        ChallengeBuildOutcome::ClaimedOutputRejected {
+            reason,
+            claimed_reference_path,
+            recomputed_trace_path,
+            recomputed_chain_dir,
+        } => {
+            println!("no divergence found; claimed output rejected");
+            println!("reason: {reason}");
+            println!("claimed reference: {}", claimed_reference_path.display());
+            println!("recomputed trace: {}", recomputed_trace_path.display());
+            println!("recomputed chain: {}", recomputed_chain_dir.display());
+        }
+        ChallengeBuildOutcome::DivergenceBuilt {
+            divergence,
+            replay_package,
+            challenge_bundle_path,
+            ..
+        } => {
+            println!("divergence found: {}", divergence.stage);
+            println!("checkpoint index: {}", divergence.checkpoint_index);
+            println!("checkpoint number: {}", divergence.checkpoint_index + 1);
+            println!("reason: {:?}", divergence.reason);
+            if let Some(claimed_hash) = divergence.claimed_hash.as_ref() {
+                println!("claimed checkpoint hash: {claimed_hash}");
+            }
+            if let Some(recomputed_hash) = divergence.recomputed_hash.as_ref() {
+                println!("recomputed checkpoint hash: {recomputed_hash}");
+            }
+            if let Some(claimed) = divergence.claimed.as_ref() {
+                println!("claimed commitment: {}", claimed.output_commitment);
+                println!("claimed sha256: {}", claimed.output_sha256);
+            }
+            if let Some(recomputed) = divergence.recomputed.as_ref() {
+                println!("recomputed commitment: {}", recomputed.output_commitment);
+                println!("recomputed sha256: {}", recomputed.output_sha256);
+            }
+            println!(
+                "raster fingerprint: {}",
+                replay_package.commit_path.display()
+            );
+            println!("challenge bundle: {}", challenge_bundle_path.display());
+        }
+    }
+}
+
+impl ChallengeBuildArgs {
+    pub(crate) fn into_options(self) -> Result<ChallengeBuildOptions> {
+        let posted = self
+            .submission
+            .map(|submission_path| -> Result<ChallengeInput> {
+                Ok(ChallengeInput::Posted {
+                    submission_path: absolute(
+                        &std::env::current_dir().context("failed to resolve current directory")?,
+                        &submission_path,
+                    ),
+                })
+            });
+        let input = match (
+            self.claim,
+            self.trace,
+            self.checkpoint_hashes,
+            self.claim_context,
+        ) {
+            (None, None, None, None) if posted.is_some() => posted.expect("checked")?,
+            (Some(claim), None, None, None) => ChallengeInput::Claim(claim),
+            (None, Some(trace), None, None) => ChallengeInput::Trace(trace),
+            (None, None, Some(checkpoint_hashes_path), Some(claim_context_path)) => {
+                ChallengeInput::CheckpointHashes {
+                    claim_context_path,
+                    checkpoint_hashes_path,
+                }
+            }
+            (None, None, Some(_), None) => {
+                anyhow::bail!("challenge build --checkpoints requires --claim-context")
+            }
+            (None, None, None, Some(_)) => {
+                anyhow::bail!("challenge build --claim-context requires --checkpoints")
+            }
+            (None, None, None, None) => anyhow::bail!(
+                "challenge build requires --claim <claim_bundle.json> or --checkpoints <checkpoints.txt> --claim-context <claim_bundle.json>"
+            ),
+            _ => anyhow::bail!(
+                "challenge build accepts only one input mode: --claim, --trace, or --checkpoints with --claim-context"
+            ),
+        };
+        let current_exe = std::env::current_exe().context("failed to locate current executable")?;
+        let staged_backend = if self.staged_subprocess {
+            staged_infer::chain_runner::StagedExecutionBackend::Subprocess
+        } else {
+            staged_infer::chain_runner::StagedExecutionBackend::InProcess
+        };
+        let mut options =
+            ChallengeBuildOptions::from_current_dir(current_exe, staged_backend, input, self.run)?;
+        options.direct_output_ids = self.direct_output_ids;
+        Ok(options)
+    }
+}
+
+pub(crate) fn run(command: ChallengeCommand) -> Result<ExitCode> {
+    match command {
+        ChallengeCommand::Profile(args) => {
+            challenge_profile::run(args)?;
+            Ok(ExitCode::SUCCESS)
+        }
+        ChallengeCommand::Corrupt(args) => {
+            fault::corrupt(args)?;
+            Ok(ExitCode::SUCCESS)
+        }
+        ChallengeCommand::Locate => {
+            bail!("iris challenge locate is not implemented yet")
+        }
+        ChallengeCommand::Build(args) => {
+            warn_if_debug_build("challenge build");
+            let result = build_challenge(args.into_options()?)?;
+            print_challenge_result(&result);
+            Ok(ExitCode::SUCCESS)
+        }
+        ChallengeCommand::Post(args) => {
+            let base_dir =
+                std::env::current_dir().context("failed to resolve current directory")?;
+            let posted = contract::post_challenge(contract::ChallengePostOptions {
+                run_spec_path: absolute(&base_dir, &args.run),
+                pins_path: args.pins.map(|path| absolute(&base_dir, &path)),
+                challenge_bundle_path: absolute(&base_dir, &args.challenge),
+                submission_path: absolute(&base_dir, &args.submission),
+                challenger: args
+                    .challenger
+                    .or_else(|| std::env::var("IRIS_CHALLENGER").ok()),
+                da_dir: args.da_dir.map(|path| absolute(&base_dir, &path)),
+                submitted_at: args.submitted_at,
+                commitment_path: args.commitment.map(|path| absolute(&base_dir, &path)),
+                out_path: args.out.map(|path| absolute(&base_dir, &path)),
+            })?;
+            for line in &posted.report.lines {
+                match &line.rejection {
+                    None => println!("ok        {}", line.check),
+                    Some(reason) => println!("REJECTED  {}: {reason}", line.check),
+                }
+            }
+            println!("challenge submission: {}", posted.submission_path.display());
+            Ok(if posted.report.accepted() {
+                ExitCode::SUCCESS
+            } else {
+                ExitCode::FAILURE
+            })
+        }
+        ChallengeCommand::Fetch(args) => {
+            let base_dir =
+                std::env::current_dir().context("failed to resolve current directory")?;
+            let fetched = posted::fetch_challenge(posted::FetchChallengeOptions {
+                challenge_path: absolute(&base_dir, &args.challenge),
+                da_dir: args.da_dir.map(|path| absolute(&base_dir, &path)),
+                out_path: absolute(&base_dir, &args.out),
+            })?;
+            println!("trace header: {}", fetched.header_digest);
+            println!(
+                "trace commitment: {} ({} bytes)",
+                fetched.commitment_path.display(),
+                fetched.bytes
+            );
+            Ok(ExitCode::SUCCESS)
+        }
+        ChallengeCommand::Check(args) => {
+            let base_dir =
+                std::env::current_dir().context("failed to resolve current directory")?;
+            let report = contract::check_challenge_submission(contract::ChallengeCheckOptions {
+                run_spec_path: absolute(&base_dir, &args.run),
+                pins_path: args.pins.map(|path| absolute(&base_dir, &path)),
+                challenge_path: absolute(&base_dir, &args.challenge),
+                submission_path: absolute(&base_dir, &args.submission),
+                da_dir: args.da_dir.map(|path| absolute(&base_dir, &path)),
+                submitted_at: args.submitted_at,
+            })?;
+            for line in &report.lines {
+                match &line.rejection {
+                    None => println!("ok        {}", line.check),
+                    Some(reason) => println!("REJECTED  {}: {reason}", line.check),
+                }
+            }
+            Ok(if report.accepted() {
+                ExitCode::SUCCESS
+            } else {
+                ExitCode::FAILURE
+            })
+        }
+    }
+}

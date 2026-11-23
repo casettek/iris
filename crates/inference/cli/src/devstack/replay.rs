@@ -746,7 +746,7 @@ pub fn faults(node: &Node, layer: &dyn PostingLayer, spec: &Path, path: &Path) -
     relay(node, layer, &heights_of(&claim))?;
     hold_claim(node, &claim)?;
 
-    let audit = crate::posted::audit_claim(crate::posted::AuditClaimOptions {
+    let audit = crate::audit::audit_claim(crate::audit::AuditClaimOptions {
         submission_path: path.to_path_buf(),
         run_spec_path: spec.to_path_buf(),
         pins_path: None,

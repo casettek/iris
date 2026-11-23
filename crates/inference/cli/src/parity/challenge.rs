@@ -161,10 +161,10 @@ pub(super) fn run_challenge_leg(leg: &Leg) -> Result<Value> {
             .context("the honest claim wrote no submission")?;
         let liar = "0x00000000000000000000000000000000000011a2";
         let corrupt = |stage: &str, out: &str| {
-            crate::posted::corrupt_claim(crate::posted::CorruptClaimOptions {
+            crate::lies::corrupt_claim(crate::lies::CorruptClaimOptions {
                 submission_path: honest_submission.clone(),
                 selection: CorruptCheckpointSelection::Stage(stage.to_string()),
-                fault: crate::posted::CorruptFault::Output,
+                fault: crate::lies::CorruptFault::Output,
                 claimer: Some(liar.to_string()),
                 out_dir: leg.dir.join(out),
             })
@@ -212,12 +212,12 @@ pub(super) fn run_challenge_leg(leg: &Leg) -> Result<Value> {
         let configuration = crate::contract::spec_configuration(&spec, None)?;
         for (fault, out, expected) in [
             (
-                crate::posted::CorruptFault::Program,
+                crate::lies::CorruptFault::Program,
                 "corrupted-program",
                 "UnapprovedProgram",
             ),
             (
-                crate::posted::CorruptFault::Input(None),
+                crate::lies::CorruptFault::Input(None),
                 "corrupted-input",
                 "NotAnEarlierOutput",
             ),
@@ -225,7 +225,7 @@ pub(super) fn run_challenge_leg(leg: &Leg) -> Result<Value> {
             // model's tokenizer: the stage checks it as it runs, but a
             // challenger has no such bytes to run the stage on.
             (
-                crate::posted::CorruptFault::Input(Some(String::from("tokenizer"))),
+                crate::lies::CorruptFault::Input(Some(String::from("tokenizer"))),
                 "corrupted-pinned",
                 "NotAPinnedValue",
             ),
@@ -233,12 +233,12 @@ pub(super) fn run_challenge_leg(leg: &Leg) -> Result<Value> {
             // claim posted its real marks, and this checkpoint names others,
             // which nobody but the claimer has.
             (
-                crate::posted::CorruptFault::Input(Some(String::from("marks"))),
+                crate::lies::CorruptFault::Input(Some(String::from("marks"))),
                 "corrupted-posted",
                 "NotAPostedValue",
             ),
         ] {
-            let lie = crate::posted::corrupt_claim(crate::posted::CorruptClaimOptions {
+            let lie = crate::lies::corrupt_claim(crate::lies::CorruptClaimOptions {
                 submission_path: honest_submission.clone(),
                 selection: CorruptCheckpointSelection::Stage(stage.to_string()),
                 fault,
@@ -279,7 +279,7 @@ pub(super) fn run_challenge_leg(leg: &Leg) -> Result<Value> {
                 out_dir: leg.dir.join(format!("{out}-fetched")),
             })
             .with_context(|| format!("`{out}`: reading the lying claim back from the layer"))?;
-            let audit = crate::posted::audit_claim(crate::posted::AuditClaimOptions {
+            let audit = crate::audit::audit_claim(crate::audit::AuditClaimOptions {
                 submission_path: fetched.submission_path,
                 run_spec_path: fetched.run_spec_path,
                 pins_path: None,
@@ -1016,7 +1016,7 @@ fn contract_challenge(
     // What the claim put on the layer, measured there: every byte of the
     // blobs it names, with the list and the checkpoints at the sizes of the
     // files that were posted.
-    let measured = crate::posted::measure_posting(&claim_path, None)
+    let measured = crate::measure::measure_posting(&claim_path, None)
         .with_context(|| format!("`{name}`: measuring what the lying claim posted"))?;
     let posted: inference_artifacts::contract::ClaimSubmission = read_json(&claim_path)?;
     ensure!(
@@ -1042,7 +1042,7 @@ fn contract_challenge(
     // A lie about a stage's output is no fault to point at: every program is
     // approved and every input is its producer's output, so the claim is
     // disputed by a replay or not at all.
-    let audit = crate::posted::audit_claim(crate::posted::AuditClaimOptions {
+    let audit = crate::audit::audit_claim(crate::audit::AuditClaimOptions {
         submission_path: fetched.submission_path.clone(),
         run_spec_path: fetched.run_spec_path.clone(),
         pins_path: None,
@@ -1108,7 +1108,7 @@ fn posted_lies(
     honest: &ClaimBuildResult,
     not_greedy: &ClaimBuildResult,
 ) -> Result<Vec<Value>> {
-    use crate::posted::CorruptFault;
+    use crate::lies::CorruptFault;
     use inference_artifacts::contract::ClaimSubmission;
 
     let layer = crate::availability::open_layer(None)?;
@@ -1185,7 +1185,7 @@ fn posted_lies(
     for (name, source, stage, fault) in cases {
         let forged = fault == CorruptFault::Verdict;
         let dir = leg.dir.join(name);
-        let lie = crate::posted::corrupt_claim(crate::posted::CorruptClaimOptions {
+        let lie = crate::lies::corrupt_claim(crate::lies::CorruptClaimOptions {
             submission_path: source.clone(),
             selection: CorruptCheckpointSelection::Stage(stage.to_string()),
             fault,
@@ -1235,7 +1235,7 @@ fn posted_lies(
             out_dir: dir.join("fetched"),
         })
         .with_context(|| format!("`{name}`: reading the lying claim back from the layer"))?;
-        let audit = crate::posted::audit_claim(crate::posted::AuditClaimOptions {
+        let audit = crate::audit::audit_claim(crate::audit::AuditClaimOptions {
             submission_path: fetched.submission_path.clone(),
             run_spec_path: fetched.run_spec_path.clone(),
             pins_path: None,
