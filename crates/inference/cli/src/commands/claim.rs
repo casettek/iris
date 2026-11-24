@@ -221,7 +221,7 @@ pub(crate) fn run(command: ClaimCommand) -> Result<ExitCode> {
                 std::env::current_dir().context("failed to resolve current directory")?;
             let submission = absolute(&base_dir, &args.submission);
             let da_dir = args.da_dir.map(|dir| absolute(&base_dir, &dir));
-            let posted = checks::post_claim_submission(&submission, da_dir.as_deref(), None)?;
+            let posted = claim_check::post_claim_submission(&submission, da_dir.as_deref(), None)?;
             for blob in &posted.blobs {
                 println!(
                     "blob: height {} commitment {} ({} bytes)",
@@ -266,7 +266,7 @@ pub(crate) fn run(command: ClaimCommand) -> Result<ExitCode> {
         ClaimCommand::Pins(args) => {
             let base_dir =
                 std::env::current_dir().context("failed to resolve current directory")?;
-            let pins = checks::run_pins(&base_dir, &args.run)?;
+            let pins = claim_check::run_pins(&base_dir, &args.run)?;
             inference_artifacts::write_json(&args.out, &pins)?;
             println!("pipeline: {}", pins.pipeline);
             for model in &pins.models {

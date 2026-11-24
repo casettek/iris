@@ -74,7 +74,7 @@ the chain then checks it.
   clean, and the native result artifact and direct's result are exactly this record
   with what the `result` stage states: code 0 and the hash of no forms, beside the
   same claim record.
-- The [contract checks](../protocol/contract.md): the native claim's submission
+- The [contract checks](../protocol/checks.md): the native claim's submission
   passes the submission checks against the import's pins, every checkpoint names
   an approved program, every input a stage takes from an earlier stage is that
   stage's committed output, and the submitted record and result are the ones

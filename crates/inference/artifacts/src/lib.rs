@@ -1,8 +1,8 @@
 pub mod availability;
 pub mod challenge;
 pub mod checkpoint;
+pub mod checks;
 pub mod claim;
-pub mod contract;
 pub mod direct;
 pub mod encoding;
 pub mod inference;

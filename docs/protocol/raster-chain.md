@@ -187,7 +187,7 @@ chain ran under (`input_text_sha256`, `source_sha256`, `model_id`, `raw_prompt`,
 computes none of it.
 
 The claim record: beside the output record, every check states the three values a
-[contract](contract.md) reads. They are the digest of the statement the record names
+[contract](checks.md) reads. They are the digest of the statement the record names
 (`Statement::digest()`), the output text hash as 32 bytes, and one `valid` flag,
 set only when the model fault, the prompt fault, the check fault, the mismatch
 count and the output fault are all zero and the prompt is complete. The host
@@ -285,7 +285,7 @@ non-greedy ids does. A claimer that ran other weights and still published a clea
 record has doctored a stage, and that stage is the divergence to replay. To
 challenge a claim, `challenge build` prepares the claim's prompt, token budget and
 claimed ids from the model `--run` selects. What a contract pins is the model id;
-see [what a contract holds and checks](contract.md).
+see [what a contract holds and checks](checks.md).
 
 ## Cost
 
@@ -406,7 +406,7 @@ the first form the text is, or zero, a hash chained over the forms, and the thre
 values of the claim record it was given. It judges nothing: an invalid record is
 restated as invalid, with whatever code its text has. A claim that wired it to
 another check would restate that check's record, which is not the one a contract
-holds to the last check (see [the contract](contract.md)). The stage is three steps
+holds to the last check (see [the contract](checks.md)). The stage is three steps
 and one per form, so it is under the replay window at every size
 ([short stages](../issues/short-stage-fraud-window.md)); the claim's record and
 verdict stay with the last check for that reason.

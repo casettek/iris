@@ -255,7 +255,7 @@ pub(crate) fn run(command: ChallengeCommand) -> Result<ExitCode> {
         ChallengeCommand::Post(args) => {
             let base_dir =
                 std::env::current_dir().context("failed to resolve current directory")?;
-            let posted = checks::post_challenge(checks::ChallengePostOptions {
+            let posted = claim_check::post_challenge(claim_check::ChallengePostOptions {
                 run_spec_path: absolute(&base_dir, &args.run),
                 pins_path: args.pins.map(|path| absolute(&base_dir, &path)),
                 challenge_bundle_path: absolute(&base_dir, &args.challenge),
@@ -300,14 +300,15 @@ pub(crate) fn run(command: ChallengeCommand) -> Result<ExitCode> {
         ChallengeCommand::Check(args) => {
             let base_dir =
                 std::env::current_dir().context("failed to resolve current directory")?;
-            let report = checks::check_challenge_submission(checks::ChallengeCheckOptions {
-                run_spec_path: absolute(&base_dir, &args.run),
-                pins_path: args.pins.map(|path| absolute(&base_dir, &path)),
-                challenge_path: absolute(&base_dir, &args.challenge),
-                submission_path: absolute(&base_dir, &args.submission),
-                da_dir: args.da_dir.map(|path| absolute(&base_dir, &path)),
-                submitted_at: args.submitted_at,
-            })?;
+            let report =
+                claim_check::check_challenge_submission(claim_check::ChallengeCheckOptions {
+                    run_spec_path: absolute(&base_dir, &args.run),
+                    pins_path: args.pins.map(|path| absolute(&base_dir, &path)),
+                    challenge_path: absolute(&base_dir, &args.challenge),
+                    submission_path: absolute(&base_dir, &args.submission),
+                    da_dir: args.da_dir.map(|path| absolute(&base_dir, &path)),
+                    submitted_at: args.submitted_at,
+                })?;
             for line in &report.lines {
                 match &line.rejection {
                     None => println!("ok        {}", line.check),

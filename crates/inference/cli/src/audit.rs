@@ -6,7 +6,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use anyhow::{ensure, Context, Result};
-use inference_artifacts::contract::ClaimSubmission;
+use inference_artifacts::checks::ClaimSubmission;
 use inference_artifacts::{
     read_checkpoint_hashes, read_checkpoint_trace, read_json, CHECKPOINTS_TXT,
     CHECKPOINT_TRACE_JSON,
@@ -65,12 +65,14 @@ pub struct ClaimAudit {
 /// found here is pointed at with `voidClaim`, and the
 /// claim is void: there is no challenge to post and nothing to answer.
 pub fn audit_claim(options: AuditClaimOptions) -> Result<ClaimAudit> {
-    use inference_artifacts::contract::{CheckpointList, LinkCheck, StageAdmission};
+    use inference_artifacts::checks::{CheckpointList, LinkCheck, StageAdmission};
     use iris_evm::{abi_encode, checkpoint_fault_token, claim_id, InputQuestion};
 
     let submission: ClaimSubmission = read_json(&options.submission_path)?;
-    let configuration =
-        crate::checks::spec_configuration(&options.run_spec_path, options.pins_path.as_deref())?;
+    let configuration = crate::claim_check::spec_configuration(
+        &options.run_spec_path,
+        options.pins_path.as_deref(),
+    )?;
     ensure!(
         configuration.id() == submission.configuration,
         "the claim is of configuration {}, and {} describes {}: give the run spec of the \

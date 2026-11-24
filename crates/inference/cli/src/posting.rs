@@ -24,7 +24,7 @@ use inference_artifacts::availability::{
     BlobPointer, CheckpointPackage, OutputReader, PostedBlob, PostedRun, WitnessedOutput,
     NAMESPACE_BYTES,
 };
-use inference_artifacts::contract::{ResultInOutput, SubmittedRecord};
+use inference_artifacts::checks::{ResultInOutput, SubmittedRecord};
 use inference_artifacts::{CheckpointTrace, PreparedRun, CHECKPOINTS_TXT, CHECKPOINT_TRACE_JSON};
 use raster::core::trace::TraceCommitment;
 use raster_prover::trace::TraceCommitmentExt;
@@ -345,12 +345,12 @@ impl OutputReader for HostReader {
     }
 
     fn check_record(&self, payload: &[u8], index: &[u8]) -> Option<SubmittedRecord> {
-        let edge = crate::checks::output_json(payload, index).ok()?;
-        crate::checks::claim_record(edge.get("claim")?).ok()
+        let edge = crate::claim_check::output_json(payload, index).ok()?;
+        crate::claim_check::claim_record(edge.get("claim")?).ok()
     }
 
     fn results(&self, payload: &[u8], index: &[u8]) -> Option<ResultInOutput> {
-        let stated = crate::checks::output_json(payload, index).ok()?;
+        let stated = crate::claim_check::output_json(payload, index).ok()?;
         // The two pipelines' result records have no field in common at the
         // top, so an output reads as one of them or as neither.
         [
@@ -358,7 +358,7 @@ impl OutputReader for HostReader {
             inference_artifacts::Pipeline::Single,
         ]
         .into_iter()
-        .find_map(|pipeline| crate::checks::result_in_output(pipeline, &stated).ok())
+        .find_map(|pipeline| crate::claim_check::result_in_output(pipeline, &stated).ok())
     }
 }
 

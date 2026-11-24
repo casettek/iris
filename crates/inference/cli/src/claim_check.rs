@@ -1,7 +1,7 @@
 //! `iris claim check`: the checks a contract would make on a claim, run on the
 //! host against the files a claimer and a challenger would post.
 //!
-//! The rules themselves are in `inference_artifacts::contract`. This module
+//! The rules themselves are in `inference_artifacts::checks`. This module
 //! finds their inputs: the pins beside the model manifest a run spec names,
 //! the parameters that spec requires, and the claim directory `claim build`
 //! wrote, which holds the submission, the checkpoint list, the checkpoints and
@@ -15,7 +15,7 @@ use inference_artifacts::availability::{
     check_claim_availability, check_holds, AvailabilityLayer, AvailabilityParameters, BlobContents,
     RequiredPosting,
 };
-use inference_artifacts::contract::{
+use inference_artifacts::checks::{
     check_origin, check_pipeline, check_stated_records, check_submission, first_unapproved_stage,
     raster_boundary_mismatch, ChallengeRefusal, CheckpointList, ClaimSubmission, ContractPins,
     LinkCheck, RequiredOrigin, RequiredParameters, RequiredSource, ResultInOutput, StageAdmission,
@@ -628,7 +628,7 @@ pub struct ChallengeCheckOptions {
 /// is. Nothing is posted and nothing is written.
 pub fn check_challenge_submission(options: ChallengeCheckOptions) -> Result<ClaimCheckReport> {
     let configuration = spec_configuration(&options.run_spec_path, options.pins_path.as_deref())?;
-    let submission: inference_artifacts::contract::ChallengeSubmission =
+    let submission: inference_artifacts::checks::ChallengeSubmission =
         read_json(&options.challenge_path)?;
     let layer = crate::posting::open_layer(options.da_dir.as_deref())?;
     let submitted_at = match options.submitted_at {
@@ -662,9 +662,9 @@ pub fn post_challenge(options: ChallengePostOptions) -> Result<ChallengePosted> 
     let challenger = options
         .challenger
         .clone()
-        .unwrap_or_else(|| inference_artifacts::contract::NO_ADDRESS.to_string());
+        .unwrap_or_else(|| inference_artifacts::checks::NO_ADDRESS.to_string());
     ensure!(
-        inference_artifacts::contract::is_address(&challenger),
+        inference_artifacts::checks::is_address(&challenger),
         "`{challenger}` is not an address: give `0x` and 40 lowercase hex digits"
     );
     let submission = challenge_submission(
@@ -682,7 +682,7 @@ pub fn post_challenge(options: ChallengePostOptions) -> Result<ChallengePosted> 
     let submission_path = options.out_path.clone().unwrap_or_else(|| {
         options
             .challenge_bundle_path
-            .with_file_name(inference_artifacts::contract::CHALLENGE_SUBMISSION_JSON)
+            .with_file_name(inference_artifacts::checks::CHALLENGE_SUBMISSION_JSON)
     });
     inference_artifacts::write_json(&submission_path, &submission)?;
     let submitted_at = match options.submitted_at {
@@ -715,10 +715,10 @@ pub(crate) fn challenge_submission(
     output_sha256: &str,
     challenger: &str,
     layer: &dyn crate::posting::PostingLayer,
-) -> Result<inference_artifacts::contract::ChallengeSubmission> {
+) -> Result<inference_artifacts::checks::ChallengeSubmission> {
     let commitment = raster_prover::commitment_file::CommitmentFile::read_memory(commit_path)
         .with_context(|| format!("{} is not a Raster trace commitment", commit_path.display()))?;
-    let challenge = inference_artifacts::contract::stage_challenge(
+    let challenge = inference_artifacts::checks::stage_challenge(
         checkpoint,
         commitment.header(),
         output_sha256,
@@ -728,8 +728,8 @@ pub(crate) fn challenge_submission(
     // admission decodes.
     let body = postcard::to_allocvec(&commitment.into_memory())
         .context("the trace commitment does not encode")?;
-    Ok(inference_artifacts::contract::ChallengeSubmission {
-        version: inference_artifacts::contract::CHALLENGE_SUBMISSION_VERSION,
+    Ok(inference_artifacts::checks::ChallengeSubmission {
+        version: inference_artifacts::checks::CHALLENGE_SUBMISSION_VERSION,
         challenger: challenger.to_string(),
         checkpoints_root: checkpoints_root.to_string(),
         stage,
@@ -746,7 +746,7 @@ pub(crate) fn challenge_submission(
 pub fn check_challenge(
     configuration: &Configuration,
     claim_submission_path: &Path,
-    submission: &inference_artifacts::contract::ChallengeSubmission,
+    submission: &inference_artifacts::checks::ChallengeSubmission,
     layer: &dyn AvailabilityLayer,
     submitted_at: u64,
 ) -> Result<ClaimCheckReport> {
@@ -795,7 +795,7 @@ pub fn check_challenge(
     lines.push(CheckLine {
         check: "challenge: about the claim's checkpoint at that stage",
         rejection: (!checkpoint.is_some_and(|checkpoint| {
-            inference_artifacts::contract::challenge_is_about(checkpoint, &submission.challenge)
+            inference_artifacts::checks::challenge_is_about(checkpoint, &submission.challenge)
         }))
         .then(|| String::from("the challenge's chain commitment is not this checkpoint's")),
     });

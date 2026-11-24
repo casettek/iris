@@ -23,7 +23,7 @@ backend runs either pipeline.
 | `consensus` | 2, one after the other | `consensus-result` | Each output's code, and whether the two agree |
 
 See [Raster chain](raster-chain.md) for the stages and
-[the contract](contract.md) for what is checked.
+[the contract](checks.md) for what is checked.
 
 ## How a chain is put together
 
@@ -178,7 +178,7 @@ its own model over the one input hash the submission names, so the two
 inferences cannot be swapped and both ran the same input. It reads both
 plaintexts by its own forms and refuses a claim whose codes or agreement are not
 what that gives. When a challenge arrives it holds each record to the check the
-result stage read for that inference. See [the contract](contract.md).
+result stage read for that inference. See [the contract](checks.md).
 
 The parity gate's [consensus leg](../workflows/test-parity.md#consensus-leg)
 runs one consensus claim over the gate's own model and the other family's.

@@ -51,7 +51,7 @@ from, and its output.
 | Kept by the contract | The claim's configuration, claimer, checkpoint count and root, when it arrived, and one hash of the commitments of the run inputs it posted. |
 
 On arrival the contract checks what it can from the transaction alone
-([the contract's rules](contract.md#on-submission)): the configuration is
+([the contract's rules](checks.md#on-submission)): the configuration is
 registered, the statement is the configuration's model and parameters over
 the claimed input, the record is valid, the source and result are what the
 configuration requires, and the data is posted and stays retrievable. It does

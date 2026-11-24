@@ -33,7 +33,7 @@ use sha2::{Digest, Sha256};
 pub use prompt_core::{PromptText, RunConfig, RunSchedule, TextClaim};
 
 use crate::checkpoint::{checkpoint_hash, checkpoints_root, CheckpointTrace};
-use crate::contract::{is_address, ClaimSubmission, ResultInOutput, SubmittedRecord};
+use crate::checks::{is_address, ClaimSubmission, ResultInOutput, SubmittedRecord};
 
 /// The first bytes of every blob iris posts.
 pub const BLOB_MAGIC: &[u8] = b"iris/blob/v3\n";
@@ -94,7 +94,7 @@ pub struct BlobContents {
 /// commits to before it is read.
 ///
 /// A contract compares these with the submission when a claim arrives
-/// ([`crate::contract::check_stated_records`]), so neither a contract nor a
+/// ([`crate::checks::check_stated_records`]), so neither a contract nor a
 /// challenger ever decodes a stage's output.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct StatedRecords {
@@ -765,7 +765,7 @@ pub fn check_posted(
 /// What a claim must have posted, and for whom: its checkpoint list. Its
 /// run inputs are not required here. A stage input that was not posted is a
 /// fault of the checkpoint that names it, which a challenger points at
-/// ([`crate::contract::CheckpointList::check_link`]).
+/// ([`crate::checks::CheckpointList::check_link`]).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RequiredPosting {
     /// The address the claim names as its claimer.
@@ -1022,7 +1022,7 @@ mod tests {
 
     #[test]
     fn a_proof_states_the_records_its_checkpoints_commit_to() {
-        use crate::contract::{StatedInference, SubmittedResult};
+        use crate::checks::{StatedInference, SubmittedResult};
 
         let record = |valid| SubmittedRecord {
             statement_sha256: "aa".repeat(32),

@@ -10,7 +10,7 @@ use staged_infer::{
     ParityPolicy,
 };
 
-use inference_artifacts::contract::{ClaimSubmission, CLAIM_SUBMISSION_JSON};
+use inference_artifacts::checks::{ClaimSubmission, CLAIM_SUBMISSION_JSON};
 use inference_artifacts::{
     file_sha256 as sha256_file, read_checkpoint_hashes, read_checkpoint_trace, read_json,
     read_run_spec, write_checkpoint_hashes, write_claim_artifacts_with_prepared_run, write_json,
@@ -160,14 +160,15 @@ pub fn build_claim(options: ClaimBuildOptions) -> Result<ClaimBuildResult> {
     // is tried again without the claim being built again.
     // Without pins there is no configuration to name, and nothing to check.
     if let Some(path) = result.claim_submission_path.as_ref() {
-        let Some(configuration) = crate::checks::run_configuration(&prepared.prepared_run)? else {
+        let Some(configuration) = crate::claim_check::run_configuration(&prepared.prepared_run)?
+        else {
             return Ok(result);
         };
         let mut submission: ClaimSubmission = inference_artifacts::read_json(path)?;
         submission.configuration = configuration.id();
         if let Some(claimer) = options.claimer {
             anyhow::ensure!(
-                inference_artifacts::contract::is_address(&claimer),
+                inference_artifacts::checks::is_address(&claimer),
                 "`{claimer}` is not an address: give `0x` and 40 lowercase hex digits"
             );
             submission.claimer = claimer;
@@ -181,7 +182,7 @@ pub fn build_claim(options: ClaimBuildOptions) -> Result<ClaimBuildResult> {
         .context("preparing the claim's data")?;
         posting.write(&result.chain_dir)?;
         if let Some(reason) =
-            crate::checks::claim_rejection(&configuration, path, posting.contents()?)?
+            crate::claim_check::claim_rejection(&configuration, path, posting.contents()?)?
         {
             if options.claimed_token_ids.is_none() {
                 anyhow::bail!("a contract would not accept this claim: {reason}");
@@ -204,7 +205,7 @@ pub fn build_posted_claim(options: ClaimBuildOptions) -> Result<ClaimBuildResult
             .with_file_name(crate::posting::POSTING_OUTPUTS_JSON)
             .exists()
         {
-            let posted = crate::checks::post_claim_submission(path, None, None)?;
+            let posted = crate::claim_check::post_claim_submission(path, None, None)?;
             if let Some(reason) = posted.rejection {
                 anyhow::bail!("a contract would not take what the claim posted: {reason}");
             }
@@ -298,7 +299,7 @@ fn write_claim_result(
         )
         .collect();
     let consensus = checkpointed.consensus.as_ref().map(|consensus| {
-        inference_artifacts::contract::SubmittedConsensus {
+        inference_artifacts::checks::SubmittedConsensus {
             same_input: consensus.same_input,
             agree: consensus.agree,
             code: consensus.code,

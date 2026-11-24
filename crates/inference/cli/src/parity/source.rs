@@ -289,10 +289,10 @@ fn run_honest(
 
     // What a contract would check, and every native checkpoint against the
     // boundary the Raster run committed.
-    let contract = crate::checks::check_claim(crate::checks::ClaimCheckOptions {
+    let contract = crate::claim_check::check_claim(crate::claim_check::ClaimCheckOptions {
         base_dir: dir.to_path_buf(),
         run_spec_path: spec.clone(),
-        submission_path: native_dir.join(inference_artifacts::contract::CLAIM_SUBMISSION_JSON),
+        submission_path: native_dir.join(inference_artifacts::checks::CLAIM_SUBMISSION_JSON),
         raster_run: Some(raster_dir),
         pins_path: None,
         registry_path: None,
@@ -313,7 +313,7 @@ fn run_honest(
     // directory, the claim's source is the documents it posted, and the run
     // spec written over them gives the source record the claim names.
     let fetched = crate::posted::fetch_claim(crate::posted::FetchClaimOptions {
-        submission_path: native_dir.join(inference_artifacts::contract::CLAIM_SUBMISSION_JSON),
+        submission_path: native_dir.join(inference_artifacts::checks::CLAIM_SUBMISSION_JSON),
         run_spec_path: spec,
         pins_path: None,
         da_dir: None,

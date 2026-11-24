@@ -12,7 +12,7 @@ Three kinds of page. Start with [how iris works](protocol/overview.md). The
   what each checks, and the schedule that holds them in order.
 - [Pipelines](protocol/pipelines.md): a run of one model, and a consensus of
   two.
-- [What a contract holds and checks](protocol/contract.md): the rules, as
+- [What a contract holds and checks](protocol/checks.md): the rules, as
   the Rust states them.
 - [Blockchain](blockchain/overview.md): Celestia and the EVM contracts: what
   each call checks, what it costs, and which parts are a trusted host.

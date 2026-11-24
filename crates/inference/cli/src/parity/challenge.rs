@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use anyhow::{ensure, Context, Result};
-use inference_artifacts::contract::{dispute_digest, settlement, stage_challenge, Settlement};
+use inference_artifacts::checks::{dispute_digest, settlement, stage_challenge, Settlement};
 use inference_artifacts::{
     build_checkpoint_trace, checkpoint_hashes, file_sha256, read_checkpoint_trace, read_json,
     write_checkpoint_hashes, CheckpointTrace, ModelManifest,
@@ -184,7 +184,7 @@ pub(super) fn run_challenge_leg(leg: &Leg) -> Result<Value> {
                         == (index == lying.checkpoint_index)),
             "a corrupted claim's list differs from the honest one elsewhere than at `{stage}`"
         );
-        let claim: inference_artifacts::contract::ClaimSubmission =
+        let claim: inference_artifacts::checks::ClaimSubmission =
             read_json(&lying.submission_path)?;
         let posting = crate::posting::PreparedPosting::read(&leg.dir.join("corrupted-claim"))?;
         ensure!(
@@ -209,7 +209,7 @@ pub(super) fn run_challenge_leg(leg: &Leg) -> Result<Value> {
         // fault by auditing it, with nothing run, at the checkpoint that
         // lies.
         let layer = crate::posting::open_layer(None)?;
-        let configuration = crate::checks::spec_configuration(&spec, None)?;
+        let configuration = crate::claim_check::spec_configuration(&spec, None)?;
         for (fault, out, expected) in [
             (
                 crate::lies::CorruptFault::Program,
@@ -245,7 +245,7 @@ pub(super) fn run_challenge_leg(leg: &Leg) -> Result<Value> {
                 claimer: Some(liar.to_string()),
                 out_dir: leg.dir.join(out),
             })?;
-            let mut claim: inference_artifacts::contract::ClaimSubmission =
+            let mut claim: inference_artifacts::checks::ClaimSubmission =
                 read_json(&lie.submission_path)?;
             claim.availability = crate::posting::PreparedPosting::read(&leg.dir.join(out))?
                 .post(layer.as_ref())
@@ -263,7 +263,7 @@ pub(super) fn run_challenge_leg(leg: &Leg) -> Result<Value> {
                     "`{out}`: a contract does not take the lying claim's data: {rejection}"
                 )
             })?;
-            inference_artifacts::contract::check_stated_records(
+            inference_artifacts::checks::check_stated_records(
                 &configuration.programs,
                 &claim,
                 &posted,
@@ -889,7 +889,7 @@ fn contract_challenge(
     challenge_as_posted: bool,
     mut outcome: Value,
 ) -> Result<Value> {
-    use inference_artifacts::contract::{ClaimSubmission, CLAIM_SUBMISSION_JSON};
+    use inference_artifacts::checks::{ClaimSubmission, CLAIM_SUBMISSION_JSON};
 
     let dir = leg.dir.join(name).join("contract");
     fs::create_dir_all(&dir)?;
@@ -905,7 +905,7 @@ fn contract_challenge(
     claim.checkpoint_count = lying.checkpoints.len() as u32;
     claim.checkpoints_root = inference_artifacts::checkpoints_root(&checkpoint_hashes(lying)?)?;
     let claim_path = dir.join(CLAIM_SUBMISSION_JSON);
-    let configuration = crate::checks::spec_configuration(spec, None)?;
+    let configuration = crate::claim_check::spec_configuration(spec, None)?;
     let layer = crate::posting::open_layer(None)?;
     let layer = layer.as_ref();
     let now = crate::posting::now()?;
@@ -931,10 +931,10 @@ fn contract_challenge(
     .map_err(|rejection| {
         anyhow::anyhow!("`{name}`: a contract does not take the lying claim's data: {rejection}")
     })?;
-    inference_artifacts::contract::check_stated_records(&configuration.programs, &claim, &posted)
+    inference_artifacts::checks::check_stated_records(&configuration.programs, &claim, &posted)
         .map_err(|rejection| {
-        anyhow::anyhow!("`{name}`: a contract does not take the lying claim: {rejection}")
-    })?;
+            anyhow::anyhow!("`{name}`: a contract does not take the lying claim: {rejection}")
+        })?;
 
     let index = lying
         .checkpoints
@@ -943,7 +943,7 @@ fn contract_challenge(
         .with_context(|| format!("the lying claim has no `{stage}`"))?;
     let replay = replay_stage_dir(leg, name, stage)?;
     let challenger = "0x000000000000000000000000000000000000c4a1";
-    let submission = crate::checks::challenge_submission(
+    let submission = crate::claim_check::challenge_submission(
         &claim.checkpoints_root,
         index as u32,
         &lying.checkpoints[index],
@@ -953,11 +953,11 @@ fn contract_challenge(
         layer,
     )?;
     inference_artifacts::write_json(
-        &dir.join(inference_artifacts::contract::CHALLENGE_SUBMISSION_JSON),
+        &dir.join(inference_artifacts::checks::CHALLENGE_SUBMISSION_JSON),
         &submission,
     )?;
-    let check = |submission: &inference_artifacts::contract::ChallengeSubmission, at: u64| {
-        crate::checks::check_challenge(&configuration, &claim_path, submission, layer, at)
+    let check = |submission: &inference_artifacts::checks::ChallengeSubmission, at: u64| {
+        crate::claim_check::check_challenge(&configuration, &claim_path, submission, layer, at)
             .map(|report| report.rejection())
     };
     if let Some(rejection) = check(&submission, now)? {
@@ -1018,7 +1018,7 @@ fn contract_challenge(
     // files that were posted.
     let measured = crate::measure::measure_posting(&claim_path, None)
         .with_context(|| format!("`{name}`: measuring what the lying claim posted"))?;
-    let posted: inference_artifacts::contract::ClaimSubmission = read_json(&claim_path)?;
+    let posted: inference_artifacts::checks::ClaimSubmission = read_json(&claim_path)?;
     ensure!(
         measured["bytes"].as_u64()
             == Some(posted.availability.iter().map(|blob| blob.length).sum()),
@@ -1111,11 +1111,11 @@ fn posted_lies(
     not_greedy: &ClaimBuildResult,
 ) -> Result<Vec<Value>> {
     use crate::lies::CorruptFault;
-    use inference_artifacts::contract::ClaimSubmission;
+    use inference_artifacts::checks::ClaimSubmission;
 
     let layer = crate::posting::open_layer(None)?;
     let layer = layer.as_ref();
-    let configuration = crate::checks::spec_configuration(spec, None)?;
+    let configuration = crate::claim_check::spec_configuration(spec, None)?;
     let now = crate::posting::now()?;
     let liar = "0x00000000000000000000000000000000000011a3";
     let challenger = "0x000000000000000000000000000000000000c4a2";
@@ -1212,14 +1212,10 @@ fn posted_lies(
                 "`{name}`: a contract does not take the lying claim's data: {rejection}"
             )
         })?;
-        inference_artifacts::contract::check_stated_records(
-            &configuration.programs,
-            &claim,
-            &posted,
-        )
-        .map_err(|rejection| {
-            anyhow::anyhow!("`{name}`: a contract does not take the lying claim: {rejection}")
-        })?;
+        inference_artifacts::checks::check_stated_records(&configuration.programs, &claim, &posted)
+            .map_err(|rejection| {
+                anyhow::anyhow!("`{name}`: a contract does not take the lying claim: {rejection}")
+            })?;
         ensure!(
             !forged
                 || claim
@@ -1321,7 +1317,7 @@ fn posted_lies(
                     == claimed.input_commitment,
             "`{name}`: the admitted challenge is not about the lying checkpoint"
         );
-        let submission = crate::checks::challenge_submission(
+        let submission = crate::claim_check::challenge_submission(
             &claim.checkpoints_root,
             lie.checkpoint_index as u32,
             claimed,
@@ -1330,7 +1326,7 @@ fn posted_lies(
             challenger,
             layer,
         )?;
-        let rejection = crate::checks::check_challenge(
+        let rejection = crate::claim_check::check_challenge(
             &configuration,
             &lie.submission_path,
             &submission,

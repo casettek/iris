@@ -62,7 +62,7 @@ pub(crate) fn heights_of(call: &Value) -> Vec<u64> {
 
 /// Register the run's configuration unless it is registered. Its id.
 pub fn register(node: &Node, run_spec: &Path) -> Result<String> {
-    let configuration = crate::checks::spec_configuration(run_spec, None)?;
+    let configuration = crate::claim_check::spec_configuration(run_spec, None)?;
     let call = crate::blockchain::evm::configuration_call(&configuration)?;
     let id = call["configuration"]
         .as_str()

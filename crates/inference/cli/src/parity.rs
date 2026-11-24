@@ -704,10 +704,10 @@ fn run_case(
     // What a contract would check on the native claim, and that each of its
     // checkpoints is the boundary the Raster run of the same chain committed:
     // the program id, the input manifest and the output.
-    let contract = crate::checks::check_claim(crate::checks::ClaimCheckOptions {
+    let contract = crate::claim_check::check_claim(crate::claim_check::ClaimCheckOptions {
         base_dir: dir.to_path_buf(),
         run_spec_path: spec.clone(),
-        submission_path: native_dir.join(inference_artifacts::contract::CLAIM_SUBMISSION_JSON),
+        submission_path: native_dir.join(inference_artifacts::checks::CLAIM_SUBMISSION_JSON),
         raster_run: Some(raster_dir.clone()),
         pins_path: None,
         registry_path: None,
@@ -731,7 +731,7 @@ fn run_case(
     comparison["availability_cases"] = run_availability_cases(
         dir,
         &spec,
-        &native_dir.join(inference_artifacts::contract::CLAIM_SUBMISSION_JSON),
+        &native_dir.join(inference_artifacts::checks::CLAIM_SUBMISSION_JSON),
     )
     .context("availability cases")?;
     ensure!(
@@ -1961,14 +1961,14 @@ fn validate_model_bundle(
 /// the checkpoints posted and not the prompt the statement names, and another
 /// prompt posted in its place.
 fn run_availability_cases(dir: &Path, spec: &Path, submission_path: &Path) -> Result<Value> {
-    use crate::checks::{check_claim, ClaimCheckOptions};
-    use inference_artifacts::contract::ClaimSubmission;
+    use crate::claim_check::{check_claim, ClaimCheckOptions};
+    use inference_artifacts::checks::ClaimSubmission;
 
     let claim_dir = submission_path
         .parent()
         .context("the submission has no directory")?;
     let honest: ClaimSubmission = read_json(submission_path)?;
-    let configuration = crate::checks::spec_configuration(spec, None)?;
+    let configuration = crate::claim_check::spec_configuration(spec, None)?;
     let registry_path = dir.join("registry.json");
     let mut registry = inference_artifacts::registry::Registry::default();
     ensure!(

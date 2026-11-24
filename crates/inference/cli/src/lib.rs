@@ -11,8 +11,8 @@ mod audit;
 mod blockchain;
 mod challenge;
 mod challenge_profile;
-mod checks;
 mod claim;
+mod claim_check;
 mod commands;
 mod convert;
 mod fault;
@@ -34,11 +34,11 @@ pub use challenge::{
     build_challenge, ChallengeBuildOptions, ChallengeBuildOutcome, ChallengeBuildResult,
     ChallengeInput,
 };
-pub use checks::{check_claim, CheckLine, ClaimCheckOptions, ClaimCheckReport};
 pub use claim::{
     build_claim, corrupt_checkpoint_hashes, ClaimBuildOptions, ClaimBuildResult,
     CorruptCheckpointHashesOptions, CorruptCheckpointHashesResult, CorruptCheckpointSelection,
 };
+pub use claim_check::{check_claim, CheckLine, ClaimCheckOptions, ClaimCheckReport};
 pub use infer::run_infer;
 pub use inference_artifacts::{
     build_checkpoint_trace, write_claim_artifacts, ChallengeBundle, ChallengeTrace, Checkpoint,
@@ -421,7 +421,7 @@ mod tests {
     #[test]
     fn the_formats_table_is_current() {
         use inference_artifacts::availability::BLOB_MAGIC;
-        use inference_artifacts::contract::{
+        use inference_artifacts::checks::{
             CHALLENGE_SUBMISSION_VERSION, CLAIM_SUBMISSION_VERSION, CONTRACT_PINS_VERSION,
         };
         use inference_artifacts::registry::{CONFIGURATION_VERSION, REGISTRY_VERSION};

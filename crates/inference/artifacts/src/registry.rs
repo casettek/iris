@@ -4,7 +4,7 @@
 //! A configuration is everything a contract holds a claim to: the pipeline
 //! and its approved stage programs, the model of each inference, the
 //! parameters, and what it requires of the claim's source and result. A claim
-//! names the id of one ([`crate::contract::ClaimSubmission::configuration`]),
+//! names the id of one ([`crate::checks::ClaimSubmission::configuration`]),
 //! and a contract judges it by that one. Registering one is a choice made in
 //! advance; no claim can bring its own.
 //!
@@ -19,7 +19,7 @@ use std::path::Path;
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 
-use crate::contract::{
+use crate::checks::{
     ContractPins, ModelPins, PipelinePins, RequiredOrigin, RequiredParameters, RequiredSource,
 };
 use crate::encoding::Encoder;

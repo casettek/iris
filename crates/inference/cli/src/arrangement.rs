@@ -15,7 +15,7 @@ use std::fs;
 use std::path::Path;
 
 use anyhow::{bail, ensure, Context, Result};
-use inference_artifacts::contract::read_input_manifest;
+use inference_artifacts::checks::read_input_manifest;
 use inference_artifacts::CheckpointTrace;
 use sha2::{Digest, Sha256};
 use staged_infer::chain_runner::{expanded_stages, ExpandedInput, ExpandedStage};

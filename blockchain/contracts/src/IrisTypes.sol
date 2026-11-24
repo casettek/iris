@@ -55,7 +55,7 @@ struct InputRule {
     bool run;
 }
 
-// --- a claim: `inference_artifacts::contract::ClaimSubmission` ---
+// --- a claim: `inference_artifacts::checks::ClaimSubmission` ---
 
 struct Record {
     bytes32 statement;
@@ -162,7 +162,7 @@ struct Claim {
     PostedBlob[] availability;
 }
 
-// --- a challenge: `inference_artifacts::contract::ChallengeSubmission` ---
+// --- a challenge: `inference_artifacts::checks::ChallengeSubmission` ---
 
 // `inference_artifacts::checkpoint::Checkpoint`
 struct Checkpoint {

@@ -618,10 +618,9 @@ fn finish_import(
 /// says so. It can still run; it cannot have a claim checked against it.
 fn write_contract_pins(model_manifest_path: &Path, template: &str) {
     let pins = inference_artifacts::ModelManifest::load_verified(model_manifest_path).and_then(
-        |manifest| inference_artifacts::contract::ContractPins::from_import(&manifest, template),
+        |manifest| inference_artifacts::checks::ContractPins::from_import(&manifest, template),
     );
-    let path =
-        model_manifest_path.with_file_name(inference_artifacts::contract::CONTRACT_PINS_JSON);
+    let path = model_manifest_path.with_file_name(inference_artifacts::checks::CONTRACT_PINS_JSON);
     match pins.and_then(|pins| inference_artifacts::write_json(&path, &pins)) {
         Ok(()) => println!("wrote {}", path.display()),
         Err(error) => println!("no contract pins written: {error:#}"),

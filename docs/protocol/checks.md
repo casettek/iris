@@ -1,7 +1,7 @@
 # What a contract holds and checks
 
 This page is the rules a contract holds a claim to: what it pins, what a
-claimer submits, and each check it makes, as `inference_artifacts::contract`
+claimer submits, and each check it makes, as `inference_artifacts::checks`
 states them in Rust. The contracts in `blockchain/contracts/src` make the same checks on
 chain ([the blockchains](../blockchain/overview.md)), and `iris claim check` runs them on the host.
 [How iris works](overview.md) is the short version.

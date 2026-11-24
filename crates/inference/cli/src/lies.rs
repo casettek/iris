@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{ensure, Context, Result};
 use inference_artifacts::availability::{check_holds, RequiredPosting};
-use inference_artifacts::contract::{is_address, ClaimSubmission, CLAIM_SUBMISSION_JSON};
+use inference_artifacts::checks::{is_address, ClaimSubmission, CLAIM_SUBMISSION_JSON};
 use inference_artifacts::{
     checkpoint_hashes, checkpoints_root, read_checkpoint_hashes, read_checkpoint_trace, read_json,
     write_checkpoint_hashes, write_json, CHECKPOINTS_TXT, CHECKPOINT_TRACE_JSON,

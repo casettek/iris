@@ -1226,9 +1226,8 @@ fn record_stage_program(
     stage_dir: &Path,
     stage_index: &BTreeMap<String, usize>,
 ) -> Result<()> {
-    let program =
-        inference_artifacts::contract::locked_program_commitment(Path::new(&stage.project))
-            .unwrap_or_default();
+    let program = inference_artifacts::checks::locked_program_commitment(Path::new(&stage.project))
+        .unwrap_or_default();
     let mut input_sources = BTreeMap::new();
     for (param, binding) in &stage.inputs {
         if let InputBinding::From(producer) = binding {

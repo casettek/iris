@@ -184,7 +184,7 @@ pub fn build_challenge(options: ChallengeBuildOptions) -> Result<ChallengeBuildR
     // the replay is not a run of the program its checkpoint names.
     let mut disputed = None;
     if let Some(posted) = &posted_claim {
-        use inference_artifacts::contract::{settlement, Settlement};
+        use inference_artifacts::checks::{settlement, Settlement};
         let claimed = posted
             .trace
             .checkpoints

@@ -15,7 +15,7 @@ use inference_artifacts::availability::{
     AvailabilityProof, BlobContents, PostedBlob, StatedRecords, NAMESPACE_BYTES,
 };
 use inference_artifacts::checkpoint::Checkpoint;
-use inference_artifacts::contract::{
+use inference_artifacts::checks::{
     ChallengeSubmission, ClaimSubmission, SubmittedConsensus, SubmittedRecord, SubmittedResult,
 };
 use inference_artifacts::encoding::{parse_hash, Encoder};

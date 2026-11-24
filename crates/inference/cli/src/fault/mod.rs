@@ -243,7 +243,7 @@ pub fn prove(args: ProveArgs) -> Result<()> {
     // The challenge as Raster states it, about the claimer's checkpoint: the
     // disputed trace commitment, and the output the challenger's run ended in.
     let claimed_checkpoint = &claim_trace.checkpoints[index];
-    let challenge = inference_artifacts::contract::stage_challenge(
+    let challenge = inference_artifacts::checks::stage_challenge(
         claimed_checkpoint,
         disputed.header(),
         &baseline.output_sha256,
@@ -443,7 +443,7 @@ pub fn prove(args: ProveArgs) -> Result<()> {
         &output.join("fault_bundle.json"),
         &json!({"version":1,"outcome":"proved","verified":true,
         "stage":bundle.stage,"commitment_sha256":file_sha256(&disputed_path)?,
-        "dispute_commitment_sha256":inference_artifacts::contract::dispute_digest(claimed_checkpoint).map(hex::encode),
+        "dispute_commitment_sha256":inference_artifacts::checks::dispute_digest(claimed_checkpoint).map(hex::encode),
         "proof_path":proof_path,"proof_sha256":file_sha256(&proof_path)?,"proof_bytes":fs::metadata(&proof_path)?.len(),"proof_seal_bytes":receipt.seal_size()}),
     )?;
     Ok(())
@@ -497,18 +497,13 @@ fn defends(
     journal: &TransitionJournal,
     transition_image_id: &[u8],
 ) -> Result<()> {
-    inference_artifacts::contract::check_defence(
-        checkpoint,
-        challenge,
-        journal,
-        transition_image_id,
-    )
-    .map(|_| ())
-    .map_err(|rejection| {
-        anyhow::anyhow!(
-            "the proof does not dismiss the challenge to the claimer's checkpoint: {rejection}"
-        )
-    })
+    inference_artifacts::checks::check_defence(checkpoint, challenge, journal, transition_image_id)
+        .map(|_| ())
+        .map_err(|rejection| {
+            anyhow::anyhow!(
+                "the proof does not dismiss the challenge to the claimer's checkpoint: {rejection}"
+            )
+        })
 }
 
 // The transition guest binds to Raster's canonical header digest, not the

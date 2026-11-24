@@ -31,7 +31,7 @@ pub(crate) fn run(command: RegistryCommand) -> Result<ExitCode> {
         RegistryCommand::Add(args) => {
             let base_dir =
                 std::env::current_dir().context("failed to resolve current directory")?;
-            let configuration = checks::spec_configuration(
+            let configuration = claim_check::spec_configuration(
                 &absolute(&base_dir, &args.run),
                 args.pins.map(|path| absolute(&base_dir, &path)).as_deref(),
             )?;

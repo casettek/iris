@@ -5,7 +5,7 @@ import "../src/InputManifest.sol";
 import "../src/IrisEncoding.sol";
 
 /// A stage's input list is read one way only: the canonical form, and
-/// nothing else. `read_input_manifest` in `inference_artifacts::contract`
+/// nothing else. `read_input_manifest` in `inference_artifacts::checks`
 /// holds the same cases in Rust.
 contract InputManifestTest {
     // Two inputs, as `serde_json` writes them: sorted, two spaces of indent.

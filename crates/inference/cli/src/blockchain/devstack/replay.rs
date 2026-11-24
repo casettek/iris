@@ -24,12 +24,12 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use anyhow::{bail, ensure, Context, Result};
-use inference_artifacts::contract::CLAIM_FAULTS;
+use inference_artifacts::checks::CLAIM_FAULTS;
 use serde_json::{json, Value};
 
 use super::submit::{heights_of, register, relay};
 use super::{bytes_of, call_with_words, returned_u64, word_of_hex, Node};
-use crate::checks::{
+use crate::claim_check::{
     check_challenge_submission, check_claim, ChallengeCheckOptions, ClaimCheckOptions,
     ClaimCheckReport,
 };

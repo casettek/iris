@@ -130,7 +130,7 @@ risc0-zkvm={{path={:?}}}
     let mut checkpoint =
         inference_artifacts::read_checkpoint_from_stage_dir(stage, &stage_dir).unwrap();
     checkpoint.program_commitment =
-        inference_artifacts::contract::locked_program_commitment(&project).unwrap();
+        inference_artifacts::checks::locked_program_commitment(&project).unwrap();
     let model = dir.join("model.json");
     fs::write(&model, "{}").unwrap();
     let manifest = dir.join("Raster.toml");

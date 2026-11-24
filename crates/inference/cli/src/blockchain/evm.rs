@@ -11,7 +11,7 @@ use std::path::Path;
 
 use anyhow::{ensure, Context, Result};
 use inference_artifacts::availability::{AvailabilityProof, HostAttestation, PostedBlob};
-use inference_artifacts::contract::{ChallengeSubmission, ClaimSubmission};
+use inference_artifacts::checks::{ChallengeSubmission, ClaimSubmission};
 use inference_artifacts::{
     checkpoint_opening, read_checkpoint_hashes, read_checkpoint_trace, read_json, CHECKPOINTS_TXT,
     CHECKPOINT_TRACE_JSON,
@@ -126,7 +126,7 @@ impl OpenedChallenge {
         // commitment of its own to say otherwise. One that was built about
         // another checkpoint is not the challenge these bytes would state.
         ensure!(
-            inference_artifacts::contract::challenge_is_about(checkpoint, &challenge.challenge),
+            inference_artifacts::checks::challenge_is_about(checkpoint, &challenge.challenge),
             "the challenge is not about the claim's checkpoint {stage}"
         );
         Ok(Self {
@@ -244,7 +244,7 @@ pub fn fault_proof_call(
 ) -> Result<Value> {
     let opened = OpenedChallenge::read(challenge_path, claim_submission_path)?;
     let proof = sealed_fault_proof(receipt_path)?;
-    let rejection = inference_artifacts::contract::check_fault_proof(
+    let rejection = inference_artifacts::checks::check_fault_proof(
         &opened.challenge.challenge,
         &proof.decoded,
         &raster_prover::chain_fraud::transition_guest_image_id(),

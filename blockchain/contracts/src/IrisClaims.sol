@@ -10,7 +10,7 @@ import "./InputManifest.sol";
 import {IRiscZeroVerifier} from "risc0/IRiscZeroVerifier.sol";
 
 /// Where a claim and a challenge arrive, and the checks made of each on
-/// arrival: `inference_artifacts::contract` and `::availability`, in the
+/// arrival: `inference_artifacts::checks` and `::availability`, in the
 /// order `iris claim check` makes them. Every error is the Rust rejection of
 /// the same name.
 ///
@@ -73,7 +73,7 @@ contract IrisClaims {
     }
 
     /// What a challenger showed wrong with a claim on the spot, with no
-    /// replay: `inference_artifacts::contract::StageAdmission` and
+    /// replay: `inference_artifacts::checks::StageAdmission` and
     /// `LinkFault`. The first stands for no fault.
     enum ClaimFault {
         None,

@@ -7,7 +7,7 @@ with its trace body posted. A claim also names, by id, the registered
 configuration it is a claim of.
 
 The rules are in `inference_artifacts::availability` and
-`inference_artifacts::registry`; [the contract page](contract.md) lists the
+`inference_artifacts::registry`; [the contract page](checks.md) lists the
 checks in the order a contract makes them. The layer is behind one trait
 (`crates/inference/cli/src/posting.rs`), with two implementations: a
 stand-in directory, and a local Celestia node. Blobstream and the availability
@@ -134,7 +134,7 @@ themselves, and the proof holds each to the hash its checkpoint commits to
 before it reads it. They are not posted, since a challenger makes its own.
 
 A contract compares the stated records with the submission when the claim
-arrives ([the contract page](contract.md#on-submission), check 7). So no
+arrives ([the contract page](checks.md#on-submission), check 7). So no
 contract and no challenger decodes a stage's output, and a claim whose
 submission is not what its own checkpoints commit to is never accepted.
 

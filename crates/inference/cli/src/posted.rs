@@ -16,7 +16,7 @@ use anyhow::{bail, ensure, Context, Result};
 use inference_artifacts::availability::{
     check_holds, Blob, BlobContents, BlobEntry, CheckpointPackage, RequiredPosting,
 };
-use inference_artifacts::contract::{ChallengeSubmission, ClaimSubmission, CLAIM_SUBMISSION_JSON};
+use inference_artifacts::checks::{ChallengeSubmission, ClaimSubmission, CLAIM_SUBMISSION_JSON};
 use inference_artifacts::{
     read_json, read_run_spec, write_json, CheckpointTrace, SourceDocumentSpec, CHECKPOINTS_TXT,
     CHECKPOINT_TRACE_JSON, INFERENCE_RUN_SPEC_TOML,
@@ -111,8 +111,10 @@ pub fn fetch_claim(options: FetchClaimOptions) -> Result<FetchedClaim> {
         "{} names no posted data: the claim was not posted",
         options.submission_path.display()
     );
-    let configuration =
-        crate::checks::spec_configuration(&options.run_spec_path, options.pins_path.as_deref())?;
+    let configuration = crate::claim_check::spec_configuration(
+        &options.run_spec_path,
+        options.pins_path.as_deref(),
+    )?;
     ensure!(
         configuration.id() == submission.configuration,
         "the claim is of configuration {}, and {} describes {}",
