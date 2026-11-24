@@ -710,7 +710,7 @@ mod tests {
             inferences: vec![PostedInference {
                 config: Default::default(),
                 schedule: Default::default(),
-                claim: Default::default(),
+                text_digest: Default::default(),
                 text: vec![PromptText {
                     chunks: vec![String::from("Which section was about a bakery?")].into(),
                 }],

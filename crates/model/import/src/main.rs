@@ -888,7 +888,7 @@ fn chain_template(
              {embedding_line}",
                 run_external("config"),
                 run_external("schedule"),
-                run_external("claim"),
+                run_external("text_digest"),
                 bind_source,
             )
         };

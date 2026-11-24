@@ -143,7 +143,7 @@ crates/
     direct/                 # fast deterministic inference
     staged/                 # the stage-by-stage run a claim and a challenge make
     kernels/                # the inference kernels both share
-    pipeline-core/          # the stage schedule and the statement a claim makes
+    statement-core/         # the stage schedule and the statement a claim makes
   model/
     import/                 # a bundle to committed files, a manifest and pins
     run-prep/               # a run's inputs, written as the files its stages load

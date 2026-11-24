@@ -1,4 +1,4 @@
-use model_identity::{pipeline_core::Execution, ModelContext};
+use model_identity::{statement_core::Execution, ModelContext};
 use prefill_range::{cache_coverage, consume_cache_position, validate_cache_coverage};
 
 fn context(start: u32, end: u32) -> ModelContext {

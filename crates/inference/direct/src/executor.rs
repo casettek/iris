@@ -114,7 +114,7 @@ impl DirectInferenceExecutor {
             // records agree byte for byte.
             if let Some(prompt_ranges) = prompt_ranges {
                 let claimed_ranges = claimed_tokens.div_ceil(model.manifest().range_size as usize);
-                context.bind_schedule(model_identity::pipeline_core::StageSchedule {
+                context.bind_schedule(model_identity::statement_core::StageSchedule {
                     prompt_ranges,
                     claimed_ranges: u32::try_from(claimed_ranges).unwrap_or(u32::MAX),
                 });
@@ -124,9 +124,9 @@ impl DirectInferenceExecutor {
                     context.require_execution(e.end.append(*id).is_ok());
                 }
                 e.prompt = Some(e.end);
-                e.phase = model_identity::pipeline_core::PREPARED;
+                e.phase = model_identity::statement_core::PREPARED;
                 // The steps the chain's last prompt range and last check record.
-                e.step = model_identity::pipeline_core::Step::tokens(
+                e.step = model_identity::statement_core::Step::tokens(
                     e.schedule.prompt_ranges.saturating_sub(1),
                 );
                 if let Some(ids) = generated {
@@ -135,8 +135,8 @@ impl DirectInferenceExecutor {
                     for id in ids {
                         context.require_execution(e.end.append(*id).is_ok());
                     }
-                    e.phase = model_identity::pipeline_core::CHECKED;
-                    e.step = model_identity::pipeline_core::Step::check(
+                    e.phase = model_identity::statement_core::CHECKED;
+                    e.step = model_identity::statement_core::Step::check(
                         e.schedule.claimed_ranges.saturating_sub(1),
                     );
                     context.completed_layers = context.layers;

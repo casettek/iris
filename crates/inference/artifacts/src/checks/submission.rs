@@ -6,7 +6,7 @@
 use std::path::Path;
 
 use ::model_identity::context::parse_id;
-use ::model_identity::pipeline_core::Statement;
+use ::model_identity::statement_core::Statement;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};

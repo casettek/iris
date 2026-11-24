@@ -3,7 +3,7 @@
 //! The verdict has to be the whole of what rejects a claim, so every field
 //! that can reject one is turned on here by itself.
 
-use model_identity::pipeline_core::Statement;
+use model_identity::statement_core::Statement;
 use sequence_check::claim_record;
 use sequence_check::input::{
     ClaimRecord, OutputRecord, CHECK_FAULT_UNSCORED, OUTPUT_FAULT_SHORT_WITHOUT_EOS,

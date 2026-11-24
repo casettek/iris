@@ -1,7 +1,7 @@
 //! A whole run under a stage schedule, and every way of leaving it.
 use crate::{ModelContext, ModelDescriptor};
 use alloc::{format, string::String, vec, vec::Vec};
-use pipeline_core::{StageSchedule, Step};
+use statement_core::{StageSchedule, Step};
 
 /// Two prompt ranges, two claimed ranges, two layers.
 fn schedule() -> StageSchedule {

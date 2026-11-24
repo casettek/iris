@@ -60,7 +60,7 @@ pub const FAULT_TOKEN_SPLIT: u32 = 8;
 pub const FAULT_NOT_THE_MERGE: u32 = 9;
 /// The text is not what the run claimed of it: its hash, its length or what
 /// the template's trim keeps.
-pub const FAULT_TEXT_CLAIM: u32 = 10;
+pub const FAULT_TEXT_DIGEST: u32 = 10;
 /// A range was given text after the text had ended.
 pub const FAULT_TEXT_AFTER_END: u32 = 11;
 /// The text has a run the word scanner could not hold until it knew which
@@ -85,7 +85,7 @@ pub fn fault_description(fault: u32) -> &'static str {
         FAULT_MERGES_INCOMPLETE => "a range's pieces could still merge",
         FAULT_TOKEN_SPLIT => "a claimed token's pieces are in two segments",
         FAULT_NOT_THE_MERGE => "the claimed tokens are not what the merge produces",
-        FAULT_TEXT_CLAIM => "the text is not what the run claimed of it",
+        FAULT_TEXT_DIGEST => "the text is not what the run claimed of it",
         FAULT_TEXT_AFTER_END => "a range was given text after the text had ended",
         FAULT_WORD_SPLIT => "the text has a run too long for the word scanner to place",
         _ => "an unknown fault",
@@ -265,7 +265,7 @@ pub struct PromptText {
 /// the end of the text can know them. So the run supplies them, every range
 /// uses them, and the range the text ends in checks them against its fold.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
-pub struct TextClaim {
+pub struct TextDigest {
     /// SHA-256 of the original UTF-8 prompt bytes, in lowercase hex.
     pub input_text_sha256: String,
     /// The text's length in bytes.
@@ -347,7 +347,7 @@ pub struct RunSchedule {
 pub fn bind_run_schedule(mut context: PromptContext, schedule: &RunSchedule) -> PromptContext {
     context
         .model
-        .bind_schedule(model_identity::pipeline_core::StageSchedule {
+        .bind_schedule(model_identity::statement_core::StageSchedule {
             prompt_ranges: schedule.prompt_ranges,
             claimed_ranges: schedule.claimed_ranges,
         });
@@ -412,7 +412,7 @@ pub struct PromptState {
     pub bind: BindCarry,
 }
 
-/// What one range's bind hands the next: the claim, and the three loops over
+/// What one range's bind hands the next: the text digest, and the three loops over
 /// the text exactly where this range left them.
 ///
 /// Each loop's result depends only on its state and the chunks it is fed, in
@@ -420,12 +420,12 @@ pub struct PromptState {
 /// pieces binding it whole gives, wherever the ranges are cut.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
 pub struct BindCarry {
-    pub claim: TextClaim,
+    pub digest: TextDigest,
     /// The text fold and the scan's position.
     pub text: TextPass,
     pub split: SplitState,
     /// The text has ended, in this range or an earlier one, and is what the
-    /// claim said.
+    /// digest said.
     pub done: bool,
 }
 
@@ -625,11 +625,11 @@ pub fn text_sha256_hex(fold: &TextFold) -> String {
     hex
 }
 
-/// The prompt context a run starts from. The text's hash is the claim's,
+/// The prompt context a run starts from. The text's hash is the digest's,
 /// until the range the text ends in has checked it.
-pub fn open_prompt_context(claim: &TextClaim, config: &RunConfig) -> PromptContext {
+pub fn open_prompt_context(digest: &TextDigest, config: &RunConfig) -> PromptContext {
     PromptContext {
-        input_text_sha256: claim.input_text_sha256.clone(),
+        input_text_sha256: digest.input_text_sha256.clone(),
         model_id: config.model_id.clone(),
         raw_prompt: config.raw_prompt,
         max_new_tokens: config.max_new_tokens,
@@ -701,24 +701,24 @@ pub struct ScanState {
     pub overflowed: bool,
 }
 
-/// The scan the claim calls for. Every range scans with it.
+/// The scan the text digest calls for. Every range scans with it.
 pub fn claimed_scan_plan(
-    claim: &TextClaim,
+    digest: &TextDigest,
     raw_prompt: bool,
     profile: &TokenizerProfile,
 ) -> ScanPlan {
     ScanPlan {
-        total: claim.total,
-        keep_start: claim.keep_start,
-        keep_end: claim.keep_end,
+        total: digest.total,
+        keep_start: digest.keep_start,
+        keep_end: digest.keep_end,
         templated: !raw_prompt && profile.templated(),
     }
 }
 
 /// What the run may claim of a text it has folded to its end.
-pub fn text_claim_of(fold: &TextFold, raw_prompt: bool, profile: &TokenizerProfile) -> TextClaim {
+pub fn text_digest_of(fold: &TextFold, raw_prompt: bool, profile: &TokenizerProfile) -> TextDigest {
     let plan = scan_plan_of(fold, raw_prompt, profile);
-    TextClaim {
+    TextDigest {
         input_text_sha256: text_sha256_hex(fold),
         total: plan.total,
         keep_start: plan.keep_start,
@@ -945,18 +945,18 @@ pub fn apply_atom(
 // Binding the text one range at a time
 // ---------------------------------------------------------------------------
 
-/// What the first range's bind starts from: the claim, and each loop before
+/// What the first range's bind starts from: the text digest, and each loop before
 /// any text.
 pub fn begin_bind_carry(
-    claim: &TextClaim,
+    digest: &TextDigest,
     raw_prompt: bool,
     profile: &TokenizerProfile,
 ) -> BindCarry {
     BindCarry {
-        claim: claim.clone(),
+        digest: digest.clone(),
         text: TextPass {
             fold: begin_text_fold_state(),
-            scan: begin_scan_state(&claimed_scan_plan(claim, raw_prompt, profile), profile),
+            scan: begin_scan_state(&claimed_scan_plan(digest, raw_prompt, profile), profile),
         },
         split: SplitState::default(),
         done: false,
@@ -966,7 +966,7 @@ pub fn begin_bind_carry(
 /// Closes one range's bind, once its text has been folded and scanned.
 ///
 /// `before` is what the range started from. The range the text ends in holds
-/// the text to its claim; a range after that one may be given no text.
+/// the text to its digest; a range after that one may be given no text.
 pub fn finish_bind_range(
     context: &mut PromptContext,
     before: &BindCarry,
@@ -990,12 +990,12 @@ pub fn finish_bind_range(
     }
     let raw = context.raw_prompt;
     let as_claimed = scan_plan_of(&carry.text.fold, raw, profile)
-        == claimed_scan_plan(&carry.claim, raw, profile)
-        && text_sha256_hex(&carry.text.fold) == carry.claim.input_text_sha256;
+        == claimed_scan_plan(&carry.digest, raw, profile)
+        && text_sha256_hex(&carry.text.fold) == carry.digest.input_text_sha256;
     if as_claimed {
         carry.done = true;
     } else {
-        record_fault(context, FAULT_TEXT_CLAIM, carry.text.fold.total);
+        record_fault(context, FAULT_TEXT_DIGEST, carry.text.fold.total);
     }
 }
 
@@ -1021,20 +1021,20 @@ pub fn open_bind_range(
     config: &RunConfig,
     descriptor: &[u8],
     schedule: &RunSchedule,
-    claim: &TextClaim,
+    digest: &TextDigest,
     source: &SourceRecord,
     tokenizer_root: &BytesPage,
     profile: &TokenizerProfile,
 ) -> BindOpen {
     use model_identity::{stream, ModelContext, Role};
     if *previous == PromptContext::default() {
-        let mut context = open_prompt_context(claim, config);
+        let mut context = open_prompt_context(digest, config);
         context.source_sha256 = source_id(source);
         if source.present {
             if source.fault != 0 {
                 record_fault(&mut context, FAULT_SOURCE, source.fault_position);
-            } else if claim.input_text_sha256 != source.text_sha256
-                || claim.total != source.text_total
+            } else if digest.input_text_sha256 != source.text_sha256
+                || digest.total != source.text_total
             {
                 record_fault(&mut context, FAULT_TEXT_SOURCE, 0);
             }
@@ -1049,7 +1049,7 @@ pub fn open_bind_range(
             context.range_size,
         );
         let context = bind_run_schedule(context, schedule);
-        let carry = begin_bind_carry(claim, context.raw_prompt, profile);
+        let carry = begin_bind_carry(digest, context.raw_prompt, profile);
         BindOpen { context, carry }
     } else {
         let mut context = previous.clone();
@@ -1195,7 +1195,7 @@ pub fn close_bind_range(
 ) -> BindOpen {
     context.model.require(!tail.unproven);
     let mut carry = BindCarry {
-        claim: before.claim.clone(),
+        digest: before.digest.clone(),
         text: pass,
         split: tail.split,
         done: before.done,
@@ -1221,7 +1221,7 @@ pub fn bind_range<S: AsRef<str>>(
         context,
         carry: before,
     } = opened;
-    let plan = claimed_scan_plan(&before.claim, context.raw_prompt, profile);
+    let plan = claimed_scan_plan(&before.digest, context.raw_prompt, profile);
     let mut pass = before.text.clone();
     for chunk in chunks {
         pass = advance_text_pass(pass, chunk.as_ref(), &plan, profile);
@@ -1364,7 +1364,7 @@ pub fn join_prompt_models(previous: PromptContext, bound: &PromptContext) -> Pro
         bound
             .model
             .execution_context()
-            .is_some_and(|e| e.phase == model_identity::pipeline_core::BOUND),
+            .is_some_and(|e| e.phase == model_identity::statement_core::BOUND),
     );
     joined.model.begin_prompt_range();
     joined.model.require_bound(&bound.model);

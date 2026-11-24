@@ -1296,7 +1296,7 @@ mod tests {
             frozen.inferences[0].model_id
         );
 
-        // Same text, so every range's text and the text claim agree; the
+        // Same text, so every range's text and the text digest agree; the
         // procedure names a different model, so the bind's committed
         // inputs differ.
         assert_eq!(
@@ -1304,8 +1304,8 @@ mod tests {
             text_commitments(&frozen_manifest)
         );
         assert_eq!(
-            bound_external(&manifest, "prompt_bind_p{j}", "claim"),
-            bound_external(&frozen_manifest, "prompt_bind_p{j}", "claim")
+            bound_external(&manifest, "prompt_bind_p{j}", "text_digest"),
+            bound_external(&frozen_manifest, "prompt_bind_p{j}", "text_digest")
         );
         assert_ne!(
             bound_external(&manifest, "prompt_bind_p{j}", "config"),
@@ -1357,7 +1357,7 @@ mod tests {
             text_commitments(&manifest),
             text_commitments(&frozen_manifest)
         );
-        for parameter in ["claim", "config"] {
+        for parameter in ["text_digest", "config"] {
             assert_eq!(
                 bound_external(&manifest, "prompt_bind_p{j}", parameter),
                 bound_external(&frozen_manifest, "prompt_bind_p{j}", parameter),

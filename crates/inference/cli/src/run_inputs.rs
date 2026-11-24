@@ -57,7 +57,7 @@ pub struct InferenceRunFiles {
     pub text: Vec<RunFile>,
     pub config: RunFile,
     pub schedule: RunFile,
-    pub claim: RunFile,
+    pub text_digest: RunFile,
     pub marks: Vec<RunFile>,
     pub claimed: Vec<RunFile>,
 }
@@ -80,7 +80,11 @@ pub fn write_inference(inference: &PostedInference, dir: &Path) -> Result<Infere
             dir,
             "schedule",
         )?,
-        claim: run_prep::write_run_input(RunInput::Claim(&inference.claim), dir, "claim")?,
+        text_digest: run_prep::write_run_input(
+            RunInput::TextDigest(&inference.text_digest),
+            dir,
+            "text_digest",
+        )?,
         marks: indexed(
             inference
                 .marks
@@ -182,7 +186,7 @@ mod tests {
                 prompt_ranges: 2,
                 claimed_ranges: 2,
             },
-            claim: Default::default(),
+            text_digest: Default::default(),
             text: vec![recast(&text).unwrap()],
             marks,
             claimed: ids.chunks(2).map(<[u32]>::to_vec).collect(),

@@ -133,7 +133,7 @@ SourceRecord {
 ### `prompt-bind` (one new input, one new check)
 
 Every bind takes `source`: the source stage's record, or a committed `no_source` constant
-in a run that has none. The first range's `open_bind` compares the run's text claim with
+in a run that has none. The first range's `open_bind` compares the run's text digest with
 `text_sha256` and `text_total`, records a fault when they differ or when the source has a
 fault, and stores a digest of the record in the context. From there it reaches the output
 record and the statement, as the model id does today.

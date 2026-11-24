@@ -163,7 +163,7 @@ risc0-zkvm={{path={:?}}}
     let profile_dir = dir.join("profile");
     let mut profile = Command::new(iris);
     profile
-        .args(["challenge", "profile", "--challenge"])
+        .args(["test", "profile", "--challenge"])
         .arg(&challenge)
         .arg("--claim-context")
         .arg(&claim)
@@ -259,7 +259,7 @@ risc0-zkvm={{path={:?}}}
     let proof_dir = dir.join("fault");
     let mut corrupt = Command::new(iris);
     corrupt
-        .args(["challenge", "corrupt", "--challenge"])
+        .args(["test", "corrupt-challenge", "--challenge"])
         .arg(&challenge)
         .arg("--profile")
         .arg(&summary)

@@ -10,7 +10,7 @@
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use model_identity::context::parse_id;
-use model_identity::pipeline_core::Statement;
+use model_identity::statement_core::Statement;
 use raster::prelude::*;
 use sha2::{Digest, Sha256};
 

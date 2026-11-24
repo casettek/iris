@@ -1,9 +1,9 @@
 {
   "format": 3,
-  "program_commitment": "42d07701b536328b4e4ce06cff1c821f65dbdf3c29db2654eedf0fa6c7c49590",
+  "program_commitment": "5260bd6207e3e44cfc89f048185445786a64755455c34d170f252be173dab38d",
   "tiles": {
     "assert_layer_complete": {
-      "image_id": "fbf225cc9c5cfd7fefd66ff1e5f843b511df1b7bb00b3ea6aa4f8afda91a6280",
+      "image_id": "799cd2a90c53413799e3de74bd6d00afa1ee197cc20348665d84cd0b5a4c8ef7",
       "source_hash": "7aa2d5390ac1919900000000000027c8"
     },
     "assert_matrix_bytes": {
@@ -15,7 +15,7 @@
       "source_hash": "7aa2d5390ac1919900000000000027c8"
     },
     "begin_ple_layer": {
-      "image_id": "f890682f3fcf79563fe1b742e505f54463568dce3187fcd13c81dec963712110",
+      "image_id": "c9c8669a9958455b2803bfdc6b1397baf429d1050ecc9a745837ba40d6a0118c",
       "source_hash": "7aa2d5390ac1919900000000000027c8"
     },
     "begin_ple_task": {
@@ -47,7 +47,7 @@
       "source_hash": "b12f1f5ee0118c6800000000000007b3"
     },
     "identity_hash_plelayerparams": {
-      "image_id": "00979c40f1587775989dd67aacd38d2642b53ebfc482981b443a87254786b4ec",
+      "image_id": "a67d60414688a4d59b762d397cf5f885961ea3d203c16e1f0abcf1828a750362",
       "source_hash": "b12f1f5ee0118c6800000000000007b3"
     },
     "identity_page": {
@@ -59,7 +59,7 @@
       "source_hash": "b12f1f5ee0118c6800000000000007b3"
     },
     "identity_sparse_page": {
-      "image_id": "8a741f0865151159b92e3b6120315f41c88e1f3b89862d5bba2b4e74d7e74b8a",
+      "image_id": "f28d40d83bb18b6969f68277332014ff9b8f86438df5b631606ee04a2b362af7",
       "source_hash": "b12f1f5ee0118c6800000000000007b3"
     },
     "identity_verify": {
@@ -87,7 +87,7 @@
       "source_hash": "7aa2d5390ac1919900000000000027c8"
     },
     "validate_layer_params": {
-      "image_id": "617252f0d2029188f858d5241979e37ce4104c8f58395399c3086cdb026e24ce",
+      "image_id": "a72afa8f1cb0d299efed1e6675c506ab654c67103da4b70d2514c1f2f5f427ab",
       "source_hash": "7aa2d5390ac1919900000000000027c8"
     },
     "zero_accum": {
@@ -100,5 +100,5 @@
     "build_mode": "local",
     "rustc": "rustc 1.97.0-dev (e638c6cfe 2026-07-15)"
   },
-  "guest_inputs": "9649abd90ca66100feef0a2c0b3432002d8f6d8bc91af5ba424fced2fc769515"
+  "guest_inputs": "55aafe741c01404d0b828de5bddc01f925dbc5383a816d6deeb131cabe3b2602"
 }

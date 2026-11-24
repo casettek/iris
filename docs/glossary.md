@@ -19,6 +19,7 @@ follows, so this page says which is which until they agree.
 | Checkpoint | What a claim commits to for one stage: its program, its inputs and its output | |
 | Checkpoint list | A claim's checkpoints, one per stage, in order | |
 | Checkpoint hashes | One hash per checkpoint of the list, in order (`checkpoints.txt`). A claim commits to its checkpoint list by the root of the tree over them | |
+| Text digest | What a run states of its input text before any stage has read the text: its SHA-256, its length, and the span the template's trim keeps. Every prompt range uses it, and the range the text ends in checks it | |
 | Challenge period | How long a claim stays open to challenge after it is submitted | |
 | Fault-proof period | How long a defender has to answer a challenge | |
 | Scenario | One test of the parity gate | |

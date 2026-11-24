@@ -427,7 +427,7 @@ pub fn dot(a: &[i32], b: &[i32]) -> core::result::Result<i32, String> {
         ));
     }
     // Accumulate the *full* Q32.32 products and requantize once, which is the
-    // canonical MAC contract. The previous version shifted each product down to
+    // canonical MAC rule. The previous version shifted each product down to
     // Q16.16 before adding, truncating on every term and rounding differently at
     // the end — invisible per element, decisive over a 1536-wide row.
     let mut acc: i64 = 0;

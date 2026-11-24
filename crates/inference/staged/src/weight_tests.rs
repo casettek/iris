@@ -1107,7 +1107,7 @@ fn sparse_embedding_checks_current_proofs_with_warm_cache() {
     prompt
         .context
         .model
-        .bind_schedule(model_identity::pipeline_core::StageSchedule {
+        .bind_schedule(model_identity::statement_core::StageSchedule {
             prompt_ranges: 1,
             claimed_ranges: 1,
         });
@@ -1246,7 +1246,7 @@ fn sparse_merge_fault_survives_later_matches_and_cached_tokenizer() {
                 let mut model =
                     model_identity::ModelContext::bind(&descriptor.encode().unwrap(), &id);
                 model.bind_statement(&"11".repeat(32), &"00".repeat(32), false, 8, 4);
-                model.bind_schedule(model_identity::pipeline_core::StageSchedule {
+                model.bind_schedule(model_identity::statement_core::StageSchedule {
                     prompt_ranges: 1,
                     claimed_ranges: 1,
                 });

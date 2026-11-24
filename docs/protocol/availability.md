@@ -44,7 +44,7 @@ stage is given, and anyone writes the file the stage loads from it:
 | `forms` | `result` | The output texts the result is read by |
 
 A contract does not judge what a posted input says. The stages do, as they
-run: `prompt_bind` hashes the text and holds it to the text claim and the
+run: `prompt_bind` hashes the text and holds it to the text digest and the
 source record, `prompt_check` holds the marks to the tokenizer's own merge,
 the first bind checks the schedule, `sequence-check` compares the claimed ids
 with the greedy output, and the statement a contract recomputes binds the
@@ -105,7 +105,7 @@ own, which the original submitter is ahead of.
 
 | Entry | What the proof states of it |
 | --- | --- |
-| The run's inputs (`PostedRun`): the source stage's, the forms, and each inference's procedure, schedule, text claim, text slices, marks and claimed ids | The commitment a stage's input list names each one by: the root of the Raster file written from it |
+| The run's inputs (`PostedRun`): the source stage's, the forms, and each inference's procedure, schedule, text digest, text slices, marks and claimed ids | The commitment a stage's input list names each one by: the root of the Raster file written from it |
 | The checkpoint hashes, with every checkpoint and every input manifest a checkpoint commits to | The root of the hashes, which is the submission's `checkpoints_root`, and that every checkpoint they name and its manifest are there |
 
 A contract keeps one hash of the run inputs' commitments, in the order the

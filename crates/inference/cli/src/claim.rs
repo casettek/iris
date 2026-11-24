@@ -686,7 +686,7 @@ fn prepare_run(
                 claimed_ranges: u32::try_from(claimed.len())
                     .context("claimed range count exceeds u32")?,
             },
-            claim: crate::run_inputs::recast(&bound.claim)?,
+            text_digest: crate::run_inputs::recast(&bound.text_digest)?,
             text: bound
                 .ranges
                 .iter()
@@ -713,7 +713,7 @@ fn prepare_run(
             text: &written.files.text,
             config: &written.files.config,
             schedule: &written.files.schedule,
-            claim: &written.files.claim,
+            text_digest: &written.files.text_digest,
             marks: &written.files.marks,
             claimed: &written.files.claimed,
         })
@@ -838,7 +838,7 @@ pub(crate) struct InferenceFiles<'a> {
     pub(crate) text: &'a [run_prep::RunFile],
     pub(crate) config: &'a run_prep::RunFile,
     pub(crate) schedule: &'a run_prep::RunFile,
-    pub(crate) claim: &'a run_prep::RunFile,
+    pub(crate) text_digest: &'a run_prep::RunFile,
     /// One set of token marks per prompt range.
     pub(crate) marks: &'a [run_prep::RunFile],
     /// One set of claimed ids per claimed range.
@@ -872,7 +872,7 @@ pub(crate) fn render_ranged_manifest(
     text: &[run_prep::RunFile],
     config: &run_prep::RunFile,
     schedule: &run_prep::RunFile,
-    claim: &run_prep::RunFile,
+    text_digest: &run_prep::RunFile,
     source: Option<&inference_artifacts::PreparedSourceInputs>,
     forms: &run_prep::RunFile,
     prompt: &[run_prep::RunFile],
@@ -886,7 +886,7 @@ pub(crate) fn render_ranged_manifest(
             text,
             config,
             schedule,
-            claim,
+            text_digest,
             marks: prompt,
             claimed,
         }],
@@ -896,7 +896,7 @@ pub(crate) fn render_ranged_manifest(
 }
 
 /// Fills a chain template for one run. For each inference: the procedure,
-/// the stage schedule and the text claim, the range counts, the last prompt
+/// the stage schedule and the text digest, the range counts, the last prompt
 /// and claimed ranges' indexes, and each range's committed text, marks or
 /// claimed ids. For the run: the source stage's inputs and the result stage's
 /// forms. A run without a source gets a chain without the source stage.
@@ -932,7 +932,7 @@ pub(crate) fn render_chain(
     let mut start = 0_usize;
     // For each inference: prompt repeats, claimed repeats, prompt externals,
     // claimed externals, per-layer prompt fans, per-layer claimed fans, text
-    // externals, procedure bindings, schedule bindings, text claim
+    // externals, procedure bindings, schedule bindings, text digest
     // bindings.
     let mut replaced = vec![[0_usize; 10]; inferences.len()];
     // For the run: the source stage's inputs, the result stage's forms.
@@ -982,8 +982,8 @@ pub(crate) fn render_chain(
                     Some(("config", files.config, 7))
                 } else if trimmed.starts_with("inputs.schedule =") {
                     Some(("schedule", files.schedule, 8))
-                } else if trimmed.starts_with("inputs.claim =") {
-                    Some(("claim", files.claim, 9))
+                } else if trimmed.starts_with("inputs.text_digest =") {
+                    Some(("text_digest", files.text_digest, 9))
                 } else {
                     None
                 };
@@ -1132,7 +1132,7 @@ pub(crate) fn render_chain(
             && replaced[6..10] == [1, 2, 2, 2]
     });
     if !filled || source_inputs != if source.is_some() { 3 } else { 0 } || result_forms != 1 {
-        anyhow::bail!("incompatible chain template: expected of each inference [prompt repeats, claimed repeats, prompt commitments, claimed commitments] = [1, 2, 1, 1], matching per-layer range fans, one set of text commitments, and a procedure, a schedule and a text claim binding for range 0's bind and for the later ranges'; and of the run three inputs for the source stage when it has a source, and the result stage's forms; found {replaced:?}, {source_inputs} and {result_forms}");
+        anyhow::bail!("incompatible chain template: expected of each inference [prompt repeats, claimed repeats, prompt commitments, claimed commitments] = [1, 2, 1, 1], matching per-layer range fans, one set of text commitments, and a procedure, a schedule and a text digest binding for range 0's bind and for the later ranges'; and of the run three inputs for the source stage when it has a source, and the result stage's forms; found {replaced:?}, {source_inputs} and {result_forms}");
     }
     out.push(String::new());
     Ok(out.join("\n"))
@@ -1707,7 +1707,7 @@ name = "prompt_bind_p0"
 inputs.text = { input = "prompt_text_0" }
 inputs.config = { external = { path = "/repo/target/iris/run-prompt-placeholder/config.rastered", index_path = "/repo/target/iris/run-prompt-placeholder/config.rindex", commitment = "0" } }
 inputs.schedule = { external = { path = "/repo/target/iris/run-prompt-placeholder/schedule.rastered", index_path = "/repo/target/iris/run-prompt-placeholder/schedule.rindex", commitment = "0" } }
-inputs.claim = { external = { path = "/repo/target/iris/run-prompt-placeholder/claim.rastered", index_path = "/repo/target/iris/run-prompt-placeholder/claim.rindex", commitment = "0" } }
+inputs.text_digest = { external = { path = "/repo/target/iris/run-prompt-placeholder/text_digest.rastered", index_path = "/repo/target/iris/run-prompt-placeholder/text_digest.rindex", commitment = "0" } }
 inputs.source = { from = "source" }
 inputs.previous = { external = { path = "/repo/model/empty_prompt.rastered", index_path = "/repo/model/empty_prompt.rindex", commitment = "e0" } }
 
@@ -1728,7 +1728,7 @@ name = "prompt_bind_p{j}"
 inputs.text = { input = "prompt_text_{j}" }
 inputs.config = { external = { path = "/repo/target/iris/run-prompt-placeholder/config.rastered", index_path = "/repo/target/iris/run-prompt-placeholder/config.rindex", commitment = "0" } }
 inputs.schedule = { external = { path = "/repo/target/iris/run-prompt-placeholder/schedule.rastered", index_path = "/repo/target/iris/run-prompt-placeholder/schedule.rindex", commitment = "0" } }
-inputs.claim = { external = { path = "/repo/target/iris/run-prompt-placeholder/claim.rastered", index_path = "/repo/target/iris/run-prompt-placeholder/claim.rindex", commitment = "0" } }
+inputs.text_digest = { external = { path = "/repo/target/iris/run-prompt-placeholder/text_digest.rastered", index_path = "/repo/target/iris/run-prompt-placeholder/text_digest.rindex", commitment = "0" } }
 inputs.source = { external = { path = "/repo/model/prompt-bind/no_source.rastered", index_path = "/repo/model/prompt-bind/no_source.rindex", commitment = "n0" } }
 inputs.previous = { from = "prompt_bind_p{j-1}", first = "prompt_bind_p0" }
 
@@ -1803,7 +1803,7 @@ inputs.forms = { external = { path = "/repo/target/iris/run-prompt-placeholder/r
         ];
         let config = file("config", "g0");
         let schedule = file("schedule", "s0");
-        let claim = file("claim", "m0");
+        let text_digest = file("text_digest", "m0");
         let forms = file("result_forms", "f0");
         let prompt = [
             file("marks_0", "a0"),
@@ -1818,7 +1818,7 @@ inputs.forms = { external = { path = "/repo/target/iris/run-prompt-placeholder/r
                 &text,
                 &config,
                 &schedule,
-                &claim,
+                &text_digest,
                 None,
                 &forms,
                 &prompt,
@@ -1907,7 +1907,7 @@ inputs.forms = { external = { path = "/repo/target/iris/run-prompt-placeholder/r
             &text,
             &config,
             &schedule,
-            &claim,
+            &text_digest,
             Some(&source),
             &forms,
             &prompt,
@@ -1927,7 +1927,7 @@ inputs.forms = { external = { path = "/repo/target/iris/run-prompt-placeholder/r
             &text[..2],
             &config,
             &schedule,
-            &claim,
+            &text_digest,
             None,
             &forms,
             &prompt,

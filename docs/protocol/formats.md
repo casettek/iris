@@ -16,7 +16,7 @@ stops and says which it wants, with one exception noted below.
 | Weight file | `<model>.detwgt` in a model bundle | 3 | `DETWGT_VERSION` | Bundles are converted again. Version 2 is still read. |
 | Deterministic number specification | The weight file's header | 1 | `DET_NUM_SPEC_VERSION` | Bundles are converted again. |
 | Model descriptor | `model-descriptor.bin` in an import, and a stage input | 2 | `DESCRIPTOR_VERSION` | Models are imported again, and every stage that reads it is re-locked. |
-| Model manifest | `manifest.json` in an import | 19 | `MODEL_MANIFEST_VERSION` | Models are imported again. iris-backend pins the same number (`IRIS_MODEL_MANIFEST_VERSION`). |
+| Model manifest | `manifest.json` in an import | 20 | `MODEL_MANIFEST_VERSION` | Models are imported again. iris-backend pins the same number (`IRIS_MODEL_MANIFEST_VERSION`). |
 | Prepared run | `prepared_run.json` beside a claim | 22 | `PREPARED_RUN_VERSION` | A claim built before cannot be challenged from its own directory. |
 | Execution context | Inside every stage's output | 3 | `EXECUTION_VERSION` | Every stage is re-locked, and every checkpoint changes. |
 | Contract pins | `contract_pins.json` in an import | 6 | `CONTRACT_PINS_VERSION` | Pins are written again (`iris claim pins`), which changes the procedure's id. |

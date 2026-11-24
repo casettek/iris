@@ -725,7 +725,7 @@ fn authenticate_decoder_inputs(mut inputs: FinalizeCase) -> FinalizeCase {
         inputs.context.range_size,
     );
     // The prompt and the claimed ids, each in whole ranges.
-    let schedule = model_identity::pipeline_core::StageSchedule {
+    let schedule = model_identity::statement_core::StageSchedule {
         prompt_ranges: inputs
             .context
             .prompt_tokens
@@ -753,8 +753,8 @@ fn authenticate_decoder_inputs(mut inputs: FinalizeCase) -> FinalizeCase {
         e.end.append(id).unwrap();
     }
     e.claimed = true;
-    e.phase = model_identity::pipeline_core::CHECKED;
-    e.step = model_identity::pipeline_core::Step::check(schedule.claimed_ranges - 1);
+    e.phase = model_identity::statement_core::CHECKED;
+    e.step = model_identity::statement_core::Step::check(schedule.claimed_ranges - 1);
     inputs.edge.decode_position = e.end.position.saturating_sub(1);
     inputs.edge.token_id = inputs.edge.generated_token_ids.last().copied().unwrap_or(0);
     inputs.edge.model.set_execution(&e);

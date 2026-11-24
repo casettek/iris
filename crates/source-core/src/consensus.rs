@@ -14,7 +14,7 @@
 //! Plain functions over a small state, one per step a stage takes, so direct
 //! inference, the native stage and the tiles run one copy.
 //!
-//! See `docs/internals/pipelines.md`.
+//! See `docs/protocol/procedure-kinds.md`.
 
 use alloc::string::String;
 use serde::{Deserialize, Serialize};

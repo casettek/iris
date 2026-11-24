@@ -31,7 +31,7 @@ pub fn open_bind(
     config: RunConfig,
     descriptor: BytesPage,
     schedule: RunSchedule,
-    claim: TextClaim,
+    digest: TextDigest,
     source: SourceRecord,
     root: BytesPage,
     profile: TokenizerProfile,
@@ -42,18 +42,18 @@ pub fn open_bind(
         &config,
         descriptor.as_slice(),
         &schedule,
-        &claim,
+        &digest,
         &source,
         &root,
         &profile,
     )
 }
 
-/// How the text is rendered: what the claim says the trim keeps, and the
+/// How the text is rendered: what the text digest says the trim keeps, and the
 /// template.
-#[tile(kind = iter, description = "The scan the text's claim calls for")]
-pub fn plan_scan(claim: TextClaim, raw_prompt: bool, profile: TokenizerProfile) -> ScanPlan {
-    claimed_scan_plan(&claim, raw_prompt, &profile)
+#[tile(kind = iter, description = "The scan the text digest calls for")]
+pub fn plan_scan(digest: TextDigest, raw_prompt: bool, profile: TokenizerProfile) -> ScanPlan {
+    claimed_scan_plan(&digest, raw_prompt, &profile)
 }
 
 // The three loops below each start from part of what the range before left.

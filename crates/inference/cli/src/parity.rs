@@ -920,7 +920,7 @@ fn run_chain_fault_scenario(
         let manifest = dir.join("Raster.toml");
         let mark_files = run_prep::write_marks(&marks, &files)?;
         let claimed_files = run_prep::write_claimed_ranges(ids, range_size as usize, &files)?;
-        let (slices, text_claim) = run_prep::text_for_ranges(
+        let (slices, text_digest) = run_prep::text_for_ranges(
             &prompt.resolved_prompt,
             case.raw_prompt,
             range_size as usize,
@@ -945,7 +945,7 @@ fn run_chain_fault_scenario(
                 (claimed_files.len() as i64 + skew[1]) as usize,
                 &files,
             )?,
-            &run_prep::write_text_claim(&text_claim, &files)?,
+            &run_prep::write_text_digest(&text_digest, &files)?,
             None,
             &run_prep::write_result_forms(&[], &files)?,
             &mark_files,
@@ -1064,7 +1064,7 @@ fn run_prompt_fault_scenario(
 ) -> Result<Value> {
     use run_prep::{
         RunFile, FAULT_CUT_BEYOND_TEXT, FAULT_EMPTY_RANGE, FAULT_NONE, FAULT_NOT_THE_MERGE,
-        FAULT_TEXT_CLAIM,
+        FAULT_TEXT_DIGEST,
     };
     let pieces = &prepared.prepared_run.first()?.prompt.initial_pieces;
     let tokenizer: Value = read_json(
@@ -1147,7 +1147,7 @@ fn run_prompt_fault_scenario(
     // not all there. A wrong hash is found where the text ends. A length the
     // text never reaches, and a text whose last slice is withheld, never end:
     // the pieces the end would have released are marked and missing.
-    cases.push(("claimed-hash", canonical.clone(), FAULT_TEXT_CLAIM, false));
+    cases.push(("claimed-hash", canonical.clone(), FAULT_TEXT_DIGEST, false));
     cases.push((
         "claimed-length",
         canonical.clone(),
@@ -1169,22 +1169,22 @@ fn run_prompt_fault_scenario(
     for (name, marks, fault, complete) in cases {
         let dir = case_dir.join("prompt-faults").join(name);
         let files: Vec<RunFile> = run_prep::write_marks(&marks, &dir.join("prompt"))?;
-        // The same text and the same claim of it, for however many ranges
+        // The same text and the same digest of it, for however many ranges
         // these marks make.
-        let (mut slices, mut claim) = run_prep::text_for_ranges(
+        let (mut slices, mut text_digest) = run_prep::text_for_ranges(
             text,
             raw_prompt,
             model.range_size as usize,
             &prompt_tokenizer,
             marks.len(),
         )?;
-        let other_claim = match name {
+        let other_digest = match name {
             "claimed-hash" => {
-                claim.input_text_sha256 = "00".repeat(32);
+                text_digest.input_text_sha256 = "00".repeat(32);
                 true
             }
             "claimed-length" => {
-                claim.total += 1;
+                text_digest.total += 1;
                 true
             }
             "text-withheld" => {
@@ -1199,13 +1199,13 @@ fn run_prompt_fault_scenario(
             _ => false,
         };
         let texts = run_prep::write_text_slices(&slices, &dir.join("prompt"))?;
-        let claim = other_claim
-            .then(|| run_prep::write_text_claim(&claim, &dir.join("prompt")))
+        let text_digest = other_digest
+            .then(|| run_prep::write_text_digest(&text_digest, &dir.join("prompt")))
             .transpose()?;
         let manifest = dir.join("Raster.toml");
         fs::write(
             &manifest,
-            prompt_only_manifest(&template, &texts, &files, claim.as_ref(), None)?,
+            prompt_only_manifest(&template, &texts, &files, text_digest.as_ref(), None)?,
         )?;
 
         let raster_dir = dir.join("raster");
@@ -1272,13 +1272,14 @@ fn run_long_text_case(
     let files = dir.join("prompt");
     let text = "ab ".repeat(1024);
     // All of it in one range, with what is true of it claimed.
-    let (slices, claim) = run_prep::text_for_ranges(&text, raw_prompt, usize::MAX, tokenizer, 1)?;
+    let (slices, text_digest) =
+        run_prep::text_for_ranges(&text, raw_prompt, usize::MAX, tokenizer, 1)?;
     let texts = run_prep::write_text_slices(&slices, &files)?;
-    let claim = run_prep::write_text_claim(&claim, &files)?;
+    let text_digest = run_prep::write_text_digest(&text_digest, &files)?;
     let manifest = dir.join("Raster.toml");
     fs::write(
         &manifest,
-        prompt_only_manifest(template, &texts, &[], Some(&claim), None)?,
+        prompt_only_manifest(template, &texts, &[], Some(&text_digest), None)?,
     )?;
 
     let raster_dir = dir.join("raster");
@@ -1349,7 +1350,7 @@ fn prompt_only_manifest(
     template: &str,
     texts: &[run_prep::RunFile],
     cuts: &[run_prep::RunFile],
-    claim: Option<&run_prep::RunFile>,
+    text_digest: Option<&run_prep::RunFile>,
     source: Option<&inference_artifacts::PreparedSourceInputs>,
 ) -> Result<String> {
     let input = |name: &str, family: &str, files: &[run_prep::RunFile]| -> Result<String> {
@@ -1433,15 +1434,15 @@ fn prompt_only_manifest(
                 if prompt_stage(block, in_prompt) && name.starts_with("prompt_bind_p") =>
             {
                 for line in block {
-                    match claim {
-                        Some(claim) if line.trim().starts_with("inputs.claim =") => {
+                    match text_digest {
+                        Some(text_digest) if line.trim().starts_with("inputs.text_digest =") => {
                             out.push_str(
                                 &crate::claim::RunExternal::new(
-                                    &claim.path,
-                                    &claim.index_path,
-                                    &claim.commitment,
+                                    &text_digest.path,
+                                    &text_digest.index_path,
+                                    &text_digest.commitment,
                                 )
-                                .binding("claim"),
+                                .binding("text_digest"),
                             );
                         }
                         _ => out.push_str(line),

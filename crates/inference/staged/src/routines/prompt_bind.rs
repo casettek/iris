@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use prompt_check::input::{
-    PromptState, PromptText, PromptTokenizer, RunConfig, RunSchedule, SourceRecord, TextClaim,
+    PromptState, PromptText, PromptTokenizer, RunConfig, RunSchedule, SourceRecord, TextDigest,
     TokenizerWitness,
 };
 
@@ -24,7 +24,7 @@ pub struct Inputs {
     pub config: RunConfig,
     pub descriptor: raster::BytesPage,
     pub schedule: RunSchedule,
-    pub claim: TextClaim,
+    pub text_digest: TextDigest,
     /// The source the text was built from, or the default for none.
     pub source: SourceRecord,
     /// The bind of the range before, or the empty state.
@@ -69,7 +69,7 @@ pub fn run_direct(inputs: &Inputs) -> Result<PromptState> {
             config: &inputs.config,
             descriptor: inputs.descriptor.as_slice(),
             schedule: &inputs.schedule,
-            claim: &inputs.claim,
+            text_digest: &inputs.text_digest,
             source: &inputs.source,
             previous: &inputs.previous,
         },
@@ -90,7 +90,7 @@ fn load_inputs_with_cache(
         raster::entry_argument_spec::<RunConfig>("config"),
         raster::entry_argument_spec::<raster::BytesPage>("descriptor"),
         raster::entry_argument_spec::<RunSchedule>("schedule"),
-        raster::entry_argument_spec::<TextClaim>("claim"),
+        raster::entry_argument_spec::<TextDigest>("text_digest"),
         raster::entry_argument_spec::<SourceRecord>("source"),
         raster::entry_argument_spec::<PromptState>("previous"),
     ])?;
@@ -121,10 +121,9 @@ fn load_inputs_with_cache(
         binding.reference.clone(),
         "schedule",
     ));
-    let claim = raster::materialize_auth_return(raster::entry_argument_auth_ref::<TextClaim>(
-        binding.reference.clone(),
-        "claim",
-    ));
+    let text_digest = raster::materialize_auth_return(
+        raster::entry_argument_auth_ref::<TextDigest>(binding.reference.clone(), "text_digest"),
+    );
     let source = raster::materialize_auth_return(raster::entry_argument_auth_ref::<SourceRecord>(
         binding.reference.clone(),
         "source",
@@ -140,7 +139,7 @@ fn load_inputs_with_cache(
         witness,
         descriptor,
         schedule,
-        claim,
+        text_digest,
         source,
         previous,
         tokenizer,

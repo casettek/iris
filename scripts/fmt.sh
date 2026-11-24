@@ -34,7 +34,7 @@ fi
 
 # What the stage programs are built from: the stage crates, the crates they
 # depend on, and whatever a symbolic link in either leads to.
-guest_dirs=(raster-stages crates/det-num crates/model/identity crates/inference/pipeline-core)
+guest_dirs=(raster-stages crates/det-num crates/model/identity crates/inference/statement-core)
 
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT

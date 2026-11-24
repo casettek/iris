@@ -420,7 +420,7 @@ pub(super) fn run_challenge_scenario(scenario: &Scenario) -> Result<Value> {
             },
         ),
         (
-            "other-text-claim",
+            "other-text-digest",
             "prompt_bind_p0",
             RunInputs {
                 other_text_hash: true,
@@ -1415,7 +1415,7 @@ fn render(model_path: &Path, model: &ModelManifest, run: &RunInputs, dir: &Path)
             .context("model manifest has no parent directory")?
             .join(&model.bundle.tokenizer_path),
     )?;
-    let (slices, mut text_claim) = run_prep::text_for_ranges(
+    let (slices, mut text_digest) = run_prep::text_for_ranges(
         &run.text,
         run.config.raw_prompt,
         range_size,
@@ -1423,7 +1423,7 @@ fn render(model_path: &Path, model: &ModelManifest, run: &RunInputs, dir: &Path)
         run.marks.len(),
     )?;
     if run.other_text_hash {
-        text_claim.input_text_sha256 = "00".repeat(32);
+        text_digest.input_text_sha256 = "00".repeat(32);
     }
     render_ranged_manifest(
         &template,
@@ -1437,7 +1437,7 @@ fn render(model_path: &Path, model: &ModelManifest, run: &RunInputs, dir: &Path)
             (claimed_files.len() as i64 + run.schedule_skew[1]) as usize,
             dir,
         )?,
-        &run_prep::write_text_claim(&text_claim, dir)?,
+        &run_prep::write_text_digest(&text_digest, dir)?,
         None,
         &run_prep::write_result_forms(&[], dir)?,
         &mark_files,

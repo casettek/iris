@@ -122,7 +122,7 @@ fn component_roles_and_sticky_context_are_enforced_in_guests() {
         &hex::encode(d.model_id().unwrap()),
     );
     context.bind_statement(&"11".repeat(32), &"00".repeat(32), false, 4, 4);
-    context.bind_schedule(model_identity::pipeline_core::StageSchedule {
+    context.bind_schedule(model_identity::statement_core::StageSchedule {
         prompt_ranges: 1,
         claimed_ranges: 1,
     });
@@ -318,6 +318,7 @@ fn page_bytes_and_final_context_are_checked_in_guests() {
         model: p,
         model_id: id.clone(),
         input_text_sha256: "11".repeat(32),
+        source_sha256: "00".repeat(32),
         max_new_tokens: 4,
         range_size: 4,
         prompt_tokens: 2,
@@ -497,7 +498,7 @@ fn prompt_statement_substitution_is_rejected_in_guest() {
     let model_id = hex::encode(descriptor.model_id().unwrap());
     let mut model = model_identity::ModelContext::bind(&descriptor.encode().unwrap(), &model_id);
     model.bind_statement(&"11".repeat(32), &"00".repeat(32), false, 8, 4);
-    model.bind_schedule(model_identity::pipeline_core::StageSchedule {
+    model.bind_schedule(model_identity::statement_core::StageSchedule {
         prompt_ranges: 2,
         claimed_ranges: 1,
     });
@@ -545,10 +546,10 @@ fn prompt_statement_substitution_is_rejected_in_guest() {
 #[test]
 #[ignore = "builds and executes the production prompt-bind guest"]
 fn a_bind_opens_and_continues_in_guest_as_it_does_natively() {
-    use model_identity::pipeline_core::{Step, MAX_RANGES};
+    use model_identity::statement_core::{Step, MAX_RANGES};
     use sequence_check::prompt::{
-        open_bind_range, text_claim_of, BindCarry, BindOpen, PromptContext, RunConfig, RunSchedule,
-        SourceRecord, TokenizerProfile,
+        open_bind_range, text_digest_of, BindCarry, BindOpen, PromptContext, RunConfig,
+        RunSchedule, SourceRecord, TokenizerProfile,
     };
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../../raster-stages/prompt-bind")
@@ -586,7 +587,7 @@ fn a_bind_opens_and_continues_in_guest_as_it_does_natively() {
         template_prefix: String::from("<s>"),
         ..Default::default()
     };
-    let claim = text_claim_of(&Default::default(), false, &profile);
+    let digest = text_digest_of(&Default::default(), false, &profile);
     let source = SourceRecord::default();
     let open = |previous: &PromptContext, carry: &BindCarry, schedule: &RunSchedule| {
         let expected = open_bind_range(
@@ -595,7 +596,7 @@ fn a_bind_opens_and_continues_in_guest_as_it_does_natively() {
             &config,
             descriptor.as_slice(),
             schedule,
-            &claim,
+            &digest,
             &source,
             &root,
             &profile,
@@ -608,7 +609,7 @@ fn a_bind_opens_and_continues_in_guest_as_it_does_natively() {
                     &config,
                     &descriptor,
                     schedule,
-                    &claim,
+                    &digest,
                     &source,
                     &root,
                     &profile,
@@ -691,7 +692,7 @@ fn execution_fixture() -> (
     };
     let mut p = ModelContext::bind(&d.encode().unwrap(), &hex::encode(d.model_id().unwrap()));
     p.bind_statement(&"11".repeat(32), &"00".repeat(32), false, 4, 4);
-    p.bind_schedule(model_identity::pipeline_core::StageSchedule {
+    p.bind_schedule(model_identity::statement_core::StageSchedule {
         prompt_ranges: 1,
         claimed_ranges: 1,
     });

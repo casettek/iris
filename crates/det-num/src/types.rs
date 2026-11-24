@@ -10,7 +10,7 @@ pub type Act = I16F16;
 /// Canonical weight scalar type for `det_num` v0.
 ///
 /// This matches the spec's "signed 32-bit fixed-point with 16 fractional bits"
-/// contract, represented by `fixed::types::I16F16`.
+/// rule, represented by `fixed::types::I16F16`.
 pub type Wgt = I16F16;
 
 /// Canonical accumulator scalar type for `det_num` v0.

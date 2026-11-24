@@ -57,7 +57,7 @@ of the whole text, wherever it was cut. A bind publishes its slice's pieces, a
 position with any text it is holding back, and the split's position.
 
 The first range's bind also takes the run's configuration, its stage schedule, a
-*text claim* and a *source record* as committed inputs. It binds the statement, and
+*text digest* and a *source record* as committed inputs. It binds the statement, and
 checks the schedule and stores it in the context (see [Stage schedule](#stage-schedule)).
 The source record says what the text was built from. In a run that has a source it is the
 `source` stage's output: the bind holds the claimed text's hash and length to the record's,
@@ -76,7 +76,7 @@ the chunks for the value at the field's path, stopping where the value ends, and
 field's lead and value to the text hash. Its record states the text's hash and length, a
 hash over the recipe, the number of documents and a hash over their attested facts, the
 signer's key, and the first fault. See
-[the design note](../proposals/authenticated-prompt.md). The text claim
+[the design note](../proposals/authenticated-prompt.md). The text digest
 is what the first range needs and only the last can know: the whole text's SHA-256,
 its length, and the first and last bytes the template's trim keeps. Every range
 scans with the claimed values, and the range the text ends in compares them with
@@ -269,7 +269,7 @@ caught one of three ways:
   `challenge build` reports this as a rejected claimed output.
 
 The prompt side is inside the chain. The text is the committed input of the bind
-stages, range by range, and the configuration, the model id and the text claim are
+stages, range by range, and the configuration, the model id and the text digest are
 committed inputs of the first. The last range's `prompt_check`
 context says what happened to them: the text's SHA-256, the model id, and whether
 every piece was prepared without a fault.
@@ -321,7 +321,7 @@ three affected program identities as described in [development](development.md).
 ### Statement and token-history binding
 
 Every nonempty stage boundary carries a versioned `Execution` record inside
-`ModelContext.execution`. The shared `pipeline-core` crate defines the canonical
+`ModelContext.execution`. The shared `statement-core` crate defines the canonical
 statement hash and position-sensitive token-prefix hash; `model-identity` checks
 stage transitions. The record binds the input-text hash, the source digest, model
 ID, raw-prompt flag, generation budget, and range size. Embedding folds the actual consumed
@@ -381,7 +381,7 @@ Every stage records its step in `Execution`: its operation, range and layer. In
 a tile it works out that step from its committed inputs, requires the
 schedule to contain it, and requires each input to carry the step the schedule
 puts before it, under the same statement and schedule. The rules are in
-`pipeline-core`'s `schedule.rs` and applied by `model-identity`'s `pipeline.rs`.
+`statement-core`'s `schedule.rs` and applied by `model-identity`'s `execution.rs`.
 
 | Stage | Its step must be | Its inputs must carry |
 | --- | --- | --- |

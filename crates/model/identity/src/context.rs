@@ -273,7 +273,7 @@ mod tests {
             .collect::<String>();
         let mut p = ModelContext::bind(&d.encode().unwrap(), &id);
         p.bind_statement(&"11".repeat(32), &"00".repeat(32), false, 4, 4);
-        p.bind_schedule(pipeline_core::StageSchedule {
+        p.bind_schedule(statement_core::StageSchedule {
             prompt_ranges: 1,
             claimed_ranges: 1,
         });
@@ -302,7 +302,7 @@ mod tests {
             .collect::<String>();
         let mut p = ModelContext::bind(&d.encode().unwrap(), &id);
         p.bind_statement(&"11".repeat(32), &"00".repeat(32), false, 4, 4);
-        p.bind_schedule(pipeline_core::StageSchedule {
+        p.bind_schedule(statement_core::StageSchedule {
             prompt_ranges: 1,
             claimed_ranges: 1,
         });

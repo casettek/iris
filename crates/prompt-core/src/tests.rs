@@ -86,12 +86,15 @@ fn the_template_trims_only_what_surrounds_the_text() {
     let plan = scan_plan_of(&fold, false, &TokenizerProfile::default());
     assert_eq!((plan.keep_start, plan.keep_end), (0, 7));
     assert!(!plan.templated);
-    // The claim an honest run makes is that plan and the text's hash.
-    let claim = text_claim_of(&fold, false, &profile);
-    assert_eq!((claim.total, claim.keep_start, claim.keep_end), (7, 2, 5));
-    assert_eq!(claim.input_text_sha256, text_sha256_hex(&fold));
+    // The digest an honest run makes is that plan and the text's hash.
+    let digest = text_digest_of(&fold, false, &profile);
     assert_eq!(
-        claimed_scan_plan(&claim, false, &profile),
+        (digest.total, digest.keep_start, digest.keep_end),
+        (7, 2, 5)
+    );
+    assert_eq!(digest.input_text_sha256, text_sha256_hex(&fold));
+    assert_eq!(
+        claimed_scan_plan(&digest, false, &profile),
         scan_plan_of(&fold, false, &profile)
     );
 }
@@ -255,13 +258,13 @@ fn chunks_of(text: &str, chars: usize) -> Vec<String> {
         .collect()
 }
 
-fn claim_of(text: &str, raw: bool, profile: &TokenizerProfile) -> TextClaim {
-    text_claim_of(&fold_text(begin_text_fold_state(), text), raw, profile)
+fn digest_of(text: &str, raw: bool, profile: &TokenizerProfile) -> TextDigest {
+    text_digest_of(&fold_text(begin_text_fold_state(), text), raw, profile)
 }
 
 /// Binds `ranges` of chunks one after another, as the chain's bind stages do.
 fn bind_in_ranges(
-    claim: &TextClaim,
+    digest: &TextDigest,
     raw: bool,
     profile: &TokenizerProfile,
     ranges: &[&[String]],
@@ -271,7 +274,7 @@ fn bind_in_ranges(
             raw_prompt: raw,
             ..PromptContext::default()
         },
-        carry: begin_bind_carry(claim, raw, profile),
+        carry: begin_bind_carry(digest, raw, profile),
     };
     let mut pieces = Vec::new();
     for chunks in ranges {
@@ -290,9 +293,9 @@ fn bind_in_ranges(
 fn binding_in_ranges_gives_the_pieces_of_binding_whole_wherever_it_is_cut() {
     let profile = chat_profile();
     for raw in [false, true] {
-        let claim = claim_of(TEXT, raw, &profile);
+        let digest = digest_of(TEXT, raw, &profile);
         let whole_text = [String::from(TEXT)];
-        let (whole, context, carry) = bind_in_ranges(&claim, raw, &profile, &[&whole_text]);
+        let (whole, context, carry) = bind_in_ranges(&digest, raw, &profile, &[&whole_text]);
         assert_eq!(context.fault, FAULT_NONE);
         assert!(carry.done);
         // The pieces are the rendered prompt's, by the unranged helper.
@@ -314,7 +317,7 @@ fn binding_in_ranges_gives_the_pieces_of_binding_whole_wherever_it_is_cut() {
             for second in first..=chunks.len() {
                 let ranges: [&[String]; 3] =
                     [&chunks[..first], &chunks[first..second], &chunks[second..]];
-                let (pieces, context, carry) = bind_in_ranges(&claim, raw, &profile, &ranges);
+                let (pieces, context, carry) = bind_in_ranges(&digest, raw, &profile, &ranges);
                 assert_eq!(pieces, whole, "{raw} {first} {second}");
                 // Any range may be empty but the first, which must hold text.
                 let expected = if first == 0 {
@@ -331,7 +334,7 @@ fn binding_in_ranges_gives_the_pieces_of_binding_whole_wherever_it_is_cut() {
             let chunks = chunks_of(TEXT, size);
             for cut in 1..=chunks.len() {
                 let ranges: [&[String]; 2] = [&chunks[..cut], &chunks[cut..]];
-                let (pieces, context, _) = bind_in_ranges(&claim, raw, &profile, &ranges);
+                let (pieces, context, _) = bind_in_ranges(&digest, raw, &profile, &ranges);
                 assert_eq!((pieces, context.fault), (whole.clone(), FAULT_NONE));
             }
         }
@@ -341,14 +344,14 @@ fn binding_in_ranges_gives_the_pieces_of_binding_whole_wherever_it_is_cut() {
 #[test]
 fn a_range_holds_back_what_could_still_start_a_special_token() {
     let profile = chat_profile();
-    let claim = claim_of("ab<|turn>", true, &profile);
+    let digest = digest_of("ab<|turn>", true, &profile);
     let chunks = chunks_of("ab<|turn>", 1);
     let begin = BindOpen {
         context: PromptContext {
             raw_prompt: true,
             ..PromptContext::default()
         },
-        carry: begin_bind_carry(&claim, true, &profile),
+        carry: begin_bind_carry(&digest, true, &profile),
     };
     let lookup = |text: &str| (in_vocabulary(text), true);
     let mut first = Vec::new();
@@ -379,20 +382,20 @@ fn a_text_that_is_not_what_was_claimed_faults_where_it_ends() {
     let profile = chat_profile();
     let chunks = chunks_of(TEXT, 4);
     let cut = chunks.len() / 2;
-    let bind = |claim: &TextClaim, ranges: &[&[String]]| {
-        let (_, context, carry) = bind_in_ranges(claim, false, &profile, ranges);
+    let bind = |digest: &TextDigest, ranges: &[&[String]]| {
+        let (_, context, carry) = bind_in_ranges(digest, false, &profile, ranges);
         (context.fault, carry.done)
     };
-    let honest = claim_of(TEXT, false, &profile);
+    let honest = digest_of(TEXT, false, &profile);
     let both: [&[String]; 2] = [&chunks[..cut], &chunks[cut..]];
     assert_eq!(bind(&honest, &both), (FAULT_NONE, true));
 
-    let with = |edit: fn(&mut TextClaim)| {
-        let mut claim = honest.clone();
-        edit(&mut claim);
-        claim
+    let with = |edit: fn(&mut TextDigest)| {
+        let mut digest = honest.clone();
+        edit(&mut digest);
+        digest
     };
-    for (case, claim) in [
+    for (case, digest) in [
         (
             "another hash",
             with(|c| c.input_text_sha256 = "00".repeat(32)),
@@ -400,7 +403,7 @@ fn a_text_that_is_not_what_was_claimed_faults_where_it_ends() {
         ("a trim that keeps more", with(|c| c.keep_start -= 1)),
         ("a trim that keeps less", with(|c| c.keep_end -= 1)),
     ] {
-        assert_eq!(bind(&claim, &both), (FAULT_TEXT_CLAIM, false), "{case}");
+        assert_eq!(bind(&digest, &both), (FAULT_TEXT_DIGEST, false), "{case}");
     }
     // A length the text never reaches: no range sees the end, and none is done.
     assert_eq!(
@@ -420,11 +423,11 @@ fn a_text_that_is_not_what_was_claimed_faults_where_it_ends() {
     let mut short = short;
     short.total = prefix.len() as u64;
     let whole: [&[String]; 1] = [&chunks[..]];
-    assert_eq!(bind(&short, &whole), (FAULT_TEXT_CLAIM, false));
-    assert_eq!(bind(&short, &both), (FAULT_TEXT_CLAIM, false));
-    // A claim that is honestly about the first half makes the second half
+    assert_eq!(bind(&short, &whole), (FAULT_TEXT_DIGEST, false));
+    assert_eq!(bind(&short, &both), (FAULT_TEXT_DIGEST, false));
+    // A digest that is honestly about the first half makes the second half
     // text after the end.
-    let half = claim_of(&prefix, false, &profile);
+    let half = digest_of(&prefix, false, &profile);
     assert_eq!(bind(&half, &both), (FAULT_TEXT_AFTER_END, true));
     let alone: [&[String]; 1] = [&chunks[..cut]];
     assert_eq!(bind(&half, &alone), (FAULT_NONE, true));
@@ -437,7 +440,7 @@ fn a_text_that_is_not_what_was_claimed_faults_where_it_ends() {
     let empty = [String::new()];
     let empty_ranges: [&[String]; 1] = [&empty];
     assert_eq!(
-        bind(&claim_of("", false, &profile), &empty_ranges),
+        bind(&digest_of("", false, &profile), &empty_ranges),
         (FAULT_NONE, true)
     );
 }
@@ -445,13 +448,13 @@ fn a_text_that_is_not_what_was_claimed_faults_where_it_ends() {
 #[test]
 fn an_unproven_lookup_is_a_model_fault_and_changes_no_piece() {
     let profile = chat_profile();
-    let claim = claim_of(TEXT, true, &profile);
+    let digest = digest_of(TEXT, true, &profile);
     let open = || BindOpen {
         context: PromptContext {
             raw_prompt: true,
             ..PromptContext::default()
         },
-        carry: begin_bind_carry(&claim, true, &profile),
+        carry: begin_bind_carry(&digest, true, &profile),
     };
     let chunks = chunks_of(TEXT, 5);
     let run = |proven: fn(&str) -> bool| {

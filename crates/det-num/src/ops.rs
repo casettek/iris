@@ -13,7 +13,7 @@ pub fn mul_wide(a: Act, b: Wgt) -> Acc {
 ///
 /// The widened product of two i32 payloads is always exact in i64; accumulation
 /// uses two's-complement wrapping addition, which is associative and commutative,
-/// so reduction order over MAC terms is not part of the contract.
+/// so reduction order over MAC terms is not part of the rule.
 pub fn mac_bits(acc_bits: i64, act_bits: i32, wgt_bits: i32) -> i64 {
     acc_bits.wrapping_add(i64::from(act_bits) * i64::from(wgt_bits))
 }
@@ -37,14 +37,14 @@ pub fn add_sat(a: Act, b: Act) -> Act {
     Act::from_bits(a.to_bits().saturating_add(b.to_bits()))
 }
 
-/// Multiplies activation values under the canonical requantize-and-saturate contract.
+/// Multiplies activation values under the canonical requantize-and-saturate rule.
 pub fn mul_sat(a: Act, b: Act) -> Act {
     requantize(Acc::from_bits(
         i64::from(a.to_bits()) * i64::from(b.to_bits()),
     ))
 }
 
-/// Applies a Q16.16 scalar to an activation under the canonical multiply contract.
+/// Applies a Q16.16 scalar to an activation under the canonical multiply rule.
 pub fn scale_act(value: Act, scalar: Act) -> Act {
     mul_sat(value, scalar)
 }
@@ -133,7 +133,7 @@ pub fn value_rms_norm_in_place(values: &mut [Act], eps: Acc) {
     }
 }
 
-/// Rotates the RoPE prefix of a row under the deterministic fixed-point contract.
+/// Rotates the RoPE prefix of a row under the deterministic fixed-point rule.
 pub fn rope_rotate_pairs(
     input: &[Act],
     rotary_dim: usize,
@@ -387,7 +387,7 @@ pub fn softcap_act(input: Act, softcap: Act) -> Act {
     mul_sat(softcap, tanh_act(normalized))
 }
 
-/// Materializes the repo's canonical GELU(tanh) contract over a fixed-point activation.
+/// Materializes the repo's canonical GELU(tanh) rule over a fixed-point activation.
 pub fn gelu_pytorch_tanh_act(input: Act) -> Act {
     const GELU_HALF_BITS: i32 = 1_i32 << (ACT_FRACTIONAL_BITS - 1);
     const GELU_TANH_INNER_SCALE_BITS: i32 = 52_290;
@@ -456,7 +456,7 @@ pub fn requantize(x: Acc) -> Act {
 /// `clip_act` and `requantize` intentionally share the same behavior.
 pub fn clip_act(x: Acc) -> Act {
     // The v0 spec requires this helper but does not distinguish it from requantization,
-    // so the smallest contract-preserving implementation shares the same canonical path.
+    // so the smallest rule-preserving implementation shares the same canonical path.
     requantize(x)
 }
 

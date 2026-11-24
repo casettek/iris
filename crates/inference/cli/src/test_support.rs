@@ -42,7 +42,7 @@ project = "raster-stages/prompt-bind"
 inputs.text = {{ input = "prompt_text_0" }}
 inputs.config = {{ external = {{ path = "target/iris/run-prompt-placeholder/config.rastered", index_path = "target/iris/run-prompt-placeholder/config.rindex", commitment = "0" }} }}
 inputs.schedule = {{ external = {{ path = "target/iris/run-prompt-placeholder/schedule.rastered", index_path = "target/iris/run-prompt-placeholder/schedule.rindex", commitment = "0" }} }}
-inputs.claim = {{ external = {{ path = "target/iris/run-prompt-placeholder/claim.rastered", index_path = "target/iris/run-prompt-placeholder/claim.rindex", commitment = "0" }} }}
+inputs.text_digest = {{ external = {{ path = "target/iris/run-prompt-placeholder/text_digest.rastered", index_path = "target/iris/run-prompt-placeholder/text_digest.rindex", commitment = "0" }} }}
 inputs.source = {{ external = {{ path = "model/prompt-bind/no_source.rastered", index_path = "model/prompt-bind/no_source.rindex", commitment = "n0" }} }}
 inputs.previous = {{ external = {{ path = "empty_prompt.rastered", index_path = "empty_prompt.rindex", commitment = "0" }} }}
 
@@ -65,7 +65,7 @@ project = "raster-stages/prompt-bind"
 inputs.text = {{ input = "prompt_text_{{j}}" }}
 inputs.config = {{ external = {{ path = "target/iris/run-prompt-placeholder/config.rastered", index_path = "target/iris/run-prompt-placeholder/config.rindex", commitment = "0" }} }}
 inputs.schedule = {{ external = {{ path = "target/iris/run-prompt-placeholder/schedule.rastered", index_path = "target/iris/run-prompt-placeholder/schedule.rindex", commitment = "0" }} }}
-inputs.claim = {{ external = {{ path = "target/iris/run-prompt-placeholder/claim.rastered", index_path = "target/iris/run-prompt-placeholder/claim.rindex", commitment = "0" }} }}
+inputs.text_digest = {{ external = {{ path = "target/iris/run-prompt-placeholder/text_digest.rastered", index_path = "target/iris/run-prompt-placeholder/text_digest.rindex", commitment = "0" }} }}
 inputs.source = {{ external = {{ path = "model/prompt-bind/no_source.rastered", index_path = "model/prompt-bind/no_source.rindex", commitment = "n0" }} }}
 inputs.previous = {{ from = "prompt_bind_p{{j-1}}", first = "prompt_bind_p0" }}
 

@@ -257,7 +257,7 @@ challenger runs, under `<case>/challenges/`:
   every tensor and two vocabulary ids exchanged, is found at `prompt_bind_p0`. The
   challenger never reads that model, and says the claim names another.
 - A claim of the honest run whose checkpoints came from elsewhere must first differ
-  at the stage named: other text, text claim, configuration or stage schedule (`prompt_bind_p0`), other marks
+  at the stage named: other text, text digest, configuration or stage schedule (`prompt_bind_p0`), other marks
   (`prompt_check_p0`), other ids (`embed_c0`), that model's tokenizer at each prompt
   stage, its embedding, PLE, weights, head and decoder at the first stage reading
   each, PLE layers exchanged, and stages wired to the wrong predecessor.

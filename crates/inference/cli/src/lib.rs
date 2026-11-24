@@ -459,7 +459,7 @@ mod tests {
         };
         use inference_artifacts::registry::{PROCEDURE_VERSION, REGISTRY_VERSION};
         use inference_artifacts::{MODEL_MANIFEST_VERSION, PREPARED_RUN_VERSION};
-        use model_identity::pipeline_core::EXECUTION_VERSION;
+        use model_identity::statement_core::EXECUTION_VERSION;
         use model_identity::DESCRIPTOR_VERSION;
 
         let table = include_str!(concat!(

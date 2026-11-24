@@ -109,7 +109,7 @@ reference.
 
 `just fmt` formats what no stage program is built from: every Rust file
 except the stage crates (`raster-stages/`), the crates they depend on
-(`det-num`, `model-identity`, `pipeline-core`), and the six files of
+(`det-num`, `model-identity`, `statement-core`), and the six files of
 `prompt-core` and `source-core` they take by symbolic link. The stage code is
 formatted only together with a re-lock. If a stage crate gains a dependency
 inside this repository, add it to `guest_dirs` in `scripts/fmt.sh`; the stage

@@ -1,6 +1,6 @@
 {
   "format": 3,
-  "program_commitment": "d58de1c758e7189d61e101882df363a5cd9a409d15b21a96d7af51f2343da78b",
+  "program_commitment": "50abb7c1c01fb0c8978900266a9883e8df672bd97d6731830e49d712cfdd12f5",
   "tiles": {
     "accumulate_context": {
       "image_id": "afc58e24780a506e7a1947ccc43848c62486f7555eb0efa4f0098e54658fed01",
@@ -27,7 +27,7 @@
       "source_hash": "453c358a8c5373c0000000000000aa85"
     },
     "begin_cache_coverage": {
-      "image_id": "44849700e7b4398226b249c223cdaf15101ea2fa40da8e7e1464c586eda82e60",
+      "image_id": "801d011e7f37cf3bb63af5f666fb0b42b50e546ea4008b5e63938a854cdc007a",
       "source_hash": "453c358a8c5373c0000000000000aa85"
     },
     "begin_cursor": {
@@ -39,7 +39,7 @@
       "source_hash": "453c358a8c5373c0000000000000aa85"
     },
     "begin_layer_output": {
-      "image_id": "2b195d49cdc03bbde0706b9afd653870df27e03518fe3a34077b52ce25a082a8",
+      "image_id": "2793567a38579e2c4e16c4230ffcf4c5e4ec4b7a9edfa654eea096d20669186d",
       "source_hash": "453c358a8c5373c0000000000000aa85"
     },
     "begin_qkv": {
@@ -47,7 +47,7 @@
       "source_hash": "453c358a8c5373c0000000000000aa85"
     },
     "binding_copy_rows": {
-      "image_id": "feef756aaa4e75c02eb15394f5b6d1cf6f0d62ea2110c9a2d0acea66283e663f",
+      "image_id": "6b6a5848ea126d204eb4d997df88506b3b5098e2497897a9ee208f470b0483d0",
       "source_hash": "453c358a8c5373c0000000000000aa85"
     },
     "binding_count_aux": {
@@ -59,15 +59,15 @@
       "source_hash": "453c358a8c5373c0000000000000aa85"
     },
     "binding_validate_aux": {
-      "image_id": "7273b6f8c0f1cd3e20c8b8a246d739df332a2fb0e68fd6a2ac219eb1bf8bddcb",
+      "image_id": "7979207580b320d2c32be5142643b5d253ba2be565f96b3e1b269b7709b8bbb0",
       "source_hash": "453c358a8c5373c0000000000000aa85"
     },
     "binding_validate_rows": {
-      "image_id": "bca32486d1ff10d446e5392915ae3fe8e023c848635f2f71d2b318ac3a8a360b",
+      "image_id": "08b0b86f7a12249904dc9adef6bc6b1cdb806e282674cf349d6986701c609a2c",
       "source_hash": "453c358a8c5373c0000000000000aa85"
     },
     "carry_cached_key": {
-      "image_id": "ff8d848ab1da7813798b48a26a4e217e9efe2741f86ff1cb57424437efcee07d",
+      "image_id": "d72563b3ecb34a6b907cc5936925fdd84023bd1c6e0cb3668371147f09762950",
       "source_hash": "453c358a8c5373c0000000000000aa85"
     },
     "check_cache_positions": {
@@ -83,15 +83,15 @@
       "source_hash": "453c358a8c5373c0000000000000aa85"
     },
     "finish_layer": {
-      "image_id": "fd51b6ebcffcd99e2284c4c53ab64cee1a78821440da89193b64e897cadac074",
+      "image_id": "a4bc2aebdaae6fe8e999ace0677cf62f2efcc686736e04afa9d7054140743f17",
       "source_hash": "453c358a8c5373c0000000000000aa85"
     },
     "finish_mlp": {
-      "image_id": "cbf8b1ce4c93f02f98912c10707d335c39f7c7a0e68092024c0e3333a099952e",
+      "image_id": "cb2489dbb9b7838be51686839eac3bc3078a012a41a4cf4c90871ba01d733b07",
       "source_hash": "453c358a8c5373c0000000000000aa85"
     },
     "finish_qkv": {
-      "image_id": "438afa1b59513b9aac50ce8cdbb85f0040bce36f18392b9626ec502cabff15de",
+      "image_id": "e006e0774d5c4eb121d0fbffa569dee79ce88275889b0bf1daaf476362108c53",
       "source_hash": "453c358a8c5373c0000000000000aa85"
     },
     "gelu_mul": {
@@ -99,7 +99,7 @@
       "source_hash": "453c358a8c5373c0000000000000aa85"
     },
     "identity_bytes": {
-      "image_id": "86c6cf38264976f0d2fb05eba02bdbc3619d5ccfb922754ebb0d53e912521a58",
+      "image_id": "ebbc04cedf781963ba05ee3f879a8538dc496a22215cda19212601aab1b93652",
       "source_hash": "0067ab6a66e2369900000000000008b2"
     },
     "identity_component": {
@@ -127,7 +127,7 @@
       "source_hash": "0067ab6a66e2369900000000000008b2"
     },
     "identity_prior_guard": {
-      "image_id": "575c837c6354651cbbd91047db09528c6a91f8e96765768e7fc899b0187e065c",
+      "image_id": "53c831352884da3be12c6914fe745edcd80a4f5b0de05c1a464ac1b3bf5f3f92",
       "source_hash": "0067ab6a66e2369900000000000008b2"
     },
     "identity_verify": {
@@ -139,11 +139,11 @@
       "source_hash": "0067ab6a66e2369900000000000008b2"
     },
     "kv_out_len": {
-      "image_id": "8f40e3b11e5345651f9d9671b5254bd3b4f407798fa12b0086f9e0ef787ad4fa",
+      "image_id": "a186031f81333a8854f36ab5c985c9cf7782529c7126a330536b1d5e40f07ee8",
       "source_hash": "453c358a8c5373c0000000000000aa85"
     },
     "layer_model_context": {
-      "image_id": "188b823fc8a5cd9de481149f34ab3e8de26e8d1c4a47ba89f5e9d38d7800d8ae",
+      "image_id": "a1262b90d3d5914af1659f81956974ddcf4f2fe28c7acbc51f4bffc25af9d4d9",
       "source_hash": "453c358a8c5373c0000000000000aa85"
     },
     "mac_q8_weight_page": {
@@ -155,7 +155,7 @@
       "source_hash": "453c358a8c5373c0000000000000aa85"
     },
     "own_cache_layer": {
-      "image_id": "c90a0dc344d8c894e4c350cbfcd1fa2baa3ba856bb6b1fc206d39da644068220",
+      "image_id": "e7d6a54383bc60b07c95125754ac4493a11a64e5c79deb372c4151e37a59c7ba",
       "source_hash": "453c358a8c5373c0000000000000aa85"
     },
     "packed_values": {
@@ -191,15 +191,15 @@
       "source_hash": "453c358a8c5373c0000000000000aa85"
     },
     "validate_layer_params": {
-      "image_id": "65e8478f91307d7177a8fe1fe416bb32a8661936e7d63408fac9c865fc5bc2d2",
+      "image_id": "7b65039afbdf5544210471d618fc66aadb5b5659ab4e9539b86b5a577f4ecdb4",
       "source_hash": "453c358a8c5373c0000000000000aa85"
     },
     "zero_accum": {
-      "image_id": "5a41213cdd51cf1146f71763841ffec523eca720a142ca3fd68523387abde546",
+      "image_id": "7a02a45e225af93474819e9343bc898adc40d21a9eb9a7633ef9b211d5105e74",
       "source_hash": "453c358a8c5373c0000000000000aa85"
     },
     "zero_context": {
-      "image_id": "d75e122828a7a29dc970d5d60970937335a6d71c6fd645f0227576521e75cd17",
+      "image_id": "7628b04dc93c9d218417be779116392d643256a12dc80e10050a8dfa48fd5c7f",
       "source_hash": "453c358a8c5373c0000000000000aa85"
     },
     "zero_scores": {
@@ -212,5 +212,5 @@
     "build_mode": "local",
     "rustc": "rustc 1.97.0-dev (e638c6cfe 2026-07-15)"
   },
-  "guest_inputs": "0335f8c727b6dfe1d82753767ca7f147de0de2c13eef56f815502fa6a7018993"
+  "guest_inputs": "3e7bc5513ae9142ccff99f323d7170d27c00865ac08dcea6cb57415242d4a671"
 }

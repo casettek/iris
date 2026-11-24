@@ -17,7 +17,7 @@
       },
       {
         "stage": "prompt-bind",
-        "program_commitment": "2a5b3843e255d99e1a9b6aa1f73b68eca56f5fdddbc21040200b16f9db60d5cc",
+        "program_commitment": "a7adb6defc7a05fe2c1a119d0448aab435c95a1531b8d8ce968f1543e06bc8e8",
         "chained_inputs": [
           {
             "name": "previous",
@@ -25,7 +25,7 @@
               "prompt-bind"
             ],
             "empty_values": [
-              "4dd645d5528856d2f2cc73d99a9e514c7046baee4923e4c69c1248045ed1372e"
+              "ea2af99aadc696a83262ee549ec1541fb2e31fbf67950993b277d36e54b67b7c"
             ]
           },
           {
@@ -39,10 +39,10 @@
           }
         ],
         "run_inputs": [
-          "claim",
           "config",
           "schedule",
-          "text"
+          "text",
+          "text_digest"
         ],
         "pinned_inputs": [
           {
@@ -67,7 +67,7 @@
       },
       {
         "stage": "prompt-check",
-        "program_commitment": "3465a20a5ca24dc5a34612b88f0a8331a524ac7db9e2a99114ad99222db704ae",
+        "program_commitment": "1539ad2b7589c325c026f07ddf7cdb514fde3e49b99848031a3fa1f229b8bd78",
         "chained_inputs": [
           {
             "name": "bound",
@@ -82,7 +82,7 @@
               "prompt-check"
             ],
             "empty_values": [
-              "4dd645d5528856d2f2cc73d99a9e514c7046baee4923e4c69c1248045ed1372e"
+              "ea2af99aadc696a83262ee549ec1541fb2e31fbf67950993b277d36e54b67b7c"
             ]
           }
         ],
@@ -106,7 +106,7 @@
       },
       {
         "stage": "input-embedding",
-        "program_commitment": "6337703b5ea38da0b202f1025845fccf5c7ffbc8a125c440f5fb11a8c5db2ddc",
+        "program_commitment": "c118d081a29e090de25670fbfe4dcd35befe8a0679f94d6b0c1e836579077acc",
         "chained_inputs": [
           {
             "name": "previous",
@@ -123,7 +123,7 @@
               "prompt-check"
             ],
             "empty_values": [
-              "4dd645d5528856d2f2cc73d99a9e514c7046baee4923e4c69c1248045ed1372e"
+              "ea2af99aadc696a83262ee549ec1541fb2e31fbf67950993b277d36e54b67b7c"
             ]
           }
         ],
@@ -153,7 +153,7 @@
       },
       {
         "stage": "sequence-check",
-        "program_commitment": "8e1c21e269f14f61ddfd6af36d7f2e98e1cdcedcc332f312b31bccdb63e02fc4",
+        "program_commitment": "a866a8d3a52571ec8aaf7181a81203472d1c656ef7dbe3b8d52ac7dc204ecd88",
         "chained_inputs": [
           {
             "name": "activations",
@@ -216,7 +216,7 @@
       },
       {
         "stage": "claim-result",
-        "program_commitment": "00d4f4926abbef4a0a26d616051771f7f7df33b5044146d6a2489afd11b32749",
+        "program_commitment": "77066fab63b3e2c425d5212ed93acfb0989fa48cbaa38f97af77b0cf4991353b",
         "chained_inputs": [
           {
             "name": "check",
@@ -233,7 +233,7 @@
       },
       {
         "stage": "prefill-prepare-aux",
-        "program_commitment": "42d07701b536328b4e4ce06cff1c821f65dbdf3c29db2654eedf0fa6c7c49590",
+        "program_commitment": "5260bd6207e3e44cfc89f048185445786a64755455c34d170f252be173dab38d",
         "chained_inputs": [
           {
             "name": "embedded",
@@ -329,7 +329,7 @@
       },
       {
         "stage": "prefill-range",
-        "program_commitment": "d58de1c758e7189d61e101882df363a5cd9a409d15b21a96d7af51f2343da78b",
+        "program_commitment": "50abb7c1c01fb0c8978900266a9883e8df672bd97d6731830e49d712cfdd12f5",
         "chained_inputs": [
           {
             "name": "activations",

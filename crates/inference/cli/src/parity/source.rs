@@ -386,11 +386,11 @@ fn run_fault(
     let files = dir.join("prompt");
     let bound = run_prep::bound_ranges(text, raw_prompt, range_size, tokenizer)?;
     let texts = run_prep::write_bound_text(&bound.ranges, &files)?;
-    let claim = run_prep::write_text_claim(&bound.claim, &files)?;
+    let text_digest = run_prep::write_text_digest(&bound.text_digest, &files)?;
     let manifest = dir.join("Raster.toml");
     fs::write(
         &manifest,
-        prompt_only_manifest(template, &texts, &[], Some(&claim), Some(inputs))?,
+        prompt_only_manifest(template, &texts, &[], Some(&text_digest), Some(inputs))?,
     )?;
 
     let raster_dir = dir.join("raster");

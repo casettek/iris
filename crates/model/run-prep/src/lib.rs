@@ -8,13 +8,13 @@ use input_embedding::input::ClaimedOutput;
 pub use prompt_check::input::PromptTokenizer;
 use prompt_check::input::{
     apply_atom, begin_scan_state, begin_text_fold_state, byte_token, claimed_scan_plan,
-    fallback_mask, fold_text, merge_bucket_of, scan_chunk_into, split_rendered, text_claim_of,
+    fallback_mask, fold_text, merge_bucket_of, scan_chunk_into, split_rendered, text_digest_of,
     vocab_bucket_of, BpeMerge, MergeBucket, PromptText, SplitState, TokenizerProfile,
 };
 pub use prompt_check::input::{
-    fault_description, RunConfig, RunSchedule, TextClaim, FAULT_CUT_BEYOND_TEXT, FAULT_EMPTY_RANGE,
-    FAULT_NONE, FAULT_NOT_THE_MERGE, FAULT_SOURCE, FAULT_TEXT_AFTER_END, FAULT_TEXT_CLAIM,
-    FAULT_TEXT_SOURCE, FAULT_TOKEN_SPLIT,
+    fault_description, RunConfig, RunSchedule, TextDigest, FAULT_CUT_BEYOND_TEXT,
+    FAULT_EMPTY_RANGE, FAULT_NONE, FAULT_NOT_THE_MERGE, FAULT_SOURCE, FAULT_TEXT_AFTER_END,
+    FAULT_TEXT_DIGEST, FAULT_TEXT_SOURCE, FAULT_TOKEN_SPLIT,
 };
 use prompt_check::input::{BpePiece, TokenEntry, VocabBucket};
 use raster::List;
@@ -335,7 +335,7 @@ fn with_run_input<R>(
         RunInput::Forms(value) => encode(value),
         RunInput::Config(value) => encode(value),
         RunInput::Schedule(value) => encode(value),
-        RunInput::Claim(value) => encode(value),
+        RunInput::TextDigest(value) => encode(value),
         RunInput::Text(value) => encode(value),
         RunInput::Marks(starts) => encode(&prompt_check::check::TokenMarks {
             starts: List::from(starts.to_vec()),
@@ -496,7 +496,7 @@ pub struct BoundRange {
 /// A prompt cut into ranges, with what the run claims of the whole text.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BoundPrompt {
-    pub claim: TextClaim,
+    pub text_digest: TextDigest,
     pub ranges: Vec<BoundRange>,
 }
 
@@ -523,12 +523,12 @@ pub fn bound_ranges(
         "invalid vocabulary bucket count"
     );
     let profile = &tokenizer.profile;
-    let claim = text_claim_of(
+    let text_digest = text_digest_of(
         &fold_text(begin_text_fold_state(), prompt),
         raw_prompt,
         profile,
     );
-    let plan = claimed_scan_plan(&claim, raw_prompt, profile);
+    let plan = claimed_scan_plan(&text_digest, raw_prompt, profile);
     let in_vocabulary = |piece: &str| {
         let index = vocab_bucket_of(piece, tokenizer.vocab_bucket_count) as usize;
         tokenizer.vocab_buckets[index]
@@ -611,7 +611,10 @@ pub fn bound_ranges(
             marks: inference_kernels::kernels::prompt_check_stage::marks_for(counts),
         });
     }
-    Ok(BoundPrompt { claim, ranges })
+    Ok(BoundPrompt {
+        text_digest,
+        ranges,
+    })
 }
 
 /// The text for a run of `count` prompt ranges, and what is claimed of it.
@@ -626,7 +629,7 @@ pub fn text_for_ranges(
     range_size: usize,
     tokenizer: &PromptTokenizer,
     count: usize,
-) -> Result<(Vec<PromptText>, TextClaim)> {
+) -> Result<(Vec<PromptText>, TextDigest)> {
     ensure!(count >= 1, "a run needs at least one prompt range");
     let bound = bound_ranges(prompt, raw_prompt, range_size, tokenizer)?;
     let slices = if bound.ranges.len() == count {
@@ -641,7 +644,7 @@ pub fn text_for_ranges(
         );
         slices
     };
-    Ok((slices, bound.claim))
+    Ok((slices, bound.text_digest))
 }
 
 /// Writes these slices of the original prompt as `text_{j}`.
@@ -662,9 +665,9 @@ pub fn write_bound_text(ranges: &[BoundRange], dir: &Path) -> Result<Vec<RunFile
         .collect()
 }
 
-/// Writes what the run claims of the whole text as `claim`.
-pub fn write_text_claim(claim: &TextClaim, dir: &Path) -> Result<RunFile> {
-    write_run_file(claim, dir, "claim")
+/// Writes what the run claims of the whole text as `text_digest`.
+pub fn write_text_digest(text_digest: &TextDigest, dir: &Path) -> Result<RunFile> {
+    write_run_file(text_digest, dir, "text_digest")
 }
 
 /// Writes the original prompt as `text`.
@@ -1234,7 +1237,7 @@ mod tests {
                     config,
                     descriptor: &[],
                     schedule: &schedule,
-                    claim: &bound.claim,
+                    text_digest: &bound.text_digest,
                     source,
                     previous: &binding,
                 },
@@ -1336,8 +1339,8 @@ mod tests {
         assert!(bound.ranges.len() > 1);
         let honest = source::SourceRecord {
             present: true,
-            text_sha256: bound.claim.input_text_sha256.clone(),
-            text_total: bound.claim.total,
+            text_sha256: bound.text_digest.input_text_sha256.clone(),
+            text_total: bound.text_digest.total,
             recipe_sha256: "aa".repeat(32),
             documents: 2,
             documents_sha256: "bb".repeat(32),
@@ -1450,11 +1453,11 @@ mod tests {
         assert_eq!(faulted(&|_| {}), (FAULT_NONE, true));
         // Another hash, and a trim that keeps one byte more.
         assert_eq!(
-            faulted(&|bound| bound.claim.input_text_sha256 = "00".repeat(32)),
-            (FAULT_TEXT_CLAIM, false)
+            faulted(&|bound| bound.text_digest.input_text_sha256 = "00".repeat(32)),
+            (FAULT_TEXT_DIGEST, false)
         );
         assert_eq!(
-            faulted(&|bound| bound.claim.keep_end += 1).1,
+            faulted(&|bound| bound.text_digest.keep_end += 1).1,
             false,
             "a wider trim"
         );

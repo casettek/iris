@@ -1,5 +1,5 @@
 {
-  "version": 19,
+  "version": 20,
   "family": "mistral-dense",
   "model_id": "928fc9c6019f94397eb0bcdd9e9702240e616cc6698ea22377ecbfc78717e89a",
   "model_commitments": [
@@ -217,6 +217,6 @@
   ],
   "provenance": {
     "raster_manifest_path": "Raster.toml",
-    "raster_manifest_sha256": "c19112dc5b61907562730d7baf111b0011daf3c022041f357410fb3bbdebb78c"
+    "raster_manifest_sha256": "1241926fe912a897d60dd24ae6602f44089f5735abe923856e16c23508d6ed8a"
   }
 }

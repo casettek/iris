@@ -30,7 +30,7 @@
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-pub use prompt_core::{PromptText, RunConfig, RunSchedule, TextClaim};
+pub use prompt_core::{PromptText, RunConfig, RunSchedule, TextDigest};
 
 use crate::checkpoint::{checkpoint_hash, checkpoints_root, CheckpointList};
 use crate::checks::{is_address, ClaimSubmission, ResultInOutput, SubmittedRecord};
@@ -273,7 +273,7 @@ pub struct PostedInference {
     pub config: prompt_core::RunConfig,
     pub schedule: prompt_core::RunSchedule,
     /// What the run claims of the whole text.
-    pub claim: prompt_core::TextClaim,
+    pub text_digest: prompt_core::TextDigest,
     /// One slice of the text per prompt range.
     pub text: Vec<prompt_core::PromptText>,
     /// One set of token marks per prompt range.
@@ -291,7 +291,7 @@ pub enum RunInput<'a> {
     Forms(&'a source_core::ResultForms),
     Config(&'a prompt_core::RunConfig),
     Schedule(&'a prompt_core::RunSchedule),
-    Claim(&'a prompt_core::TextClaim),
+    TextDigest(&'a prompt_core::TextDigest),
     Text(&'a prompt_core::PromptText),
     Marks(&'a [u32]),
     Claimed(&'a [u32]),
@@ -307,7 +307,7 @@ impl RunInput<'_> {
             Self::Forms(_) => "forms",
             Self::Config(_) => "config",
             Self::Schedule(_) => "schedule",
-            Self::Claim(_) => "claim",
+            Self::TextDigest(_) => "text_digest",
             Self::Text(_) => "text",
             Self::Marks(_) => "marks",
             Self::Claimed(_) => "claimed",
@@ -317,7 +317,7 @@ impl RunInput<'_> {
 
 impl PostedRun {
     /// Every input of the run, in one order: the source's, the forms, then
-    /// each inference's procedure, schedule, text claim, text slices,
+    /// each inference's procedure, schedule, text digest, text slices,
     /// marks and claimed ids.
     pub fn values(&self) -> Vec<RunInput<'_>> {
         let mut values = Vec::new();
@@ -330,7 +330,7 @@ impl PostedRun {
         for inference in &self.inferences {
             values.push(RunInput::Config(&inference.config));
             values.push(RunInput::Schedule(&inference.schedule));
-            values.push(RunInput::Claim(&inference.claim));
+            values.push(RunInput::TextDigest(&inference.text_digest));
             values.extend(inference.text.iter().map(RunInput::Text));
             values.extend(inference.marks.iter().map(|marks| RunInput::Marks(marks)));
             values.extend(inference.claimed.iter().map(|ids| RunInput::Claimed(ids)));
@@ -989,7 +989,7 @@ mod tests {
             inferences: vec![PostedInference {
                 config: Default::default(),
                 schedule: Default::default(),
-                claim: Default::default(),
+                text_digest: Default::default(),
                 text: vec![slice("hello "), slice("there")],
                 marks: vec![vec![1, 0, 1], vec![1]],
                 claimed: vec![vec![7, 8]],
@@ -1003,7 +1003,17 @@ mod tests {
         let names: Vec<&str> = run.values().iter().map(RunInput::name).collect();
         assert_eq!(
             names,
-            ["forms", "config", "schedule", "claim", "text", "text", "marks", "marks", "claimed"]
+            [
+                "forms",
+                "config",
+                "schedule",
+                "text_digest",
+                "text",
+                "text",
+                "marks",
+                "marks",
+                "claimed"
+            ]
         );
         let posted = blob(vec![BlobEntry::Run(run.clone())]);
         assert_eq!(Blob::decode(&posted.encode()), Ok(posted.clone()));

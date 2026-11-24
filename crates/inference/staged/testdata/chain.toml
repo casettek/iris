@@ -53,7 +53,7 @@ inputs.tokenizer = { external = { path = "model/raster/prompt-bind/tokenizer.ras
 inputs.text = { input = "prompt_text_0" }
 inputs.config = { external = { path = "run/config.rastered", index_path = "run/config.rindex", commitment = "0000000000000000000000000000000000000000000000000000000000000000" } }
 inputs.schedule = { external = { path = "run/schedule.rastered", index_path = "run/schedule.rindex", commitment = "0000000000000000000000000000000000000000000000000000000000000000" } }
-inputs.claim = { external = { path = "run/claim.rastered", index_path = "run/claim.rindex", commitment = "0000000000000000000000000000000000000000000000000000000000000000" } }
+inputs.text_digest = { external = { path = "run/text_digest.rastered", index_path = "run/text_digest.rindex", commitment = "0000000000000000000000000000000000000000000000000000000000000000" } }
 inputs.previous = { external = { path = "model/raster/prompt-bind/empty_prompt.rastered", index_path = "model/raster/prompt-bind/empty_prompt.rindex", commitment = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" } }
 
 [[chain.stage]]
@@ -85,7 +85,7 @@ inputs.tokenizer = { external = { path = "model/raster/prompt-bind/tokenizer.ras
 inputs.text = { input = "prompt_text_{j}" }
 inputs.config = { external = { path = "run/config.rastered", index_path = "run/config.rindex", commitment = "0000000000000000000000000000000000000000000000000000000000000000" } }
 inputs.schedule = { external = { path = "run/schedule.rastered", index_path = "run/schedule.rindex", commitment = "0000000000000000000000000000000000000000000000000000000000000000" } }
-inputs.claim = { external = { path = "run/claim.rastered", index_path = "run/claim.rindex", commitment = "0000000000000000000000000000000000000000000000000000000000000000" } }
+inputs.text_digest = { external = { path = "run/text_digest.rastered", index_path = "run/text_digest.rindex", commitment = "0000000000000000000000000000000000000000000000000000000000000000" } }
 inputs.previous = { from = "prompt_bind_p{j-1}", first = "prompt_bind_p0" }
 
   [[chain.repeat.stage]]

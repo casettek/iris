@@ -42,7 +42,7 @@ fn look_up_atom(
 
 /// Stage entrypoint for one range: `text` is the range's slice of the original
 /// prompt and `previous` the bind of the range before, or the empty state.
-/// `config`, `descriptor`, `schedule`, `claim` and `source` are the run's, read
+/// `config`, `descriptor`, `schedule`, `text_digest` and `source` are the run's, read
 /// by the first range only. `source` is the source stage's record, or the
 /// constant a run without a source uses. `tokenizer` is the committed tokenizer.
 #[sequence]
@@ -53,7 +53,7 @@ fn main(
     config: RunConfig,
     descriptor: BytesPage,
     schedule: RunSchedule,
-    claim: TextClaim,
+    text_digest: TextDigest,
     source: SourceRecord,
     previous: PromptState,
 ) -> PromptState {
@@ -72,7 +72,7 @@ fn main(
         config,
         descriptor,
         schedule,
-        claim,
+        text_digest,
         source,
         root,
         profile.clone()
@@ -80,9 +80,9 @@ fn main(
     let context = select!(PromptContext, opened.clone().context);
     let before = select!(BindCarry, opened.carry);
 
-    let text_claim = select!(TextClaim, before.clone().claim);
+    let digest = select!(TextDigest, before.clone().digest);
     let raw_prompt = select!(bool, context.clone().raw_prompt);
-    let plan = call!(plan_scan, text_claim, raw_prompt, profile.clone());
+    let plan = call!(plan_scan, digest, raw_prompt, profile.clone());
     let pass_seed = call!(text_pass_seed, before.clone());
     let pass = call_recur!(
         tile = fold_text_chunk,

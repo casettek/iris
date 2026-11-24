@@ -62,7 +62,7 @@ model that computes something else.
 
 | Part | Shared | Per family today |
 | --- | --- | --- |
-| Schedule and step rules (`pipeline-core`, `model-identity`) | yes; a model's descriptor has one auxiliary root per layer or none | a layer's step is `ModelContext::layer` when the model has per-layer inputs and may borrow a cache, and `plain_layer` when it has neither |
+| Schedule and step rules (`statement-core`, `model-identity`) | yes; a model's descriptor has one auxiliary root per layer or none | a layer's step is `ModelContext::layer` when the model has per-layer inputs and may borrow a cache, and `plain_layer` when it has neither |
 | `input-embedding`, `sequence-check` (which also states the output record) | yes | the head's softcap and the embedding scale are manifest values |
 | `prompt-bind`, `prompt-check` | the stages and the merge check; the chat template, the scanner and the longest token are data in the tokenizer profile | two scanners in `prompt-core`: one atom a character with Gemma's space rules (`prompt.rs`), and one atom a word for a byte-level tokenizer (`tekken.rs`) |
 | The layer program | the steps' shape: project Q/K/V, score and softmax over the keys, the feed-forward matvecs, and the weight-page tile | `prefill-range` with `prefill-prepare-aux` is Gemma's; `layer-mistral` is Ministral's. The tiles both need are copied between them, not shared |

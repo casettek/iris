@@ -476,7 +476,7 @@ pub mod stream;
 
 pub mod sparse;
 
-mod pipeline;
+mod execution;
 #[cfg(test)]
 mod schedule_tests;
-pub use pipeline_core;
+pub use statement_core;
