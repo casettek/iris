@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Chain tier, a few minutes: claims against the contracts on the local
+# Blockchain tier, a few minutes: claims against the contracts on the local
 # blockchains (blockchain/devstack/README.md). An honest claim must stand, and
 # a claim that lies in each known way must be caught the way the protocol
 # catches it:
@@ -18,7 +18,7 @@
 # `submitFaultProof`), and the contract is held to iris on changed copies of
 # the honest claim and of the first challenge.
 #
-# usage: test-chain.sh [--deploy] [--real-model <run spec>]
+# usage: test-blockchain.sh [--deploy] [--real-model <run spec>]
 #   --deploy       build and deploy the contracts first (new addresses: claims
 #                  made before are not on them)
 #   --real-model   also build a claim of this run spec's model and make the
@@ -33,7 +33,7 @@
 # family's small model a layer stage given another layer's weights is under
 # the replay window, which `--real-model` covers at full size. Every run
 # makes its claims for fresh addresses, so it can be repeated on one
-# deployment. Everything is kept under target/chain-test/<run>.
+# deployment. Everything is kept under target/blockchain-test/<run>.
 # See docs/workflows/testing.md.
 source "$(dirname "${BASH_SOURCE[0]}")/test-env.sh"
 source "$repo_root/blockchain/devstack/env.sh"
@@ -48,14 +48,14 @@ while [ $# -gt 0 ]; do
         shift
         ;;
     *)
-        echo "usage: test-chain.sh [--deploy] [--real-model <run spec>]" >&2
+        echo "usage: test-blockchain.sh [--deploy] [--real-model <run spec>]" >&2
         exit 2
         ;;
     esac
     shift
 done
 
-echo "== chain tier"
+echo "== blockchain tier"
 
 rpc_answers() {
     curl -s -m 5 -o /dev/null -X POST -H 'content-type: application/json' \
@@ -67,10 +67,10 @@ if ! rpc_answers; then
     exit 1
 fi
 # The deployment file is written by the binary, so it is built first.
-step chain-build "release binary built" \
+step blockchain-build "release binary built" \
     cargo build --release --locked -p iris-cli --bin iris "${features[@]}"
 if [ $deploy -eq 1 ]; then
-    step chain-deploy "contracts built and deployed" bash "$repo_root/blockchain/devstack/deploy.sh"
+    step blockchain-deploy "contracts built and deployed" bash "$repo_root/blockchain/devstack/deploy.sh"
 fi
 # The EVM node keeps nothing across a restart, so a deployment file can
 # outlive its contracts.
@@ -105,13 +105,13 @@ if [ -z "$parity_run" ] || [ ! -f "$small_spec" ]; then
 fi
 
 run_id=$(date +%s)
-out="$repo_root/target/chain-test/$run_id"
+out="$repo_root/target/blockchain-test/$run_id"
 mkdir -p "$out"
-echo "   kept under target/chain-test/$run_id"
+echo "   kept under target/blockchain-test/$run_id"
 iris="$repo_root/target/release/iris"
 export IRIS_BINARY="$iris"
 # The cases run in directories of their own.
-export IRIS_CHAIN_DEPLOYMENT="$repo_root/blockchain/devstack/deployment.json"
+export IRIS_BLOCKCHAIN_DEPLOYMENT="$repo_root/blockchain/devstack/deployment.json"
 
 # A fresh address per run and name: twenty bytes of the hash of both.
 address() {
@@ -267,7 +267,7 @@ replayed_lie() (
     fi
 )
 
-step chain-contracts "contracts' own tests, with a real fault proof" \
+step blockchain-contracts "contracts' own tests, with a real fault proof" \
     bash "$repo_root/blockchain/devstack/foundry.sh" forge test
 
 # build_claims <prefix> <run spec>: an honest claim, and a claim of ids that
@@ -277,28 +277,28 @@ build_claims() (
     build_claim "$1honest" "$2"
     build_claim "$1other-ids" "$2" "$(other_ids "$2")"
 )
-step chain-claims "small model: an honest claim and one of other ids built" \
+step blockchain-claims "small model: an honest claim and one of other ids built" \
     build_claims "" "$small_spec"
-step chain-honest "honest claim: taken, and every question refused" \
+step blockchain-honest "honest claim: taken, and every question refused" \
     honest_claim honest "$small_spec"
 
 stage=prompt_check_p1
-step chain-void-program "unapproved program: voided on the spot" \
+step blockchain-void-program "unapproved program: voided on the spot" \
     voided_lie void-program honest "$small_spec" UnapprovedProgram --stage $stage --fault program
-step chain-void-chained "input not its producer's output: voided on the spot" \
+step blockchain-void-chained "input not its producer's output: voided on the spot" \
     voided_lie void-chained honest "$small_spec" NotAnEarlierOutput --stage $stage --fault input
-step chain-void-pinned "input not a pinned commitment: voided on the spot" \
+step blockchain-void-pinned "input not a pinned commitment: voided on the spot" \
     voided_lie void-pinned honest "$small_spec" NotAPinnedValue --stage $stage --fault input --input tokenizer
-step chain-void-posted "input not a posted value: voided on the spot" \
+step blockchain-void-posted "input not a posted value: voided on the spot" \
     voided_lie void-posted honest "$small_spec" NotAPostedValue --stage $stage --fault input --input marks
 
-step chain-arranged-pinned "another layer's weights: challenged by a replay" \
+step blockchain-arranged-pinned "another layer's weights: challenged by a replay" \
     replayed_lie arranged-pinned honest "$small_spec" range_p1_l2 yes yes --fault arrangement --input layer
-step chain-arranged-posted "another range's marks: challenged by a replay" \
+step blockchain-arranged-posted "another range's marks: challenged by a replay" \
     replayed_lie arranged-posted honest "$small_spec" $stage yes no --fault arrangement --input marks
-step chain-arranged-chained "another stage's output: challenged by a replay" \
+step blockchain-arranged-chained "another stage's output: challenged by a replay" \
     replayed_lie arranged-chained honest "$small_spec" $stage yes no --fault arrangement --input bound
-step chain-arranged-empty "empty value for an earlier output: challenged by a replay" \
+step blockchain-arranged-empty "empty value for an earlier output: challenged by a replay" \
     replayed_lie arranged-empty honest "$small_spec" $stage yes no --fault arrangement --input previous
 
 forged_verdict() {
@@ -306,15 +306,15 @@ forged_verdict() {
     check=$(last_check "$(cat "$out/$2.submission")")
     replayed_lie "$1" "$2" "$3" "$check" "$4" no --fault verdict
 }
-step chain-forged-verdict "forged verdict: arrives valid, found at the last check" \
+step blockchain-forged-verdict "forged verdict: arrives valid, found at the last check" \
     forged_verdict forged-verdict other-ids "$small_spec" no
 
 if [ -n "$real_spec" ]; then
-    step chain-real-claims "real model: an honest claim and one of other ids built" \
+    step blockchain-real-claims "real model: an honest claim and one of other ids built" \
         build_claims real- "$real_spec"
-    step chain-real-arranged "real model, another layer's weights: challenged by a replay" \
+    step blockchain-real-arranged "real model, another layer's weights: challenged by a replay" \
         replayed_lie real-arranged real-honest "$real_spec" range_p0_l1 yes no --fault arrangement --input layer
-    step chain-real-verdict "real model, forged verdict: challenged by a replay" \
+    step blockchain-real-verdict "real model, forged verdict: challenged by a replay" \
         forged_verdict real-verdict real-other-ids "$real_spec" yes
 fi
 

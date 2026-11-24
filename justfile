@@ -60,9 +60,9 @@ test-full:
 test-release *args:
     bash scripts/test-release.sh {{args}}
 
-# Chain (a few minutes, needs the local blockchains): lying claims against the contracts: [--deploy] [--real-model <run spec>]
-test-chain *args:
-    bash scripts/test-chain.sh {{args}}
+# Blockchain (a few minutes, needs the local blockchains): lying claims against the contracts: [--deploy] [--real-model <run spec>]
+test-blockchain *args:
+    bash scripts/test-blockchain.sh {{args}}
 
 # The Raster check ladder for stage programs, on the newest parity run's inputs: [program ...]
 stage-ladder *args:

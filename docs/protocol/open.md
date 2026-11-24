@@ -33,7 +33,7 @@ decided. The last is what Raster would have to change.
   bind and check stages. A layer stage of the mistral family that is given
   another layer's weights states the fault and passes no rows on, so what is
   left of it is short too: under the window on the small test model, and long
-  enough to replay on Ministral 3B, where the chain tier challenges it. The
+  enough to replay on Ministral 3B, where the blockchain tier challenges it. The
   contract does not rest on the result stage: it
   takes the result on the submitted text itself, and for a consensus the
   agreement on the two. A result step that grows past what a contract can

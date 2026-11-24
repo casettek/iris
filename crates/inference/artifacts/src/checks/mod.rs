@@ -2,7 +2,7 @@
 //!
 //! The contracts in `blockchain/contracts/src` make these same checks on
 //! chain. This module is what they are written from and held to: the chain
-//! tier (`just test-chain`) asks both about the same claims and challenges
+//! tier (`just test-blockchain`) asks both about the same claims and challenges
 //! and fails when they differ. A rule changes here and in the contract, and
 //! nowhere else.
 //!

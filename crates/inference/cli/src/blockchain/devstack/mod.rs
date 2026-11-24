@@ -21,7 +21,7 @@ use serde_json::{json, Value};
 
 /// Names the file `blockchain/devstack/deploy.sh` wrote: where the contracts
 /// are.
-pub const DEPLOYMENT_ENV: &str = "IRIS_CHAIN_DEPLOYMENT";
+pub const DEPLOYMENT_ENV: &str = "IRIS_BLOCKCHAIN_DEPLOYMENT";
 /// That file, from the repository's root.
 pub const DEFAULT_DEPLOYMENT: &str = "blockchain/devstack/deployment.json";
 

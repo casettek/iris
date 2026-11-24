@@ -68,13 +68,13 @@ use them anywhere else.
 ## Run all of it as a test
 
 ```bash
-just test-chain                              # about 3 minutes
-just test-chain --real-model inference.toml  # with a real model's claim, a few minutes more
+just test-blockchain                              # about 3 minutes
+just test-blockchain --real-model inference.toml  # with a real model's claim, a few minutes more
 ```
 
-The chain tier makes an honest claim and a claim of each known lie, and holds
+The blockchain tier makes an honest claim and a claim of each known lie, and holds
 the contracts to what iris says of each
-([testing](../../docs/workflows/testing.md#the-chain-tier)). The sections below
+([testing](../../docs/workflows/testing.md#the-blockchain-tier)). The sections below
 are the same steps by hand.
 
 ## Submit a claim
@@ -96,7 +96,7 @@ submit challenge --submission <claim_submission.json> --challenge
 
 The commands read where the contracts are from `blockchain/devstack/deployment.json`.
 Run them from the repository's root, or name that file with
-`IRIS_CHAIN_DEPLOYMENT`.
+`IRIS_BLOCKCHAIN_DEPLOYMENT`.
 
 ## Challenge a claim from the blockchains
 

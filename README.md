@@ -121,7 +121,7 @@ The local blockchains, and a claim and a challenge taken through them, are in
 just test-fast      # minutes: formatting, unit tests, stage locks
 just test-full      # about half an hour: fast, the parity gate, the stage ladder
 just test-release   # about an hour: full, a real fault proof, a real model
-just test-chain     # about 3 minutes, with the local blockchains up: lying claims against the contracts
+just test-blockchain     # about 3 minutes, with the local blockchains up: lying claims against the contracts
 just fmt            # format; never `cargo fmt --all`
 ```
 

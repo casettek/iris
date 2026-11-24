@@ -27,7 +27,7 @@ fi
 
 # IRIS_TEST_CELESTIA=1 has every tier post to the local Celestia node
 # (blockchain/devstack/README.md) in place of the stand-in directory. Only
-# the node is named here: no tier but the chain tier sends a transaction.
+# the node is named here: no tier but the blockchain tier sends a transaction.
 if [ -n "${IRIS_TEST_CELESTIA:-}" ]; then
     IRIS_CELESTIA_RPC="$(source "$repo_root/blockchain/devstack/env.sh" && echo "$IRIS_CELESTIA_RPC")"
     export IRIS_CELESTIA_RPC

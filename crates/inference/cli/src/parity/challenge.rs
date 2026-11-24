@@ -1288,7 +1288,7 @@ fn posted_lies(
         // layer's weights. That stage states the fault and passes no rows
         // on, and what is left of it on a model this small is a few dozen
         // steps. On a real model of that family the same stage is long
-        // enough, and the chain tier replays it there.
+        // enough, and the blockchain tier replays it there.
         let short_here = !long_enough_to_challenge(stage)
             || (name == "arranged-pinned" && !scenario.model.family()?.has_auxiliary_stages());
         if let Err(error) = built {

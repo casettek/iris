@@ -25,11 +25,11 @@ Iris makes four promises, and every check here is about one of them.
 just test-fast      # minutes
 just test-full      # about half an hour
 just test-release   # about an hour; add --skip-proof to leave out the fault proof
-just test-chain     # about 3 minutes; needs the local blockchains
+just test-blockchain     # about 3 minutes; needs the local blockchains
 ```
 
-Each of the first three runs the one before it. The chain tier stands apart,
-because it needs the local blockchains running (see [The chain tier](#the-chain-tier)).
+Each of the first three runs the one before it. The blockchain tier stands apart,
+because it needs the local blockchains running (see [The blockchain tier](#the-blockchain-tier)).
 Every check prints one line, `PASS` or `FAIL` with what a pass means and how
 long it took, and keeps its log under `target/test-logs/`. A tier runs all of
 its checks even after a failure and exits nonzero if any failed.
@@ -63,20 +63,20 @@ claim the gate's source scenario builds, and `consensus-result`, on the claim it
 consensus scenario builds. The two result programs are a handful of steps and are
 committed at a window of two.
 
-## The chain tier
+## The blockchain tier
 
 ```sh
 just devstack-up        # the local blockchains, once
 just devstack-deploy    # the contracts, once per restart of the blockchains and after any contract change
-just test-chain
-just test-chain --real-model inference.toml
+just test-blockchain
+just test-blockchain --real-model inference.toml
 ```
 
 The tier sends real transactions to the local EVM node and posts to the local
 Celestia node ([devstack](../../blockchain/devstack/README.md)). It builds its own claims
 of the newest parity run's small model, for addresses no earlier run used, so
 it can be repeated on one deployment. `--deploy` deploys the contracts first.
-Everything it makes is kept under `target/chain-test/<run>`.
+Everything it makes is kept under `target/blockchain-test/<run>`.
 
 The small model is the gemma family's, from the newest parity run of it. Its
 check stage is under the replay window, so there the forged verdict is
@@ -163,10 +163,10 @@ intend is a regression: the check names the first stage that differs.
   judged.
 - **Nothing here runs the backend.** Its own checks are `pnpm typecheck`,
   `pnpm test` and `pnpm validate:gpu` in `iris-backend`.
-- **No fault proof of a real dispute goes to the contracts.** The chain tier
+- **No fault proof of a real dispute goes to the contracts.** The blockchain tier
   ends each dispute at the admitted challenge. The contract's own tests take
   one real proof, of the small fixture.
-- **The chain tier runs against trusted stand-ins**: a host's signature for
+- **The blockchain tier runs against trusted stand-ins**: a host's signature for
   what a blob holds, and a relayer for Celestia's block roots.
 - **None of this runs automatically.** There is no CI; a tier runs when someone
   runs it.
@@ -178,6 +178,6 @@ intend is a regression: the check names the first stage that differs.
   native kernels: `just test-full`.
 - A change to the contracts, to what a claim or a challenge posts, to the rules
   a claim or a challenge is checked by, or to how a challenge is built:
-  `just test-chain`, after `just devstack-deploy` if a contract changed.
+  `just test-blockchain`, after `just devstack-deploy` if a contract changed.
 - Before a version is committed, after a Raster or toolchain update, and after a
   re-lock: `just test-release`.
