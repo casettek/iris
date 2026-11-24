@@ -39,7 +39,7 @@ Outputs:
 
 - `runtime/model-artifacts/<model-id>/Raster.toml`, the model's prompt-free segment of a [chain](../protocol/raster-chain.md), saved on every full import: its chain inputs and its stages from the first bind to the last check, with the first bind given the constant source. It has no `source` or `result` stage. Those belong to the run's [procedure kind](../protocol/procedure-kinds.md), which makes the chain template from this file. Its path and SHA-256 are recorded in the model manifest. `--range-size <positions>` (default 512) sets the largest range, in prompt tokens or claimed ids. It is recorded in the manifest and a run's configuration, so it is a per-model setting, not a per-claim one.
 - Reusable Raster externals under `runtime/model-artifacts/<model-id>/raster/*`, written as `.rastered` and `.rindex` pairs with manifest commitments.
-- `runtime/model-artifacts/<model-id>/manifest.json`, the prompt-free model manifest consumed by run specs.
+- `runtime/model-artifacts/<model-id>/manifest.json`, the prompt-free model manifest a specification names.
 - `runtime/model-artifacts/<model-id>/contract_pins.json`, what a [contract](../protocol/checks.md) of the `single` procedure kind over this model would pin: the procedure kind's name, a program entry and a model entry. The program entry holds the program id each stage project has locked and, read from the chain template of the `single` procedure kind over this import, the inputs each program takes from earlier stages. The model entry holds the model id with the commitments it hashes, and the range size. Import from the repository root, after any re-lock: an import that cannot read the stage locks writes no pins and says so.
 
 ## Converting a GGUF model
@@ -69,7 +69,7 @@ By default, `<model-id>` is the sanitized model bundle directory name. Pass `--m
 
 Pass `--manifest <path>` to also save a template copy for manual Raster commands. Claims always use the model-specific template, so importing another model or overwriting that copy cannot change an existing model’s selection. Saved templates resolve stage and external paths against the importing workspace.
 
-`infer`, `claim build`, and `challenge build` select their model through `--run inference.toml`. They verify the bundle’s recorded weight, config, and tokenizer hashes once before execution. Claims and challenges also require the recorded template hash to match. Missing provenance or changed files require a full import.
+`infer`, `claim build`, and `challenge build` select their models through `--specification`. They verify the bundle’s recorded weight, config, and tokenizer hashes once before execution. Claims and challenges also require the recorded template hash to match. Missing provenance or changed files require a full import.
 
 A full import records `model_commitments`, every committed model input by role,
 and `model_id`, the hash of that list, in the model manifest (version 4). Paths are
@@ -88,7 +88,7 @@ Useful partial modes:
 
 Partial external refreshes do not refresh model identity. Run a full import before using changed bundle files in a claim or challenge.
 
-`model import` no longer accepts `--prompt`, `--raw-prompt`, or `--tokens`. Runtime prompt text and token count live in `inference.toml`.
+`model import` no longer accepts `--prompt`, `--raw-prompt`, or `--tokens`. The token count is the specification's and the prompt text the case's.
 
 ## Model identity artifacts
 

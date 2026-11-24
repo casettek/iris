@@ -4,7 +4,7 @@
 
 ```bash
 cargo run --release -p iris-cli -- challenge build \
-  --run inference.toml \
+  --specification specification.toml \
   --claim-context target/staged-infer/runs/.../claim_bundle.json \
   --checkpoints target/staged-infer/runs/.../checkpoints.txt
 # or
@@ -16,7 +16,7 @@ just challenge \
 Flow:
 
 1. Load the claimed `checkpoints.txt` and use `claim_bundle.json` only as today's local carrier for `prepared_run.json`.
-2. Verify the frozen run manifest's hash, then prepare the challenger's own run: the claim's prompt, `raw_prompt`, `tokens` and claimed ids, from the model `--run` (default: `inference.toml`) selects. Run the checkpointed staged executor on that manifest. The prompt and token count are the claim's even if the current run spec has changed.
+2. Verify the frozen run manifest's hash, then prepare the challenger's own run: the claim's prompt, `raw_prompt`, `max_new_tokens` and claimed ids, on the models `--specification` (default: `specification.toml`) names. Run the checkpointed staged executor on that manifest. The prompt and token count are the claim's, whatever the challenger's specification and any case beside it say.
 3. After each recomputed checkpoint, hash the verifier's local checkpoint record and compare it to the claimed hash at the same index.
 4. If no divergence exists, report the claimed and recomputed traces.
 5. If a divergence exists, seed a replay directory with all prior recomputed stages.
@@ -101,13 +101,15 @@ The inputs above come from the claimer's own directory. A challenger of a
 submitted claim has none of it, and starts from the data-availability layer:
 
 ```bash
-iris claim fetch --submission <claim_submission.json> --run inference.toml --out fetched
-iris challenge build --run fetched/inference.toml --submission fetched/claim_submission.json
+iris claim fetch --submission <claim_submission.json> --specification specification.toml --out fetched
+iris challenge build --specification specification.toml --submission fetched/claim_submission.json
 ```
 
 `claim fetch` writes the claim's checkpoint hashes, checkpoints and input
 manifests as it posted them, the inputs its run was given (`posted_run.bin`),
-and a run spec over them ([the blockchains](../blockchain/overview.md#starting-from-the-blockchains)).
+and the case they hold, as `case.toml` ([the blockchains](../blockchain/overview.md#starting-from-the-blockchains)).
+The specification is the challenger's own, and `challenge build --submission`
+reads the case from beside the submission.
 `challenge build --submission` runs every stage on the inputs the claim's
 checkpoint names for it, each of which the claim posted, the procedure
 pins or an earlier stage made. It tokenizes nothing and runs no direct

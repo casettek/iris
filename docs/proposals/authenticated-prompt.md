@@ -32,7 +32,7 @@ for it, and what the output means. The examples in iris-backend keep their shape
 
 ## The run's new inputs
 
-A run that has a source gives these in place of `prompt_file`.
+A case of a specification that has a source gives these in place of a prompt.
 
 **The documents.** One or more response bodies, as bytes. They enter the stage as one list
 of chunks of at most 4,096 bytes, each naming its document and whether it is that
@@ -176,7 +176,7 @@ native stage twins call it and direct calls it, as with `prompt-core`.
 | Where | What it gains |
 | --- | --- |
 | `iris attest sign` | Host only. Signs a document's hash, length, server and target with a key file. This is the trusted stand-in for the notary |
-| Run spec | A `[source]` table naming the recipe, document, attestation and signer key. It excludes `prompt` and `prompt_file` |
+| Specification and case | A `[source]` table in the specification holds the recipe and the signer's key, and `[[form]]` tables the forms. The case names each document and its attestation, and gives no `prompt` or `prompt_file` |
 | Direct | Verifies the attestation, renders the prompt, runs the model, matches the forms. The rendered text is what the claim's binds are given |
 | Staged, native | `source` and `result` routines with checkpoints, like every other stage |
 | Raster | `raster-stages/source`, `raster-stages/result` |
@@ -232,7 +232,7 @@ until the notary replaces it.
 
 ## Build order
 
-1. `source-core`, `iris attest sign`, the `[source]` run spec and the direct path. The
+1. `source-core`, `iris attest sign`, the `[source]` table and the direct path. The
    backend's earthquake case runs through it. No chain change.
 2. The native `source` and `result` routines, the bind's new input, checkpoints, and a
    parity case for each row of the table above.
@@ -252,11 +252,11 @@ test tier's lock check passes.
   is not yet listed in the root `Cargo.toml`, because Raster's lock check reads that file
   and listing it would make every stage lock stale before step 3 re-locks them anyway.
 - `iris attest keygen` and `iris attest sign`.
-- A `[source]` table in the run spec, naming `recipe`, `signer` and a list of `documents`,
-  each a `document` and its `attestation`. The signer's key is a file the spec names
-  until a chain pins it.
+- A `[source]` table in what is now the specification, with the recipe and the signer's
+  key, and in the case a list of documents, each with its attestation. When this step
+  was built the recipe and the key were files a run spec named.
 - `iris source render`, which prints the record and can write the prompt text.
-- `iris infer` and `iris claim build` on such a spec use the prompt the source gives. A
+- `iris infer` and `iris claim build` on such a specification use the prompt the source gives. A
   source with a fault gives none, and the run stops there. `iris infer` also prints the
   source's facts and the result code. They are computed by the host from the same
   functions, and no chain states them yet.
@@ -370,7 +370,7 @@ lock, at manifest version 18.
   forms hash are what the contract's own forms give the submitted output. At a
   challenge: the claim record is in the output of the checkpoint before the last, which
   must run the check, and the result is in the last, which must run the result stage.
-  `iris claim check` takes the signer, the recipe and the forms from the run spec.
+  `iris claim check` takes the signer, the recipe and the forms from the specification.
 - **Challenges are unchanged.** `source` and `result` are stages with approved programs
   and chained inputs. A challenger recomputes, finds the first checkpoint that differs
   and replays that stage.

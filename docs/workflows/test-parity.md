@@ -130,7 +130,7 @@ the chain then checks it.
   is under the replay window on the pinned model, so the replay itself is
   not run here.
   The claim with a source is read back the same way (source scenario): the
-  documents must be the posted ones, and the run spec written over them must
+  documents must be the posted ones, and the case written over them must
   give the source record the claim names.
   Run against a Celestia node
   (`IRIS_CELESTIA_RPC`), the gate leaves both posted there, and
@@ -190,7 +190,7 @@ ends at the `result` stage, and every stage's output must be the same bytes thro
 and natively. The record of direct inference must be the claim's, its source digest the
 one the source step gives, and its result code the second form's. A contract's checks must
 pass with every native checkpoint held to the Raster run's boundary: those include the
-source record's signer and recipe and the result code, each against what the run spec
+source record's signer and recipe and the result code, each against what the specification
 names.
 
 Then the source stage and the binds are run, through Raster and natively, on sources that
@@ -282,8 +282,8 @@ proving is not part of the gate.
 
 Each invocation creates `target/parity/<run-id>/report.json` and prints its path.
 The versioned report records model-bundle checksums, executable hashes, comparison
-counts, results, timings, and any failure. Case directories contain their run
-spec, preparation artifacts, independent execution outputs, and separate logs.
+counts, results, timings, and any failure. Case directories contain their
+specification and case file, preparation artifacts, independent execution outputs, and separate logs.
 Build/import logs are at the run root. Files are retained on success and failure.
 
 Under the final `PASS` the command prints what the run covered, and the report
@@ -355,14 +355,14 @@ unchanged. Postcard inputs retain eager loading; malformed Raster inputs fail.
 persistent workers, and standalone staged execution. An unset variable means
 `selective`; other values are errors. The requested mode is recorded as
 `ple_loading` in `staged-performance.json`. For a real-model comparison, run the
-same release binary and run spec with `eager`, then `selective`, keeping the
+same release binary, specification and case with `eager`, then `selective`, keeping the
 weight-cache budget, worker count, and Rayon thread count identical. Compare
 every entry in `checkpoint_list.json` and `checkpoints.txt`; repeat in reversed
 order to assess OS-cache effects. On PowerShell, set the mode with:
 
 ```powershell
 $env:STAGED_INFER_PLE_LOADING = 'eager'
-# Run your normal iris claim build --run <spec> command.
+# Run your normal iris claim build command.
 $env:STAGED_INFER_PLE_LOADING = 'selective'
 # Repeat the same command and compare the two chain directories.
 ```
@@ -465,8 +465,8 @@ parity tests cover persistent workers and per-stage subprocess execution.
 
 ### Manual Gemma comparison
 
-Use a short run spec first (for example four requested output tokens), with the
-same prompt and model manifest for all builds. Invoke the CLI directly so the
+Use a short specification first (for example four requested output tokens), with the
+same case and model manifest for all builds. Invoke the CLI directly so the
 backend request timeout does not obscure whether the chain completed. Keep
 cache budget, worker count, Rayon threads, and PLE mode identical. For example,
 from the Iris repository, using the retained budget from the earlier run:
@@ -478,11 +478,11 @@ $env:RAYON_NUM_THREADS = '4'
 $env:STAGED_INFER_PLE_LOADING = 'selective'
 Remove-Item Env:RASTER_PARALLELISM -ErrorAction SilentlyContinue
 & ./target/staged-pages-validation/baseline-bin/iris.exe parity-worker `
-  --run ./gemma-short.toml --output ./target/gemma-pages-before
+  --specification ./gemma-short.toml --case ./case.toml --output ./target/gemma-pages-before
 & ./target/staged-pages-validation/embedding-bin/iris.exe parity-worker `
-  --run ./gemma-short.toml --output ./target/gemma-pages-embedding
+  --specification ./gemma-short.toml --case ./case.toml --output ./target/gemma-pages-embedding
 & ./target/windows/release/iris.exe parity-worker `
-  --run ./gemma-short.toml --output ./target/gemma-pages-after
+  --specification ./gemma-short.toml --case ./case.toml --output ./target/gemma-pages-after
 ```
 
 Use fresh output directories on repeats and reverse build order to assess OS

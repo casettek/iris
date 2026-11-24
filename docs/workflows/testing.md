@@ -69,7 +69,7 @@ committed at a window of two.
 just devstack-up        # the local blockchains, once
 just devstack-deploy    # the contracts, once per restart of the blockchains and after any contract change
 just test-blockchain
-just test-blockchain --real-model inference.toml
+just test-blockchain --real-model specification.toml
 ```
 
 The tier sends real transactions to the local EVM node and posts to the local
@@ -80,8 +80,8 @@ Everything it makes is kept under `target/blockchain-test/<run>`.
 
 The small model is the gemma family's, from the newest parity run of it. Its
 check stage is under the replay window, so there the forged verdict is
-followed only as far as the replay. `--real-model <run spec>` adds a
-claim of that spec's model, another layer's weights given to one of its
+followed only as far as the replay. `--real-model <specification>` adds a
+claim of that specification's model on the `case.toml` beside it, another layer's weights given to one of its
 stages, and the forged verdict, each of which must end in a challenge the
 contract accepts. With a short prompt on a GPU build that adds a few minutes.
 No proof is made.
@@ -136,7 +136,7 @@ several minutes without. The Groth16 wrapper runs in Docker either way.
 
 ### The real-model reference
 
-`tests/real-model/<model>/` holds `spec.toml`, the run, and `checkpoints.txt`,
+`tests/real-model/<model>/` holds `specification.toml`, `case.toml` and `checkpoints.txt`,
 one hash per stage of an honest claim. A model that is not imported here is
 reported as `SKIP`, not as a pass.
 

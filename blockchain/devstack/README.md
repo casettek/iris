@@ -69,7 +69,7 @@ use them anywhere else.
 
 ```bash
 just test-blockchain                              # about 3 minutes
-just test-blockchain --real-model inference.toml  # with a real model's claim, a few minutes more
+just test-blockchain --real-model specification.toml  # with a real model's claim, a few minutes more
 ```
 
 The blockchain tier makes an honest claim and a claim of each known lie, and holds
@@ -81,12 +81,12 @@ are the same steps by hand.
 
 ```bash
 source blockchain/devstack/env.sh
-iris claim build --run spec.toml --claimer 0x...   # builds the claim, posts nothing
+iris claim build --specification specification.toml --case case.toml --claimer 0x...   # builds the claim, posts nothing
 iris claim post --submission <dir>/claim_submission.json   # posts its data to Celestia
-iris test devstack submit claim --run spec.toml --submission <dir>/claim_submission.json
+iris test devstack submit claim --specification specification.toml --submission <dir>/claim_submission.json
 ```
 
-`iris test devstack submit` attests the blobs, relays their block roots, registers the run's
+`iris test devstack submit` attests the blobs, relays their block roots, registers the specification's
 procedure if it is not registered, and submits the claim. It prints
 whether the contract took it, or the error it refused it with.
 
@@ -103,14 +103,14 @@ Run them from the repository's root, or name that file with
 A challenger starts from what Celestia holds, in a directory of its own:
 
 ```bash
-# Read the claim's data back, with a run spec over what it posted.
-iris claim fetch --submission <claim_submission.json> --run spec.toml --out fetched
+# Read the claim's data back, with the case it posted.
+iris claim fetch --submission <claim_submission.json> --specification specification.toml --out fetched
 # Run its stages on the inputs it posted and replay the first whose output differs.
-iris challenge build --run fetched/inference.toml --submission fetched/claim_submission.json
+iris challenge build --specification specification.toml --submission fetched/claim_submission.json
 # Post the trace, then submit.
 iris challenge post --challenge <challenge_bundle.json> \
-  --submission fetched/claim_submission.json --run fetched/inference.toml --challenger 0x...
-iris test devstack submit challenge --run spec.toml \
+  --submission fetched/claim_submission.json --specification specification.toml --challenger 0x...
+iris test devstack submit challenge --specification specification.toml \
   --submission fetched/claim_submission.json --challenge <dir>/challenge_submission.json
 ```
 
@@ -121,7 +121,7 @@ claimer would submit, and submit it as a claim of its own:
 iris test corrupt-claim --submission <claim_submission.json> --stage <stage> \
   --claimer 0x... --output lying
 iris claim post --submission lying/claim_submission.json
-iris test devstack submit claim --run spec.toml --submission lying/claim_submission.json
+iris test devstack submit claim --specification specification.toml --submission lying/claim_submission.json
 ```
 
 A defender reads a challenge's trace back the same way: `iris challenge fetch
@@ -141,7 +141,7 @@ takes from an earlier one is that stage's output:
 
 ```bash
 iris claim audit --submission fetched/claim_submission.json \
-  --run fetched/inference.toml --calls calls.json
+  --specification specification.toml --calls calls.json
 iris test devstack submit fault --calls calls.json --call <n>
 ```
 
@@ -187,12 +187,12 @@ kept in `blockchain/contracts/test/fault_proof.json`. It needs Docker and no cha
 ## Check the contracts against iris
 
 ```bash
-iris test devstack replay claim --run spec.toml --submission <dir>/claim_submission.json
-iris test devstack replay challenge --run spec.toml \
+iris test devstack replay claim --specification specification.toml --submission <dir>/claim_submission.json
+iris test devstack replay challenge --specification specification.toml \
   --submission <dir>/claim_submission.json --challenge <dir>/challenge_submission.json
 ```
 
-`iris test devstack replay faults --run fetched/inference.toml --submission
+`iris test devstack replay faults --specification specification.toml --submission
 fetched/claim_submission.json` does the same for the two on-the-spot calls:
 every question the audit asks, asked of the contract.
 

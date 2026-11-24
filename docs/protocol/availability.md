@@ -189,8 +189,8 @@ fault-proof period, 2 days.
 A procedure (`Procedure`) is everything a contract judges a claim by:
 the procedure kind and its approved programs, one model per inference, the raw prompt
 flag and token budget, the signer a source must be signed by, and the forms the
-output is read by. Its id is a hash over all of it. `iris registry add --run
-<spec> --registry <file>` registers the run's procedure and prints the id;
+output is read by. Its id is a hash over all of it. `iris registry add --specification
+<file> --registry <file>` registers the specification's procedure and prints the id;
 `claim build` writes the id into the submission; `iris claim check --registry
 <file>` judges a claim by the procedure it names there.
 

@@ -27,7 +27,7 @@ takes.
 
 | Command | What it does |
 | --- | --- |
-| `iris infer` | Fast deterministic inference from a run spec. This is the only path that generates: it finds the output a claim then states. |
+| `iris infer` | Fast deterministic inference of a case under a specification. This is the only path that generates: it finds the output a claim then states. |
 
 ### Claim
 
@@ -42,7 +42,7 @@ takes.
 
 | Command | What it does |
 | --- | --- |
-| `iris claim fetch` | Read a submitted claim back from the layer into a new directory, with a run spec over what it posted. A challenger starts here. |
+| `iris claim fetch` | Read a submitted claim back from the layer into a new directory, with the case it posted. A challenger starts here. |
 | `iris claim audit` | Ask of a fetched claim what no replay shows: that every stage names an approved program and every input is an earlier stage's output, a pinned commitment or a posted value. Nothing is run. A fault found voids the claim on the spot. |
 | `iris challenge build` | Run every stage on the inputs the claim names, and replay through Raster the first stage whose output differs. |
 | `iris challenge post` | Post the replay's trace and write the challenge's submission. |
@@ -105,11 +105,12 @@ Nothing under `iris test` is anything an honest party runs.
 # Import a model: the small one checked in here, or your own bundle.
 cargo run --release -p iris-cli -- model import --model model-bundles/parity-gemma
 
-# Run it. `inference.toml` names the model manifest, the prompt and the token budget.
-cargo run --release -p iris-cli -- infer --run inference.toml
+# Run it. `specification.toml` names the model manifest and the token budget,
+# and `case.toml` the prompt. These two files are the defaults.
+cargo run --release -p iris-cli -- infer --specification specification.toml --case case.toml
 
 # Build a claim of what it answered.
-cargo run --release -p iris-cli -- claim build --run inference.toml
+cargo run --release -p iris-cli -- claim build --specification specification.toml --case case.toml
 ```
 
 The local blockchains, and a claim and a challenge taken through them, are in

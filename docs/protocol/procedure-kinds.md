@@ -71,45 +71,43 @@ keeps its files in `prompt/`.
 
 | Place | Field | Notes |
 | --- | --- | --- |
-| Run spec | `procedure_kind = "consensus"` | Optional. A spec that names none runs `single`. A name that is no procedure kind is an error |
+| Specification | `procedure_kind = "consensus"` | Optional. A specification that names none is of `single`. A name that is no procedure kind is an error |
 | `prepared_run.json` | `procedure_kind` | The claim's frozen run, which its claim bundle points at. Required, version 20 |
 | `claim_submission.json` | `procedure_kind` | Required, version 5. It holds one entry per inference, and for `consensus` the agreement |
 | `iris infer`, `iris claim build` | a `procedure_kind:` line | Printed before the result |
 
-A `single` run names its model as `model_manifest`. A run of several
-inferences names its models as `[[model]]` tables, in the order the procedure kind
-runs them, and no `model_manifest`:
+A specification names its models as `[[model]]` tables, in the order the
+procedure kind runs them: one for `single`, two for `consensus`.
 
 ```toml
 procedure_kind = "consensus"
-tokens = 16
+max_new_tokens = 16
 
 [[model]]
 manifest = "runtime/model-artifacts/gemma-4-E2B-q8/manifest.json"
+
 [[model]]
 manifest = "runtime/model-artifacts/ministral-3b-q8/manifest.json"
-
-[source]
-recipe = "recipe.json"
-signer = "signer.json"
-documents = [{ document = "event.bin", attestation = "event.attestation.json" }]
 ```
 
-The prompt, the source, `raw_prompt` and `tokens` are the run's, and the same
+A `[source]` table and the forms follow, for a prompt built from signed
+documents ([artifacts](artifacts.md#models-specifications-and-cases)).
+
+The prompt, the source, `raw_prompt` and `max_new_tokens` are the run's, and the same
 for every inference. Each model tokenizes the text with its own tokenizer and
 chat template, so the inferences have different prompt tokens, range counts and
 statements. Both statements name the same input text hash and source digest.
 
-Every command that acts on a run takes the run spec, so naming the procedure kind
+Every command that acts on a run takes the specification, so naming the procedure kind
 there is naming it for all of them:
 
 | Command | What it does with the name |
 | --- | --- |
 | `iris infer` | Runs the procedure kind directly: each inference in turn, then the result |
 | `iris claim build` | Builds the procedure kind's chain and records the name in the frozen run and the submission |
-| `iris claim pins` | Writes what a contract of the spec's procedure kind over its models pins |
-| `iris claim check` | Requires the submission to be of the spec's procedure kind and to hold what a claim of it does, each inference to be of the model the spec names for it, and the claim's last stage to run that procedure kind's result program |
-| `iris challenge build` | Refuses a run spec that names another procedure kind than the claim's, then rebuilds the claim's arrangement from what the claim froze: the text, the source inputs, the forms and each inference's claimed ids |
+| `iris claim pins` | Writes what a contract of the specification's procedure kind over its models pins |
+| `iris claim check` | Requires the submission to be of the specification's procedure kind and to hold what a claim of it does, each inference to be of the model the specification names for it, and the claim's last stage to run that procedure kind's result program |
+| `iris challenge build` | Refuses a specification that names another procedure kind than the claim's, then rebuilds the claim's arrangement from what the claim froze: the text, the source inputs, the forms and each inference's claimed ids |
 
 ## The consensus procedure kind
 

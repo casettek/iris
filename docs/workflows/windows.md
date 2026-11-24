@@ -40,12 +40,12 @@ artifact directory rather than replacing a manifest used by an active WSL run:
   --no-stage-fixtures
 ```
 
-Set `model_manifest` in a separate run spec to
-`runtime/windows-model-artifacts/gemma-4-E2B-q8/manifest.json`, then run:
+Name `runtime/windows-model-artifacts/gemma-4-E2B-q8/manifest.json` as the
+`[[model]]` `manifest` of a separate specification, then run:
 
 ```powershell
-.\target\windows\release\iris.exe infer --run inference-windows.toml
-.\target\windows\release\iris.exe claim build --run inference-windows.toml
+.\target\windows\release\iris.exe infer --specification specification-windows.toml --case case.toml
+.\target\windows\release\iris.exe claim build --specification specification-windows.toml --case case.toml
 ```
 
 For a backend running with Windows Node, set `IRIS_BINARY_PATH` to the absolute

@@ -176,7 +176,7 @@ wrong is challenged with a replay (`submitChallenge`), which the claimer can
 answer with a fault proof (`submitFaultProof`). The sections below say what
 each call checks.
 
-`iris claim audit --submission <fetched>/claim_submission.json --run <spec>`
+`iris claim audit --submission <fetched>/claim_submission.json --specification <file>`
 asks these of every checkpoint of a claim and every input its program has,
 from its files and the procedure alone, with nothing run. A challenger does this first. With
 `--calls <file>` it writes every call a contract can be asked, each with what
@@ -342,7 +342,7 @@ A challenger has the procedure and the models, and nothing of the
 claimer's. A defender has its own run of the disputed stage, and nothing of
 the challenger's. Each reads the rest back from Celestia.
 
-**`iris claim fetch --submission <claim_submission.json> --run <spec> --out <dir>`**
+**`iris claim fetch --submission <claim_submission.json> --specification <file> --out <dir>`**
 reads every blob the submission names and writes a new directory:
 
 | File | What it is |
@@ -351,15 +351,16 @@ reads every blob the submission names and writes a new directory:
 | `checkpoints.txt`, `checkpoint_list.json` | The claim's checkpoint hashes and its checkpoint list, byte for byte as posted |
 | `<stage>/input_manifest.json` | Each stage's input manifest |
 | `posted_run.bin` | The inputs the claim's run was given, as it posted them |
-| `inference.toml` | The reader's run spec over what the claim posted |
+| `case.toml` | The case the claim posted, for the reader's specification to run |
 
-`--run` is the reader's own spec of the procedure: the procedure kind, the
-models, the parameters, and for a claim with a source the recipe and the
-signer's key. The command keeps those and replaces the rest with what was
-posted: the prompt text the posted slices concatenate to, written into the
-spec itself, or the source's documents with their attestations.
+`--specification` is the reader's own specification of the procedure: the
+procedure kind, the models, the parameters, and for a claim with a source the
+recipe and the signer's key. The command leaves it as it is. The case it
+writes holds what was posted: the prompt text the posted slices concatenate
+to, in the case itself, or the source's documents with their attestations as
+files beside it.
 
-Nothing is written unless the spec describes the procedure the claim
+Nothing is written unless the specification describes the procedure the claim
 names, every blob was posted for the claimer, and together they hold the
 checkpoint list the claim names and the inputs of one run. The
 outputs that travel with the stand-in proof are not read: a challenger makes
@@ -369,8 +370,9 @@ The submission's bytes are the ones of the transaction. The command takes
 them as a file, and whoever runs it asks the contract whether it holds a
 claim with that id (`claims(bytes32)`), as iris-backend does.
 
-**`iris challenge build --run <dir>/inference.toml --submission <dir>/claim_submission.json`**
-builds the challenge from that directory alone. Every stage is run on the
+**`iris challenge build --specification <file> --submission <dir>/claim_submission.json`**
+builds the challenge from that directory and the challenger's own
+specification. The case is the `case.toml` beside the submission. Every stage is run on the
 inputs the claim's checkpoint names for it: nothing is tokenized and no
 output is found by direct inference, since the stages check what they are
 given. The command writes the chain the checkpoints describe
@@ -499,7 +501,7 @@ the layer into an empty directory and compared with what was posted: the
 list, the checkpoints and every input manifest. For the first of them a
 challenge is built from that directory alone, and must find and replay the
 same stage. The claim with a source is read back too: its documents must be
-the posted ones, and the run spec written over them must give the source
+the posted ones, and the case written over them must give the source
 record the claim names.
 
 ## What is open

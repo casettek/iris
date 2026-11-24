@@ -284,7 +284,7 @@ flag. So a chain run honestly on other weights refutes itself, as one run on
 non-greedy ids does. A claimer that ran other weights and still published a clean
 record has doctored a stage, and that stage is the divergence to replay. To
 challenge a claim, `challenge build` prepares the claim's prompt, token budget and
-claimed ids from the model `--run` selects. What a contract pins is the model id;
+claimed ids on the models `--specification` names. What a contract pins is the model id;
 see [what a contract holds and checks](checks.md).
 
 ## Cost

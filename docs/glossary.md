@@ -10,8 +10,8 @@ follows, so this page says which is which until they agree.
 | --- | --- | --- |
 | Procedure | The registered way a judgment is made: the stage programs, the models and the parameters a claim must have run under. A contract judges a claim by the procedure the claim names | |
 | Procedure kind | The arrangement a procedure's segments follow. Two exist: `single`, one inference on one model, and `consensus`, the same inference on two models and whether they agree | |
-| Specification | The document that defines a procedure | Three files: the run spec, the recipe file and the signer file |
-| Case | One run of a procedure: what a claim is about | No word |
+| Specification | The document that defines a procedure | |
+| Case | One run of a procedure: what a claim is about | |
 | Claim | What a claimer posts about a case: the statement, the checkpoint list and what the procedure requires beside them | |
 | Claimer, challenger, defender | Who posts a claim, who disputes one of its stages, and who answers that dispute | |
 | Segment | The stages that share one purpose. A procedure has a source segment, one inference segment per model, and a result segment | |

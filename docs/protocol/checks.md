@@ -34,8 +34,8 @@ three are the pins, a file, `contract_pins.json` (version 5):
 | `models` | One model entry per inference, in the order the procedure kind runs them |
 
 A model import writes the pins of the `single` procedure kind over that model beside
-the import's `manifest.json`. `iris claim pins --run <spec> --out <file>` writes
-those of the run spec's procedure kind over the models it names, from their imports and
+the import's `manifest.json`. `iris claim pins --specification <file> --out <file>` writes
+those of the specification's procedure kind over the models it names, from their imports and
 the stage projects' locks as they are when it runs.
 
 **The program entry** is true of the stage programs whatever model they run,
@@ -64,11 +64,11 @@ and what it requires of the claim's origin (`RequiredOrigin`):
 
 | Value | Meaning |
 | --- | --- |
-| The source, or none | The signer's key, and optionally the recipe's hash. With none, the claim must name no source. A procedure made from a run spec does not pin the recipe: the base prompt and the documents' domains are not pinned yet |
+| The source, or none | The signer's key, and optionally the recipe's hash. With none, the claim must name no source. A procedure made from a specification does not pin the recipe: the base prompt and the documents' domains are not pinned yet |
 | The forms | The texts the output is read by and the code of each, in order. May be empty |
 
-`iris claim check` reads all of them from the run spec: the signer and the
-recipe from the files its `[source]` table names, and the forms from the recipe.
+`iris claim check` reads all of them from the specification: the signer and the
+recipe from its `[source]` table, and the forms from its `[[form]]` tables.
 A contract holds the forms themselves and not only their hash, because it takes
 the result step on the submitted output itself (below).
 
@@ -346,7 +346,7 @@ claimed output follows from the claimer's inputs.
 
 ```bash
 cargo run --release -p iris-cli -- claim check \
-  --run inference.toml \
+  --specification specification.toml \
   --submission target/staged-infer/runs/.../claim_submission.json
 ```
 
@@ -360,7 +360,7 @@ the submission checks, the availability check and the challenge-time
 comparisons, the link comparison for every chained input of every stage. It
 prints eight lines for a `single` claim and nine for a `consensus` one, which
 has a statement line per inference. `--registry <file>` judges the claim by the
-procedure it names in that registry; without it, by the one the run spec
+procedure it names in that registry; without it, by the one the specification
 and the pins describe. `--submitted-at <seconds>` sets when the claim is taken
 to be submitted.
 `claim build` names its procedure, prepares the blobs it has to post, and
