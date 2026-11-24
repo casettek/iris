@@ -423,7 +423,7 @@ struct RunModel {
     manifest_path: PathBuf,
     manifest: ModelManifest,
     template_path: PathBuf,
-    /// The model's part of a chain, as its import wrote it.
+    /// The model's segment of a chain, as its import wrote it.
     part: String,
     tokenizer: serde_json::Value,
     prompt: inference_artifacts::PreparedPrompt,
@@ -542,7 +542,7 @@ fn prepare_run(
         _ => None,
     };
     let postable = given.is_some() || source_values.is_some() == source_inputs.is_some();
-    // The imports wrote each model's part of a chain. The pipeline makes the
+    // The imports wrote each model's segment of a chain. The pipeline makes the
     // chain's template from them.
     let parts: Vec<&str> = models.iter().map(|model| model.part.as_str()).collect();
     let template = pipeline.chain_template(&parts)?;

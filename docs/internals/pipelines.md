@@ -1,6 +1,6 @@
 # Pipelines
 
-A pipeline is a named arrangement of the parts a claim is made of. Two exist:
+A pipeline is a named arrangement of the segments a claim is made of. Two exist:
 `single`, one inference on one model, and `consensus`, the same inference on
 two models and whether they agree. Others can be added beside them without
 each command growing its own switch.
@@ -11,7 +11,7 @@ backend runs either pipeline.
 
 ## What a pipeline arranges
 
-| Part | What it is |
+| Segment | What it is |
 | --- | --- |
 | Source | Optional. The `source` stage, which states what the prompt text was built from |
 | Inferences | One or more. An inference is everything between the source and the result for one model: its binds, prompt checks, embeddings, layers and checks, ending in a check that states a claim record |
@@ -27,18 +27,18 @@ See [Raster chain](raster-chain.md) for the stages and
 
 ## How a chain is put together
 
-A model import knows nothing of pipelines. It writes one inference's part of a
+A model import knows nothing of pipelines. It writes one inference's segment of a
 chain to its `Raster.toml`: the chain inputs and the stages from the first bind
 to the last check. The first bind is given the constant source record, as every
-later bind is, so the part on its own is a chain for a text taken as given, with
+later bind is, so the segment on its own is a chain for a text taken as given, with
 no result.
 
-A pipeline makes the chain template from one part per model
+A pipeline makes the chain template from one segment per model
 (`Pipeline::chain_template`):
 
-1. the `[chain]` table and each part's chain inputs;
+1. the `[chain]` table and each segment's chain inputs;
 2. the `source` stage;
-3. each part's stages, in order, with its first bind taking the `source` stage's
+3. each segment's stages, in order, with its first bind taking the `source` stage's
    record in place of the constant;
 4. the pipeline's result stage, reading each inference's last check.
 
@@ -62,7 +62,7 @@ and the marks a run replaces with its range counts. `source` and the result
 stage have no label. The native runner reads a stage's kind through the label
 (`unlabelled`).
 
-Run preparation fills in each inference's part of the template from that
+Run preparation fills in each inference's segment of the template from that
 inference's run files, which are in a directory of their own under the run's
 `prompt/` directory: `prompt/m0/`, `prompt/m1/`. A pipeline of one inference
 keeps its files in `prompt/`.

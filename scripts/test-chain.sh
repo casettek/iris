@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Chain tier, a few minutes: claims against the contracts on the local chains
+# Chain tier, a few minutes: claims against the contracts on the local blockchains
 # (devstack/README.md). An honest claim must stand, and a claim that lies in
 # each known way must be caught the way the protocol catches it:
 #
@@ -25,7 +25,7 @@
 #                  replay, which the small model's is not. A few minutes on a
 #                  GPU build for a short prompt; no proof is made.
 #
-# Needs the local chains up (`just devstack-up`), the contracts deployed, and
+# Needs the local blockchains up (`just devstack-up`), the contracts deployed, and
 # a parity run of the gemma family's small model for the small claims (`just
 # test-parity`); reads the newest such run under target/parity, or the one
 # IRIS_PARITY_RUN names. The cases are written for that model: on the other
@@ -62,7 +62,7 @@ rpc_answers() {
         curl -s -m 5 -o /dev/null "$IRIS_CELESTIA_RPC"
 }
 if ! rpc_answers; then
-    echo "the local chains do not answer at $IRIS_EVM_RPC and $IRIS_CELESTIA_RPC: run \`just devstack-up\`" >&2
+    echo "the local blockchains do not answer at $IRIS_EVM_RPC and $IRIS_CELESTIA_RPC: run \`just devstack-up\`" >&2
     exit 1
 fi
 # The deployment file is written by the binary, so it is built first.

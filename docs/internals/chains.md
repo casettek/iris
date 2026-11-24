@@ -1,7 +1,7 @@
-# The chains: Celestia and the EVM contracts
+# Blockchain: Celestia and the EVM contracts
 
 A claim's data goes to Celestia, and the claim itself to a contract on an EVM
-chain. This page says what iris does on each, what the contracts check, and
+blockchain. This page says what iris does on each, what the contracts check, and
 which parts are still a trusted host in place of a proof.
 
 What is built: a claim arrives and is accepted or refused, a claim with a
@@ -116,7 +116,7 @@ posts the challenger's trace of the stage (`kind: "trace_body"`).
 
 The numbers above are a one-token claim of Gemma 4 E4B: 174 checkpoints. The
 input manifests are over half of it, and the run's inputs are 187 bytes. On
-the local chains that claim took about 1,074,000 gas to submit, and a
+the local blockchains that claim took about 1,074,000 gas to submit, and a
 challenge of it, with a 38 KB trace posted, about 278,000.
 
 ## The contracts
@@ -336,7 +336,7 @@ proof programs, which `iris evm proof-programs` prints, so it takes fault
 proofs of one build of Raster: after a Raster update, build iris and deploy
 again.
 
-## Starting from the chains
+## Starting from the blockchains
 
 A challenger has the configuration and the models, and nothing of the
 claimer's. A defender has its own run of the disputed stage, and nothing of

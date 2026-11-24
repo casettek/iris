@@ -10,7 +10,7 @@ use crate::io::{read_json, write_json};
 
 pub const CLAIM_BUNDLE_JSON: &str = "claim_bundle.json";
 
-/// Contract-shaped summary of a proposer claim.
+/// Contract-shaped summary of a claimer's claim.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ClaimBundle {
     pub version: u32,

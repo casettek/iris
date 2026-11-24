@@ -1,4 +1,4 @@
-//! The local chains, as a test drives them: iris sending its own calls to
+//! The local blockchains, as a test drives them: iris sending its own calls to
 //! the contracts `devstack/deploy.sh` deployed, and holding the contracts'
 //! answers to its own.
 //!

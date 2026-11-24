@@ -1,5 +1,5 @@
 #!/bin/bash
-# A single-validator Celestia chain, as celestia-app's scripts/single-node.sh
+# A single-validator Celestia blockchain, as celestia-app's scripts/single-node.sh
 # makes one: chain id `test`, one funded key named `validator`.
 set -o errexit -o nounset
 

@@ -8,7 +8,7 @@ the one stage that differs and the claimer has to answer with a proof.
 
 Inference is cut into stages, each a Raster program. A claim
 commits to one checkpoint per stage, posts its inputs and checkpoints to
-Celestia, and is submitted to contracts on an EVM chain.
+Celestia, and is submitted to contracts on an EVM blockchain.
 
 ## The commands
 
@@ -97,7 +97,7 @@ Nothing under `iris test` is anything an honest party runs.
 | `iris test corrupt-checkpoints` | Copy a checkpoint hash list with one hash changed. |
 | `iris test corrupt-challenge` | Flip a bit in a copy of a challenge's trace: the challenge a defender can refute. |
 | `iris test profile` | Measure guest cycles in a completed challenge and pick a heavy window to prove. |
-| `iris test devstack submit`, `replay`, `deployment` | Drive the local chains: send iris's calls to the contracts there, and hold the contracts to iris. |
+| `iris test devstack submit`, `replay`, `deployment` | Drive the local blockchains: send iris's calls to the contracts there, and hold the contracts to iris. |
 
 ## Quick start
 
@@ -112,7 +112,7 @@ cargo run --release -p iris-cli -- infer --run inference.toml
 cargo run --release -p iris-cli -- claim build --run inference.toml
 ```
 
-The local chains, and a claim and a challenge taken through them, are in
+The local blockchains, and a claim and a challenge taken through them, are in
 [devstack/README.md](devstack/README.md). `just --list` shows the shortcuts.
 
 ## Tests
@@ -121,7 +121,7 @@ The local chains, and a claim and a challenge taken through them, are in
 just test-fast      # minutes: formatting, unit tests, stage locks
 just test-full      # about half an hour: fast, the parity gate, the stage ladder
 just test-release   # about an hour: full, a real fault proof, a real model
-just test-chain     # about 3 minutes, with the local chains up: lying claims against the contracts
+just test-chain     # about 3 minutes, with the local blockchains up: lying claims against the contracts
 just fmt            # format; never `cargo fmt --all`
 ```
 
@@ -151,7 +151,7 @@ crates/
   prompt-core/, source-core/, det-num/   # the tokenizer, sources and results, deterministic numbers
 raster-stages/              # one Raster program per kind of stage, each with its Raster.lock
 contracts/                  # the Solidity contracts and their tests
-devstack/                   # the local Celestia and EVM chains
+devstack/                   # the local Celestia and EVM blockchains
 model-bundles/              # the small models the tests run
 runtime/                    # imported models
 scripts/                    # the test tiers and the formatter

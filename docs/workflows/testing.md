@@ -16,7 +16,7 @@ Iris makes four promises, and every check here is about one of them.
 3. **The catch can be proven.** The stage runs in the zkVM guest as it does
    natively, and a fault proof of it verifies.
 4. **The contracts say what iris says.** A claim iris would take the contracts
-   take, a claim that lies is void or challenged on the chains as the Rust
+   take, a claim that lies is void or challenged on the blockchains as the Rust
    rules say it is, and a challenge iris would refuse the contracts refuse.
 
 ## The tiers
@@ -25,11 +25,11 @@ Iris makes four promises, and every check here is about one of them.
 just test-fast      # minutes
 just test-full      # about half an hour
 just test-release   # about an hour; add --skip-proof to leave out the fault proof
-just test-chain     # about 3 minutes; needs the local chains
+just test-chain     # about 3 minutes; needs the local blockchains
 ```
 
 Each of the first three runs the one before it. The chain tier stands apart,
-because it needs the local chains running (see [The chain tier](#the-chain-tier)).
+because it needs the local blockchains running (see [The chain tier](#the-chain-tier)).
 Every check prints one line, `PASS` or `FAIL` with what a pass means and how
 long it took, and keeps its log under `target/test-logs/`. A tier runs all of
 its checks even after a failure and exits nonzero if any failed.
@@ -66,8 +66,8 @@ committed at a window of two.
 ## The chain tier
 
 ```sh
-just devstack-up        # the local chains, once
-just devstack-deploy    # the contracts, once per restart of the chains and after any contract change
+just devstack-up        # the local blockchains, once
+just devstack-deploy    # the contracts, once per restart of the blockchains and after any contract change
 just test-chain
 just test-chain --real-model inference.toml
 ```

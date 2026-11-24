@@ -98,7 +98,7 @@ checkpoint names and replaying the first whose output differs
 The second and third rows need no replay and have no answer: the contract
 reads the claim's own checkpoint, its configuration and what it posted, and
 there is nothing to wait for. They are two questions of one call, with five
-recorded faults ([the chains](chains.md#what-voidclaim-checks)).
+recorded faults ([the blockchains](chains.md#what-voidclaim-checks)).
 
 There is one proof in all of this: Raster's fault proof, in the last row.
 

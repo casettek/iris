@@ -7,11 +7,11 @@ natively and as Raster programs, and every stage is re-locked at manifest versio
 ## Goal
 
 **One inference whose prompt holds web data a signer vouches for, with a basic version of
-each part a larger process would grow from.**
+each segment a larger process would grow from.**
 
-There are four parts. The third exists.
+There are four segments. The third exists.
 
-| Part | What it does |
+| Segment | What it does |
 | --- | --- |
 | Source | Checks a signed attestation that a document came from a named server |
 | Prompt | Builds the prompt from a base prompt and values taken out of that document |
@@ -89,7 +89,7 @@ source ─▶ prompt_bind_p0 … check_c{last} ─▶ result
 
 ### `source` (new program)
 
-One stage holds the Source and Prompt parts for every document. Building the prompt alone
+One stage holds the Source and Prompt segments for every document. Building the prompt alone
 is a handful of tiles, and so is a small document: the two PAGER documents of the impact
 claim are 833 and 1,456 bytes.
 

@@ -217,7 +217,7 @@ pub fn is_address(text: &str) -> bool {
     })
 }
 
-/// Why a contract would not open a challenge window for a submission.
+/// Why a contract would not open a challenge period for a submission.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SubmissionRejection {
     /// The pins do not describe a model: the id is not the hash of the
@@ -547,7 +547,7 @@ pub fn check_pipeline(
 }
 
 /// The checks a contract makes on submission of one inference, before it
-/// opens a challenge window: `model` is the model the contract pins for that
+/// opens a challenge period: `model` is the model the contract pins for that
 /// inference. One equality covers the model and every parameter; the other
 /// two cover the output.
 ///

@@ -135,7 +135,7 @@ the chain then checks it.
   Run against a Celestia node
   (`IRIS_CELESTIA_RPC`), the gate leaves both posted there, and
   `iris test devstack replay` takes them to the contracts
-  ([the chains](../internals/chains.md)).
+  ([the blockchains](../internals/chains.md)).
 - Over wrong token marks, on the templated case: the prompt stages finish through
   both Raster and native-staged, agree byte for byte, and record the expected fault.
   This includes marks past the end of the prompt, a range with no marks, a token

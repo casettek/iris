@@ -1,6 +1,6 @@
-# Local chains
+# Local blockchains
 
-The two chains iris integrates against, run locally with Docker: a
+The two blockchains iris integrates against, run locally with Docker: a
 single-validator Celestia with a bridge node, and an EVM node with iris's
 contracts. Everything here is for development. Nothing is deployed anywhere.
 
@@ -26,7 +26,7 @@ just devstack-up        # start the three services and wait until they are healt
 just devstack-deploy    # build and deploy the contracts, write deployment.json
 ```
 
-`just devstack-down` stops the services and deletes their state. The chains
+`just devstack-down` stops the services and deletes their state. The blockchains
 start from nothing each time, so deploy again after starting.
 
 `deployment.json` is what everything else reads: the EVM node's address, the
@@ -48,7 +48,7 @@ are run by the same host here.
   under a root the oracle holds. The oracle has the shape of a Blobstream
   contract, so a bridge that proves the roots can take its place.
 
-iris holds no key of an account on either chain. It posts blobs to Celestia,
+iris holds no key of an account on either blockchain. It posts blobs to Celestia,
 signs as the attester, and writes the bytes of each contract call (`iris evm
 ...`). Whoever runs it sends them: iris-backend for a service. Here, `iris
 devstack submit` sends them itself through the account the local EVM node
@@ -98,7 +98,7 @@ The commands read where the contracts are from `devstack/deployment.json`.
 Run them from the repository's root, or name that file with
 `IRIS_CHAIN_DEPLOYMENT`.
 
-## Challenge a claim from the chains
+## Challenge a claim from the blockchains
 
 A challenger starts from what Celestia holds, in a directory of its own:
 
@@ -130,7 +130,7 @@ A defender reads a challenge's trace back the same way: `iris challenge fetch
 `iris da contents --submission <submission>` measures what a claim or a
 challenge put on Celestia: every blob read back, and its size split among
 what it holds.
-[The chains](../docs/internals/chains.md#starting-from-the-chains) says what
+[The blockchains](../docs/internals/chains.md#starting-from-the-blockchains) says what
 each of these checks.
 
 ## Point at a fault no replay shows

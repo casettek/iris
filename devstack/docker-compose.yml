@@ -1,4 +1,4 @@
-# The local chains iris integrates against: a single-validator Celestia with a
+# The local blockchains iris integrates against: a single-validator Celestia with a
 # bridge node, and an EVM node. See README.md in this directory.
 name: iris-devstack
 
@@ -15,7 +15,7 @@ services:
       - "127.0.0.1:${IRIS_CELESTIA_GRPC_PORT:-9090}:9090"
     healthcheck:
       # The latest block, and not a fixed early one: the validator prunes old
-      # blocks, and a check of one of those fails on a chain that is running.
+      # blocks, and a check of one of those fails on a blockchain that is running.
       test: ["CMD-SHELL", "curl -sf http://localhost:26657/block | jq -e '(.result.block.header.height | tonumber) >= 2' > /dev/null"]
       interval: 2s
       timeout: 5s

@@ -1,6 +1,7 @@
 # Documentation
 
-Three kinds of page. Start with [how iris works](internals/overview.md).
+Three kinds of page. Start with [how iris works](internals/overview.md). The
+[glossary](glossary.md) gives each word its one meaning.
 
 ## How it works
 
@@ -13,7 +14,7 @@ Three kinds of page. Start with [how iris works](internals/overview.md).
   two.
 - [What a contract holds and checks](internals/contract.md): the rules, as
   the Rust states them.
-- [The chains](internals/chains.md): Celestia and the EVM contracts: what
+- [Blockchain](internals/chains.md): Celestia and the EVM contracts: what
   each call checks, what it costs, and which parts are a trusted host.
 - [Data availability](internals/availability.md): what a claim and a
   challenge post, and the configuration registry.
@@ -28,7 +29,7 @@ Three kinds of page. Start with [how iris works](internals/overview.md).
 - [Claim build](workflows/claim-build.md)
 - [Challenge build](workflows/challenge-build.md)
 - [Fault proving](workflows/fault-prove.md)
-- [The local chains](../devstack/README.md): a claim and a challenge taken
+- [The local blockchains](../devstack/README.md): a claim and a challenge taken
   through Celestia and the contracts.
 - [Testing](workflows/testing.md): the tiers, and what a pass of each check
   means.

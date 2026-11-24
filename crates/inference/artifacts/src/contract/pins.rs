@@ -128,7 +128,7 @@ impl ContractPins {
 
     /// The pins of a pipeline over imported models: each model as its import
     /// identifies it, and the stage programs of the pipeline's chain over the
-    /// imports' parts, with the program id each stage project has locked now.
+    /// imports' segments, with the program id each stage project has locked now.
     pub fn of(pipeline: Pipeline, imports: &[(&ModelManifest, &str)]) -> Result<Self> {
         let parts: Vec<&str> = imports.iter().map(|(_, part)| *part).collect();
         let template = pipeline.chain_template(&parts)?;

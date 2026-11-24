@@ -154,7 +154,7 @@ enum Commands {
     },
     /// The tools a test stages a dispute with, and the test suites
     /// themselves: lying claims and challenges, what catching them costs,
-    /// the parity gate, and the local chains. Nothing an honest party runs.
+    /// the parity gate, and the local blockchains. Nothing an honest party runs.
     Test {
         #[command(subcommand)]
         command: TestCommand,

@@ -60,7 +60,7 @@ test-full:
 test-release *args:
     bash scripts/test-release.sh {{args}}
 
-# Chain (a few minutes, needs the local chains): lying claims against the contracts: [--deploy] [--real-model <run spec>]
+# Chain (a few minutes, needs the local blockchains): lying claims against the contracts: [--deploy] [--real-model <run spec>]
 test-chain *args:
     bash scripts/test-chain.sh {{args}}
 
@@ -84,11 +84,11 @@ test-parity *args:
 build-raster-stages:
     bash scripts/build-raster-stages.sh
 
-# The local chains (devstack/README.md): a Celestia validator and bridge node, and an EVM node.
+# The local blockchains (devstack/README.md): a Celestia validator and bridge node, and an EVM node.
 devstack-up:
     docker compose -f devstack/docker-compose.yml up -d --wait
 
-# Stop the local chains and delete their state.
+# Stop the local blockchains and delete their state.
 devstack-down:
     docker compose -f devstack/docker-compose.yml down -v
 

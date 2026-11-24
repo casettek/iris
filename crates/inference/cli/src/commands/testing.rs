@@ -3,7 +3,7 @@
 //! Nothing here is anything an honest party runs. A claimer runs `iris claim`,
 //! a challenger `iris claim fetch` and `iris challenge`, a defender `iris
 //! fault`. These make the wrong claims and challenges those commands must
-//! catch, measure what catching them costs, and drive the local chains.
+//! catch, measure what catching them costs, and drive the local blockchains.
 
 use super::claim::ClaimBuildArgs;
 use super::devstack::DevstackCommand;
@@ -45,7 +45,7 @@ pub(crate) enum TestCommand {
     CorruptChallenge(fault::CorruptArgs),
     /// Measure guest cycles and select a heavy fault window from a completed challenge.
     Profile(challenge_profile::ProfileArgs),
-    /// Drive the local chains (devstack/README.md): send iris's calls to the
+    /// Drive the local blockchains (devstack/README.md): send iris's calls to the
     /// contracts deployed there, and hold the contracts to iris.
     /// Transactions go out through an account the development node keeps
     /// unlocked, so this works against a development node and nothing else.

@@ -113,7 +113,7 @@ fn load_pins(path: &Path, pipeline: Pipeline, models: &[&ModelManifest]) -> Resu
 }
 
 /// The imports a run spec names: each model's manifest path, the manifest
-/// and the model's part of a chain.
+/// and the model's segment of a chain.
 fn run_imports(
     run_spec_path: &Path,
     run_spec: &InferenceRunSpec,

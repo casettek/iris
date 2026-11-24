@@ -134,7 +134,7 @@ impl std::fmt::Display for ChallengeRefusal {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StageAdmission {
     /// The stage names an approved program: the challenge is an ordinary
-    /// disputed one, and a defender must answer it within the window.
+    /// disputed one, and a defender must answer it within the fault-proof period.
     Disputed { program_commitment: String },
     /// The stage names a program outside the approved set, or none: the claim
     /// is void with no replay.

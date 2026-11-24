@@ -1,6 +1,6 @@
 //! The pipelines iris runs.
 //!
-//! A pipeline is a named arrangement of the parts a claim is made of: an
+//! A pipeline is a named arrangement of the segments a claim is made of: an
 //! optional source, one or more inferences, and the stage program that turns
 //! their outputs into a result. A run spec names its pipeline, and so every
 //! command that takes a run spec follows it: direct inference, claim build,
@@ -12,11 +12,11 @@
 //! holds is the shape: a claim of a pipeline must end in that pipeline's
 //! result program, which is in the approved set of no other.
 //!
-//! A model import writes one inference's part of a chain: its chain inputs
+//! A model import writes one inference's segment of a chain: its chain inputs
 //! and its stages, from the first bind to the last check, with the first
 //! bind given the constant source. [`Pipeline::chain_template`] makes the
-//! chain template of a run from one part per model: the `source` stage in
-//! front, each part's first bind taking its record, and the pipeline's
+//! chain template of a run from one segment per model: the `source` stage in
+//! front, each segment's first bind taking its record, and the pipeline's
 //! result stage behind.
 //!
 //! See `docs/internals/pipelines.md`.
@@ -174,7 +174,7 @@ fn project_line(stages_dir: &str, program: &str) -> String {
     format!("project = {project:?}\n")
 }
 
-/// Where the stage projects are, read from the first stage a part names:
+/// Where the stage projects are, read from the first stage a segment names:
 /// they are side by side, and a pipeline's own stages are beside a model's.
 fn stage_projects_dir(part: &str) -> Result<String> {
     let line = part
@@ -190,7 +190,7 @@ fn stage_projects_dir(part: &str) -> Result<String> {
         .unwrap_or_default())
 }
 
-/// One part with every name that is its own given the label: its chain
+/// One segment with every name that is its own given the label: its chain
 /// inputs, its stages and repeats, what its stages take from each other, and
 /// the marks a run replaces with its range counts.
 fn labelled(part: &str, label: &str) -> String {
@@ -230,8 +230,8 @@ fn labelled(part: &str, label: &str) -> String {
     out.join("\n")
 }
 
-/// The whole template: the `[chain]` table, every part's chain inputs, the
-/// source stage, every part's stages with its first bind taking the source
+/// The whole template: the `[chain]` table, every segment's chain inputs, the
+/// source stage, every segment's stages with its first bind taking the source
 /// stage's record, and the result stage.
 fn assemble(parts: &[&str], labels: &[String], source: &str, result: &str) -> Result<String> {
     let mut chain: Option<String> = None;
@@ -239,7 +239,7 @@ fn assemble(parts: &[&str], labels: &[String], source: &str, result: &str) -> Re
     let mut stages = String::new();
     for (part, label) in parts.iter().zip(labels) {
         let part = labelled(part, label);
-        // A part is its tables up to the first stage or repeat, then those.
+        // A segment is its tables up to the first stage or repeat, then those.
         let cut = part
             .find("\n[[chain.")
             .context("the chain template of a model import has no stages")?;
