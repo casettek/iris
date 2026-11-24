@@ -6,9 +6,9 @@
 use std::collections::BTreeSet;
 use std::error::Error;
 
-use inference_artifacts::MistralShape;
 use inference_kernels::mistral::num::{attention_scale_q32, yarn_inverse_frequencies};
 use layer_mistral::input::{LayerParams, TransformerLayer};
+use model_manifest::MistralShape;
 
 use super::externals::page_of_i32s;
 use super::{external_line, mapped_weights, write_external, ArtifactLayout, ChainLayers};

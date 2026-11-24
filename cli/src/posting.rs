@@ -2,7 +2,7 @@
 //! keeps blobs in a directory, a Blobstream that attests to every block it
 //! makes, and an availability proof the host checks by reading the blob.
 //!
-//! The rules a contract applies are in `inference_artifacts::availability`.
+//! The rules a contract applies are in `blockchain_rules::availability`.
 //! This module posts a claim's data and a challenger's trace body, and answers
 //! the two questions a contract asks of the layer. Every function a real
 //! network replaces is here and behind `AvailabilityLayer`; nothing else in
@@ -19,13 +19,13 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{bail, Context, Result};
-use inference_artifacts::availability::{
+use blockchain_rules::availability::{
     stub_blob_commitment, AvailabilityLayer, AvailabilityProof, Blob, BlobContents, BlobEntry,
     BlobPointer, CheckpointPackage, OutputReader, PostedBlob, PostedRun, WitnessedOutput,
     NAMESPACE_BYTES,
 };
-use inference_artifacts::checks::{ResultInOutput, SubmittedRecord};
-use inference_artifacts::{CheckpointList, PreparedRun, CHECKPOINTS_TXT, CHECKPOINT_LIST_JSON};
+use blockchain_rules::checks::{ResultInOutput, SubmittedRecord};
+use procedure_definition::{CheckpointList, PreparedRun, CHECKPOINTS_TXT, CHECKPOINT_LIST_JSON};
 use raster::core::trace::TraceCommitment;
 use raster_prover::trace::TraceCommitmentExt;
 use serde::{Deserialize, Serialize};
@@ -188,7 +188,7 @@ impl StubLayer {
         if !path.exists() {
             return Ok(Blobstream::default());
         }
-        inference_artifacts::read_json(&path)
+        procedure_definition::read_json(&path)
     }
 
     fn block_dir(&self, height: u64) -> PathBuf {
@@ -266,7 +266,7 @@ impl PostingLayer for StubLayer {
             time: now()?,
             data_root: self.data_root(height)?,
         });
-        inference_artifacts::write_json(&self.dir.join(BLOBSTREAM_JSON), &blobstream)?;
+        procedure_definition::write_json(&self.dir.join(BLOBSTREAM_JSON), &blobstream)?;
         Ok(pointers)
     }
 
@@ -354,8 +354,8 @@ impl OutputReader for HostReader {
         // The two procedure kinds' result records have no field in common at the
         // top, so an output reads as one of them or as neither.
         [
-            inference_artifacts::ProcedureKind::Consensus,
-            inference_artifacts::ProcedureKind::Single,
+            procedure_definition::ProcedureKind::Consensus,
+            procedure_definition::ProcedureKind::Single,
         ]
         .into_iter()
         .find_map(|procedure_kind| {
@@ -513,7 +513,7 @@ impl PreparedPosting {
             fs::write(&path, blob.encode())
                 .with_context(|| format!("failed to write {}", path.display()))?;
         }
-        inference_artifacts::write_json(&claim_dir.join(POSTING_OUTPUTS_JSON), &self.outputs)
+        procedure_definition::write_json(&claim_dir.join(POSTING_OUTPUTS_JSON), &self.outputs)
     }
 
     /// Read what `claim build` wrote beside the claim.
@@ -538,7 +538,7 @@ impl PreparedPosting {
         );
         Ok(Self {
             blobs,
-            outputs: inference_artifacts::read_json(&claim_dir.join(POSTING_OUTPUTS_JSON))?,
+            outputs: procedure_definition::read_json(&claim_dir.join(POSTING_OUTPUTS_JSON))?,
         })
     }
 
@@ -687,7 +687,7 @@ pub fn post_trace_body(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use inference_artifacts::availability::check_posted;
+    use blockchain_rules::availability::check_posted;
 
     fn layer(label: &str) -> StubLayer {
         let dir = std::env::temp_dir().join(format!(
@@ -703,7 +703,7 @@ mod tests {
 
     /// The inputs of a run of one inference over one prompt range.
     fn run() -> PostedRun {
-        use inference_artifacts::availability::{PostedInference, PromptText};
+        use blockchain_rules::availability::{PostedInference, PromptText};
         PostedRun {
             source: None,
             forms: Default::default(),

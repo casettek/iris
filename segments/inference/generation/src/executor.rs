@@ -1,7 +1,7 @@
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
-use inference_artifacts::{
+use procedure_definition::{
     read_case, read_specification, InferStageTiming, InferenceResult, InferenceRunReport,
     InferenceTimings,
 };
@@ -283,7 +283,7 @@ impl DirectInferenceExecutor {
             prompt_complete: output.prompt_complete,
             prompt_fault: output.prompt_fault,
             prompt_fault_position: output.prompt_fault_position,
-            statement_sha256: inference_artifacts::inference::lower_hex(
+            statement_sha256: procedure_definition::inference::lower_hex(
                 output.claim.statement.as_slice(),
             ),
             valid: output.claim.valid,
@@ -317,7 +317,7 @@ fn run_layers_and_logits(
     Vec<prefill_range::input::ActivationSequence>,
     crate::generation::PrefillLogits,
 )> {
-    if model.family() == inference_artifacts::ModelFamily::MistralDense {
+    if model.family() == model_manifest::ModelFamily::MistralDense {
         return run_mistral_layers_and_logits(model, seed, prior_layers, timings, label, trace);
     }
     let ple_source = seed.clone();
@@ -482,11 +482,11 @@ mod tests {
             config.specification_path,
             config
                 .base_dir
-                .join(inference_artifacts::SPECIFICATION_TOML)
+                .join(procedure_definition::SPECIFICATION_TOML)
         );
         assert_eq!(
             config.case_path,
-            config.base_dir.join(inference_artifacts::CASE_TOML)
+            config.base_dir.join(procedure_definition::CASE_TOML)
         );
     }
 }

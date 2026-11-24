@@ -1,5 +1,6 @@
 // Real native -> replay -> targeted corruption -> fault proof. No model required.
-use inference_artifacts::{file_sha256, read_json, write_json};
+use model_manifest::file_sha256;
+use procedure_definition::{read_json, write_json};
 use serde_json::{json, Value};
 use std::{
     fs,
@@ -128,9 +129,9 @@ risc0-zkvm={{path={:?}}}
     // A claim's checkpoint names the stage's locked program. The stage
     // directory is Raster's, which records none, so it is read from the lock.
     let mut checkpoint =
-        inference_artifacts::read_checkpoint_from_stage_dir(stage, &stage_dir).unwrap();
+        procedure_definition::read_checkpoint_from_stage_dir(stage, &stage_dir).unwrap();
     checkpoint.program_commitment =
-        inference_artifacts::checks::locked_program_commitment(&project).unwrap();
+        procedure_definition::checkpoint::locked_program_commitment(&project).unwrap();
     let model = dir.join("model.json");
     fs::write(&model, "{}").unwrap();
     let manifest = dir.join("Raster.toml");
@@ -143,7 +144,7 @@ risc0-zkvm={{path={:?}}}
     )
     .unwrap();
     let prepared = dir.join("prepared.json");
-    write_json(&prepared,&json!({"version":inference_artifacts::PREPARED_RUN_VERSION,"procedure_kind":"single","specification_path":dir.join("specification.toml"),"raw_prompt":true,
+    write_json(&prepared,&json!({"version":procedure_definition::PREPARED_RUN_VERSION,"procedure_kind":"single","specification_path":dir.join("specification.toml"),"raw_prompt":true,
         "inferences":[{"model_manifest_path":model,"model_id":"",
         "model_manifest_sha256":file_sha256(&model).unwrap(),"prompt":{"resolved_prompt":"","rendered_prompt":"","initial_pieces":[],"eos_token_ids":[]}}],
         "max_new_tokens":1,"run_manifest_path":manifest,"run_manifest_sha256":file_sha256(&manifest).unwrap()})).unwrap();

@@ -11,15 +11,15 @@
 use anyhow::{bail, ensure, Context, Result};
 use sha2::{Digest, Sha256};
 
-use inference_artifacts::availability::{
+use blockchain_rules::availability::{
     AvailabilityProof, BlobContents, PostedBlob, StatedRecords, NAMESPACE_BYTES,
 };
-use inference_artifacts::checkpoint::Checkpoint;
-use inference_artifacts::checks::{
+use blockchain_rules::checks::{
     ChallengeSubmission, ClaimSubmission, SubmittedConsensus, SubmittedRecord, SubmittedResult,
 };
-use inference_artifacts::encoding::{parse_hash, Encoder};
-use inference_artifacts::registry::Procedure;
+use blockchain_rules::registry::Procedure;
+use procedure_definition::checkpoint::Checkpoint;
+use procedure_definition::encoding::{parse_hash, Encoder};
 
 /// One ABI value.
 #[derive(Debug, Clone, PartialEq, Eq)]

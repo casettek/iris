@@ -88,9 +88,9 @@ pub(super) fn read_boundaries(
     // Current Raster also writes public chain-commitment metadata in no-auth
     // mode. Only per-stage execution traces/commit.bin imply authentication.
     let names = if direct {
-        inference_artifacts::read_json::<Vec<String>>(&dir.join("boundary-order.json"))?
+        procedure_definition::read_json::<Vec<String>>(&dir.join("boundary-order.json"))?
     } else {
-        inference_artifacts::read_stage_order(dir)?.context(
+        procedure_definition::read_stage_order(dir)?.context(
             "missing recorded stage inventory: expected chain-commitment or execution-times.json",
         )?
     };
@@ -128,7 +128,7 @@ pub(super) fn read_boundaries(
             if !direct {
                 for file in ["input.json", "input_manifest.json"] {
                     ensure!(path.join(file).is_file(), "{stage}: missing {file}");
-                    let _: Value = inference_artifacts::read_json(&path.join(file))?;
+                    let _: Value = procedure_definition::read_json(&path.join(file))?;
                 }
             }
             let boundary = read_boundary(&path)
@@ -142,7 +142,7 @@ pub(super) fn read_boundaries(
 pub(super) fn read_boundary(dir: &Path) -> Result<Boundary> {
     let bytes = fs::read(dir.join("output.bin"))?;
     let index = fs::read(dir.join("output.rindex"))?;
-    let manifest: Value = inference_artifacts::read_json(&dir.join("output_manifest.json"))?;
+    let manifest: Value = procedure_definition::read_json(&dir.join("output_manifest.json"))?;
     decode_boundary(
         bytes,
         &index,
@@ -230,7 +230,7 @@ pub(crate) fn value_json(value: &RasterValue) -> Result<Value> {
 
 pub(super) fn validate_errors(stage: &str, value: &Value) -> Result<()> {
     // A stage of a chain of several inferences is named for its own.
-    let stage = inference_artifacts::procedure_kind::unlabelled(stage);
+    let stage = procedure_definition::procedure_kind::unlabelled(stage);
     // `decode_init` and `output_finalize` are direct inference's names for
     // its empty edge and its final one; no chain stage has them.
     if stage != "prompt_prepare"
@@ -501,9 +501,9 @@ mod tests {
         fs::write(stage.join("output.bin"), data).unwrap();
         fs::write(stage.join("output.rindex"), index).unwrap();
         for file in ["input.json", "input_manifest.json"] {
-            inference_artifacts::write_json(&stage.join(file), &json!({})).unwrap();
+            procedure_definition::write_json(&stage.join(file), &json!({})).unwrap();
         }
-        inference_artifacts::write_json(
+        procedure_definition::write_json(
             &stage.join("output_manifest.json"),
             &json!({"output": {"commitment": root}}),
         )

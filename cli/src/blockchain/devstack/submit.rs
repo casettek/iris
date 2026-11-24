@@ -162,7 +162,7 @@ pub fn fault_proof(
 /// Send one of the calls `iris claim audit --calls` wrote: point the
 /// contract at a fault.
 pub fn fault(node: &Node, calls: &Path, index: usize) -> Result<Value> {
-    let calls: Vec<Value> = inference_artifacts::read_json(calls)?;
+    let calls: Vec<Value> = procedure_definition::read_json(calls)?;
     let call = calls
         .get(index)
         .with_context(|| format!("there is no call {index}: the audit wrote {}", calls.len()))?;

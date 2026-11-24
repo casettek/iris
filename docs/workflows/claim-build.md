@@ -17,7 +17,7 @@ Flow:
 5. `staged-infer` reads the run manifest and expands the [chain](../protocol/raster-chain.md).
 6. Each stage synthesizes `input.json` and `input_manifest.json`, runs the host implementation, and writes Raster-compatible output artifacts.
 7. Claim build applies the rule a challenger will. If the final record's committed verdict counts any claimed id that is not the greedy selection, claim build fails: direct and teacher-forced inference are not in parity, and the claim would refute itself.
-8. `inference-artifacts` scans the completed chain directory and writes the claim files.
+8. `blockchain-rules` scans the completed chain directory and writes the claim files.
 
 `prepared_run.json` holds no copy of the ids: the claim's output is the record the last range's check states with its edge, which also holds the input text's SHA-256, the model id and the output text's SHA-256.
 

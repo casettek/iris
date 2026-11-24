@@ -15,8 +15,8 @@ use std::fs;
 use std::path::Path;
 
 use anyhow::{bail, ensure, Context, Result};
-use inference_artifacts::checks::read_input_manifest;
-use inference_artifacts::CheckpointList;
+use blockchain_rules::checks::read_input_manifest;
+use procedure_definition::CheckpointList;
 use sha2::{Digest, Sha256};
 use staged_infer::chain_runner::{expanded_stages, ExpandedInput, ExpandedStage};
 
@@ -241,7 +241,7 @@ fn quoted(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use inference_artifacts::Checkpoint;
+    use procedure_definition::Checkpoint;
 
     const RUN: &str = r#"[chain]
 name = "iris"

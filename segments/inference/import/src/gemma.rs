@@ -8,7 +8,7 @@
 //! paging, commitments, the chain template and the manifest.
 //!
 //! A second family gets its own module beside this one, and a variant of
-//! `inference_artifacts::ModelFamily`.
+//! `model_manifest::ModelFamily`.
 
 use super::*;
 
@@ -697,7 +697,7 @@ pub(super) fn require_known_tensors<'a>(
     Err(format!(
         "the bundle has language-model weights the {} import does not read: {shown}{more}; \
          it is another model family, or one this build does not import yet",
-        inference_artifacts::ModelFamily::GemmaDense.name()
+        model_manifest::ModelFamily::GemmaDense.name()
     )
     .into())
 }
@@ -726,8 +726,8 @@ impl Shape {
     pub(super) fn manifest_shape(
         &self,
         text_config: &serde_json::Value,
-    ) -> inference_artifacts::DirectInferShape {
-        inference_artifacts::DirectInferShape {
+    ) -> model_manifest::DirectInferShape {
+        model_manifest::DirectInferShape {
             hidden_size: self.hidden as u32,
             num_hidden_layers: self.layers as u32,
             num_attention_heads: self.heads as u32,

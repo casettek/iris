@@ -10,11 +10,12 @@ use staged_infer::{
     ParityPolicy,
 };
 
-use inference_artifacts::checks::{ClaimSubmission, CLAIM_SUBMISSION_JSON};
-use inference_artifacts::{
-    file_sha256 as sha256_file, read_case, read_checkpoint_hashes, read_checkpoint_list, read_json,
-    read_specification, write_checkpoint_hashes, write_claim_artifacts_with_prepared_run,
-    write_json, Case, InferenceResult, ModelManifest, PreparedRun, Specification,
+use blockchain_rules::checks::{ClaimSubmission, CLAIM_SUBMISSION_JSON};
+use blockchain_rules::write_claim_artifacts_with_prepared_run;
+use model_manifest::{file_sha256 as sha256_file, ModelManifest};
+use procedure_definition::{
+    read_case, read_checkpoint_hashes, read_checkpoint_list, read_json, read_specification,
+    write_checkpoint_hashes, write_json, Case, InferenceResult, PreparedRun, Specification,
     CHECKPOINT_LIST_JSON, PREPARED_RUN_JSON,
 };
 use serde::Serialize;
@@ -56,7 +57,7 @@ pub(crate) struct PreparedClaimRun {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClaimBuildResult {
     /// The procedure kind the claim is of.
-    pub procedure_kind: inference_artifacts::ProcedureKind,
+    pub procedure_kind: procedure_definition::ProcedureKind,
     pub chain_dir: PathBuf,
     pub checkpoint_list_path: PathBuf,
     pub checkpoint_hashes_path: PathBuf,
@@ -67,7 +68,7 @@ pub struct ClaimBuildResult {
     /// The first inference's result: the whole result of a procedure kind of one.
     pub final_result: Option<InferenceResult>,
     /// What a consensus chain states besides.
-    pub consensus: Option<inference_artifacts::ConsensusOutcome>,
+    pub consensus: Option<procedure_definition::ConsensusOutcome>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -166,16 +167,16 @@ pub fn build_claim(options: ClaimBuildOptions) -> Result<ClaimBuildResult> {
         let Some(procedure) = crate::claim_check::run_procedure(&prepared.prepared_run)? else {
             return Ok(result);
         };
-        let mut submission: ClaimSubmission = inference_artifacts::read_json(path)?;
+        let mut submission: ClaimSubmission = procedure_definition::read_json(path)?;
         submission.procedure = procedure.id();
         if let Some(claimer) = options.claimer {
             anyhow::ensure!(
-                inference_artifacts::checks::is_address(&claimer),
+                blockchain_rules::checks::is_address(&claimer),
                 "`{claimer}` is not an address: give `0x` and 40 lowercase hex digits"
             );
             submission.claimer = claimer;
         }
-        inference_artifacts::write_json(path, &submission)?;
+        procedure_definition::write_json(path, &submission)?;
         let posting = crate::posting::claim_blobs(
             &result.chain_dir,
             &submission.claimer,
@@ -301,7 +302,7 @@ fn write_claim_result(
         )
         .collect();
     let consensus = checkpointed.consensus.as_ref().map(|consensus| {
-        inference_artifacts::checks::SubmittedConsensus {
+        blockchain_rules::checks::SubmittedConsensus {
             same_input: consensus.same_input,
             agree: consensus.agree,
             code: consensus.code,
@@ -319,7 +320,7 @@ fn write_claim_result(
             &checkpointed.chain_dir,
         )?;
         let path = checkpointed.chain_dir.join(CLAIM_SUBMISSION_JSON);
-        inference_artifacts::write_json(&path, &submission)?;
+        procedure_definition::write_json(&path, &submission)?;
         Some(path)
     } else {
         None
@@ -394,7 +395,7 @@ fn read_options_case(options: &ClaimBuildOptions) -> Result<(PathBuf, Case)> {
 /// stated a clean one.
 pub(crate) fn prepare_posted_run(
     options: &ClaimBuildOptions,
-    posted: &inference_artifacts::availability::PostedRun,
+    posted: &blockchain_rules::availability::PostedRun,
 ) -> Result<PreparedClaimRun> {
     let specification_path = absolute(&options.base_dir, &options.specification_path);
     let specification = read_specification(&specification_path)?;
@@ -444,7 +445,7 @@ pub(crate) fn prepare_challenge_run(
 /// the source stage ran on.
 pub(crate) type FrozenSource<'a> = (
     &'a run_prep::source::SourceRecord,
-    &'a inference_artifacts::PreparedSourceInputs,
+    &'a procedure_definition::PreparedSourceInputs,
 );
 
 /// What a claim fixed of its run, for a challenger to rebuild it under.
@@ -463,7 +464,7 @@ struct RunModel {
     /// The model's segment of a chain, as its import wrote it.
     segment: String,
     tokenizer: serde_json::Value,
-    prompt: inference_artifacts::PreparedPrompt,
+    prompt: procedure_definition::PreparedPrompt,
 }
 
 /// The files written for one inference of a run.
@@ -481,10 +482,10 @@ fn prepare_run(
     specification: &Specification,
     (case_path, case): (Option<PathBuf>, &Case),
     frozen: Option<Frozen<'_>>,
-    given: Option<&inference_artifacts::availability::PostedRun>,
+    given: Option<&blockchain_rules::availability::PostedRun>,
     check_claimed_length: bool,
 ) -> Result<PreparedClaimRun> {
-    use inference_artifacts::availability::{PostedInference, PostedRun, PostedSourceInputs};
+    use blockchain_rules::availability::{PostedInference, PostedRun, PostedSourceInputs};
     let specification_dir = specification_path
         .parent()
         .ok_or_else(|| anyhow::anyhow!("specification has no parent directory"))?;
@@ -603,7 +604,7 @@ fn prepare_run(
         },
     };
     let forms = run_prep::write_run_input(
-        inference_artifacts::availability::RunInput::Forms(&form_values),
+        blockchain_rules::availability::RunInput::Forms(&form_values),
         &prompt_dir,
         "result_forms",
     )?;
@@ -674,13 +675,13 @@ fn prepare_run(
         // The values a stage is given, which are what the claim posts. Each
         // file is written from its value, so the two cannot differ.
         let posted = PostedInference {
-            config: inference_artifacts::availability::RunConfig {
+            config: blockchain_rules::availability::RunConfig {
                 model_id: model.manifest.model_id.clone(),
                 raw_prompt: specification.raw_prompt,
                 max_new_tokens: specification.max_new_tokens,
                 range_size,
             },
-            schedule: inference_artifacts::availability::RunSchedule {
+            schedule: blockchain_rules::availability::RunSchedule {
                 prompt_ranges: u32::try_from(bound.ranges.len())
                     .context("prompt range count exceeds u32")?,
                 claimed_ranges: u32::try_from(claimed.len())
@@ -732,14 +733,14 @@ fn prepare_run(
         .with_context(|| format!("failed to write {}", manifest_path.display()))?;
     let run_manifest_sha256 = format!("{:x}", Sha256::digest(run_manifest.as_bytes()));
     let prepared_run = PreparedRun {
-        version: inference_artifacts::PREPARED_RUN_VERSION,
+        version: procedure_definition::PREPARED_RUN_VERSION,
         procedure_kind,
         specification_path,
         case_path,
         inferences: models
             .into_iter()
             .map(|model| {
-                Ok(inference_artifacts::PreparedInference {
+                Ok(procedure_definition::PreparedInference {
                     model_manifest_sha256: sha256_file(&model.manifest_path)?,
                     model_manifest_path: model.manifest_path,
                     model_id: model.manifest.model_id,
@@ -873,7 +874,7 @@ pub(crate) fn render_ranged_manifest(
     config: &run_prep::RunFile,
     schedule: &run_prep::RunFile,
     text_digest: &run_prep::RunFile,
-    source: Option<&inference_artifacts::PreparedSourceInputs>,
+    source: Option<&procedure_definition::PreparedSourceInputs>,
     forms: &run_prep::RunFile,
     prompt: &[run_prep::RunFile],
     claimed: &[run_prep::RunFile],
@@ -904,7 +905,7 @@ pub(crate) fn render_chain(
     template: &str,
     template_dir: &Path,
     inferences: &[InferenceFiles<'_>],
-    source: Option<&inference_artifacts::PreparedSourceInputs>,
+    source: Option<&procedure_definition::PreparedSourceInputs>,
     forms: &run_prep::RunFile,
 ) -> Result<String> {
     anyhow::ensure!(!inferences.is_empty(), "a run needs at least one inference");
@@ -918,7 +919,7 @@ pub(crate) fn render_chain(
             "a run needs one slice of text for each prompt range"
         );
     }
-    let template = inference_artifacts::resolve_raster_manifest_paths(template, template_dir)?;
+    let template = model_manifest::resolve_raster_manifest_paths(template, template_dir)?;
     let template = match source {
         Some(_) => template,
         None => without_source_stage(&template)?,
@@ -1182,7 +1183,7 @@ fn absolute(base: &Path, path: &Path) -> PathBuf {
 pub(crate) fn select_checkpoint_index(
     selection: &CorruptCheckpointSelection,
     hashes: &[String],
-    list: Option<&inference_artifacts::CheckpointList>,
+    list: Option<&procedure_definition::CheckpointList>,
 ) -> Result<usize> {
     match selection {
         CorruptCheckpointSelection::Index(index) => {
@@ -1274,7 +1275,8 @@ fn run_id(specification_path: &Path, rendered_prompt: &str, max_new_tokens: u32)
 #[cfg(test)]
 mod tests {
     use super::*;
-    use inference_artifacts::{CHECKPOINT_LIST_JSON, CLAIM_BUNDLE_JSON};
+    use blockchain_rules::CLAIM_BUNDLE_JSON;
+    use procedure_definition::CHECKPOINT_LIST_JSON;
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -1401,18 +1403,18 @@ mod tests {
             },
             &manifest_path,
             &PreparedRun {
-                version: inference_artifacts::PREPARED_RUN_VERSION,
-                procedure_kind: inference_artifacts::ProcedureKind::Single,
+                version: procedure_definition::PREPARED_RUN_VERSION,
+                procedure_kind: procedure_definition::ProcedureKind::Single,
                 specification_path: base.join("specification.toml"),
                 case_path: Some(base.join("case.toml")),
-                inferences: vec![inference_artifacts::PreparedInference {
+                inferences: vec![procedure_definition::PreparedInference {
                     model_manifest_path: base.join("model-artifacts/manifest.json"),
                     model_manifest_sha256: String::from("model-sha"),
                     model_id: String::from("model-id"),
-                    prompt: inference_artifacts::PreparedPrompt {
+                    prompt: procedure_definition::PreparedPrompt {
                         resolved_prompt: String::from("hello"),
                         rendered_prompt: String::from("hello"),
-                        initial_pieces: vec![inference_artifacts::PreparedPiece {
+                        initial_pieces: vec![procedure_definition::PreparedPiece {
                             text: String::from("hello"),
                             segment: 0,
                         }],
@@ -1437,7 +1439,7 @@ mod tests {
         );
         assert_eq!(
             result.checkpoint_hashes_path.file_name().unwrap(),
-            inference_artifacts::CHECKPOINT_HASHES_TXT
+            procedure_definition::CHECKPOINT_HASHES_TXT
         );
         assert_eq!(
             result.claim_bundle_path.file_name().unwrap(),
@@ -1458,7 +1460,7 @@ mod tests {
             String::from("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
             String::from("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"),
         ];
-        inference_artifacts::write_checkpoint_hashes(&hashes_path, &hashes).unwrap();
+        procedure_definition::write_checkpoint_hashes(&hashes_path, &hashes).unwrap();
 
         let result = corrupt_checkpoint_hashes(CorruptCheckpointHashesOptions {
             hashes_path: hashes_path.clone(),
@@ -1468,7 +1470,7 @@ mod tests {
         })
         .unwrap();
 
-        let corrupted = inference_artifacts::read_checkpoint_hashes(&output_path).unwrap();
+        let corrupted = procedure_definition::read_checkpoint_hashes(&output_path).unwrap();
         assert_eq!(result.checkpoint_index, 1);
         assert_eq!(result.checkpoint_number, 2);
         assert_eq!(corrupted[0], hashes[0]);
@@ -1486,9 +1488,9 @@ mod tests {
         fs::create_dir_all(&base).unwrap();
         let hashes_path = base.join("checkpoints.txt");
         let list_path = base.join(CHECKPOINT_LIST_JSON);
-        let list = inference_artifacts::CheckpointList {
+        let list = procedure_definition::CheckpointList {
             checkpoints: vec![
-                inference_artifacts::Checkpoint {
+                procedure_definition::Checkpoint {
                     stage: String::from("stage_a"),
                     program_commitment: String::from("program-a"),
                     input_sources: Default::default(),
@@ -1496,7 +1498,7 @@ mod tests {
                     output_commitment: String::from("output-a"),
                     output_sha256: String::from("sha-a"),
                 },
-                inference_artifacts::Checkpoint {
+                procedure_definition::Checkpoint {
                     stage: String::from("stage_b"),
                     program_commitment: String::from("program-b"),
                     input_sources: Default::default(),
@@ -1506,9 +1508,9 @@ mod tests {
                 },
             ],
         };
-        inference_artifacts::write_json(&list_path, &list).unwrap();
-        let hashes = inference_artifacts::checkpoint_hashes(&list).unwrap();
-        inference_artifacts::write_checkpoint_hashes(&hashes_path, &hashes).unwrap();
+        procedure_definition::write_json(&list_path, &list).unwrap();
+        let hashes = procedure_definition::checkpoint_hashes(&list).unwrap();
+        procedure_definition::write_checkpoint_hashes(&hashes_path, &hashes).unwrap();
 
         let result = corrupt_checkpoint_hashes(CorruptCheckpointHashesOptions {
             hashes_path: hashes_path.clone(),
@@ -1541,7 +1543,7 @@ mod tests {
         )
         .unwrap();
         // A challenger's case is the claim's prompt, and no file.
-        let case = inference_artifacts::Case::of_prompt(String::from("h"));
+        let case = procedure_definition::Case::of_prompt(String::from("h"));
         let options = |ids: Option<Vec<u32>>| ClaimBuildOptions {
             base_dir: base.clone(),
             case_path: None,
@@ -1562,7 +1564,7 @@ mod tests {
         let run = &prepared.prepared_run;
         assert_eq!(
             run.procedure_kind,
-            inference_artifacts::ProcedureKind::Consensus
+            procedure_definition::ProcedureKind::Consensus
         );
         assert_eq!(run.inferences.len(), 2);
         assert_ne!(run.inferences[0].model_id, run.inferences[1].model_id);
@@ -1891,12 +1893,12 @@ inputs.forms = { external = { path = "/repo/target/iris/run-prompt-placeholder/r
         assert!(!manifest.contains(r#"from = "source""#));
         assert_eq!(manifest.matches(r#"commitment = "n0""#).count(), 2);
 
-        let run_file = |name: &str, commitment: &str| inference_artifacts::RunFileRef {
+        let run_file = |name: &str, commitment: &str| procedure_definition::RunFileRef {
             path: PathBuf::from(format!("/tmp/run/prompt/{name}.rastered")),
             index_path: PathBuf::from(format!("/tmp/run/prompt/{name}.rindex")),
             commitment: commitment.into(),
         };
-        let source = inference_artifacts::PreparedSourceInputs {
+        let source = procedure_definition::PreparedSourceInputs {
             signer: run_file("source_signer", "k0"),
             recipe: run_file("source_recipe", "r0"),
             documents: run_file("source_documents", "d0"),

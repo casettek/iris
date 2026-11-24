@@ -6,8 +6,8 @@ data posted to the data-availability layer (Celestia), and a challenge only
 with its trace body posted. A claim also names, by id, the registered
 procedure it is a claim of.
 
-The rules are in `inference_artifacts::availability` and
-`inference_artifacts::registry`; [the contract page](checks.md) lists the
+The rules are in `blockchain_rules::availability` and
+`blockchain_rules::registry`; [the contract page](checks.md) lists the
 checks in the order a contract makes them. The layer is behind one trait
 (`cli/src/posting.rs`), with two implementations: a
 stand-in directory, and a local Celestia node. Blobstream and the availability

@@ -8,15 +8,15 @@ use direct_infer::model::{
 };
 use direct_infer::view_kernels::{run_prefill_range_view, score_prefill_logits_view};
 use direct_infer::{DirectInferenceConfig, DirectInferenceExecutor};
-use inference_artifacts::{
-    write_json, DirectInferBundle, DirectInferShape, ModelManifest, CASE_TOML, MODEL_ARTIFACTS_DIR,
-    MODEL_MANIFEST_JSON, SPECIFICATION_TOML,
-};
 use inference_kernels::tensor::{dot_bits, matvec_from_source, Matrix, MatrixSource};
+use model_manifest::{
+    DirectInferBundle, DirectInferShape, ModelManifest, MODEL_ARTIFACTS_DIR, MODEL_MANIFEST_JSON,
+};
 use prefill_range::input::{
     pack_i32s, unpack_i32s, ActivationRow, ActivationSequence, LayerParams, PleLayerInputs, PleRow,
     TransformerLayer,
 };
+use procedure_definition::{write_json, CASE_TOML, SPECIFICATION_TOML};
 use raster::{Bytes, List};
 use sequence_check::input::FinalHeadParams;
 use sha2::{Digest, Sha256};
@@ -413,11 +413,9 @@ fn direct_executor_runs_from_direct_manifest_without_raster_toml() {
     write_json(
         &manifest_path,
         &ModelManifest {
-            version: inference_artifacts::MODEL_MANIFEST_VERSION,
-            family: inference_artifacts::ModelFamily::GemmaDense
-                .name()
-                .to_string(),
-            model_id: inference_artifacts::model_id_of(&[]),
+            version: model_manifest::MODEL_MANIFEST_VERSION,
+            family: model_manifest::ModelFamily::GemmaDense.name().to_string(),
+            model_id: model_manifest::model_id_of(&[]),
             model_commitments: Vec::new(),
             range_size: 512,
             bundle: DirectInferBundle {
@@ -486,7 +484,7 @@ fn direct_executor_stops_at_eos_and_reports_only_selected_tokens() {
         fs::create_dir_all(&dir).unwrap();
         write_direct_fixture(&dir);
         let manifest_path = dir.join(MODEL_ARTIFACTS_DIR).join(MODEL_MANIFEST_JSON);
-        let mut manifest: ModelManifest = inference_artifacts::read_json(&manifest_path).unwrap();
+        let mut manifest: ModelManifest = procedure_definition::read_json(&manifest_path).unwrap();
         manifest.eos_token_ids = vec![eos_id];
         write_json(&manifest_path, &manifest).unwrap();
         let specification_path = write_specification(&dir, &manifest_path, "h", 8);
@@ -688,11 +686,9 @@ fn write_tiny_model_detwgt(path: &Path) {
 
 fn tiny_direct_manifest(detwgt: &Path, config: &Path, tokenizer: &Path) -> ModelManifest {
     ModelManifest {
-        version: inference_artifacts::MODEL_MANIFEST_VERSION,
-        family: inference_artifacts::ModelFamily::GemmaDense
-            .name()
-            .to_string(),
-        model_id: inference_artifacts::model_id_of(&[]),
+        version: model_manifest::MODEL_MANIFEST_VERSION,
+        family: model_manifest::ModelFamily::GemmaDense.name().to_string(),
+        model_id: model_manifest::model_id_of(&[]),
         model_commitments: Vec::new(),
         range_size: 512,
         bundle: DirectInferBundle {

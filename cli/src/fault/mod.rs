@@ -1,10 +1,9 @@
 //! Fault workflow orchestration. Raster remains the execution/proof implementation.
 
 use anyhow::{ensure, Context, Result};
-use inference_artifacts::{
-    file_sha256, read_json, write_json, ChallengeBundle, CheckpointList, ClaimBundle, PreparedRun,
-    ReplayPackage,
-};
+use blockchain_rules::{ChallengeBundle, ClaimBundle, ReplayPackage};
+use model_manifest::file_sha256;
+use procedure_definition::{read_json, write_json, CheckpointList, PreparedRun};
 use raster_core::transition::{TransitionJournal, TransitionState};
 use raster_prover::commitment_file::CommitmentFile;
 use serde_json::json;
@@ -199,7 +198,7 @@ pub fn prove(args: ProveArgs) -> Result<()> {
         .run_manifest_path
         .as_ref()
         .context("missing run manifest")?;
-    inference_artifacts::verify_file_sha256(
+    model_manifest::verify_file_sha256(
         manifest,
         prepared
             .run_manifest_sha256
@@ -208,7 +207,7 @@ pub fn prove(args: ProveArgs) -> Result<()> {
         "frozen run",
     )?;
     for inference in &prepared.inferences {
-        inference_artifacts::verify_file_sha256(
+        model_manifest::verify_file_sha256(
             &inference.model_manifest_path,
             &inference.model_manifest_sha256,
             "frozen model",
@@ -232,7 +231,7 @@ pub fn prove(args: ProveArgs) -> Result<()> {
         read_json(&reference(&challenge_path, &bundle.replay_package_path))?;
     ensure!(package.stage == bundle.stage, "challenge stage mismatch");
     let baseline =
-        inference_artifacts::read_checkpoint_from_stage_dir(&bundle.stage, &package.stage_dir)?;
+        procedure_definition::read_checkpoint_from_stage_dir(&bundle.stage, &package.stage_dir)?;
     // The replayed stage directory is Raster's: it states the boundary and
     // not the program id or producers the claimer's checkpoint also names.
     ensure!(
@@ -243,7 +242,7 @@ pub fn prove(args: ProveArgs) -> Result<()> {
     // The challenge as Raster states it, about the claimer's checkpoint: the
     // disputed trace commitment, and the output the challenger's run ended in.
     let claimed_checkpoint = &claim_list.checkpoints[index];
-    let challenge = inference_artifacts::checks::stage_challenge(
+    let challenge = blockchain_rules::checks::stage_challenge(
         claimed_checkpoint,
         disputed.header(),
         &baseline.output_sha256,
@@ -443,7 +442,7 @@ pub fn prove(args: ProveArgs) -> Result<()> {
         &output.join("fault_bundle.json"),
         &json!({"version":1,"outcome":"proved","verified":true,
         "stage":bundle.stage,"commitment_sha256":file_sha256(&disputed_path)?,
-        "dispute_commitment_sha256":inference_artifacts::checks::dispute_digest(claimed_checkpoint).map(hex::encode),
+        "dispute_commitment_sha256":blockchain_rules::checks::dispute_digest(claimed_checkpoint).map(hex::encode),
         "proof_path":proof_path,"proof_sha256":file_sha256(&proof_path)?,"proof_bytes":fs::metadata(&proof_path)?.len(),"proof_seal_bytes":receipt.seal_size()}),
     )?;
     Ok(())
@@ -492,12 +491,12 @@ fn validate_estimate_report(report: &serde_json::Value, disputed: &CommitmentFil
 /// about the claimer's checkpoint: its program, on its inputs. This is
 /// Raster's own defence rule, applied to the checkpoint.
 fn defends(
-    checkpoint: &inference_artifacts::Checkpoint,
+    checkpoint: &procedure_definition::Checkpoint,
     challenge: &raster_core::chain::StageChallenge,
     journal: &TransitionJournal,
     transition_image_id: &[u8],
 ) -> Result<()> {
-    inference_artifacts::checks::check_defence(checkpoint, challenge, journal, transition_image_id)
+    blockchain_rules::checks::check_defence(checkpoint, challenge, journal, transition_image_id)
         .map(|_| ())
         .map_err(|rejection| {
             anyhow::anyhow!(

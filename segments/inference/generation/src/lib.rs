@@ -10,4 +10,4 @@ pub mod view_kernels;
 
 pub use config::DirectInferenceConfig;
 pub use executor::DirectInferenceExecutor;
-pub use inference_artifacts::InferenceResult;
+pub use procedure_definition::InferenceResult;

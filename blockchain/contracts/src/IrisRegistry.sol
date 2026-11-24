@@ -5,7 +5,7 @@ import "./IrisTypes.sol";
 import "./IrisEncoding.sol";
 
 /// The procedures claims are made of, each registered before any claim
-/// arrives and named by its id: `inference_artifacts::registry`.
+/// arrives and named by its id: `blockchain_rules::registry`.
 ///
 /// A procedure's id is computed here from the procedure itself, in
 /// the encoding `Procedure::id` uses, so the id a claim names stands for

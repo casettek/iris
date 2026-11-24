@@ -51,7 +51,7 @@ impl Deployment {
 
     pub fn read() -> Result<Self> {
         let path = Self::path();
-        inference_artifacts::read_json(&path).with_context(|| {
+        procedure_definition::read_json(&path).with_context(|| {
             format!(
                 "no deployment at {}: deploy the contracts (`just devstack-deploy`), and name \
                  the file with {DEPLOYMENT_ENV} when this is not run from the repository's root",
@@ -287,6 +287,6 @@ pub fn write_deployment(path: &Path, mut fields: Value, errors_text: &str) -> Re
     }
     let count = errors.len();
     fields["errors"] = json!(errors);
-    inference_artifacts::write_json(path, &fields)?;
+    procedure_definition::write_json(path, &fields)?;
     Ok(count)
 }

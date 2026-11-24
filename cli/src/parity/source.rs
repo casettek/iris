@@ -12,10 +12,11 @@ use std::fs;
 use std::path::Path;
 
 use anyhow::{ensure, Context, Result};
-use inference_artifacts::{
-    Case, CaseDocument, ModelManifest, PathStep, PreparedSourceInputs, ProcedureKind,
-    Specification, SpecificationDocument, SpecificationField, SpecificationForm,
-    SpecificationModel, SpecificationSource, CASE_TOML, SPECIFICATION_TOML,
+use model_manifest::ModelManifest;
+use procedure_definition::{
+    Case, CaseDocument, PathStep, PreparedSourceInputs, ProcedureKind, Specification,
+    SpecificationDocument, SpecificationField, SpecificationForm, SpecificationModel,
+    SpecificationSource, CASE_TOML, SPECIFICATION_TOML,
 };
 use run_prep::source::{LoadedDocument, LoadedSource};
 use serde_json::{json, Value};
@@ -151,7 +152,7 @@ pub(super) fn write_run(
         let file = std::path::PathBuf::from(format!("document_{index}.bin"));
         let attestation = std::path::PathBuf::from(format!("document_{index}.json"));
         fs::write(dir.join(&file), &document.body)?;
-        inference_artifacts::write_json(&dir.join(&attestation), &document.attestation)?;
+        procedure_definition::write_json(&dir.join(&attestation), &document.attestation)?;
         documents.push(CaseDocument { file, attestation });
     }
     let specification = Specification {
@@ -199,7 +200,7 @@ fn direct_output(
         .arg(dir.join("native-direct"))
         .arg("--direct");
     logged(run, &dir.join("native-direct.log")).context("direct inference")?;
-    let result: Value = inference_artifacts::read_json(&dir.join("native-direct/result.json"))?;
+    let result: Value = procedure_definition::read_json(&dir.join("native-direct/result.json"))?;
     Ok(result["generated_text"]
         .as_str()
         .context("direct inference recorded no text")?
@@ -247,14 +248,14 @@ fn run_honest(
         }
         logged(run, &dir.join(format!("{name}.log"))).with_context(|| name.to_string())?;
     }
-    let staged: Value = inference_artifacts::read_json(&dir.join("native-staged/result.json"))?;
-    let direct: Value = inference_artifacts::read_json(&dir.join("native-direct/result.json"))?;
+    let staged: Value = procedure_definition::read_json(&dir.join("native-staged/result.json"))?;
+    let direct: Value = procedure_definition::read_json(&dir.join("native-direct/result.json"))?;
     let native_dir = std::path::PathBuf::from(
         staged["chain_dir"]
             .as_str()
             .context("native-staged recorded no chain directory")?,
     );
-    let order = inference_artifacts::read_stage_order(&native_dir)?
+    let order = procedure_definition::read_stage_order(&native_dir)?
         .context("native chain recorded no stage inventory")?;
     ensure!(
         order.first().map(String::as_str) == Some("source"),
@@ -306,7 +307,7 @@ fn run_honest(
     let contract = crate::claim_check::check_claim(crate::claim_check::ClaimCheckOptions {
         base_dir: dir.to_path_buf(),
         specification_path: specification.clone(),
-        submission_path: native_dir.join(inference_artifacts::checks::CLAIM_SUBMISSION_JSON),
+        submission_path: native_dir.join(blockchain_rules::checks::CLAIM_SUBMISSION_JSON),
         raster_run: Some(raster_dir),
         pins_path: None,
         registry_path: None,
@@ -327,7 +328,7 @@ fn run_honest(
     // directory, the claim's source is the documents it posted, and the case
     // written over them gives the source record the claim names.
     let fetched = crate::posted::fetch_claim(crate::posted::FetchClaimOptions {
-        submission_path: native_dir.join(inference_artifacts::checks::CLAIM_SUBMISSION_JSON),
+        submission_path: native_dir.join(blockchain_rules::checks::CLAIM_SUBMISSION_JSON),
         specification_path: specification.clone(),
         pins_path: None,
         da_dir: None,
@@ -335,12 +336,12 @@ fn run_honest(
     })
     .context("reading the claim back from the layer")?;
     let fetched_source = run_prep::source::load_source(
-        &inference_artifacts::read_specification(&specification)?,
+        &procedure_definition::read_specification(&specification)?,
         fetched
             .case_path
             .parent()
             .context("the fetched case has no directory")?,
-        &inference_artifacts::read_case(&fetched.case_path)?,
+        &procedure_definition::read_case(&fetched.case_path)?,
     )?
     .context("the specification of a claim with a source names none")?;
     ensure!(
@@ -413,7 +414,7 @@ fn run_fault(
         .with_context(|| format!("source fault `{name}`: a native stage did not finish"))?
         .chain_dir;
 
-    let order = inference_artifacts::read_stage_order(&raster_dir)?
+    let order = procedure_definition::read_stage_order(&raster_dir)?
         .with_context(|| format!("source fault `{name}`: no stage inventory"))?;
     ensure!(
         order.first().map(String::as_str) == Some("source") && order.len() == texts.len() + 1,
@@ -474,7 +475,7 @@ pub(super) fn run_source_scenario(
     let prompt = &prepared.prepared_run.first()?.prompt;
     let raw_prompt = prepared.prepared_run.raw_prompt;
     let range_size = model.range_size as usize;
-    let tokenizer: Value = inference_artifacts::read_json(
+    let tokenizer: Value = procedure_definition::read_json(
         &model_path
             .parent()
             .context("model manifest has no parent directory")?

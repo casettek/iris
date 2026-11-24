@@ -6,7 +6,7 @@ pragma solidity ^0.8.28;
 /// A checkpoint commits to the list by the SHA-256 of its bytes. For those
 /// bytes to say one thing to every reader they must be exactly the canonical
 /// encoding of what they hold, which is what `read_input_manifest` in
-/// `inference_artifacts::checks` requires and what this reads:
+/// `blockchain_rules::checks` requires and what this reads:
 ///
 /// ```text
 /// {

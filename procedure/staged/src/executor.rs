@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
-use inference_artifacts::{CheckpointList, ConsensusOutcome, Divergence, InferenceResult};
+use procedure_definition::{CheckpointList, ConsensusOutcome, Divergence, InferenceResult};
 
 use crate::cache::CachedStageValue;
 use crate::chain_runner::{self, CheckpointHashVerifier, StagedExecutionBackend};

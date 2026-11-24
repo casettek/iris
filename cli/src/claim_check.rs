@@ -1,7 +1,7 @@
 //! `iris claim check`: the checks a contract would make on a claim, run on the
 //! host against the files a claimer and a challenger would post.
 //!
-//! The rules themselves are in `inference_artifacts::checks`. This module
+//! The rules themselves are in `blockchain_rules::checks`. This module
 //! finds their inputs: the pins beside the model manifest a specification names,
 //! the parameters that specification requires, and the claim directory `claim build`
 //! wrote, which holds the submission, the checkpoint hashes, the checkpoints and
@@ -11,21 +11,22 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{ensure, Context, Result};
-use inference_artifacts::availability::{
+use blockchain_rules::availability::{
     check_claim_availability, check_holds, AvailabilityLayer, AvailabilityParameters, BlobContents,
     RequiredPosting,
 };
-use inference_artifacts::checks::{
+use blockchain_rules::checks::{
     check_origin, check_procedure_kind, check_stated_records, check_submission,
     first_unapproved_stage, raster_boundary_mismatch, ChallengeRefusal, CheckpointHashes,
     ClaimSubmission, ContractPins, LinkCheck, RequiredOrigin, RequiredParameters, RequiredSource,
     ResultInOutput, StageAdmission, StatedInference, SubmittedConsensus, SubmittedRecord,
     SubmittedResult, CONTRACT_PINS_JSON,
 };
-use inference_artifacts::registry::{Procedure, Registry};
-use inference_artifacts::{
-    read_checkpoint_list, read_json, read_specification, Checkpoint, CheckpointList, ModelManifest,
-    PreparedRun, ProcedureKind, Specification, CHECKPOINTS_TXT, CHECKPOINT_LIST_JSON,
+use blockchain_rules::registry::{Procedure, Registry};
+use model_manifest::ModelManifest;
+use procedure_definition::{
+    read_checkpoint_list, read_json, read_specification, Checkpoint, CheckpointList, PreparedRun,
+    ProcedureKind, Specification, CHECKPOINTS_TXT, CHECKPOINT_LIST_JSON,
 };
 use raster::core::chain::ChainCommitment;
 
@@ -267,7 +268,7 @@ pub(crate) fn claim_rejection(
 /// What `iris claim post` did: where each blob is, and whether a contract
 /// would take them as the claim's data.
 pub struct ClaimPosted {
-    pub blobs: Vec<inference_artifacts::availability::PostedBlob>,
+    pub blobs: Vec<blockchain_rules::availability::PostedBlob>,
     /// `None` when they are, otherwise why not.
     pub rejection: Option<String>,
 }
@@ -286,7 +287,7 @@ pub fn post_claim_submission(
     submission.availability = prepared
         .post(layer.as_ref())
         .context("posting the claim's data")?;
-    inference_artifacts::write_json(submission_path, &submission)?;
+    procedure_definition::write_json(submission_path, &submission)?;
     let rejection = check_claim_availability(
         layer.as_ref(),
         AvailabilityParameters::default(),
@@ -629,7 +630,7 @@ pub struct ChallengeCheckOptions {
 /// is. Nothing is posted and nothing is written.
 pub fn check_challenge_submission(options: ChallengeCheckOptions) -> Result<ClaimCheckReport> {
     let procedure = spec_procedure(&options.specification_path, options.pins_path.as_deref())?;
-    let submission: inference_artifacts::checks::ChallengeSubmission =
+    let submission: blockchain_rules::checks::ChallengeSubmission =
         read_json(&options.challenge_path)?;
     let layer = crate::posting::open_layer(options.da_dir.as_deref())?;
     let submitted_at = match options.submitted_at {
@@ -651,8 +652,8 @@ pub fn post_challenge(options: ChallengePostOptions) -> Result<ChallengePosted> 
     let procedure = spec_procedure(&options.specification_path, options.pins_path.as_deref())?;
     let claim: ClaimSubmission = read_json(&options.submission_path)?;
     let list = claim_list(&options.submission_path)?;
-    let bundle = inference_artifacts::read_challenge_bundle(&options.challenge_bundle_path)?;
-    let replay: inference_artifacts::ChallengeTrace = read_json(&bundle.challenge_trace_path)?;
+    let bundle = blockchain_rules::read_challenge_bundle(&options.challenge_bundle_path)?;
+    let replay: blockchain_rules::ChallengeTrace = read_json(&bundle.challenge_trace_path)?;
     let stage = list
         .checkpoints
         .iter()
@@ -663,9 +664,9 @@ pub fn post_challenge(options: ChallengePostOptions) -> Result<ChallengePosted> 
     let challenger = options
         .challenger
         .clone()
-        .unwrap_or_else(|| inference_artifacts::checks::NO_ADDRESS.to_string());
+        .unwrap_or_else(|| blockchain_rules::checks::NO_ADDRESS.to_string());
     ensure!(
-        inference_artifacts::checks::is_address(&challenger),
+        blockchain_rules::checks::is_address(&challenger),
         "`{challenger}` is not an address: give `0x` and 40 lowercase hex digits"
     );
     let submission = challenge_submission(
@@ -683,9 +684,9 @@ pub fn post_challenge(options: ChallengePostOptions) -> Result<ChallengePosted> 
     let submission_path = options.out_path.clone().unwrap_or_else(|| {
         options
             .challenge_bundle_path
-            .with_file_name(inference_artifacts::checks::CHALLENGE_SUBMISSION_JSON)
+            .with_file_name(blockchain_rules::checks::CHALLENGE_SUBMISSION_JSON)
     });
-    inference_artifacts::write_json(&submission_path, &submission)?;
+    procedure_definition::write_json(&submission_path, &submission)?;
     let submitted_at = match options.submitted_at {
         Some(at) => at,
         None => crate::posting::now()?,
@@ -716,21 +717,18 @@ pub(crate) fn challenge_submission(
     output_sha256: &str,
     challenger: &str,
     layer: &dyn crate::posting::PostingLayer,
-) -> Result<inference_artifacts::checks::ChallengeSubmission> {
+) -> Result<blockchain_rules::checks::ChallengeSubmission> {
     let commitment = raster_prover::commitment_file::CommitmentFile::read_memory(commit_path)
         .with_context(|| format!("{} is not a Raster trace commitment", commit_path.display()))?;
-    let challenge = inference_artifacts::checks::stage_challenge(
-        checkpoint,
-        commitment.header(),
-        output_sha256,
-    )
-    .context("the claim's checkpoint is not one a dispute can be built from")?;
+    let challenge =
+        blockchain_rules::checks::stage_challenge(checkpoint, commitment.header(), output_sha256)
+            .context("the claim's checkpoint is not one a dispute can be built from")?;
     // The body a defender reads: the commitment in the encoding Raster's
     // admission decodes.
     let body = postcard::to_allocvec(&commitment.into_memory())
         .context("the trace commitment does not encode")?;
-    Ok(inference_artifacts::checks::ChallengeSubmission {
-        version: inference_artifacts::checks::CHALLENGE_SUBMISSION_VERSION,
+    Ok(blockchain_rules::checks::ChallengeSubmission {
+        version: blockchain_rules::checks::CHALLENGE_SUBMISSION_VERSION,
         challenger: challenger.to_string(),
         checkpoints_root: checkpoints_root.to_string(),
         stage,
@@ -747,7 +745,7 @@ pub(crate) fn challenge_submission(
 pub fn check_challenge(
     procedure: &Procedure,
     claim_submission_path: &Path,
-    submission: &inference_artifacts::checks::ChallengeSubmission,
+    submission: &blockchain_rules::checks::ChallengeSubmission,
     layer: &dyn AvailabilityLayer,
     submitted_at: u64,
 ) -> Result<ClaimCheckReport> {
@@ -796,7 +794,7 @@ pub fn check_challenge(
     lines.push(CheckLine {
         check: "challenge: about the claim's checkpoint at that stage",
         rejection: (!checkpoint.is_some_and(|checkpoint| {
-            inference_artifacts::checks::challenge_is_about(checkpoint, &submission.challenge)
+            blockchain_rules::checks::challenge_is_about(checkpoint, &submission.challenge)
         }))
         .then(|| String::from("the challenge's chain commitment is not this checkpoint's")),
     });
@@ -809,7 +807,7 @@ pub fn check_challenge(
     lines.push(CheckLine {
         check:
             "challenge: trace body posted, proven and retrievable through the fault-proof period",
-        rejection: inference_artifacts::availability::check_challenge_availability(
+        rejection: blockchain_rules::availability::check_challenge_availability(
             layer,
             AvailabilityParameters::default(),
             &submission.availability,

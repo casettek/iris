@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
-// The values the contracts take, as `inference_artifacts` states them in Rust.
+// The values the contracts take, as `blockchain_rules` states them in Rust.
 // A 32-byte hash is `bytes32` here and 64 hex digits in the Rust files. The
 // one digest the stages compute over hex text, a source record's, keeps its
 // text here, so that it is hashed as the stages hash it.
 
-// --- a procedure: `inference_artifacts::registry::Procedure` ---
+// --- a procedure: `blockchain_rules::registry::Procedure` ---
 
 // A model the procedure pins. `commitments` is the part of the id's
 // encoding that lists what the model id hashes: a count, then each role and
@@ -55,7 +55,7 @@ struct InputRule {
     bool run;
 }
 
-// --- a claim: `inference_artifacts::checks::ClaimSubmission` ---
+// --- a claim: `blockchain_rules::checks::ClaimSubmission` ---
 
 struct Record {
     bytes32 statement;
@@ -109,7 +109,7 @@ struct StatedCheck {
     Record record;
 }
 
-// `inference_artifacts::availability::StatedRecords`
+// `blockchain_rules::availability::StatedRecords`
 struct StatedRecords {
     bytes32 checkpointsRoot;
     bytes32 resultProgram;
@@ -120,7 +120,7 @@ struct StatedRecords {
     StatedCheck[] checks;
 }
 
-// `inference_artifacts::availability::BlobContents`. Each stated-records
+// `blockchain_rules::availability::BlobContents`. Each stated-records
 // entry is listed by its digest; a claim gives the one it relies on in full.
 struct BlobContents {
     address submitter;
@@ -162,9 +162,9 @@ struct Claim {
     PostedBlob[] availability;
 }
 
-// --- a challenge: `inference_artifacts::checks::ChallengeSubmission` ---
+// --- a challenge: `blockchain_rules::checks::ChallengeSubmission` ---
 
-// `inference_artifacts::checkpoint::Checkpoint`
+// `procedure_definition::checkpoint::Checkpoint`
 struct Checkpoint {
     string stage;
     bytes32 program;

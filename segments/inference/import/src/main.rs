@@ -29,7 +29,7 @@ mod mistral;
 
 use externals::*;
 use gemma::*;
-use inference_artifacts::ModelFamily;
+use model_manifest::ModelFamily;
 use std::collections::BTreeMap;
 use std::error::Error;
 use std::fs;
@@ -117,6 +117,10 @@ pub const DEFAULT_RANGE_SIZE: u32 = 512;
 pub struct ImportResult {
     pub manifest_path: Option<PathBuf>,
     pub manifest_text: Option<String>,
+    /// The model manifest the import wrote, and the chain template as it
+    /// was saved: what the pins of this import are read from.
+    pub model_manifest_path: Option<PathBuf>,
+    pub template: Option<String>,
     pub stage_count: usize,
 }
 
@@ -132,7 +136,7 @@ pub fn run_from_args(args: impl IntoIterator<Item = String>) -> Result<(), Box<d
 fn parse_args_from(args: impl IntoIterator<Item = String>) -> Result<ImportConfig, Box<dyn Error>> {
     let mut model_dir = None;
     let mut manifest = None;
-    let mut artifact_root = PathBuf::from(inference_artifacts::MODEL_ARTIFACTS_DIR);
+    let mut artifact_root = PathBuf::from(model_manifest::MODEL_ARTIFACTS_DIR);
     let mut model_id = None;
     let mut only_tokenizer = false;
     let mut only_layers = false;
@@ -330,6 +334,8 @@ pub fn import_model(args: ImportConfig) -> Result<ImportResult, Box<dyn Error>> 
         return Ok(ImportResult {
             manifest_path: None,
             manifest_text: None,
+            model_manifest_path: None,
+            template: None,
             stage_count: 0,
         });
     }
@@ -369,6 +375,8 @@ pub fn import_model(args: ImportConfig) -> Result<ImportResult, Box<dyn Error>> 
         return Ok(ImportResult {
             manifest_path: None,
             manifest_text: None,
+            model_manifest_path: None,
+            template: None,
             stage_count: stages.len(),
         });
     }
@@ -452,6 +460,8 @@ pub fn import_model(args: ImportConfig) -> Result<ImportResult, Box<dyn Error>> 
         return Ok(ImportResult {
             manifest_path: None,
             manifest_text: None,
+            model_manifest_path: None,
+            template: None,
             stage_count: stages.len(),
         });
     }
@@ -477,6 +487,8 @@ pub fn import_model(args: ImportConfig) -> Result<ImportResult, Box<dyn Error>> 
         return Ok(ImportResult {
             manifest_path: None,
             manifest_text: None,
+            model_manifest_path: None,
+            template: None,
             stage_count: stages.len(),
         });
     }
@@ -495,6 +507,8 @@ pub fn import_model(args: ImportConfig) -> Result<ImportResult, Box<dyn Error>> 
         return Ok(ImportResult {
             manifest_path: None,
             manifest_text: None,
+            model_manifest_path: None,
+            template: None,
             stage_count: stages.len(),
         });
     }
@@ -550,7 +564,7 @@ fn finish_import(
     args: &ImportConfig,
     layout: &ArtifactLayout,
     family: ModelFamily,
-    manifest_shape: inference_artifacts::FamilyShape,
+    manifest_shape: model_manifest::FamilyShape,
     chain: &ChainLayers,
     eos_ids: &std::collections::BTreeSet<u32>,
     decoder_commitment: &str,
@@ -558,10 +572,8 @@ fn finish_import(
     stages: &[String],
 ) -> Result<ImportResult, Box<dyn Error>> {
     let commitments = model_commitments(chain, decoder_commitment, stages)?;
-    let descriptor = inference_artifacts::model_identity::descriptor_from_commitments(
-        &commitments,
-        chain.layers,
-    )?;
+    let descriptor =
+        model_manifest::model_identity::descriptor_from_commitments(&commitments, chain.layers)?;
     let descriptor =
         raster::BytesPage::__from_parts(0, 0, descriptor.encode().map_err(|f| format!("{f:?}"))?);
     let descriptor_commitment = write_external(
@@ -600,31 +612,13 @@ fn finish_import(
         Some((&template_path, &template)),
         &commitments,
     )?;
-    write_contract_pins(&model_manifest_path, &template);
     Ok(ImportResult {
         manifest_path: Some(template_path),
         manifest_text: None,
+        model_manifest_path: Some(model_manifest_path),
+        template: Some(template),
         stage_count,
     })
-}
-
-/// Writes what a contract pins for this import beside its manifest, as two
-/// entries. The procedure kind: the program id each stage project has locked, and
-/// for each program the inputs it takes from earlier stages, read from the
-/// chain template of the `single` procedure kind over this import. The model: its
-/// id with the commitments it hashes, and the range size.
-///
-/// An import made where the stage projects are not locked gets no pins and
-/// says so. It can still run; it cannot have a claim checked against it.
-fn write_contract_pins(model_manifest_path: &Path, template: &str) {
-    let pins = inference_artifacts::ModelManifest::load_verified(model_manifest_path).and_then(
-        |manifest| inference_artifacts::checks::ContractPins::from_import(&manifest, template),
-    );
-    let path = model_manifest_path.with_file_name(inference_artifacts::checks::CONTRACT_PINS_JSON);
-    match pins.and_then(|pins| inference_artifacts::write_json(&path, &pins)) {
-        Ok(()) => println!("wrote {}", path.display()),
-        Err(error) => println!("no contract pins written: {error:#}"),
-    }
 }
 
 fn save_model_template(
@@ -634,7 +628,7 @@ fn save_model_template(
     // Generated paths start at the importing workspace. Resolve them before
     // saving under the model directory (or an optional custom --manifest path).
     let template =
-        inference_artifacts::resolve_raster_manifest_paths(manifest, &std::env::current_dir()?)
+        model_manifest::resolve_raster_manifest_paths(manifest, &std::env::current_dir()?)
             .map_err(|error| -> Box<dyn Error> { error.to_string().into() })?;
     let path = args.artifact_dir().join("Raster.toml");
     fs::create_dir_all(args.artifact_dir())?;
@@ -661,11 +655,9 @@ fn model_commitments(
     chain: &ChainLayers,
     decoder_commitment: &str,
     stages: &[String],
-) -> Result<Vec<inference_artifacts::ModelCommitment>, Box<dyn Error>> {
-    let entry = |role: String, commitment: String| inference_artifacts::ModelCommitment {
-        role,
-        commitment,
-    };
+) -> Result<Vec<model_manifest::ModelCommitment>, Box<dyn Error>> {
+    let entry =
+        |role: String, commitment: String| model_manifest::ModelCommitment { role, commitment };
     let mut entries = vec![
         entry(
             String::from("tokenizer"),
@@ -1459,19 +1451,19 @@ mod tests {
                 ]
                 .into_iter()
                 .enumerate()
-                .map(|(i, role)| inference_artifacts::ModelCommitment {
+                .map(|(i, role)| model_manifest::ModelCommitment {
                     role: role.into(),
                     commitment: format!("{:02x}", i).repeat(32),
                 })
                 .collect::<Vec<_>>(),
             )
             .unwrap();
-            let model = inference_artifacts::ModelManifest::load_verified(&model_path).unwrap();
+            let model = model_manifest::ModelManifest::load_verified(&model_path).unwrap();
             let descriptor_bytes = fs::read(
                 model_path
                     .parent()
                     .unwrap()
-                    .join(inference_artifacts::model_identity::MODEL_DESCRIPTOR_BIN),
+                    .join(model_manifest::model_identity::MODEL_DESCRIPTOR_BIN),
             )
             .unwrap();
             assert_eq!(
@@ -1496,12 +1488,12 @@ mod tests {
         }
         fs::write(base.join("shared/Raster.toml"), "overwritten").unwrap();
         for (path, template) in &models {
-            let model = inference_artifacts::ModelManifest::load_verified(path).unwrap();
+            let model = model_manifest::ModelManifest::load_verified(path).unwrap();
             assert_eq!(model.verified_raster_template(path).unwrap().1, *template);
         }
         args.only_direct = true;
         import_model(args).unwrap();
-        let direct_only = inference_artifacts::ModelManifest::load_verified(&models[1].0).unwrap();
+        let direct_only = model_manifest::ModelManifest::load_verified(&models[1].0).unwrap();
         assert!(direct_only.provenance.is_none());
         assert!(direct_only.verified_raster_template(&models[1].0).is_err());
         fs::remove_dir_all(base).unwrap();
@@ -1527,7 +1519,7 @@ mod tests {
             ImportConfig {
                 model_dir: PathBuf::from("model-bundles/model"),
                 manifest: Some(PathBuf::from("Raster.toml")),
-                artifact_root: PathBuf::from(inference_artifacts::MODEL_ARTIFACTS_DIR),
+                artifact_root: PathBuf::from(model_manifest::MODEL_ARTIFACTS_DIR),
                 model_id: None,
                 only_tokenizer: true,
                 only_layers: false,

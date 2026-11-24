@@ -3,8 +3,8 @@
 use std::path::Path;
 
 use anyhow::{ensure, Context, Result};
-use inference_artifacts::availability::{Blob, BlobEntry};
-use inference_artifacts::read_json;
+use blockchain_rules::availability::{Blob, BlobEntry};
+use procedure_definition::read_json;
 
 use crate::posting::open_layer;
 
@@ -22,7 +22,7 @@ pub fn measure_posting(submission_path: &Path, da_dir: Option<&Path>) -> Result<
     #[derive(serde::Deserialize)]
     struct Posted {
         #[serde(default)]
-        availability: Vec<inference_artifacts::availability::PostedBlob>,
+        availability: Vec<blockchain_rules::availability::PostedBlob>,
     }
     let submission: Posted = read_json(submission_path)?;
     ensure!(

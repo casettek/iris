@@ -1,7 +1,7 @@
 # What a contract holds and checks
 
 This page is the rules a contract holds a claim to: what it pins, what a
-claimer submits, and each check it makes, as `inference_artifacts::checks`
+claimer submits, and each check it makes, as `blockchain_rules::checks`
 states them in Rust. The contracts in `blockchain/contracts/src` make the same checks on
 chain ([the blockchains](../blockchain/overview.md)), and `iris claim check` runs them on the host.
 [How iris works](overview.md) is the short version.
@@ -266,7 +266,7 @@ stages' own digests use (`Statement::digest`, `source_id`): a tag ending in a
 zero byte, then the fields in order; numbers 32-bit little-endian; text and
 lists after a 32-bit count; a hash as a byte 1 and its 32 bytes, or a byte 0
 when the field is empty. Everything is SHA-256. The code is
-`inference_artifacts::encoding`.
+`procedure_definition::encoding`.
 
 - **A checkpoint's hash** (`checkpoint_hash`): tag `iris/checkpoint/v1`, the
   stage name, the program id, the input manifest hash, the producers in name

@@ -7,7 +7,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{ensure, Context, Result};
-use inference_artifacts::{Case, Specification, SpecificationForm, SpecificationSource};
+use procedure_definition::{Case, Specification, SpecificationForm, SpecificationSource};
 pub use result_core::{forms_id, run_forms, Form};
 pub use source_core::{
     fault_description, Attestation, DocumentName, Field, Recipe, SignerKey, SourceDocument,

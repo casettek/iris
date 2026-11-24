@@ -22,8 +22,8 @@ use serde::{Deserialize, Serialize};
 use crate::checks::{
     ContractPins, ModelPins, ProgramPins, RequiredOrigin, RequiredParameters, RequiredSource,
 };
-use crate::encoding::Encoder;
-use crate::procedure_kind::ProcedureKind;
+use procedure_definition::encoding::Encoder;
+use procedure_definition::procedure_kind::ProcedureKind;
 
 pub const PROCEDURE_VERSION: u32 = 3;
 pub const REGISTRY_VERSION: u32 = 3;
@@ -66,7 +66,7 @@ impl Procedure {
 
     /// The procedure's id: a hash over all of it, in lowercase hex, in
     /// the encoding a contract recomputes when one is registered
-    /// (`crate::encoding`). Every field is hashed in the order it is
+    /// (`procedure_definition::encoding`). Every field is hashed in the order it is
     /// declared, each list after its count.
     pub fn id(&self) -> String {
         let mut encoder = Encoder::new(b"iris/procedure/v3\0");
@@ -195,7 +195,7 @@ impl Registry {
     }
 
     pub fn write(&self, path: &Path) -> Result<()> {
-        crate::io::write_json(path, self)
+        model_manifest::io::write_json(path, self)
     }
 
     /// Register a procedure and return its id. Registering one twice

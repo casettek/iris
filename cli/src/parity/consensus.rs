@@ -16,9 +16,10 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{ensure, Context, Result};
-use inference_artifacts::checks::CLAIM_SUBMISSION_JSON;
-use inference_artifacts::SpecificationForm;
-use inference_artifacts::{ModelFamily, ModelManifest, PreparedRun, ProcedureKind};
+use blockchain_rules::checks::CLAIM_SUBMISSION_JSON;
+use model_manifest::{ModelFamily, ModelManifest};
+use procedure_definition::SpecificationForm;
+use procedure_definition::{PreparedRun, ProcedureKind};
 use run_prep::source::LoadedSource;
 use serde_json::{json, Value};
 use staged_infer::chain_runner::StagedExecutionBackend;
@@ -136,8 +137,8 @@ pub(super) fn run_consensus_scenario(
         direct.consensus,
         built.consensus
     );
-    let bundle = inference_artifacts::read_claim_bundle(&built.claim_bundle_path)?;
-    let prepared: PreparedRun = inference_artifacts::read_json(
+    let bundle = blockchain_rules::read_claim_bundle(&built.claim_bundle_path)?;
+    let prepared: PreparedRun = procedure_definition::read_json(
         bundle
             .prepared_run_path
             .as_ref()
@@ -156,7 +157,7 @@ pub(super) fn run_consensus_scenario(
         .args(["--no-auth", "--run"])
         .arg(&raster_dir);
     logged(run, &claim_dir.join("raster.log")).context("Raster-staged execution")?;
-    let order = inference_artifacts::read_stage_order(&built.chain_dir)?
+    let order = procedure_definition::read_stage_order(&built.chain_dir)?
         .context("native chain recorded no stage inventory")?;
     let of = |label: &str| {
         order
@@ -203,7 +204,7 @@ pub(super) fn run_consensus_scenario(
         .context("the consensus claim wrote no submission")?;
     // The contract's pins are a file: the consensus procedure kind's programs and
     // both models, as `iris claim pins` writes them.
-    let pins_path = claim_dir.join(inference_artifacts::checks::CONTRACT_PINS_JSON);
+    let pins_path = claim_dir.join(blockchain_rules::checks::CONTRACT_PINS_JSON);
     let pins =
         crate::claim_check::run_pins(&claim_dir, &specification).context("the contract's pins")?;
     ensure!(
@@ -214,7 +215,7 @@ pub(super) fn run_consensus_scenario(
             && pins.models[0].model_id != pins.models[1].model_id,
         "the pins are not of this claim's two models"
     );
-    inference_artifacts::write_json(&pins_path, &pins)?;
+    procedure_definition::write_json(&pins_path, &pins)?;
     let check = |submission: &Path, raster_run: Option<PathBuf>| {
         crate::claim_check::check_claim(crate::claim_check::ClaimCheckOptions {
             base_dir: claim_dir.clone(),
@@ -243,13 +244,13 @@ pub(super) fn run_consensus_scenario(
     );
     // A claim that states another agreement than its outputs have is refused
     // when it is submitted, with no stage replayed.
-    let mut overstated: Value = inference_artifacts::read_json(&submission_path)?;
+    let mut overstated: Value = procedure_definition::read_json(&submission_path)?;
     overstated["consensus"]["agree"] = json!(false);
     overstated["consensus"]["code"] = json!(0);
     let overstated_path = built
         .chain_dir
         .join(format!("denied.{CLAIM_SUBMISSION_JSON}"));
-    inference_artifacts::write_json(&overstated_path, &overstated)?;
+    procedure_definition::write_json(&overstated_path, &overstated)?;
     let refused = check(&overstated_path, None)?;
     let refusal = refused
         .lines
@@ -303,7 +304,7 @@ pub(super) fn run_consensus_scenario(
         ),
         "a false checkpoint in the second inference was not found at `{FALSIFIED_STAGE}`"
     );
-    let honest_trace = inference_artifacts::read_checkpoint_list(&built.checkpoint_list_path)?;
+    let honest_trace = procedure_definition::read_checkpoint_list(&built.checkpoint_list_path)?;
     let mut lying = honest_trace.clone();
     lying
         .checkpoints

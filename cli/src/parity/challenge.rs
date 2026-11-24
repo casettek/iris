@@ -11,10 +11,11 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use anyhow::{ensure, Context, Result};
-use inference_artifacts::checks::{dispute_digest, settlement, stage_challenge, Settlement};
-use inference_artifacts::{
-    build_checkpoint_list, checkpoint_hashes, file_sha256, read_checkpoint_list, read_json,
-    write_checkpoint_hashes, CheckpointList, ModelManifest,
+use blockchain_rules::checks::{dispute_digest, settlement, stage_challenge, Settlement};
+use model_manifest::{file_sha256, ModelManifest};
+use procedure_definition::{
+    build_checkpoint_list, checkpoint_hashes, read_checkpoint_list, read_json,
+    write_checkpoint_hashes, CheckpointList,
 };
 use raster_prover::commitment_file::CommitmentFile;
 use run_prep::RunConfig;
@@ -82,7 +83,7 @@ struct RunInputs {
 
 pub(super) fn run_challenge_scenario(scenario: &Scenario) -> Result<Value> {
     fs::create_dir_all(&scenario.dir)?;
-    let specification = scenario.dir.join(inference_artifacts::SPECIFICATION_TOML);
+    let specification = scenario.dir.join(procedure_definition::SPECIFICATION_TOML);
     write_specification(&specification, scenario.model_path, scenario.case)?;
     write_case(&specification, scenario.case)?;
     let inputs = honest_inputs(scenario)?;
@@ -187,8 +188,8 @@ pub(super) fn run_challenge_scenario(scenario: &Scenario) -> Result<Value> {
         let stage = FALSIFIED_STAGES[0];
         let lying = corrupt(stage, "corrupted-claim")?;
         let honest_hashes =
-            inference_artifacts::read_checkpoint_hashes(&honest.checkpoint_hashes_path)?;
-        let lying_hashes = inference_artifacts::read_checkpoint_hashes(&lying.hashes_path)?;
+            procedure_definition::read_checkpoint_hashes(&honest.checkpoint_hashes_path)?;
+        let lying_hashes = procedure_definition::read_checkpoint_hashes(&lying.hashes_path)?;
         ensure!(
             honest_hashes.len() == lying_hashes.len()
                 && honest_hashes
@@ -199,14 +200,13 @@ pub(super) fn run_challenge_scenario(scenario: &Scenario) -> Result<Value> {
                         == (index == lying.checkpoint_index)),
             "a corrupted claim's list differs from the honest one elsewhere than at `{stage}`"
         );
-        let claim: inference_artifacts::checks::ClaimSubmission =
-            read_json(&lying.submission_path)?;
+        let claim: blockchain_rules::checks::ClaimSubmission = read_json(&lying.submission_path)?;
         let posting = crate::posting::PreparedPosting::read(&scenario.dir.join("corrupted-claim"))?;
         ensure!(
             claim.claimer == liar
-                && inference_artifacts::availability::check_holds(
+                && blockchain_rules::availability::check_holds(
                     &posting.contents()?,
-                    &inference_artifacts::availability::RequiredPosting::of(&claim),
+                    &blockchain_rules::availability::RequiredPosting::of(&claim),
                 )
                 .is_ok(),
             "a corrupted claim's data is not the liar's own"
@@ -260,17 +260,17 @@ pub(super) fn run_challenge_scenario(scenario: &Scenario) -> Result<Value> {
                 claimer: Some(liar.to_string()),
                 out_dir: scenario.dir.join(out),
             })?;
-            let mut claim: inference_artifacts::checks::ClaimSubmission =
+            let mut claim: blockchain_rules::checks::ClaimSubmission =
                 read_json(&lie.submission_path)?;
             claim.availability = crate::posting::PreparedPosting::read(&scenario.dir.join(out))?
                 .post(layer.as_ref())
                 .with_context(|| format!("`{out}`: posting the lying claim's data"))?;
-            inference_artifacts::write_json(&lie.submission_path, &claim)?;
-            let posted = inference_artifacts::availability::check_claim_availability(
+            procedure_definition::write_json(&lie.submission_path, &claim)?;
+            let posted = blockchain_rules::availability::check_claim_availability(
                 layer.as_ref(),
-                inference_artifacts::availability::AvailabilityParameters::default(),
+                blockchain_rules::availability::AvailabilityParameters::default(),
                 &claim.availability,
-                &inference_artifacts::availability::RequiredPosting::of(&claim),
+                &blockchain_rules::availability::RequiredPosting::of(&claim),
                 crate::posting::now()?,
             )
             .map_err(|rejection| {
@@ -278,7 +278,7 @@ pub(super) fn run_challenge_scenario(scenario: &Scenario) -> Result<Value> {
                     "`{out}`: a contract does not take the lying claim's data: {rejection}"
                 )
             })?;
-            inference_artifacts::checks::check_stated_records(&procedure.programs, &claim, &posted)
+            blockchain_rules::checks::check_stated_records(&procedure.programs, &claim, &posted)
                 .map_err(|rejection| {
                     anyhow::anyhow!(
                         "`{out}`: a contract does not take the lying claim: {rejection}"
@@ -906,13 +906,13 @@ fn contract_challenge(
     challenge_as_posted: bool,
     mut outcome: Value,
 ) -> Result<Value> {
-    use inference_artifacts::checks::{ClaimSubmission, CLAIM_SUBMISSION_JSON};
+    use blockchain_rules::checks::{ClaimSubmission, CLAIM_SUBMISSION_JSON};
 
     let dir = scenario.dir.join(name).join("contract");
     fs::create_dir_all(&dir)?;
-    let list_path = dir.join(inference_artifacts::CHECKPOINTS_TXT);
+    let list_path = dir.join(procedure_definition::CHECKPOINTS_TXT);
     write_checkpoint_hashes(&list_path, &checkpoint_hashes(lying)?)?;
-    inference_artifacts::write_json(&dir.join(inference_artifacts::CHECKPOINT_LIST_JSON), lying)?;
+    procedure_definition::write_json(&dir.join(procedure_definition::CHECKPOINT_LIST_JSON), lying)?;
     let mut claim: ClaimSubmission = read_json(
         honest
             .claim_submission_path
@@ -920,7 +920,7 @@ fn contract_challenge(
             .context("the honest claim wrote no submission")?,
     )?;
     claim.checkpoint_count = lying.checkpoints.len() as u32;
-    claim.checkpoints_root = inference_artifacts::checkpoints_root(&checkpoint_hashes(lying)?)?;
+    claim.checkpoints_root = procedure_definition::checkpoints_root(&checkpoint_hashes(lying)?)?;
     let claim_path = dir.join(CLAIM_SUBMISSION_JSON);
     let procedure = crate::claim_check::spec_procedure(specification, None)?;
     let layer = crate::posting::open_layer(None)?;
@@ -932,26 +932,27 @@ fn contract_challenge(
     let posting = crate::posting::PreparedPosting::read(&honest.chain_dir)?.with_checkpoints(
         &claim.claimer,
         &fs::read(&list_path)?,
-        &fs::read(dir.join(inference_artifacts::CHECKPOINT_LIST_JSON))?,
+        &fs::read(dir.join(procedure_definition::CHECKPOINT_LIST_JSON))?,
     )?;
     claim.availability = posting
         .post(layer)
         .with_context(|| format!("`{name}`: posting the lying claim's data"))?;
-    inference_artifacts::write_json(&claim_path, &claim)?;
-    let posted = inference_artifacts::availability::check_claim_availability(
+    procedure_definition::write_json(&claim_path, &claim)?;
+    let posted = blockchain_rules::availability::check_claim_availability(
         layer,
-        inference_artifacts::availability::AvailabilityParameters::default(),
+        blockchain_rules::availability::AvailabilityParameters::default(),
         &claim.availability,
-        &inference_artifacts::availability::RequiredPosting::of(&claim),
+        &blockchain_rules::availability::RequiredPosting::of(&claim),
         now,
     )
     .map_err(|rejection| {
         anyhow::anyhow!("`{name}`: a contract does not take the lying claim's data: {rejection}")
     })?;
-    inference_artifacts::checks::check_stated_records(&procedure.programs, &claim, &posted)
-        .map_err(|rejection| {
+    blockchain_rules::checks::check_stated_records(&procedure.programs, &claim, &posted).map_err(
+        |rejection| {
             anyhow::anyhow!("`{name}`: a contract does not take the lying claim: {rejection}")
-        })?;
+        },
+    )?;
 
     let index = lying
         .checkpoints
@@ -969,11 +970,11 @@ fn contract_challenge(
         challenger,
         layer,
     )?;
-    inference_artifacts::write_json(
-        &dir.join(inference_artifacts::checks::CHALLENGE_SUBMISSION_JSON),
+    procedure_definition::write_json(
+        &dir.join(blockchain_rules::checks::CHALLENGE_SUBMISSION_JSON),
         &submission,
     )?;
-    let check = |submission: &inference_artifacts::checks::ChallengeSubmission, at: u64| {
+    let check = |submission: &blockchain_rules::checks::ChallengeSubmission, at: u64| {
         crate::claim_check::check_challenge(&procedure, &claim_path, submission, layer, at)
             .map(|report| report.rejection())
     };
@@ -985,7 +986,7 @@ fn contract_challenge(
     // The same challenge and body under another address: a copied challenge.
     let mut copied = submission.clone();
     copied.challenger = String::from("0x00000000000000000000000000000000000c0b1e");
-    let late = now + inference_artifacts::availability::DEFAULT_RETENTION_SECS;
+    let late = now + blockchain_rules::availability::DEFAULT_RETENTION_SECS;
     for (case, rejection) in [
         ("unposted", check(&unposted, now)?),
         ("late", check(&submission, late)?),
@@ -1014,8 +1015,8 @@ fn contract_challenge(
         .parent()
         .context("the fetched claim has no directory")?;
     for file in [
-        inference_artifacts::CHECKPOINTS_TXT,
-        inference_artifacts::CHECKPOINT_LIST_JSON,
+        procedure_definition::CHECKPOINTS_TXT,
+        procedure_definition::CHECKPOINT_LIST_JSON,
     ] {
         ensure!(
             fs::read(fetched_dir.join(file))? == fs::read(dir.join(file))?,
@@ -1035,7 +1036,7 @@ fn contract_challenge(
     // files that were posted.
     let measured = crate::measure::measure_posting(&claim_path, None)
         .with_context(|| format!("`{name}`: measuring what the lying claim posted"))?;
-    let posted: inference_artifacts::checks::ClaimSubmission = read_json(&claim_path)?;
+    let posted: blockchain_rules::checks::ClaimSubmission = read_json(&claim_path)?;
     ensure!(
         measured["bytes"].as_u64()
             == Some(posted.availability.iter().map(|blob| blob.length).sum()),
@@ -1050,9 +1051,9 @@ fn contract_challenge(
         .with_context(|| format!("`{name}`: no checkpoints were measured on the layer"))?;
     ensure!(
         checkpoints["checkpoint_hashes_bytes"].as_u64()
-            == Some(fs::metadata(dir.join(inference_artifacts::CHECKPOINTS_TXT))?.len())
+            == Some(fs::metadata(dir.join(procedure_definition::CHECKPOINTS_TXT))?.len())
             && checkpoints["checkpoint_list_bytes"].as_u64()
-                == Some(fs::metadata(dir.join(inference_artifacts::CHECKPOINT_LIST_JSON))?.len()),
+                == Some(fs::metadata(dir.join(procedure_definition::CHECKPOINT_LIST_JSON))?.len()),
         "`{name}`: the checkpoints measured on the layer are not the size of the ones posted"
     );
     outcome["posted_bytes"] = measured["bytes"].clone();
@@ -1128,7 +1129,7 @@ fn posted_lies(
     not_greedy: &ClaimBuildResult,
 ) -> Result<Vec<Value>> {
     use crate::lies::CorruptFault;
-    use inference_artifacts::checks::ClaimSubmission;
+    use blockchain_rules::checks::ClaimSubmission;
 
     let layer = crate::posting::open_layer(None)?;
     let layer = layer.as_ref();
@@ -1216,12 +1217,12 @@ fn posted_lies(
         claim.availability = crate::posting::PreparedPosting::read(&dir.join("claim"))?
             .post(layer)
             .with_context(|| format!("`{name}`: posting the lying claim's data"))?;
-        inference_artifacts::write_json(&lie.submission_path, &claim)?;
-        let posted = inference_artifacts::availability::check_claim_availability(
+        procedure_definition::write_json(&lie.submission_path, &claim)?;
+        let posted = blockchain_rules::availability::check_claim_availability(
             layer,
-            inference_artifacts::availability::AvailabilityParameters::default(),
+            blockchain_rules::availability::AvailabilityParameters::default(),
             &claim.availability,
-            &inference_artifacts::availability::RequiredPosting::of(&claim),
+            &blockchain_rules::availability::RequiredPosting::of(&claim),
             now,
         )
         .map_err(|rejection| {
@@ -1229,7 +1230,7 @@ fn posted_lies(
                 "`{name}`: a contract does not take the lying claim's data: {rejection}"
             )
         })?;
-        inference_artifacts::checks::check_stated_records(&procedure.programs, &claim, &posted)
+        blockchain_rules::checks::check_stated_records(&procedure.programs, &claim, &posted)
             .map_err(|rejection| {
                 anyhow::anyhow!("`{name}`: a contract does not take the lying claim: {rejection}")
             })?;
@@ -1308,7 +1309,7 @@ fn posted_lies(
         );
         let lying = read_checkpoint_list(
             &dir.join("claim")
-                .join(inference_artifacts::CHECKPOINT_LIST_JSON),
+                .join(procedure_definition::CHECKPOINT_LIST_JSON),
         )?;
         let claimed = &lying.checkpoints[lie.checkpoint_index];
         let replay = replay_stage_dir(scenario, name, stage)?;
@@ -1405,7 +1406,7 @@ fn not_greedy_ids(scenario: &Scenario) -> Result<Vec<u32>> {
 /// This model's chain over these inputs.
 fn render(model_path: &Path, model: &ModelManifest, run: &RunInputs, dir: &Path) -> Result<String> {
     let (template_path, segment) = model.verified_raster_template(model_path)?;
-    let template = inference_artifacts::ProcedureKind::Single.chain_template(&[&segment])?;
+    let template = procedure_definition::ProcedureKind::Single.chain_template(&[&segment])?;
     let range_size = run.config.range_size as usize;
     let mark_files = run_prep::write_marks(&run.marks, dir)?;
     let claimed_files = run_prep::write_claimed_ranges(&run.ids, range_size, dir)?;
@@ -1849,7 +1850,7 @@ fn replay_semantic_rejection(
         .arg(&raster_dir);
     logged(run, &dir.join("raster.log"))?;
     let order =
-        inference_artifacts::read_stage_order(&raster_dir)?.context("missing stage inventory")?;
+        procedure_definition::read_stage_order(&raster_dir)?.context("missing stage inventory")?;
     let raster_outputs = super::read_boundaries(&raster_dir, &order, false)?;
     let native_outputs = super::read_boundaries(&native.chain_dir, &order, false)?;
     for stage in &order {
@@ -1886,7 +1887,7 @@ mod tests {
         let base = std::path::PathBuf::from(
             std::env::var_os("IRIS_PARITY_RUN").expect("set IRIS_PARITY_RUN"),
         );
-        let model: inference_artifacts::ModelManifest = inference_artifacts::read_json(
+        let model: model_manifest::ModelManifest = procedure_definition::read_json(
             &base.join("model-artifacts/parity-gemma/manifest.json"),
         )
         .unwrap();

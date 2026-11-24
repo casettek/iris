@@ -8,12 +8,15 @@ use anyhow::{bail, ensure, Context, Result};
 use staged_infer::chain_runner::StagedExecutionBackend;
 use staged_infer::{CheckpointHashChallengeConfig, CheckpointedInferenceExecutor};
 
-use inference_artifacts::{
-    checkpoint_hashes, read_challenge_bundle, read_checkpoint_hashes, read_checkpoint_list,
-    read_claim_bundle, verify_file_sha256, write_challenge_artifacts,
-    write_checkpoint_list_artifact, Case, ChallengeBundle, ChallengeSourcePath, Checkpoint,
-    CheckpointList, Divergence, DivergenceReason, PreparedRun, ReplayPackage, Specification,
-    CASE_TOML,
+use blockchain_rules::{
+    read_challenge_bundle, read_claim_bundle, write_challenge_artifacts, ChallengeBundle,
+    ChallengeSourcePath, ReplayPackage,
+};
+use model_manifest::verify_file_sha256;
+use procedure_definition::{
+    checkpoint_hashes, read_checkpoint_hashes, read_checkpoint_list,
+    write_checkpoint_list_artifact, Case, Checkpoint, CheckpointList, Divergence, DivergenceReason,
+    PreparedRun, Specification, CASE_TOML,
 };
 use raster_runtime::{read_raster_artifact_from_bytes, ReadLimits};
 
@@ -185,7 +188,7 @@ pub fn build_challenge(options: ChallengeBuildOptions) -> Result<ChallengeBuildR
     // the replay is not a run of the program its checkpoint names.
     let mut disputed = None;
     if let Some(posted) = &posted_claim {
-        use inference_artifacts::checks::{settlement, Settlement};
+        use blockchain_rules::checks::{settlement, Settlement};
         let claimed = posted
             .list
             .checkpoints
@@ -276,7 +279,7 @@ pub fn build_challenge(options: ChallengeBuildOptions) -> Result<ChallengeBuildR
             &divergence,
             &replay_package,
         )?;
-    inference_artifacts::write_json(
+    procedure_definition::write_json(
         &challenge_dir.join("challenge_timings.json"),
         &serde_json::json!({
             "version": 1,
@@ -319,7 +322,7 @@ fn arrange_posted_claim(
     let claim_dir = submission_path
         .parent()
         .context("the claim submission has no parent directory")?;
-    let list = read_checkpoint_list(&claim_dir.join(inference_artifacts::CHECKPOINT_LIST_JSON))?;
+    let list = read_checkpoint_list(&claim_dir.join(procedure_definition::CHECKPOINT_LIST_JSON))?;
     ensure!(
         checkpoint_hashes(&list)? == claimed.hashes,
         "the checkpoints in {} are not the ones {} lists",
@@ -437,7 +440,7 @@ fn rebuild_teacher_forced_run(
     frozen: &PreparedRun,
 ) -> Result<crate::claim::PreparedClaimRun> {
     let specification_path = resolve_bundle_path(&options.base_dir, &options.specification_path);
-    let selected = inference_artifacts::read_specification(&specification_path)?;
+    let selected = procedure_definition::read_specification(&specification_path)?;
     // A challenger rebuilds the claim's own arrangement of stages, so its
     // specification has to name the procedure kind the claim is of.
     anyhow::ensure!(
@@ -634,7 +637,7 @@ fn load_claimed_input(input: &ChallengeInput) -> Result<ClaimedInput> {
             let path = submission_path
                 .parent()
                 .context("the claim submission has no parent directory")?
-                .join(inference_artifacts::CHECKPOINTS_TXT);
+                .join(procedure_definition::CHECKPOINTS_TXT);
             let hashes = read_checkpoint_hashes(&path)?;
             Ok(ClaimedInput {
                 hashes_path: path,
@@ -672,9 +675,9 @@ fn load_claimed_input(input: &ChallengeInput) -> Result<ClaimedInput> {
 }
 
 fn read_prepared_run(path: &Path) -> Result<PreparedRun> {
-    let value: serde_json::Value = inference_artifacts::read_json(path)?;
-    if value["version"].as_u64() != Some(inference_artifacts::PREPARED_RUN_VERSION as u64) {
-        bail!("incompatible frozen prepared-run version: expected ranked-BPE version {}; preserve this claim and use its original implementation for replay", inference_artifacts::PREPARED_RUN_VERSION);
+    let value: serde_json::Value = procedure_definition::read_json(path)?;
+    if value["version"].as_u64() != Some(procedure_definition::PREPARED_RUN_VERSION as u64) {
+        bail!("incompatible frozen prepared-run version: expected ranked-BPE version {}; preserve this claim and use its original implementation for replay", procedure_definition::PREPARED_RUN_VERSION);
     }
     serde_json::from_value(value).context("incompatible frozen ranked-BPE pieces")
 }
@@ -682,7 +685,7 @@ fn read_prepared_run(path: &Path) -> Result<PreparedRun> {
 /// A claim is recomputed from the challenger's own model, so the claimer's model
 /// files are neither needed nor trusted here.
 fn verify_prepared_run(prepared: &PreparedRun) -> Result<()> {
-    if prepared.version != inference_artifacts::PREPARED_RUN_VERSION {
+    if prepared.version != procedure_definition::PREPARED_RUN_VERSION {
         bail!(
             "incompatible frozen prepared-run version {}",
             prepared.version
@@ -727,14 +730,14 @@ fn bound_commitments(manifest_path: &Path, name: &str) -> Result<Vec<String>> {
 /// claimer who wanted a clean one instead had to doctor a stage, which diverges
 /// and is replayed rather than reaching this point.
 pub(crate) fn claimed_output_rejection(
-    final_result: Option<&inference_artifacts::InferenceResult>,
+    final_result: Option<&procedure_definition::InferenceResult>,
 ) -> Result<Option<String>> {
     let result = final_result
         .context("recomputation produced no final output to check the claim against")?;
     Ok(final_record_rejection(result))
 }
 
-fn final_record_rejection(result: &inference_artifacts::InferenceResult) -> Option<String> {
+fn final_record_rejection(result: &procedure_definition::InferenceResult) -> Option<String> {
     if result.model_fault != 0 {
         return Some(format!(
             "consumed model data failed authentication (fault {})",
@@ -1097,18 +1100,18 @@ mod tests {
         fs::write(&run_manifest, b"[chain]\nname = \"test\"\n").unwrap();
 
         let prepared = PreparedRun {
-            version: inference_artifacts::PREPARED_RUN_VERSION,
-            procedure_kind: inference_artifacts::ProcedureKind::Single,
+            version: procedure_definition::PREPARED_RUN_VERSION,
+            procedure_kind: procedure_definition::ProcedureKind::Single,
             specification_path: base.join("specification.toml"),
             case_path: Some(base.join("case.toml")),
-            inferences: vec![inference_artifacts::PreparedInference {
+            inferences: vec![procedure_definition::PreparedInference {
                 model_manifest_path: model_manifest.clone(),
                 model_manifest_sha256: format!("{:x}", sha2::Sha256::digest(b"model")),
                 model_id: String::from("model-id"),
-                prompt: inference_artifacts::PreparedPrompt {
+                prompt: procedure_definition::PreparedPrompt {
                     resolved_prompt: String::from("hello"),
                     rendered_prompt: String::from("hello"),
-                    initial_pieces: vec![inference_artifacts::PreparedPiece {
+                    initial_pieces: vec![procedure_definition::PreparedPiece {
                         text: String::from("hello"),
                         segment: 0,
                     }],
@@ -1132,12 +1135,12 @@ mod tests {
 
     #[test]
     fn a_claim_is_judged_by_its_final_record() {
-        let clean = inference_artifacts::InferenceResult {
+        let clean = procedure_definition::InferenceResult {
             prompt_complete: true,
             valid: true,
             ..Default::default()
         };
-        let rejection = |result: inference_artifacts::InferenceResult| {
+        let rejection = |result: procedure_definition::InferenceResult| {
             claimed_output_rejection(Some(&result)).unwrap()
         };
 
@@ -1145,14 +1148,14 @@ mod tests {
 
         for (result, expected) in [
             (
-                inference_artifacts::InferenceResult {
+                procedure_definition::InferenceResult {
                     model_fault: 1,
                     ..clean.clone()
                 },
                 "model data failed authentication",
             ),
             (
-                inference_artifacts::InferenceResult {
+                procedure_definition::InferenceResult {
                     prompt_fault: run_prep::FAULT_NOT_THE_MERGE,
                     prompt_fault_position: 7,
                     ..clean.clone()
@@ -1160,14 +1163,14 @@ mod tests {
                 "not what the merge produces",
             ),
             (
-                inference_artifacts::InferenceResult {
+                procedure_definition::InferenceResult {
                     prompt_complete: false,
                     ..clean.clone()
                 },
                 "do not cover",
             ),
             (
-                inference_artifacts::InferenceResult {
+                procedure_definition::InferenceResult {
                     check_fault: 1,
                     check_fault_position: 9,
                     ..clean.clone()
@@ -1175,7 +1178,7 @@ mod tests {
                 "could not be scored",
             ),
             (
-                inference_artifacts::InferenceResult {
+                procedure_definition::InferenceResult {
                     claim_mismatches: 2,
                     first_claim_mismatch_position: 9,
                     ..clean.clone()
@@ -1183,14 +1186,14 @@ mod tests {
                 "counts 2 claimed token(s)",
             ),
             (
-                inference_artifacts::InferenceResult {
+                procedure_definition::InferenceResult {
                     output_fault: 3,
                     ..clean.clone()
                 },
                 "without reaching EOS",
             ),
             (
-                inference_artifacts::InferenceResult {
+                procedure_definition::InferenceResult {
                     valid: false,
                     ..clean.clone()
                 },

@@ -448,9 +448,9 @@ impl Fixture {
                 );
             }
             let ac =
-                inference_artifacts::read_checkpoint_from_stage_dir(name, &a.join(name)).unwrap();
+                procedure_definition::read_checkpoint_from_stage_dir(name, &a.join(name)).unwrap();
             let bc =
-                inference_artifacts::read_checkpoint_from_stage_dir(name, &b.join(name)).unwrap();
+                procedure_definition::read_checkpoint_from_stage_dir(name, &b.join(name)).unwrap();
             // One side may be a directory Raster wrote, which records no
             // program id or producers: the boundary is what both state.
             assert!(
@@ -714,8 +714,9 @@ fn early_checkpoint_divergence_stops_and_reaps_workers() {
         .iter()
         .map(|(name, _)| {
             let checkpoint =
-                inference_artifacts::read_checkpoint_from_stage_dir(name, &run.join(name)).unwrap();
-            inference_artifacts::checkpoint_hash(&checkpoint).unwrap()
+                procedure_definition::read_checkpoint_from_stage_dir(name, &run.join(name))
+                    .unwrap();
+            procedure_definition::checkpoint_hash(&checkpoint).unwrap()
         })
         .collect();
     let stop = f

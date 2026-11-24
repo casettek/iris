@@ -1,7 +1,8 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use inference_artifacts::{file_sha256, write_json, ModelManifest};
+use model_manifest::{file_sha256, ModelManifest};
+use procedure_definition::write_json;
 use serde_json::json;
 
 /// Small bundle for exercising preparation without running any model stages.
@@ -115,13 +116,13 @@ start = 1
 count = 0
 
 "#)).unwrap();
-    let commitments = [inference_artifacts::ModelCommitment {
+    let commitments = [model_manifest::ModelCommitment {
         role: String::from("embedding"),
         commitment: name.to_string(),
     }];
     let manifest: ModelManifest = serde_json::from_value(json!({
-        "version": inference_artifacts::MODEL_MANIFEST_VERSION,
-        "model_id": inference_artifacts::model_id_of(&commitments),
+        "version": model_manifest::MODEL_MANIFEST_VERSION,
+        "model_id": model_manifest::model_id_of(&commitments),
         "model_commitments": commitments,
         "range_size": 4,
         "bundle": {
@@ -154,7 +155,7 @@ count = 0
 pub(crate) fn specification(base: &Path, name: &str) -> PathBuf {
     let dir = base.join("specs");
     fs::create_dir_all(&dir).unwrap();
-    let path = dir.join(inference_artifacts::SPECIFICATION_TOML);
+    let path = dir.join(procedure_definition::SPECIFICATION_TOML);
     fs::write(
         &path,
         format!(
@@ -178,5 +179,5 @@ manifest = \"../models/{name}/manifest.json\"
 
 /// The case file beside a specification [`specification`] wrote.
 pub(crate) fn case_beside(specification: &Path) -> PathBuf {
-    specification.with_file_name(inference_artifacts::CASE_TOML)
+    specification.with_file_name(procedure_definition::CASE_TOML)
 }

@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::encoding::{parse_hash, root_from_path, tree_path, tree_root, Encoder};
-use crate::io::{read_json, write_json};
+use model_manifest::io::{read_json, write_json};
 
 pub const CHECKPOINT_LIST_JSON: &str = "checkpoint_list.json";
 pub const CHECKPOINTS_TXT: &str = "checkpoints.txt";
@@ -356,4 +356,23 @@ impl From<Vec<String>> for StageOrderIndex {
         }
         Self { order }
     }
+}
+
+/// The program identity a stage project's `Raster.lock` records.
+pub fn locked_program_commitment(stage_project: &Path) -> Result<String> {
+    #[derive(serde::Deserialize)]
+    struct Lock {
+        program_commitment: String,
+    }
+    let path = stage_project.join("Raster.lock");
+    let lock: Lock = serde_json::from_slice(
+        &std::fs::read(&path).with_context(|| format!("failed to read {}", path.display()))?,
+    )
+    .with_context(|| format!("failed to parse {}", path.display()))?;
+    anyhow::ensure!(
+        model_identity::context::parse_id(&lock.program_commitment).is_some(),
+        "{} does not record a 32-byte program commitment",
+        path.display()
+    );
+    Ok(lock.program_commitment)
 }

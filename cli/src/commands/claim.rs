@@ -45,7 +45,7 @@ pub(crate) struct ClaimAuditArgs {
     submission: PathBuf,
 
     /// A specification of the procedure the claim names.
-    #[arg(long, default_value = inference_artifacts::SPECIFICATION_TOML)]
+    #[arg(long, default_value = procedure_definition::SPECIFICATION_TOML)]
     specification: PathBuf,
 
     /// The pins the contract holds. As for `iris claim check`.
@@ -72,7 +72,7 @@ pub(crate) struct ClaimFetchArgs {
     /// procedure kind, models and parameters, and for a claim with a source the
     /// recipe and the signer's key. The claim's procedure is held to it
     /// before anything is read.
-    #[arg(long, default_value = inference_artifacts::SPECIFICATION_TOML)]
+    #[arg(long, default_value = procedure_definition::SPECIFICATION_TOML)]
     specification: PathBuf,
 
     /// The pins the contract holds. As for `iris claim check`.
@@ -92,7 +92,7 @@ pub(crate) struct ClaimFetchArgs {
 #[derive(Debug, Args)]
 pub(crate) struct ClaimPinsArgs {
     /// Specification naming the procedure kind and its models.
-    #[arg(long, default_value = inference_artifacts::SPECIFICATION_TOML)]
+    #[arg(long, default_value = procedure_definition::SPECIFICATION_TOML)]
     specification: PathBuf,
 
     /// Where to write the pins. They are made from the models' imports and
@@ -105,7 +105,7 @@ pub(crate) struct ClaimPinsArgs {
 #[derive(Debug, Args)]
 pub(crate) struct ClaimCheckArgs {
     /// Specification naming the models and the parameters the contract requires.
-    #[arg(long, default_value = inference_artifacts::SPECIFICATION_TOML)]
+    #[arg(long, default_value = procedure_definition::SPECIFICATION_TOML)]
     specification: PathBuf,
 
     /// The `claim_submission.json` that `claim build` wrote.
@@ -143,12 +143,12 @@ pub(crate) struct ClaimCheckArgs {
 #[derive(Debug, Args)]
 pub(crate) struct ClaimBuildArgs {
     /// The specification of the procedure the claim is of.
-    #[arg(long, default_value = inference_artifacts::SPECIFICATION_TOML)]
+    #[arg(long, default_value = procedure_definition::SPECIFICATION_TOML)]
     pub(crate) specification: PathBuf,
 
     /// The case the claim is about: the prompt, or the documents of the
     /// specification's source.
-    #[arg(long, default_value = inference_artifacts::CASE_TOML)]
+    #[arg(long, default_value = procedure_definition::CASE_TOML)]
     pub(crate) case: PathBuf,
 
     /// The comma-separated output ids `iris infer` printed for this same
@@ -275,7 +275,7 @@ pub(crate) fn run(command: ClaimCommand) -> Result<ExitCode> {
             let base_dir =
                 std::env::current_dir().context("failed to resolve current directory")?;
             let pins = claim_check::run_pins(&base_dir, &args.specification)?;
-            inference_artifacts::write_json(&args.out, &pins)?;
+            procedure_definition::write_json(&args.out, &pins)?;
             println!("procedure kind: {}", pins.procedure_kind);
             for model in &pins.models {
                 println!("model id: {}", model.model_id);
@@ -326,7 +326,7 @@ pub(crate) fn run(command: ClaimCommand) -> Result<ExitCode> {
             }
             if let Some(calls) = args.calls {
                 let calls = absolute(&base_dir, &calls);
-                inference_artifacts::write_json(&calls, &audit.calls)?;
+                procedure_definition::write_json(&calls, &audit.calls)?;
                 println!("calls: {}", calls.display());
             }
             Ok(ExitCode::SUCCESS)

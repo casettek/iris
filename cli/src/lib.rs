@@ -30,6 +30,11 @@ mod stage_bindings;
 #[cfg(test)]
 mod test_support;
 
+pub use blockchain_rules::{
+    write_claim_artifacts, ChallengeBundle, ChallengeTrace, ClaimBundle, ClaimEndpoint,
+    ReplayPackage, CHALLENGE_BUNDLE_JSON, CHALLENGE_TRACE_JSON, CLAIM_BUNDLE_JSON,
+    REPLAY_PACKAGE_JSON,
+};
 pub use challenge::{
     build_challenge, ChallengeBuildOptions, ChallengeBuildOutcome, ChallengeBuildResult,
     ChallengeInput,
@@ -40,11 +45,9 @@ pub use claim::{
 };
 pub use claim_check::{check_claim, CheckLine, ClaimCheckOptions, ClaimCheckReport};
 pub use infer::run_infer;
-pub use inference_artifacts::{
-    build_checkpoint_list, write_claim_artifacts, ChallengeBundle, ChallengeTrace, Checkpoint,
-    CheckpointList, ClaimBundle, ClaimEndpoint, Divergence, DivergenceReason, ReplayPackage,
-    CHALLENGE_BUNDLE_JSON, CHALLENGE_TRACE_JSON, CHECKPOINT_HASHES_TXT, CHECKPOINT_LIST_JSON,
-    CLAIM_BUNDLE_JSON, DIVERGENCE_JSON, REPLAY_PACKAGE_JSON,
+pub use procedure_definition::{
+    build_checkpoint_list, Checkpoint, CheckpointList, Divergence, DivergenceReason,
+    CHECKPOINT_HASHES_TXT, CHECKPOINT_LIST_JSON, DIVERGENCE_JSON,
 };
 #[cfg(feature = "replay-profile")]
 pub use replay_profile::{run_replay_profile, ReplayProfileOptions};
@@ -453,14 +456,15 @@ mod tests {
     /// link: its row is checked by its presence alone.
     #[test]
     fn the_formats_table_is_current() {
-        use inference_artifacts::availability::BLOB_MAGIC;
-        use inference_artifacts::checks::{
+        use blockchain_rules::availability::BLOB_MAGIC;
+        use blockchain_rules::checks::{
             CHALLENGE_SUBMISSION_VERSION, CLAIM_SUBMISSION_VERSION, CONTRACT_PINS_VERSION,
         };
-        use inference_artifacts::registry::{PROCEDURE_VERSION, REGISTRY_VERSION};
-        use inference_artifacts::{MODEL_MANIFEST_VERSION, PREPARED_RUN_VERSION};
+        use blockchain_rules::registry::{PROCEDURE_VERSION, REGISTRY_VERSION};
         use model_identity::statement_core::EXECUTION_VERSION;
         use model_identity::DESCRIPTOR_VERSION;
+        use model_manifest::MODEL_MANIFEST_VERSION;
+        use procedure_definition::PREPARED_RUN_VERSION;
 
         let table = include_str!(concat!(
             env!("CARGO_MANIFEST_DIR"),
@@ -501,8 +505,8 @@ mod tests {
     }
 
     /// The core does not depend on the blockchain code: of the crates under
-    /// `segments/`, `procedure/`, `crates/`, `cli/` and `raster-stages/`, only
-    /// this one names a path that leads into `blockchain/`.
+    /// `segments/`, `procedure/`, `cli/` and `raster-stages/`, only this one
+    /// names a path that leads into `blockchain/`.
     #[test]
     fn nothing_but_the_cli_depends_on_blockchain() {
         fn manifests(dir: &Path, found: &mut Vec<PathBuf>) {
@@ -563,7 +567,7 @@ mod tests {
                 .any(|path| resolved(manifest.parent().unwrap(), path).starts_with(&blockchain))
         };
         let mut found = Vec::new();
-        for dir in ["segments", "procedure", "crates", "cli", "raster-stages"] {
+        for dir in ["segments", "procedure", "cli", "raster-stages"] {
             manifests(&root.join(dir), &mut found);
         }
         let own = here.join("Cargo.toml");

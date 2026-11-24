@@ -20,7 +20,7 @@ clap = { version = "4.5", features = ["derive"] }
 det-num = { path = "../../segments/inference/numerics" }
 hex = "0.4"
 input-embedding = { path = "../../raster-stages/input-embedding" }
-inference-artifacts = { path = "../../crates/inference/artifacts" }
+procedure-definition = { path = "../definition" }
 prefill-range = { path = "../../raster-stages/prefill-range" }
 layer-mistral = { path = "../../raster-stages/layer-mistral" }
 prefill-prepare-aux = { path = "../../raster-stages/prefill-prepare-aux" }

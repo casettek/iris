@@ -47,9 +47,9 @@ heavier than its own program would be, that family gets its own.
 
 | Where | What it does |
 | --- | --- |
-| `inference_artifacts::ModelFamily` | The list of families this build has. `ALL`, `name` and `parse` are the only way a name becomes a family. |
+| `model_manifest::ModelFamily` | The list of families this build has. `ALL`, `name` and `parse` are the only way a name becomes a family. |
 | `manifest.json`, field `family` | Written by the import. A manifest without it is `gemma-dense`. `ModelManifest::load_verified` refuses a family this build does not have, before any inference. |
-| `manifest.json`, field `shape` | The family's own numbers, as `inference_artifacts::FamilyShape`. A manifest whose shape is not its family's is refused. |
+| `manifest.json`, field `shape` | The family's own numbers, as `model_manifest::FamilyShape`. A manifest whose shape is not its family's is refused. |
 | `model-import`, `bundle_family` | Reads `model_type` from a bundle's `config.json` and refuses one that is not a family this build imports. |
 | `model-import`, `gemma::require_known_tensors` | Refuses a bundle with language-model weights the family's import does not read. |
 

@@ -3,10 +3,10 @@ use std::path::{Path, PathBuf};
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
-use crate::checkpoint::{
+use model_manifest::io::{read_json, write_json};
+use procedure_definition::checkpoint::{
     build_checkpoint_list, write_checkpoint_hashes_artifact, CHECKPOINT_LIST_JSON,
 };
-use crate::io::{read_json, write_json};
 
 pub const CLAIM_BUNDLE_JSON: &str = "claim_bundle.json";
 

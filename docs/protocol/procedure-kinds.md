@@ -191,7 +191,7 @@ a file, and `iris claim check --pins` checks a claim against it.
 ## Adding a procedure kind
 
 In code a procedure kind is a variant of `ProcedureKind`
-(`crates/inference/artifacts/src/procedure_kind.rs`) with its name, how many
+(`procedure/definition/src/procedure_kind.rs`) with its name, how many
 inferences it makes, its result program and its result stage's bindings. It
 also needs its result program (a stage project, a native routine and the
 function direct inference calls), what `iris infer` and `iris claim build`

@@ -2,7 +2,7 @@
 use std::collections::BTreeSet;
 
 use anyhow::{bail, ensure, Result};
-use inference_artifacts::InferenceRunReport;
+use procedure_definition::InferenceRunReport;
 use serde::Serialize;
 
 #[derive(Debug, Clone)]

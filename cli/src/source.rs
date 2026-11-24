@@ -58,9 +58,9 @@ pub struct SignArgs {
 pub enum SourceCommand {
     /// Check a run's source and print its record. Exits with 1 on a fault.
     Render {
-        #[arg(long, default_value = inference_artifacts::SPECIFICATION_TOML)]
+        #[arg(long, default_value = procedure_definition::SPECIFICATION_TOML)]
         specification: PathBuf,
-        #[arg(long, default_value = inference_artifacts::CASE_TOML)]
+        #[arg(long, default_value = procedure_definition::CASE_TOML)]
         case: PathBuf,
         /// Write the prompt text the source gives to this file.
         #[arg(long)]
@@ -69,9 +69,9 @@ pub enum SourceCommand {
     /// Write the `prompt-source` stage's inputs for a run, with the
     /// `input.json` and `input_manifest.json` that run the stage on its own.
     Inputs {
-        #[arg(long, default_value = inference_artifacts::SPECIFICATION_TOML)]
+        #[arg(long, default_value = procedure_definition::SPECIFICATION_TOML)]
         specification: PathBuf,
-        #[arg(long, default_value = inference_artifacts::CASE_TOML)]
+        #[arg(long, default_value = procedure_definition::CASE_TOML)]
         case: PathBuf,
         /// Directory to write the files in.
         #[arg(long)]
@@ -164,9 +164,9 @@ pub fn sign(args: SignArgs) -> Result<()> {
 pub fn run_source_of(specification_path: &Path, case_path: &Path) -> Result<Option<LoadedSource>> {
     let base_dir = std::env::current_dir().context("failed to read current directory")?;
     let specification_path = crate::absolute(&base_dir, specification_path);
-    let specification = inference_artifacts::read_specification(&specification_path)?;
+    let specification = procedure_definition::read_specification(&specification_path)?;
     let case_path = crate::absolute(&base_dir, case_path);
-    let case = inference_artifacts::read_case(&case_path)?;
+    let case = procedure_definition::read_case(&case_path)?;
     let case_dir = case_path.parent().context("case has no parent directory")?;
     load_source(&specification, case_dir, &case)
 }
@@ -257,7 +257,7 @@ pub fn print_source_lines(source: &LoadedSource) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use inference_artifacts::{Case, CaseDocument, Specification};
+    use procedure_definition::{Case, CaseDocument, Specification};
     use run_prep::source::sourced_prompt;
 
     const EVENT: &str = r#"{"type":"Feature","properties":{"mag":5.1,"products":{"losspager":[{"id":"p1","contents":{"comments.json":{"url":"https://example.org/p1/comments.json"}}}]}},"id":"us7000abcd"}"#;

@@ -14,7 +14,7 @@ model-identity = { path = "../../common/identity" }
 sequence-check = { path = "../../../raster-stages/sequence-check" }
 det-num = { path = "../numerics" }
 detwgt = { path = "../weights" }
-inference-artifacts = { path = "../../../crates/inference/artifacts" }
+model-manifest = { path = "../manifest" }
 inference-kernels = { path = "../kernels" }
 raster = { path = "../../../../raster/crates/raster" }
 serde = { version = "1.0", features = ["derive"] }

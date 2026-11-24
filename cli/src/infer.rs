@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use direct_infer::{DirectInferenceConfig, DirectInferenceExecutor};
-use inference_artifacts::{ConsensusOutcome, ProcedureKind};
+use procedure_definition::{ConsensusOutcome, ProcedureKind};
 use staged_infer::InferenceRunReport;
 
 /// A procedure kind run directly: one report per inference, in order, and what a
@@ -19,7 +19,7 @@ pub fn run_infer(specification_path: PathBuf, case_path: PathBuf) -> Result<Infe
     config.specification_path = specification_path;
     config.case_path = case_path;
     let specification_path = crate::absolute(&config.base_dir, &config.specification_path);
-    let specification = inference_artifacts::read_specification(&specification_path).with_context(|| {
+    let specification = procedure_definition::read_specification(&specification_path).with_context(|| {
         format!(
             "failed to load specification {}; create specification.toml with a `[[model]]` table, raw_prompt and max_new_tokens",
             specification_path.display()

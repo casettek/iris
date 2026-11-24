@@ -11,8 +11,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
-use inference_artifacts::availability::{PostedInference, PostedRun, PostedSourceInputs, RunInput};
-use inference_artifacts::{PreparedSourceInputs, RunFileRef};
+use blockchain_rules::availability::{PostedInference, PostedRun, PostedSourceInputs, RunInput};
+use procedure_definition::{PreparedSourceInputs, RunFileRef};
 use run_prep::RunFile;
 
 /// A run's inputs, beside its frozen manifest and beside a fetched claim.
@@ -182,7 +182,7 @@ mod tests {
 
         let posted = PostedInference {
             config: recast(&config).unwrap(),
-            schedule: inference_artifacts::availability::RunSchedule {
+            schedule: blockchain_rules::availability::RunSchedule {
                 prompt_ranges: 2,
                 claimed_ranges: 2,
             },

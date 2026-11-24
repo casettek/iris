@@ -1,9 +1,8 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
-use inference_artifacts::{
-    Case, DirectInferShape, MistralShape, ModelFamily, ModelManifest, PreparedPrompt, Specification,
-};
+use model_manifest::{DirectInferShape, MistralShape, ModelFamily, ModelManifest};
+use procedure_definition::{Case, PreparedPrompt, Specification};
 use prompt_check::input::BpePieces;
 use raster::{Bytes, List};
 

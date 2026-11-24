@@ -1,9 +1,8 @@
 //! Observability of a frozen challenge using Raster's existing run/replay interfaces.
 use anyhow::{ensure, Context, Result};
-use inference_artifacts::{
-    file_sha256, read_json, write_json, ChallengeBundle, CheckpointList, ClaimBundle, PreparedRun,
-    ReplayPackage,
-};
+use blockchain_rules::{ChallengeBundle, ClaimBundle, ReplayPackage};
+use model_manifest::file_sha256;
+use procedure_definition::{read_json, write_json, CheckpointList, PreparedRun};
 use raster_analysis::replay_profile::ReplayProfile;
 use raster_compiler::{CfsBuilder, Project};
 
@@ -196,7 +195,7 @@ pub(crate) fn summarize(
 }
 
 pub(crate) fn verify_output(stage: &str, baseline_dir: &Path, run: &Path) -> Result<()> {
-    let baseline = inference_artifacts::read_checkpoint_from_stage_dir(stage, baseline_dir)?;
+    let baseline = procedure_definition::read_checkpoint_from_stage_dir(stage, baseline_dir)?;
     let output: Value = read_json(&run.join("output_manifest.json"))?;
     ensure!(
         output["output"]["commitment"] == baseline.output_commitment
@@ -222,14 +221,14 @@ pub fn run(args: ProfileArgs) -> Result<PathBuf> {
             .context("missing frozen run")?,
     ))?;
     ensure!(
-        prepared.version == inference_artifacts::PREPARED_RUN_VERSION,
+        prepared.version == procedure_definition::PREPARED_RUN_VERSION,
         "unsupported frozen run version"
     );
     let manifest = prepared
         .run_manifest_path
         .as_ref()
         .context("missing run manifest")?;
-    inference_artifacts::verify_file_sha256(
+    model_manifest::verify_file_sha256(
         manifest,
         prepared
             .run_manifest_sha256
@@ -238,7 +237,7 @@ pub fn run(args: ProfileArgs) -> Result<PathBuf> {
         "frozen run",
     )?;
     for inference in &prepared.inferences {
-        inference_artifacts::verify_file_sha256(
+        model_manifest::verify_file_sha256(
             &inference.model_manifest_path,
             &inference.model_manifest_sha256,
             "frozen model",
@@ -251,7 +250,7 @@ pub fn run(args: ProfileArgs) -> Result<PathBuf> {
         "replay package stage mismatch"
     );
     let baseline =
-        inference_artifacts::read_checkpoint_from_stage_dir(&bundle.stage, &package.stage_dir)?;
+        procedure_definition::read_checkpoint_from_stage_dir(&bundle.stage, &package.stage_dir)?;
     let list: CheckpointList = read_json(&reference(&claim_path, &claim.checkpoint_list_path))?;
     ensure!(
         list.checkpoints

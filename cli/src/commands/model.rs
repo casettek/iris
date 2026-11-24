@@ -34,7 +34,7 @@ pub(crate) struct ModelImportArgs {
     /// Also save a copy of the model-specific Raster template at this path.
     #[arg(long)]
     manifest: Option<PathBuf>,
-    #[arg(long = "artifact-root", default_value = inference_artifacts::MODEL_ARTIFACTS_DIR)]
+    #[arg(long = "artifact-root", default_value = model_manifest::MODEL_ARTIFACTS_DIR)]
     artifact_root: PathBuf,
     #[arg(long = "model-id")]
     model_id: Option<String>,
@@ -81,10 +81,35 @@ pub(crate) fn run(command: ModelCommand) -> Result<ExitCode> {
             Ok(ExitCode::SUCCESS)
         }
         ModelCommand::Import(args) => {
-            model_import::import_model(args.into_import_config())
+            let imported = model_import::import_model(args.into_import_config())
                 .map_err(|error| anyhow::anyhow!("{error}"))?;
+            if let (Some(manifest), Some(template)) =
+                (&imported.model_manifest_path, &imported.template)
+            {
+                write_contract_pins(manifest, template);
+            }
             Ok(ExitCode::SUCCESS)
         }
+    }
+}
+
+/// Writes what a contract pins for this import beside its manifest, as two
+/// entries. The procedure kind: the program id each stage project has locked, and
+/// for each program the inputs it takes from earlier stages, read from the
+/// chain template of the `single` procedure kind over this import. The model: its
+/// id with the commitments it hashes, and the range size.
+///
+/// An import made where the stage projects are not locked gets no pins and
+/// says so. It can still run; it cannot have a claim checked against it.
+fn write_contract_pins(model_manifest_path: &std::path::Path, template: &str) {
+    let pins =
+        model_manifest::ModelManifest::load_verified(model_manifest_path).and_then(|manifest| {
+            blockchain_rules::checks::ContractPins::from_import(&manifest, template)
+        });
+    let path = model_manifest_path.with_file_name(blockchain_rules::checks::CONTRACT_PINS_JSON);
+    match pins.and_then(|pins| model_manifest::write_json(&path, &pins)) {
+        Ok(()) => println!("wrote {}", path.display()),
+        Err(error) => println!("no contract pins written: {error:#}"),
     }
 }
 
@@ -97,7 +122,7 @@ mod tests {
         let config = ModelImportArgs {
             model_dir: PathBuf::from("model"),
             manifest: Some(PathBuf::from("Raster.toml")),
-            artifact_root: PathBuf::from(inference_artifacts::MODEL_ARTIFACTS_DIR),
+            artifact_root: PathBuf::from(model_manifest::MODEL_ARTIFACTS_DIR),
             model_id: Some(String::from("gemma")),
             only_tokenizer: true,
             only_layers: false,
@@ -114,7 +139,7 @@ mod tests {
             model_import::ImportConfig {
                 model_dir: PathBuf::from("model"),
                 manifest: Some(PathBuf::from("Raster.toml")),
-                artifact_root: PathBuf::from(inference_artifacts::MODEL_ARTIFACTS_DIR),
+                artifact_root: PathBuf::from(model_manifest::MODEL_ARTIFACTS_DIR),
                 model_id: Some(String::from("gemma")),
                 only_tokenizer: true,
                 only_layers: false,

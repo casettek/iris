@@ -84,7 +84,7 @@ impl StageKind {
     pub fn from_stage_spec(project: &str, name: &str) -> Result<Self> {
         // A stage of a procedure kind with several inferences is named with its
         // inference's label in front.
-        let name = inference_artifacts::procedure_kind::unlabelled(name);
+        let name = procedure_definition::procedure_kind::unlabelled(name);
         match project_basename(project) {
             "prompt-source" if name == "source" => Ok(Self::PromptSource),
             "prompt-bind" if name.starts_with("prompt_bind_p") => Ok(Self::PromptBind),
@@ -140,7 +140,7 @@ impl StageKind {
     }
 
     pub fn from_stage_name(name: &str) -> Result<Self> {
-        let name = inference_artifacts::procedure_kind::unlabelled(name);
+        let name = procedure_definition::procedure_kind::unlabelled(name);
         match name {
             "source" => Ok(Self::PromptSource),
             "result" => Ok(Self::ClaimResult),

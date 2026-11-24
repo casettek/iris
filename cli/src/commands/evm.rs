@@ -7,7 +7,7 @@ use crate::*;
 pub(crate) enum EvmCommand {
     /// The call that registers a specification's procedure.
     Procedure {
-        #[arg(long, default_value = inference_artifacts::SPECIFICATION_TOML)]
+        #[arg(long, default_value = procedure_definition::SPECIFICATION_TOML)]
         specification: PathBuf,
         #[arg(long)]
         pins: Option<PathBuf>,

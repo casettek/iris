@@ -12,9 +12,9 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::availability::{BlobContents, PostedBlob};
-use crate::checkpoint::checkpoints_root;
-use crate::inference::InferenceResult;
-use crate::procedure_kind::ProcedureKind;
+use procedure_definition::checkpoint::checkpoints_root;
+use procedure_definition::inference::InferenceResult;
+use procedure_definition::procedure_kind::ProcedureKind;
 
 use super::*;
 
@@ -164,7 +164,7 @@ pub struct ClaimSubmission {
     /// The digest of the source record the claimer says the text was built
     /// from, or 64 zeros. The statement names it, so a record that is valid
     /// was produced under it.
-    #[serde(default = "crate::inference::no_source_id")]
+    #[serde(default = "procedure_definition::inference::no_source_id")]
     pub source_sha256: String,
     /// The source record that digest is over, for a claim that names a
     /// source. A contract reads the signer and the recipe from it.
@@ -181,7 +181,7 @@ pub struct ClaimSubmission {
     pub checkpoint_count: u32,
     /// The claim's commitment to every stage boundary: the count and the
     /// root of the tree over its checkpoint hashes, in order
-    /// ([`crate::checkpoint::checkpoints_root`]). One checkpoint opens
+    /// ([`procedure_definition::checkpoint::checkpoints_root`]). One checkpoint opens
     /// against it with a path.
     pub checkpoints_root: String,
     /// What the claimer posted to the data-availability layer: its run's
@@ -447,8 +447,8 @@ impl ClaimSubmission {
         chain_dir: &Path,
     ) -> Result<Self> {
         let first = results.first().context("a claim holds an inference")?;
-        let checkpoints = crate::checkpoint::read_checkpoint_hashes(
-            &chain_dir.join(crate::checkpoint::CHECKPOINTS_TXT),
+        let checkpoints = procedure_definition::checkpoint::read_checkpoint_hashes(
+            &chain_dir.join(procedure_definition::checkpoint::CHECKPOINTS_TXT),
         )?;
         Ok(Self {
             version: CLAIM_SUBMISSION_VERSION,
@@ -622,7 +622,7 @@ pub fn check_origin(
     }
     match (&required.source, &submission.source) {
         (None, _) => {
-            if submission.source_sha256 != crate::inference::no_source_id() {
+            if submission.source_sha256 != procedure_definition::inference::no_source_id() {
                 return Err(SubmissionRejection::UnexpectedSource);
             }
         }

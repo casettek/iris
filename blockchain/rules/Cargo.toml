@@ -1,0 +1,25 @@
+[package]
+name = "blockchain-rules"
+version = "0.1.0"
+edition = "2021"
+description = "What a claim, a challenge and a contract hold, and the contract's rules in Rust"
+
+[dependencies]
+anyhow = "1.0"
+hex = "0.4"
+postcard = { version = "1", default-features = false, features = ["alloc"] }
+raster-core = { path = "../../../raster/crates/raster-core" }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sha2 = "0.10"
+toml = "0.8"
+
+model-identity = { path = "../../segments/common/identity" }
+model-manifest = { path = "../../segments/inference/manifest" }
+procedure-definition = { path = "../../procedure/definition" }
+prompt-core = { path = "../../segments/inference/tokenizer" }
+result-core = { path = "../../segments/result" }
+source-core = { path = "../../segments/source" }
+
+[dev-dependencies]
+source-core = { path = "../../segments/source", features = ["sign"] }

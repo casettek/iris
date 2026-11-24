@@ -13,7 +13,7 @@ pub(crate) enum RegistryCommand {
 #[derive(Debug, Args)]
 pub(crate) struct RegistryAddArgs {
     /// Specification naming the procedure kind, its models and the parameters.
-    #[arg(long, default_value = inference_artifacts::SPECIFICATION_TOML)]
+    #[arg(long, default_value = procedure_definition::SPECIFICATION_TOML)]
     specification: PathBuf,
 
     /// The pins of the procedure kind's programs and models, as `iris claim pins`
@@ -36,7 +36,7 @@ pub(crate) fn run(command: RegistryCommand) -> Result<ExitCode> {
                 args.pins.map(|path| absolute(&base_dir, &path)).as_deref(),
             )?;
             let registry_path = absolute(&base_dir, &args.registry);
-            let mut registry = inference_artifacts::registry::Registry::read(&registry_path)?;
+            let mut registry = blockchain_rules::registry::Registry::read(&registry_path)?;
             let id = registry.register(procedure);
             registry.write(&registry_path)?;
             println!("procedure: {id}");

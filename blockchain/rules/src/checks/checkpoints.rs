@@ -9,7 +9,9 @@ use ::model_identity::context::parse_id;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::checkpoint::{checkpoint_hash, checkpoints_root, Checkpoint, CheckpointList};
+use procedure_definition::checkpoint::{
+    checkpoint_hash, checkpoints_root, Checkpoint, CheckpointList,
+};
 
 use super::*;
 
@@ -292,7 +294,7 @@ pub fn read_input_manifest(bytes: &[u8]) -> Option<BTreeMap<String, String>> {
 ///
 /// The host holds every hash. A contract holds only the root and opens
 /// one checkpoint with a path
-/// ([`crate::checkpoint::verify_checkpoint_opening`]); every comparison
+/// ([`procedure_definition::checkpoint::verify_checkpoint_opening`]); every comparison
 /// here reads a checkpoint through [`CheckpointHashes::opened`], which is that
 /// opening with the hashes in hand.
 #[derive(Debug, Clone, PartialEq, Eq)]

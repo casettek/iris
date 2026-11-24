@@ -34,7 +34,7 @@ test-cli:
     cargo test -p iris-cli
 
 test-artifacts:
-    cargo test -p inference-artifacts
+    cargo test -p model-manifest -p procedure-definition -p blockchain-rules
 
 stage-check stage:
     cargo check --manifest-path "raster-stages/{{stage}}/Cargo.toml" --no-default-features

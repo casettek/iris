@@ -11,9 +11,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{ensure, Context, Result};
-use inference_artifacts::availability::{check_holds, RequiredPosting};
-use inference_artifacts::checks::{is_address, ClaimSubmission, CLAIM_SUBMISSION_JSON};
-use inference_artifacts::{
+use blockchain_rules::availability::{check_holds, RequiredPosting};
+use blockchain_rules::checks::{is_address, ClaimSubmission, CLAIM_SUBMISSION_JSON};
+use procedure_definition::{
     checkpoint_hashes, checkpoints_root, read_checkpoint_hashes, read_checkpoint_list, read_json,
     write_checkpoint_hashes, write_json, CHECKPOINTS_TXT, CHECKPOINT_LIST_JSON,
 };
@@ -118,7 +118,7 @@ pub fn corrupt_claim(options: CorruptClaimOptions) -> Result<CorruptedClaim> {
     // Outputs the lying claim's records are read from, in place of the
     // honest ones at those checkpoints.
     let mut forged_outputs: Vec<(usize, staged_infer::artifact_io::EncodedArtifact)> = Vec::new();
-    let read_list = |checkpoint: &inference_artifacts::Checkpoint,
+    let read_list = |checkpoint: &procedure_definition::Checkpoint,
                      position: usize|
      -> Result<BTreeMap<String, BTreeMap<String, String>>> {
         let path = dir
@@ -262,7 +262,7 @@ pub fn corrupt_claim(options: CorruptClaimOptions) -> Result<CorruptedClaim> {
             }
             let lying = serde_json::to_vec_pretty(&entries)?;
             let stated =
-                |checkpoint: &mut inference_artifacts::Checkpoint,
+                |checkpoint: &mut procedure_definition::Checkpoint,
                  output: &staged_infer::artifact_io::EncodedArtifact| {
                     checkpoint.output_commitment = output.structural_commitment.clone();
                     checkpoint.output_sha256 = hex::encode(Sha256::digest(&output.data));

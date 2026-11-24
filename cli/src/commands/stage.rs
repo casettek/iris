@@ -5,9 +5,9 @@ use crate::*;
 #[cfg(feature = "replay-profile")]
 #[derive(Debug, Args)]
 pub(crate) struct ReplayProfileArgs {
-    #[arg(long, default_value = inference_artifacts::SPECIFICATION_TOML)]
+    #[arg(long, default_value = procedure_definition::SPECIFICATION_TOML)]
     pub(crate) specification: PathBuf,
-    #[arg(long, default_value = inference_artifacts::CASE_TOML)]
+    #[arg(long, default_value = procedure_definition::CASE_TOML)]
     pub(crate) case: PathBuf,
     /// Exact expanded stage name, e.g. range_p0_l13 or prompt_check_p0.
     #[arg(long)]

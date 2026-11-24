@@ -10,15 +10,15 @@
 use std::path::Path;
 
 use anyhow::{ensure, Context, Result};
-use inference_artifacts::availability::{AvailabilityProof, HostAttestation, PostedBlob};
-use inference_artifacts::checks::{ChallengeSubmission, ClaimSubmission};
-use inference_artifacts::{
-    checkpoint_opening, read_checkpoint_hashes, read_checkpoint_list, read_json, CHECKPOINTS_TXT,
-    CHECKPOINT_LIST_JSON,
-};
+use blockchain_rules::availability::{AvailabilityProof, HostAttestation, PostedBlob};
+use blockchain_rules::checks::{ChallengeSubmission, ClaimSubmission};
 use iris_evm::{
     abi_encode, attestation_digest, call_with_bytes, challenge_id, challenge_token, claim_id,
     claim_token, fault_proof_token, procedure_token, read_fault_journal, FaultVerdict,
+};
+use procedure_definition::{
+    checkpoint_opening, read_checkpoint_hashes, read_checkpoint_list, read_json, CHECKPOINTS_TXT,
+    CHECKPOINT_LIST_JSON,
 };
 use serde_json::{json, Value};
 
@@ -42,7 +42,7 @@ pub(crate) fn call(name: &str, encoded: &[u8]) -> Value {
 }
 
 /// The call that registers a procedure, with the id it will have.
-pub fn procedure_call(procedure: &inference_artifacts::registry::Procedure) -> Result<Value> {
+pub fn procedure_call(procedure: &blockchain_rules::registry::Procedure) -> Result<Value> {
     let mut call = call("register", &abi_encode(&procedure_token(procedure)?));
     call["procedure"] = json!(format!("0x{}", procedure.id()));
     Ok(call)
@@ -74,7 +74,7 @@ pub fn challenge_call(challenge_path: &Path, claim_submission_path: &Path) -> Re
 struct OpenedChallenge {
     claim_id: [u8; 32],
     challenge: ChallengeSubmission,
-    checkpoint: inference_artifacts::Checkpoint,
+    checkpoint: procedure_definition::Checkpoint,
     path: Vec<String>,
 }
 
@@ -121,7 +121,7 @@ impl OpenedChallenge {
         // commitment of its own to say otherwise. One that was built about
         // another checkpoint is not the challenge these bytes would state.
         ensure!(
-            inference_artifacts::checks::challenge_is_about(checkpoint, &challenge.challenge),
+            blockchain_rules::checks::challenge_is_about(checkpoint, &challenge.challenge),
             "the challenge is not about the claim's checkpoint {stage}"
         );
         Ok(Self {
@@ -239,7 +239,7 @@ pub fn fault_proof_call(
 ) -> Result<Value> {
     let opened = OpenedChallenge::read(challenge_path, claim_submission_path)?;
     let proof = sealed_fault_proof(receipt_path)?;
-    let rejection = inference_artifacts::checks::check_fault_proof(
+    let rejection = blockchain_rules::checks::check_fault_proof(
         &opened.challenge.challenge,
         &proof.decoded,
         &raster_prover::chain_fraud::transition_guest_image_id(),
@@ -319,13 +319,13 @@ pub fn attest_submission(path: &Path, layer: &dyn PostingLayer) -> Result<usize>
     // A claim's submission, or else a challenge's.
     if let Ok(mut claim) = read_json::<ClaimSubmission>(path) {
         attest_blobs(layer, &mut claim.availability, &key)?;
-        inference_artifacts::write_json(path, &claim)?;
+        procedure_definition::write_json(path, &claim)?;
         return Ok(claim.availability.len());
     }
     let mut challenge: ChallengeSubmission = read_json(path)
         .with_context(|| format!("{} is no claim or challenge submission", path.display()))?;
     attest_blobs(layer, &mut challenge.availability, &key)?;
-    inference_artifacts::write_json(path, &challenge)?;
+    procedure_definition::write_json(path, &challenge)?;
     Ok(challenge.availability.len())
 }
 

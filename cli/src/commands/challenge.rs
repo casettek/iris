@@ -14,7 +14,7 @@ pub(crate) struct ChallengePostArgs {
     submission: PathBuf,
 
     /// Specification naming the procedure kind and models of the contract.
-    #[arg(long, default_value = inference_artifacts::SPECIFICATION_TOML)]
+    #[arg(long, default_value = procedure_definition::SPECIFICATION_TOML)]
     specification: PathBuf,
 
     /// The pins the contract holds. As for `iris claim check`.
@@ -75,7 +75,7 @@ pub(crate) struct ChallengeCheckArgs {
     submission: PathBuf,
 
     /// Specification naming the procedure kind and models of the contract.
-    #[arg(long, default_value = inference_artifacts::SPECIFICATION_TOML)]
+    #[arg(long, default_value = procedure_definition::SPECIFICATION_TOML)]
     specification: PathBuf,
 
     /// The pins the contract holds. As for `iris claim check`.
@@ -113,7 +113,7 @@ pub(crate) enum ChallengeCommand {
 pub(crate) struct ChallengeBuildArgs {
     /// Your own specification of the procedure the claim names. Its models
     /// are the ones the claim is verified against.
-    #[arg(long, default_value = inference_artifacts::SPECIFICATION_TOML)]
+    #[arg(long, default_value = procedure_definition::SPECIFICATION_TOML)]
     specification: PathBuf,
 
     /// For a test that has the claimer's own directory: the claim's

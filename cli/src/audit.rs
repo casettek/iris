@@ -6,8 +6,8 @@ use std::fs;
 use std::path::PathBuf;
 
 use anyhow::{ensure, Context, Result};
-use inference_artifacts::checks::ClaimSubmission;
-use inference_artifacts::{
+use blockchain_rules::checks::ClaimSubmission;
+use procedure_definition::{
     read_checkpoint_hashes, read_checkpoint_list, read_json, CHECKPOINTS_TXT, CHECKPOINT_LIST_JSON,
 };
 
@@ -64,7 +64,7 @@ pub struct ClaimAudit {
 /// found here is pointed at with `voidClaim`, and the
 /// claim is void: there is no challenge to post and nothing to answer.
 pub fn audit_claim(options: AuditClaimOptions) -> Result<ClaimAudit> {
-    use inference_artifacts::checks::{CheckpointHashes, LinkCheck, StageAdmission};
+    use blockchain_rules::checks::{CheckpointHashes, LinkCheck, StageAdmission};
     use iris_evm::{abi_encode, checkpoint_fault_token, claim_id, InputQuestion};
 
     let submission: ClaimSubmission = read_json(&options.submission_path)?;
@@ -110,7 +110,7 @@ pub fn audit_claim(options: AuditClaimOptions) -> Result<ClaimAudit> {
     };
     for (index, checkpoint) in list.checkpoints.iter().enumerate() {
         let position = index as u32;
-        let path = inference_artifacts::checkpoint_opening(&hashes, index)?;
+        let path = procedure_definition::checkpoint_opening(&hashes, index)?;
         let refused =
             |refusal| anyhow::anyhow!("checkpoint {index} (`{}`): {refusal}", checkpoint.stage);
         let approved = matches!(
@@ -188,7 +188,7 @@ pub fn audit_claim(options: AuditClaimOptions) -> Result<ClaimAudit> {
             );
             let producer_opening = producer
                 .map(|(producer, listed)| {
-                    inference_artifacts::checkpoint_opening(&hashes, producer)
+                    procedure_definition::checkpoint_opening(&hashes, producer)
                         .map(|path| (listed, path))
                 })
                 .transpose()?;

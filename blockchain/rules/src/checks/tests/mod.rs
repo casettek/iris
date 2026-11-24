@@ -13,10 +13,10 @@ use raster_core::transition::{TraceCommitmentHeader, TransitionJournal};
 use sha2::{Digest, Sha256};
 
 use crate::availability::{BlobContents, PostedBlob};
-use crate::checkpoint::{checkpoints_root, Checkpoint, CheckpointList};
-use crate::direct::{model_id_of, ModelCommitment, ModelManifest};
+use model_manifest::direct::{model_id_of, ModelCommitment, ModelManifest};
+use procedure_definition::checkpoint::{checkpoints_root, Checkpoint, CheckpointList};
 
-use crate::procedure_kind::ProcedureKind;
+use procedure_definition::procedure_kind::ProcedureKind;
 use raster_core::chain::DefenceReason;
 use raster_core::fingerprint::{BitPacker, Fingerprint};
 use raster_core::transition::{
@@ -164,7 +164,7 @@ fn checkpoint(
 }
 
 fn checkpoints_txt(list: &CheckpointList) -> Vec<u8> {
-    let mut text = crate::checkpoint::checkpoint_hashes(list)
+    let mut text = procedure_definition::checkpoint::checkpoint_hashes(list)
         .unwrap()
         .join("\n");
     text.push('\n');
@@ -198,7 +198,7 @@ impl Claim {
             source: None,
             checkpoint_count: list.checkpoints.len() as u32,
             checkpoints_root: checkpoints_root(
-                &crate::checkpoint::checkpoint_hashes(&list).unwrap(),
+                &procedure_definition::checkpoint::checkpoint_hashes(&list).unwrap(),
             )
             .unwrap(),
             // The run inputs the claim posted: its text and its forms.

@@ -14,7 +14,8 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{bail, ensure, Context, Result};
 use direct_infer::{DirectInferenceConfig, DirectInferenceExecutor};
-use inference_artifacts::{file_sha256, read_json, write_json, InferenceResult, ModelManifest};
+use model_manifest::{file_sha256, ModelManifest};
+use procedure_definition::{read_json, write_json, InferenceResult};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -116,7 +117,7 @@ fn outcomes(report: &Value) -> Value {
     };
     let layer_program = report["layer_program"]
         .as_str()
-        .unwrap_or(inference_artifacts::ModelFamily::GemmaDense.layer_program());
+        .unwrap_or(model_manifest::ModelFamily::GemmaDense.layer_program());
     let mut replayed = BTreeMap::<&str, u64>::new();
     let mut found_only = BTreeMap::<&str, u64>::new();
     let mut rejected = 0u64;
@@ -300,7 +301,7 @@ fn run_suite(
     // not pin. Raster's own checks do not see one.
     crate::stage_bindings::check_stage_programs(root)?;
     ensure!(
-        inference_artifacts::ModelFamily::ALL
+        model_manifest::ModelFamily::ALL
             .iter()
             .any(|family| family.parity_bundle() == bundle),
         "`{bundle}` is not a family's parity bundle"
@@ -507,7 +508,7 @@ fn run_case(
     skip_challenges: bool,
 ) -> Result<()> {
     let started = Instant::now();
-    let specification = dir.join(inference_artifacts::SPECIFICATION_TOML);
+    let specification = dir.join(procedure_definition::SPECIFICATION_TOML);
     write_specification(&specification, model_path, case)?;
     write_case(&specification, case)?;
     // Preparation discovers the claimed ids with direct decode.
@@ -556,7 +557,7 @@ fn run_case(
     let direct_dir = dir.join("native-direct");
 
     // Raster and native-staged, byte for byte, in the expected order.
-    let order = inference_artifacts::read_stage_order(&native_dir)?
+    let order = procedure_definition::read_stage_order(&native_dir)?
         .context("native chain recorded no stage inventory")?;
     let shape = RangedShape::from_names(&order);
     ensure!(
@@ -610,8 +611,8 @@ fn run_case(
         comparison["generated_token_ids"] == json!(claimed),
         "the chain's output differs from the claimed ids"
     );
-    let checkpoints = inference_artifacts::read_checkpoint_hashes(
-        &native_dir.join(inference_artifacts::CHECKPOINT_HASHES_TXT),
+    let checkpoints = procedure_definition::read_checkpoint_hashes(
+        &native_dir.join(procedure_definition::CHECKPOINT_HASHES_TXT),
     )?;
     comparison["checkpoints"] = json!(names.len());
     comparison["final_checkpoint_sha256"] = json!(checkpoints.last());
@@ -702,7 +703,7 @@ fn run_case(
     let contract = crate::claim_check::check_claim(crate::claim_check::ClaimCheckOptions {
         base_dir: dir.to_path_buf(),
         specification_path: specification.clone(),
-        submission_path: native_dir.join(inference_artifacts::checks::CLAIM_SUBMISSION_JSON),
+        submission_path: native_dir.join(blockchain_rules::checks::CLAIM_SUBMISSION_JSON),
         raster_run: Some(raster_dir.clone()),
         pins_path: None,
         registry_path: None,
@@ -726,7 +727,7 @@ fn run_case(
     comparison["availability_cases"] = run_availability_cases(
         dir,
         &specification,
-        &native_dir.join(inference_artifacts::checks::CLAIM_SUBMISSION_JSON),
+        &native_dir.join(blockchain_rules::checks::CLAIM_SUBMISSION_JSON),
     )
     .context("availability cases")?;
     ensure!(
@@ -818,7 +819,7 @@ fn run_chain_fault_scenario(
         .map(|index| index + 1)
         .context("the pinned case's prompt is a single token")?;
     let (template_path, segment) = model.verified_raster_template(model_path)?;
-    let template = inference_artifacts::ProcedureKind::Single.chain_template(&[&segment])?;
+    let template = procedure_definition::ProcedureKind::Single.chain_template(&[&segment])?;
     let template_dir = template_path
         .parent()
         .context("manifest template has no parent directory")?;
@@ -972,7 +973,7 @@ fn run_chain_fault_scenario(
             })
             .with_context(|| format!("chain fault `{name}`: a native stage did not finish"))?;
 
-        let order = inference_artifacts::read_stage_order(&raster_dir)?
+        let order = procedure_definition::read_stage_order(&raster_dir)?
             .with_context(|| format!("chain fault `{name}`: no stage inventory"))?;
         let raster_outputs = read_boundaries(&raster_dir, &order, false)?;
         let native = read_boundaries(&native_run.chain_dir, &order, false)?;
@@ -1228,7 +1229,7 @@ fn run_prompt_fault_scenario(
             .with_context(|| format!("prompt fault `{name}`: a native stage did not finish"))?
             .chain_dir;
 
-        let order = inference_artifacts::read_stage_order(&raster_dir)?
+        let order = procedure_definition::read_stage_order(&raster_dir)?
             .with_context(|| format!("prompt fault `{name}`: no stage inventory"))?;
         let raster_outputs = read_boundaries(&raster_dir, &order, false)?;
         let native = read_boundaries(&native_dir, &order, false)?;
@@ -1351,7 +1352,7 @@ fn prompt_only_manifest(
     texts: &[run_prep::RunFile],
     cuts: &[run_prep::RunFile],
     text_digest: Option<&run_prep::RunFile>,
-    source: Option<&inference_artifacts::PreparedSourceInputs>,
+    source: Option<&procedure_definition::PreparedSourceInputs>,
 ) -> Result<String> {
     let input = |name: &str, family: &str, files: &[run_prep::RunFile]| -> Result<String> {
         let dir = files[0]
@@ -1484,7 +1485,7 @@ pub(crate) fn compare_teacher_forced(tf_dir: &Path, direct_dir: &Path) -> Result
         compare::validate_errors(stage, &boundary.value)?;
         Ok(boundary)
     };
-    let tf_names = inference_artifacts::read_stage_order(tf_dir)?
+    let tf_names = procedure_definition::read_stage_order(tf_dir)?
         .with_context(|| format!("{}: missing recorded stage inventory", tf_dir.display()))?;
     let shape = RangedShape::from_names(&tf_names);
     ensure!(
@@ -1962,7 +1963,7 @@ fn run_availability_cases(
     submission_path: &Path,
 ) -> Result<Value> {
     use crate::claim_check::{check_claim, ClaimCheckOptions};
-    use inference_artifacts::checks::ClaimSubmission;
+    use blockchain_rules::checks::ClaimSubmission;
 
     let claim_dir = submission_path
         .parent()
@@ -1970,14 +1971,14 @@ fn run_availability_cases(
     let honest: ClaimSubmission = read_json(submission_path)?;
     let procedure = crate::claim_check::spec_procedure(specification, None)?;
     let registry_path = dir.join("registry.json");
-    let mut registry = inference_artifacts::registry::Registry::default();
+    let mut registry = blockchain_rules::registry::Registry::default();
     ensure!(
         registry.register(procedure.clone()) == honest.procedure,
         "the claim does not name its run's procedure"
     );
     registry.write(&registry_path)?;
     let empty_registry = dir.join("empty-registry.json");
-    inference_artifacts::registry::Registry::default().write(&empty_registry)?;
+    blockchain_rules::registry::Registry::default().write(&empty_registry)?;
 
     let check = |name: &str,
                  submission: &ClaimSubmission,
@@ -2033,7 +2034,7 @@ fn run_availability_cases(
         "submission: data posted",
     )?);
     // Submitted so late that the blobs are gone before the period ends.
-    let late = crate::posting::now()? + inference_artifacts::availability::DEFAULT_RETENTION_SECS;
+    let late = crate::posting::now()? + blockchain_rules::availability::DEFAULT_RETENTION_SECS;
     cases.push(refused_at(
         "expires",
         check("expires", &honest, None, Some(late))?,
@@ -2058,7 +2059,7 @@ fn run_availability_cases(
     let mut unstated = honest.clone();
     for blob in &mut unstated.availability {
         blob.contents.records.clear();
-        blob.proof = inference_artifacts::availability::AvailabilityProof::host_checked();
+        blob.proof = blockchain_rules::availability::AvailabilityProof::host_checked();
     }
     cases.push(refused_at(
         "records-not-stated",
@@ -2129,7 +2130,7 @@ pub fn worker(specification: &Path, case: &Path, output: &Path, direct: bool) ->
 
 /// The case file of a gate run: `case.toml` beside its specification.
 fn case_beside(specification: &Path) -> PathBuf {
-    specification.with_file_name(inference_artifacts::CASE_TOML)
+    specification.with_file_name(procedure_definition::CASE_TOML)
 }
 
 /// Writes a specification of one model with a pinned case's parameters.

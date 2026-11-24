@@ -9,7 +9,7 @@ cargo check --workspace
 cargo test --workspace
 cargo test -p direct-infer
 cargo test -p staged-infer
-cargo test -p inference-artifacts
+cargo test -p model-manifest -p procedure-definition -p blockchain-rules
 cargo test -p iris-cli
 ```
 

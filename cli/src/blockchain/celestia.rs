@@ -17,7 +17,7 @@ use std::net::TcpStream;
 use std::time::Duration;
 
 use anyhow::{bail, ensure, Context, Result};
-use inference_artifacts::availability::{
+use blockchain_rules::availability::{
     AvailabilityLayer, AvailabilityProof, BlobPointer, PostedBlob, NAMESPACE_BYTES,
 };
 use iris_celestia::blob_commitment;

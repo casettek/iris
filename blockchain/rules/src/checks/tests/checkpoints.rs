@@ -101,13 +101,15 @@ fn a_challenge_must_present_the_list_and_the_checkpoint_the_claim_committed() {
 
     // What a contract does with the root alone: open one checkpoint
     // with its path.
-    let hashes = crate::checkpoint::checkpoint_hashes(&claim.list).unwrap();
+    let hashes = procedure_definition::checkpoint::checkpoint_hashes(&claim.list).unwrap();
     let root = &claim.submission.checkpoints_root;
     let count = claim.submission.checkpoint_count;
     for (index, checkpoint) in claim.list.checkpoints.iter().enumerate() {
-        let path = crate::checkpoint::checkpoint_opening(&hashes, index).unwrap();
+        let path = procedure_definition::checkpoint::checkpoint_opening(&hashes, index).unwrap();
         let opens = |index: u32, checkpoint: &Checkpoint, count: u32| {
-            crate::checkpoint::verify_checkpoint_opening(root, count, index, checkpoint, &path)
+            procedure_definition::checkpoint::verify_checkpoint_opening(
+                root, count, index, checkpoint, &path,
+            )
         };
         assert!(opens(index as u32, checkpoint, count));
         assert!(!opens(index as u32, &forged, count));

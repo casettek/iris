@@ -7,7 +7,7 @@ use std::process::{Command, Stdio};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{bail, Context, Result};
-use inference_artifacts::{
+use procedure_definition::{
     checkpoint_hash, read_checkpoint_from_stage_dir, Checkpoint, CheckpointList, Divergence,
     DivergenceReason, CHECKPOINT_LIST_JSON,
 };
@@ -1194,7 +1194,7 @@ fn finish_stage(
     if let Some(value) = stage_run.output {
         if matches!(value, CachedStageValue::DecodeEdge(_)) {
             // A check of a chain of several inferences is named for its own.
-            let inference = inference_artifacts::procedure_kind::labelled_name(&stage.name)
+            let inference = procedure_definition::procedure_kind::labelled_name(&stage.name)
                 .map_or(0, |(inference, _)| inference);
             state.last_checks.insert(inference, value.clone());
         }
@@ -1226,8 +1226,9 @@ fn record_stage_program(
     stage_dir: &Path,
     stage_index: &BTreeMap<String, usize>,
 ) -> Result<()> {
-    let program = inference_artifacts::checks::locked_program_commitment(Path::new(&stage.project))
-        .unwrap_or_default();
+    let program =
+        procedure_definition::checkpoint::locked_program_commitment(Path::new(&stage.project))
+            .unwrap_or_default();
     let mut input_sources = BTreeMap::new();
     for (param, binding) in &stage.inputs {
         if let InputBinding::From(producer) = binding {
@@ -1240,7 +1241,7 @@ fn record_stage_program(
             input_sources.insert(param.clone(), u32::try_from(*index)?);
         }
     }
-    inference_artifacts::write_stage_program(stage_dir, &program, &input_sources)
+    procedure_definition::write_stage_program(stage_dir, &program, &input_sources)
 }
 
 fn observe_checkpoint(

@@ -1,6 +1,6 @@
 # Artifact Formats
 
-The stable format types and filenames live in `crates/inference/artifacts`.
+The stable format types and filenames live in `procedure/definition` and `blockchain/rules`.
 
 ## Models, Specifications And Cases
 

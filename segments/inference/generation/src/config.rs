@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use inference_artifacts::{CASE_TOML, SPECIFICATION_TOML};
+use procedure_definition::{CASE_TOML, SPECIFICATION_TOML};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DirectInferenceConfig {

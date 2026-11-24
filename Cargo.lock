@@ -734,6 +734,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "blockchain-rules"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "hex",
+ "model-identity",
+ "model-manifest",
+ "postcard",
+ "procedure-definition",
+ "prompt-core",
+ "raster-core",
+ "result-core",
+ "serde",
+ "serde_json",
+ "sha2",
+ "source-core",
+ "toml",
+]
+
+[[package]]
 name = "blst"
 version = "0.3.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1499,12 +1519,13 @@ dependencies = [
  "anyhow",
  "det-num",
  "detwgt",
- "inference-artifacts",
  "inference-kernels",
  "input-embedding",
  "model-identity",
+ "model-manifest",
  "prefill-prepare-aux",
  "prefill-range",
+ "procedure-definition",
  "prompt-check",
  "raster",
  "run-prep",
@@ -2548,24 +2569,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "inference-artifacts"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "hex",
- "model-identity",
- "postcard",
- "prompt-core",
- "raster-core",
- "result-core",
- "serde",
- "serde_json",
- "sha2",
- "source-core",
- "toml",
-]
-
-[[package]]
 name = "inference-kernels"
 version = "0.1.0"
 dependencies = [
@@ -2623,17 +2626,19 @@ name = "iris-cli"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "blockchain-rules",
  "clap",
  "det-num",
  "direct-infer",
  "hex",
- "inference-artifacts",
  "iris-celestia",
  "iris-evm",
  "k256",
  "model-identity",
  "model-import",
+ "model-manifest",
  "postcard",
+ "procedure-definition",
  "raster",
  "raster-analysis",
  "raster-backend",
@@ -2659,8 +2664,9 @@ name = "iris-evm"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "blockchain-rules",
  "hex",
- "inference-artifacts",
+ "procedure-definition",
  "raster-core",
  "sha2",
 ]
@@ -3143,14 +3149,26 @@ version = "0.1.0"
 dependencies = [
  "det-num",
  "detwgt",
- "inference-artifacts",
  "inference-kernels",
  "layer-mistral",
  "model-identity",
+ "model-manifest",
  "prompt-check",
  "raster",
  "run-prep",
  "sequence-check",
+ "serde",
+ "serde_json",
+ "sha2",
+]
+
+[[package]]
+name = "model-manifest"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "hex",
+ "model-identity",
  "serde",
  "serde_json",
  "sha2",
@@ -3647,6 +3665,25 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "985e7ec9bb745e6ce6535b544d84d6cd6f7ad8bd711c398938ae983b91a766d9"
 dependencies = [
  "unicode-ident",
+]
+
+[[package]]
+name = "procedure-definition"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "hex",
+ "model-identity",
+ "model-manifest",
+ "postcard",
+ "prompt-core",
+ "raster-core",
+ "result-core",
+ "serde",
+ "serde_json",
+ "sha2",
+ "source-core",
+ "toml",
 ]
 
 [[package]]
@@ -4737,9 +4774,10 @@ name = "run-prep"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "inference-artifacts",
  "inference-kernels",
  "input-embedding",
+ "model-manifest",
+ "procedure-definition",
  "prompt-check",
  "raster",
  "result-core",
@@ -5253,13 +5291,13 @@ dependencies = [
  "consensus-result",
  "det-num",
  "hex",
- "inference-artifacts",
  "inference-kernels",
  "input-embedding",
  "layer-mistral",
  "model-identity",
  "prefill-prepare-aux",
  "prefill-range",
+ "procedure-definition",
  "prompt-check",
  "raster",
  "raster-core",

@@ -5,7 +5,8 @@ edition = "2021"
 
 [dependencies]
 anyhow = "1.0"
-inference-artifacts = { path = "../../crates/inference/artifacts" }
+model-manifest = { path = "../../segments/inference/manifest" }
+procedure-definition = { path = "../definition" }
 inference-kernels = { path = "../../segments/inference/kernels" }
 prompt-check = { path = "../../raster-stages/prompt-check" }
 sequence-check = { path = "../../raster-stages/sequence-check" }

@@ -27,7 +27,7 @@ use direct_infer::detwgt::MmapDetwgt;
 use direct_infer::generation::PrefillLogits;
 use direct_infer::model::DirectInferenceModel;
 use direct_infer::view_kernels::{run_mistral_range_view, score_prefill_logits_view};
-use inference_artifacts::MistralShape;
+use model_manifest::MistralShape;
 use prefill_range::input::{pack_i32s, ActivationRow, ActivationSequence};
 use raster::List;
 

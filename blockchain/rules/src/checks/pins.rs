@@ -4,15 +4,15 @@
 //! and the stage projects' locks.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::fs;
 use std::path::{Path, PathBuf};
 
 use ::model_identity::context::parse_id;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
-use crate::direct::{model_id_of, ModelCommitment, ModelManifest};
-use crate::procedure_kind::ProcedureKind;
+use model_manifest::direct::{model_id_of, ModelCommitment, ModelManifest};
+use procedure_definition::checkpoint::locked_program_commitment;
+use procedure_definition::procedure_kind::ProcedureKind;
 
 /// Written beside a model import's `manifest.json`.
 pub const CONTRACT_PINS_JSON: &str = "contract_pins.json";
@@ -276,8 +276,11 @@ fn project_name(project: &Path) -> Result<String> {
 /// a stage belongs to is kept as it is: two inferences of one chain may run
 /// different programs for stages of one name.
 fn stage_shape(name: &str) -> String {
-    let (mut shape, name) = match crate::procedure_kind::labelled_name(name) {
-        Some((inference, name)) => (crate::procedure_kind::inference_label(inference), name),
+    let (mut shape, name) = match procedure_definition::procedure_kind::labelled_name(name) {
+        Some((inference, name)) => (
+            procedure_definition::procedure_kind::inference_label(inference),
+            name,
+        ),
         None => (String::new(), name),
     };
     let mut chars = name.chars().peekable();
@@ -588,23 +591,4 @@ pub fn chain_pinned_inputs(
         }
     }
     Ok(pinned)
-}
-
-/// The program identity a stage project's `Raster.lock` records.
-pub fn locked_program_commitment(stage_project: &Path) -> Result<String> {
-    #[derive(Deserialize)]
-    struct Lock {
-        program_commitment: String,
-    }
-    let path = stage_project.join("Raster.lock");
-    let lock: Lock = serde_json::from_slice(
-        &fs::read(&path).with_context(|| format!("failed to read {}", path.display()))?,
-    )
-    .with_context(|| format!("failed to parse {}", path.display()))?;
-    anyhow::ensure!(
-        parse_id(&lock.program_commitment).is_some(),
-        "{} does not record a 32-byte program commitment",
-        path.display()
-    );
-    Ok(lock.program_commitment)
 }

@@ -5,12 +5,12 @@ use crate::*;
 #[derive(Debug, Args)]
 pub(crate) struct InferArgs {
     /// The specification of the procedure to run.
-    #[arg(long, default_value = inference_artifacts::SPECIFICATION_TOML)]
+    #[arg(long, default_value = procedure_definition::SPECIFICATION_TOML)]
     specification: PathBuf,
 
     /// The case to run it on: the prompt, or the documents of the
     /// specification's source.
-    #[arg(long, default_value = inference_artifacts::CASE_TOML)]
+    #[arg(long, default_value = procedure_definition::CASE_TOML)]
     case: PathBuf,
 }
 
@@ -18,7 +18,7 @@ pub(crate) struct InferArgs {
 /// inference's result, whose last lines are its generated text.
 pub(crate) fn print_consensus(
     first: &staged_infer::InferenceResult,
-    consensus: &inference_artifacts::ConsensusOutcome,
+    consensus: &procedure_definition::ConsensusOutcome,
 ) {
     println!("consensus: {}", consensus.description(first));
     println!("consensus code: {}", consensus.code);
@@ -74,7 +74,7 @@ pub(crate) fn render_token_trace_for_run(
 ) -> Result<String> {
     let base_dir = std::env::current_dir().context("failed to read current directory")?;
     let specification_path = absolute(&base_dir, specification_path);
-    let specification = inference_artifacts::read_specification(&specification_path)?;
+    let specification = procedure_definition::read_specification(&specification_path)?;
     let specification_dir = specification_path
         .parent()
         .ok_or_else(|| anyhow::anyhow!("specification has no parent directory"))?;
@@ -83,13 +83,13 @@ pub(crate) fn render_token_trace_for_run(
         specification_dir,
         specification.model_manifest_of(inference)?,
     );
-    let model_manifest: inference_artifacts::ModelManifest =
-        inference_artifacts::read_json(&model_manifest_path)?;
+    let model_manifest: model_manifest::ModelManifest =
+        procedure_definition::read_json(&model_manifest_path)?;
     let model_manifest_dir = model_manifest_path
         .parent()
         .ok_or_else(|| anyhow::anyhow!("model manifest has no parent directory"))?;
     let tokenizer_path = absolute(model_manifest_dir, &model_manifest.bundle.tokenizer_path);
-    let tokenizer: serde_json::Value = inference_artifacts::read_json(&tokenizer_path)?;
+    let tokenizer: serde_json::Value = procedure_definition::read_json(&tokenizer_path)?;
     let decoder = TokenDecoder::from_tokenizer(&tokenizer, &model_manifest.eos_token_ids)?;
     Ok(render_token_trace(result, &decoder))
 }

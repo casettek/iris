@@ -13,11 +13,11 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{bail, ensure, Context, Result};
-use inference_artifacts::availability::{
+use blockchain_rules::availability::{
     check_holds, Blob, BlobContents, BlobEntry, CheckpointPackage, RequiredPosting,
 };
-use inference_artifacts::checks::{ChallengeSubmission, ClaimSubmission, CLAIM_SUBMISSION_JSON};
-use inference_artifacts::{
+use blockchain_rules::checks::{ChallengeSubmission, ClaimSubmission, CLAIM_SUBMISSION_JSON};
+use procedure_definition::{
     read_json, write_json, Case, CaseDocument, CheckpointList, CASE_TOML, CHECKPOINTS_TXT,
     CHECKPOINT_LIST_JSON,
 };

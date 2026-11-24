@@ -3,8 +3,9 @@ use std::fs;
 use std::path::Path;
 
 use anyhow::{ensure, Context, Result};
-use inference_artifacts::{Case, ModelManifest, PreparedPiece, PreparedPrompt, Specification};
 use input_embedding::input::ClaimedOutput;
+use model_manifest::ModelManifest;
+use procedure_definition::{Case, PreparedPiece, PreparedPrompt, Specification};
 pub use prompt_check::input::PromptTokenizer;
 use prompt_check::input::{
     apply_atom, begin_scan_state, begin_text_fold_state, byte_token, claimed_scan_plan,
@@ -112,13 +113,13 @@ pub fn source_id(record: Option<&source::SourceRecord>) -> String {
 pub fn write_source_inputs(
     source: &source::LoadedSource,
     dir: &Path,
-) -> Result<inference_artifacts::PreparedSourceInputs> {
-    let file = |file: RunFile| inference_artifacts::RunFileRef {
+) -> Result<procedure_definition::PreparedSourceInputs> {
+    let file = |file: RunFile| procedure_definition::RunFileRef {
         path: file.path,
         index_path: file.index_path,
         commitment: file.commitment,
     };
-    Ok(inference_artifacts::PreparedSourceInputs {
+    Ok(procedure_definition::PreparedSourceInputs {
         signer: file(write_run_file(
             &source.specification.signer,
             dir,
@@ -144,7 +145,7 @@ pub fn tekken_prompt(
     tokenizer: &tekken::Tekken,
     prompt: &str,
     raw_prompt: bool,
-) -> Result<(String, Vec<inference_artifacts::PreparedPiece>, Vec<u32>)> {
+) -> Result<(String, Vec<procedure_definition::PreparedPiece>, Vec<u32>)> {
     let rendered = if !raw_prompt && tokenizer.templated() {
         format!(
             "{}{}{}",
@@ -320,14 +321,14 @@ fn write_run_file<T: serde::Serialize>(value: &T, dir: &Path, name: &str) -> Res
 /// program reads, which is what its Raster file is written from.
 ///
 /// A claim posts its run's inputs as values
-/// ([`inference_artifacts::availability::PostedRun`]), and anyone writes the
+/// ([`procedure_definition::run_inputs::PostedRun`]), and anyone writes the
 /// file a stage loads from one. The token marks and the claimed ids are
 /// posted as plain numbers and given to a stage as the stage's own type.
 fn with_run_input<R>(
-    input: inference_artifacts::availability::RunInput<'_>,
+    input: procedure_definition::run_inputs::RunInput<'_>,
     encode: &mut dyn FnMut(&dyn ErasedRunValue) -> Result<R>,
 ) -> Result<R> {
-    use inference_artifacts::availability::RunInput;
+    use procedure_definition::run_inputs::RunInput;
     match input {
         RunInput::Signer(value) => encode(value),
         RunInput::Recipe(value) => encode(value),
@@ -366,14 +367,14 @@ impl<T: serde::Serialize> ErasedRunValue for T {
 
 /// The commitment a stage's input list names this run input by.
 pub fn run_input_commitment(
-    input: inference_artifacts::availability::RunInput<'_>,
+    input: procedure_definition::run_inputs::RunInput<'_>,
 ) -> Result<String> {
     with_run_input(input, &mut |value| value.commitment())
 }
 
 /// Writes a run input as the files a stage loads, named `name`.
 pub fn write_run_input(
-    input: inference_artifacts::availability::RunInput<'_>,
+    input: procedure_definition::run_inputs::RunInput<'_>,
     dir: &Path,
     name: &str,
 ) -> Result<RunFile> {
@@ -1020,7 +1021,7 @@ fn parse_merge(rank: u32, entry: &serde_json::Value) -> Option<BpeMerge> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use inference_artifacts::{DirectInferBundle, DirectInferShape};
+    use model_manifest::{DirectInferBundle, DirectInferShape};
     use std::path::PathBuf;
 
     const ONE: i32 = 1 << 16;
@@ -1547,7 +1548,7 @@ mod tests {
             procedure_kind: Default::default(),
             raw_prompt,
             max_new_tokens: 1,
-            models: vec![inference_artifacts::SpecificationModel {
+            models: vec![procedure_definition::SpecificationModel {
                 manifest: PathBuf::from("model-artifacts/manifest.json"),
             }],
             source: None,
@@ -1558,11 +1559,9 @@ mod tests {
 
     fn model_manifest() -> ModelManifest {
         ModelManifest {
-            version: inference_artifacts::MODEL_MANIFEST_VERSION,
-            family: inference_artifacts::ModelFamily::GemmaDense
-                .name()
-                .to_string(),
-            model_id: inference_artifacts::model_id_of(&[]),
+            version: model_manifest::MODEL_MANIFEST_VERSION,
+            family: model_manifest::ModelFamily::GemmaDense.name().to_string(),
+            model_id: model_manifest::model_id_of(&[]),
             model_commitments: Vec::new(),
             range_size: 512,
             bundle: DirectInferBundle {

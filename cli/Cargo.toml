@@ -34,7 +34,9 @@ det-num = { path = "../segments/inference/numerics" }
 staged-infer = { path = "../procedure/staged" }
 hex = "0.4"
 k256 = { version = "0.13", default-features = false, features = ["ecdsa"] }
-inference-artifacts = { path = "../crates/inference/artifacts" }
+blockchain-rules = { path = "../blockchain/rules" }
+model-manifest = { path = "../segments/inference/manifest" }
+procedure-definition = { path = "../procedure/definition" }
 iris-celestia = { path = "../blockchain/celestia" }
 iris-evm = { path = "../blockchain/evm" }
 model-import = { path = "../segments/inference/import" }

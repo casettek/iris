@@ -3,7 +3,7 @@ pragma solidity ^0.8.28;
 
 import "./IrisTypes.sol";
 
-/// The byte encodings iris hashes, as `inference_artifacts::encoding` and the
+/// The byte encodings iris hashes, as `procedure_definition::encoding` and the
 /// stages' own digests write them: a tag ending in a zero byte, fields in
 /// order, numbers little-endian, text and lists after a 32-bit count, a hash
 /// as a byte 1 and its 32 bytes. Everything is SHA-256.

@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::availability::PostedBlob;
-use crate::checkpoint::{Checkpoint, CheckpointList};
+use procedure_definition::checkpoint::{Checkpoint, CheckpointList};
 
 /// Where a claim's checkpoints are not the boundaries a Raster chain run of
 /// the same claim committed, or `None` when every one is: the same stages in

@@ -24,7 +24,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use anyhow::{bail, ensure, Context, Result};
-use inference_artifacts::checks::CLAIM_FAULTS;
+use blockchain_rules::checks::CLAIM_FAULTS;
 use serde_json::{json, Value};
 
 use super::submit::{heights_of, register, relay};
@@ -222,7 +222,7 @@ fn changed(
         .and_then(|file| file.to_str())
         .context("the submission has no file name")?;
     let out = path.with_file_name(format!("replay-{name}.{file}"));
-    inference_artifacts::write_json(&out, &copied)?;
+    procedure_definition::write_json(&out, &copied)?;
     Ok(out)
 }
 
@@ -303,7 +303,7 @@ pub fn claim(
     let mut replay = Replay::default();
 
     crate::blockchain::evm::attest_submission(path, layer)?;
-    let honest: Value = inference_artifacts::read_json(path)?;
+    let honest: Value = procedure_definition::read_json(path)?;
     let built = crate::blockchain::evm::claim_call(path)?;
     register(node, specification)?;
     relay(node, layer, &heights_of(&built))?;
@@ -564,7 +564,7 @@ pub fn challenge(
     hold_claim(node, &claim)?;
 
     crate::blockchain::evm::attest_submission(path, layer)?;
-    let honest: Value = inference_artifacts::read_json(path)?;
+    let honest: Value = procedure_definition::read_json(path)?;
     let built = crate::blockchain::evm::challenge_call(path, claim_path)?;
     relay(node, layer, &heights_of(&built))?;
 
@@ -627,8 +627,8 @@ pub fn challenge(
     let stage = honest["stage"]
         .as_u64()
         .context("the challenge names no stage")? as usize;
-    let trace = inference_artifacts::read_checkpoint_list(
-        &claim_path.with_file_name(inference_artifacts::CHECKPOINT_LIST_JSON),
+    let trace = procedure_definition::read_checkpoint_list(
+        &claim_path.with_file_name(procedure_definition::CHECKPOINT_LIST_JSON),
     )?;
     let stated = hex::decode(
         &trace
@@ -689,7 +689,7 @@ pub fn challenge(
     let unknown = changed(
         claim_path,
         "unknown",
-        &inference_artifacts::read_json::<Value>(claim_path)?,
+        &procedure_definition::read_json::<Value>(claim_path)?,
         |s| s["claimer"] = json!(SOMEONE_ELSE),
     )?;
     replay.record(
@@ -766,7 +766,7 @@ pub fn faults(
         specification_path: specification.to_path_buf(),
         pins_path: None,
     })?;
-    inference_artifacts::write_json(
+    procedure_definition::write_json(
         &path.with_file_name("replay-audit-calls.json"),
         &audit.calls,
     )?;
