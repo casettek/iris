@@ -9,7 +9,7 @@ procedure it is a claim of.
 The rules are in `inference_artifacts::availability` and
 `inference_artifacts::registry`; [the contract page](checks.md) lists the
 checks in the order a contract makes them. The layer is behind one trait
-(`crates/inference/cli/src/posting.rs`), with two implementations: a
+(`cli/src/posting.rs`), with two implementations: a
 stand-in directory, and a local Celestia node. Blobstream and the availability
 proof are still stand-ins run by a trusted host. [The blockchains](../blockchain/overview.md) says
 how the Celestia node and the contracts are used.

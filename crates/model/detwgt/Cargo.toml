@@ -1,9 +1,0 @@
-[package]
-name = "detwgt"
-version = "0.1.0"
-edition = "2021"
-
-[dependencies]
-anyhow = "1.0"
-det-num = { path = "../../det-num" }
-memmap2 = "0.9"

@@ -2,7 +2,7 @@
 
 Every format iris writes that carries a version, in one place. A test holds
 the first table to the constants in the code (`the_formats_table_is_current`
-in `crates/inference/cli/src/lib.rs`), so a version cannot change without
+in `cli/src/lib.rs`), so a version cannot change without
 this page changing with it.
 
 A version changes when a reader of the old form would misread the new one.

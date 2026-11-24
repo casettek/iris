@@ -253,7 +253,7 @@ pub struct PostedRun {
     /// The source stage's inputs, in a run that has a source.
     pub source: Option<PostedSourceInputs>,
     /// The result stage's forms.
-    pub forms: source_core::ResultForms,
+    pub forms: result_core::ResultForms,
     /// One per inference, in the order the procedure kind runs them.
     pub inferences: Vec<PostedInference>,
 }
@@ -288,7 +288,7 @@ pub enum RunInput<'a> {
     Signer(&'a source_core::SignerKey),
     Recipe(&'a source_core::Recipe),
     Documents(&'a source_core::SourceDocuments),
-    Forms(&'a source_core::ResultForms),
+    Forms(&'a result_core::ResultForms),
     Config(&'a prompt_core::RunConfig),
     Schedule(&'a prompt_core::RunSchedule),
     TextDigest(&'a prompt_core::TextDigest),
@@ -985,7 +985,7 @@ mod tests {
         };
         PostedRun {
             source: None,
-            forms: source_core::ResultForms::default(),
+            forms: result_core::ResultForms::default(),
             inferences: vec![PostedInference {
                 config: Default::default(),
                 schedule: Default::default(),

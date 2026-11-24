@@ -1,1 +1,1 @@
-../../../crates/prompt-core/src/prompt.rs
+../../../segments/inference/tokenizer/src/prompt.rs

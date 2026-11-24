@@ -118,7 +118,7 @@ What exists:
 | Output decoding | `sequence-check`: a decoder entry says its text is bytes, and a character that spans tokens is put together |
 | Direct inference | `direct-infer`, which branches on the family where it loads layers and runs them |
 
-How it is checked (`crates/inference/direct/tests/mistral_reference.rs`, an ignored test
+How it is checked (`segments/inference/generation/tests/mistral_reference.rs`, an ignored test
 that needs an imported model): the integer logits are compared with the same weights
 computed in `f64`, and with another implementation's logits read from a file. `run-prep`'s
 ignored `ids_match_a_reference_tokenizer` compares token ids the same way, both the

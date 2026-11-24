@@ -415,17 +415,17 @@ fn consensus_claim(second_output: &str) -> Claim {
 }
 
 /// The fixture's forms: its output, `ZK`, is the second.
-fn forms() -> Vec<source_core::Form> {
+fn forms() -> Vec<result_core::Form> {
     [("no", 2), ("ZK", 1)]
         .into_iter()
-        .map(|(text, code)| source_core::Form {
+        .map(|(text, code)| result_core::Form {
             text: text.to_string(),
             code,
         })
         .collect()
 }
 
-fn no_source(forms: Vec<source_core::Form>) -> RequiredOrigin {
+fn no_source(forms: Vec<result_core::Form>) -> RequiredOrigin {
     RequiredOrigin {
         source: None,
         forms,

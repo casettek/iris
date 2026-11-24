@@ -1,0 +1,28 @@
+[package]
+name = "direct-infer"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+# Layer matrix products on an NVIDIA GPU; see inference-kernels.
+gpu-kernels = ["inference-kernels/gpu-kernels"]
+
+[dependencies]
+model-identity = { path = "../../common/identity", default-features = false }
+inference-kernels = { path = "../kernels" }
+anyhow = "1.0"
+det-num = { path = "../numerics" }
+detwgt = { path = "../weights" }
+input-embedding = { path = "../../../raster-stages/input-embedding" }
+inference-artifacts = { path = "../../../crates/inference/artifacts" }
+prefill-prepare-aux = { path = "../../../raster-stages/prefill-prepare-aux" }
+prefill-range = { path = "../../../raster-stages/prefill-range" }
+prompt-check = { path = "../../../raster-stages/prompt-check" }
+raster = { path = "../../../../raster/crates/raster" }
+run-prep = { path = "../../../procedure/prepare" }
+sequence-check = { path = "../../../raster-stages/sequence-check" }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+[dev-dependencies]
+sha2 = "0.10"

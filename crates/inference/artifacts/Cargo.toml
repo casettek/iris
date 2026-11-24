@@ -11,11 +11,12 @@ raster-core = { path = "../../../../raster/crates/raster-core" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 sha2 = "0.10"
-source-core = { path = "../../source-core" }
-prompt-core = { path = "../../prompt-core" }
+source-core = { path = "../../../segments/source" }
+result-core = { path = "../../../segments/result" }
+prompt-core = { path = "../../../segments/inference/tokenizer" }
 toml = "0.8"
 
-model-identity = { path = "../../model/identity" }
+model-identity = { path = "../../../segments/common/identity" }
 
 [dev-dependencies]
-source-core = { path = "../../source-core", features = ["sign"] }
+source-core = { path = "../../../segments/source", features = ["sign"] }

@@ -136,20 +136,24 @@ the chain and the contracts work, and what is open.
 ## Layout
 
 ```text
-crates/
-  inference/
-    cli/                    # the `iris` binary: one module per command group under src/commands/
-    artifacts/              # what a claim, a challenge and a contract hold, and the contract's rules in Rust
-    direct/                 # fast deterministic inference
-    staged/                 # the stage-by-stage run a claim and a challenge make
-    kernels/                # the inference kernels both share
-    statement-core/         # the stage schedule and the statement a claim makes
-  model/
-    import/                 # a bundle to committed files, a manifest and pins
-    run-prep/               # a run's inputs, written as the files its stages load
+segments/                   # the logic of each piece of a procedure, written once
+  common/
+    statement/              # the stage schedule and the statement a claim makes
     identity/               # binding what a stage reads to the model a claim names
-    detwgt/                 # the weight format's readers
-  prompt-core/, source-core/, det-num/   # the tokenizer, sources and results, deterministic numbers
+  source/                   # what a prompt text was built from
+  result/                   # forms, and whether two outputs agree
+  inference/
+    numerics/               # deterministic numbers
+    tokenizer/              # the tokenizer
+    weights/                # the weight format's readers
+    kernels/                # the inference kernels generation and verification share
+    import/                 # a bundle to committed files, a manifest and pins
+    generation/             # fast deterministic inference: finds the output a claim states
+procedure/                  # a procedure and the ways to run it
+  prepare/                  # a run's inputs, written as the files its stages load
+  staged/                   # the stage-by-stage run a claim and a challenge make
+crates/inference/artifacts/ # what a claim, a challenge and a contract hold, and the contract's rules in Rust
+cli/                        # the `iris` binary: one module per command group under src/commands/
 raster-stages/              # one Raster program per kind of stage, each with its Raster.lock
 blockchain/
   evm/                      # what iris sends to its contracts: the ABI encoding and the calldata

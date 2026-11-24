@@ -32,7 +32,7 @@ Those are the pieces. What to run for a change is one of three tiers:
 
 ```bash
 just test-fast      # unit tests, the stage schema check, every Raster.lock
-just test-full      # fast, the parity gate, all six stage programs through authenticated Raster
+just test-full      # fast, the parity gate, every stage program through authenticated Raster
 just test-release   # full, the ignored tests (guests, a fault proof), the real-model check
 ```
 

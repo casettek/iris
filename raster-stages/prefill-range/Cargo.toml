@@ -10,12 +10,12 @@ std = ["raster/std"]
 profiling = ["raster/profiling"]
 
 [dependencies]
-model-identity = { path = "../../crates/model/identity", default-features = false }
+model-identity = { path = "../../segments/common/identity", default-features = false }
 raster = { path = "../../../raster/crates/raster", default-features = false }
 serde = { version = "1.0", default-features = false, features = ["derive", "alloc"] }
 # Canonical fixed-point kernels, vendored verbatim from the reference
 # implementation and held to bit-equality by `det-num/tests/equivalence.rs`.
-det-num = { path = "../../crates/det-num" }
+det-num = { path = "../../segments/inference/numerics" }
 
 [dev-dependencies]
 raster-runtime = { path = "../../../raster/crates/raster-runtime" }

@@ -7,7 +7,7 @@ for the window is not used for challenges.
 
 `challenge build` replays the disputed stage with
 `cargo raster chain run --fraud-proof-window-size 128`
-([`challenge.rs`](../../crates/inference/cli/src/challenge.rs), `run_raster_replay`).
+([`challenge.rs`](../../cli/src/challenge.rs), `run_raster_replay`).
 Raster's commitment writer refuses any trace whose length does not exceed the
 window. `CommitmentFile::finish` returns
 `InvalidWindow("trace length outside commitment limits")` when

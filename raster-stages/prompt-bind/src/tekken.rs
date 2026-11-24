@@ -1,1 +1,1 @@
-../../../crates/prompt-core/src/tekken.rs
+../../../segments/inference/tokenizer/src/tekken.rs

@@ -118,7 +118,7 @@ as for any chain. Each inference is a whole claim of its own model: it has its
 own statement and its last check states its own claim record.
 
 `result` runs `consensus-result`. It reads both last checks and the run's forms
-(`crates/source-core/src/consensus.rs`) and states a `ConsensusRecord`:
+(`segments/result/src/consensus.rs`) and states a `ConsensusRecord`:
 
 | Field | Meaning |
 | --- | --- |

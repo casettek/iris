@@ -1,0 +1,31 @@
+[package]
+name = "model-import"
+version = "0.1.0"
+edition = "2021"
+
+# Not a Raster program: a host-side tool that turns a model bundle into this
+# chain's committed externals. It has no tiles and no `#[sequence] main`.
+[[bin]]
+name = "model-import"
+path = "src/main.rs"
+
+[dependencies]
+model-identity = { path = "../../common/identity" }
+sequence-check = { path = "../../../raster-stages/sequence-check" }
+det-num = { path = "../numerics" }
+detwgt = { path = "../weights" }
+inference-artifacts = { path = "../../../crates/inference/artifacts" }
+inference-kernels = { path = "../kernels" }
+raster = { path = "../../../../raster/crates/raster" }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sha2 = "0.10"
+# Only for the bucket hash. The stage types stay duplicated in `externals.rs`
+# (see its header), but the hash must NOT be: it is the one function the host
+# and the replay guest have to agree on byte-for-byte, and two copies of it is
+# exactly how they would silently drift into different buckets.
+prompt-check = { path = "../../../raster-stages/prompt-check" }
+
+run-prep = { path = "../../../procedure/prepare" }
+# The `mistral-dense` layer external is the stage's own type.
+layer-mistral = { path = "../../../raster-stages/layer-mistral" }

@@ -52,7 +52,7 @@ fmt-check:
 test-fast:
     bash scripts/test-fast.sh
 
-# Full (about half an hour): fast, the parity gate, and all six stage programs through authenticated Raster.
+# Full (about half an hour): fast, the parity gate, and every stage program through authenticated Raster.
 test-full:
     bash scripts/test-full.sh
 

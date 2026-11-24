@@ -1,1 +1,1 @@
-../../../crates/model/identity/src/sparse.rs
+../../../segments/common/identity/src/sparse.rs

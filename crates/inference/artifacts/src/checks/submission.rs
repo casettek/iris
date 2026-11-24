@@ -53,16 +53,16 @@ pub struct RequiredOrigin {
     /// and not only their hash: the result step is a comparison per form, so
     /// a contract takes it on the submitted output itself and does not rest
     /// on the result stage, which is too short to be replayed in a dispute.
-    pub forms: Vec<source_core::Form>,
+    pub forms: Vec<result_core::Form>,
 }
 
 impl RequiredOrigin {
     /// What the result step states of an output read by these forms.
     pub fn result_of(&self, output_text: &str) -> SubmittedResult {
-        let matched = source_core::run_forms(&self.forms, output_text);
+        let matched = result_core::run_forms(&self.forms, output_text);
         SubmittedResult {
             code: matched.code,
-            forms_sha256: source_core::forms_id(&matched),
+            forms_sha256: result_core::forms_id(&matched),
         }
     }
 
@@ -70,13 +70,13 @@ impl RequiredOrigin {
     /// forms, when both claim records are valid and name one input. A
     /// contract has held the submission to both before it asks.
     pub fn consensus_of(&self, first_output: &str, second_output: &str) -> SubmittedConsensus {
-        let valid = || source_core::Claimed {
+        let valid = || result_core::Claimed {
             statement: &[],
             output_text_sha256: &[],
             valid: true,
         };
-        let record = source_core::close_consensus(
-            source_core::run_consensus(&self.forms, first_output, second_output, true),
+        let record = result_core::close_consensus(
+            result_core::run_consensus(&self.forms, first_output, second_output, true),
             valid(),
             valid(),
         );

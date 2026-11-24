@@ -1,1 +1,1 @@
-../../../crates/prompt-core/src/unicode_classes.rs
+../../../segments/inference/tokenizer/src/unicode_classes.rs

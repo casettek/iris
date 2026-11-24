@@ -1,0 +1,2071 @@
+//! The challenge scenario: a claim that differs from honest execution is found by a
+//! challenger's own recomputation, and the stage it differs at replays through
+//! authenticated Raster. Runs the `challenge build` command a challenger runs.
+//!
+//! A stage too short for the replay window cannot be challenged yet (see
+//! `docs/issues/short-stage-fraud-window.md`), so the scenario only checks that
+//! recomputation finds it.
+
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::time::Instant;
+
+use anyhow::{ensure, Context, Result};
+use inference_artifacts::checks::{dispute_digest, settlement, stage_challenge, Settlement};
+use inference_artifacts::{
+    build_checkpoint_list, checkpoint_hashes, file_sha256, read_checkpoint_list, read_json,
+    write_checkpoint_hashes, CheckpointList, ModelManifest,
+};
+use raster_prover::commitment_file::CommitmentFile;
+use run_prep::RunConfig;
+use serde_json::{json, Value};
+use staged_infer::chain_runner::StagedExecutionBackend;
+use staged_infer::{CheckpointedInferenceConfig, CheckpointedInferenceExecutor, ParityPolicy};
+
+use super::{
+    block_name, case_beside, command, logged, manifest_blocks, write_case, write_specification,
+    Case,
+};
+use crate::challenge::locate_divergence;
+use crate::claim::{
+    build_posted_claim, corrupt_checkpoint_hashes, render_ranged_manifest, ClaimBuildOptions,
+    ClaimBuildResult, CorruptCheckpointHashesOptions, CorruptCheckpointSelection, PreparedClaimRun,
+};
+
+/// The window a challenge replays at.
+const REPLAY_WINDOW: usize = 128;
+
+/// Checkpoints to falsify in an otherwise honest claim, one per family of stage
+/// long enough to challenge.
+const FALSIFIED_STAGES: [&str; 4] = [
+    "prompt_check_p0",
+    "prompt_check_p1",
+    "range_p1_l2",
+    "range_c1_l3",
+];
+
+/// Whether this stage's trace exceeds the replay window on the pinned templated
+/// case.
+fn long_enough_to_challenge(stage: &str) -> bool {
+    // A bind stage covers one range, and a range of the pinned model is six
+    // tokens: about 110 steps, where a 512-token range of a real model is
+    // about 28,000.
+    stage.starts_with("prompt_check_p")
+        || stage.starts_with("range_p")
+        || stage.starts_with("range_c")
+}
+
+pub(super) struct Scenario<'a> {
+    pub root: &'a Path,
+    pub dir: PathBuf,
+    pub exe: &'a Path,
+    pub raster: &'a Path,
+    pub model_path: &'a Path,
+    pub model: &'a ModelManifest,
+    pub case: &'a Case,
+    pub prepared: &'a PreparedClaimRun,
+    pub claimed: &'a [u32],
+}
+
+/// What one run binds besides the model.
+#[derive(Clone)]
+struct RunInputs {
+    text: String,
+    config: RunConfig,
+    marks: Vec<Vec<u32>>,
+    ids: Vec<u32>,
+    /// Added to the schedule's two counts. Zero for a schedule matching the run.
+    schedule_skew: [i64; 2],
+    /// Claim another hash for the text than the text's.
+    other_text_hash: bool,
+}
+
+pub(super) fn run_challenge_scenario(scenario: &Scenario) -> Result<Value> {
+    fs::create_dir_all(&scenario.dir)?;
+    let specification = scenario.dir.join(inference_artifacts::SPECIFICATION_TOML);
+    write_specification(&specification, scenario.model_path, scenario.case)?;
+    write_case(&specification, scenario.case)?;
+    let inputs = honest_inputs(scenario)?;
+    let (other_path, other) = import_other_model(scenario)?;
+    let honest_manifest = render(
+        scenario.model_path,
+        scenario.model,
+        &inputs,
+        &scenario.dir.join("honest-run"),
+    )?;
+    let other_manifest = render(
+        &other_path,
+        &other,
+        &inputs,
+        &scenario.dir.join("other-run"),
+    )?;
+
+    let honest = claim(
+        scenario,
+        "honest",
+        &specification,
+        Some(scenario.claimed.to_vec()),
+    )?;
+    let context = honest.claim_bundle_path.as_path();
+    let honest_trace = read_checkpoint_list(&honest.checkpoint_list_path)?;
+    let mut replays = Vec::new();
+
+    // An honest claim has nothing to dispute and nothing to reject.
+    let log = challenge(
+        scenario,
+        "honest",
+        &specification,
+        context,
+        &honest.checkpoint_hashes_path,
+    )?;
+    ensure!(
+        has_line(&log, "no divergence found"),
+        "an honest claim was disputed"
+    );
+
+    for stage in FALSIFIED_STAGES {
+        let name = format!("falsified-{stage}");
+        let dir = scenario.dir.join(&name);
+        fs::create_dir_all(&dir)?;
+        let hashes = dir.join("checkpoints.txt");
+        corrupt_checkpoint_hashes(CorruptCheckpointHashesOptions {
+            hashes_path: honest.checkpoint_hashes_path.clone(),
+            list_path: Some(honest.checkpoint_list_path.clone()),
+            output_path: Some(hashes.clone()),
+            selection: CorruptCheckpointSelection::Stage(stage.to_string()),
+        })?;
+        let outcome = expect_divergence(scenario, &name, &specification, context, &hashes, stage)?;
+        // The same replay, against a claimer that ran this stage on the honest
+        // inputs and stated another output for it. A falsified hash has no
+        // checkpoint behind it, so this is the claim a contract would see: a
+        // replay settles it, and Raster must admit the challenge.
+        let mut lying = honest_trace.clone();
+        let stated = lying
+            .checkpoints
+            .iter_mut()
+            .find(|checkpoint| checkpoint.stage == stage)
+            .with_context(|| format!("the honest claim has no `{stage}`"))?;
+        stated.output_sha256 = "5a".repeat(32);
+        let outcome = dispute_tie(scenario, &name, &lying, &honest_trace, stage, outcome)?;
+        ensure!(
+            outcome["settled_by"] == "replay" && outcome["raster_admits"] == true,
+            "`{name}`: a claim that states another output was not settled by a replay Raster admits"
+        );
+        let outcome = contract_challenge(
+            scenario,
+            &name,
+            &specification,
+            &honest,
+            &lying,
+            stage,
+            stage == FALSIFIED_STAGES[0],
+            outcome,
+        )?;
+        replays.push(outcome);
+    }
+
+    // The command that stages such a claim (`test corrupt-claim --submission`)
+    // writes one a contract takes: the honest hashes with one changed,
+    // posted for the liar. A lie about the result is refused there, since
+    // the claim's records are read from that output and no proof would
+    // state them.
+    {
+        let honest_submission = honest
+            .claim_submission_path
+            .as_ref()
+            .context("the honest claim wrote no submission")?;
+        let liar = "0x00000000000000000000000000000000000011a2";
+        let corrupt = |stage: &str, out: &str| {
+            crate::lies::corrupt_claim(crate::lies::CorruptClaimOptions {
+                submission_path: honest_submission.clone(),
+                selection: CorruptCheckpointSelection::Stage(stage.to_string()),
+                fault: crate::lies::CorruptFault::Output,
+                claimer: Some(liar.to_string()),
+                out_dir: scenario.dir.join(out),
+            })
+        };
+        let stage = FALSIFIED_STAGES[0];
+        let lying = corrupt(stage, "corrupted-claim")?;
+        let honest_hashes =
+            inference_artifacts::read_checkpoint_hashes(&honest.checkpoint_hashes_path)?;
+        let lying_hashes = inference_artifacts::read_checkpoint_hashes(&lying.hashes_path)?;
+        ensure!(
+            honest_hashes.len() == lying_hashes.len()
+                && honest_hashes
+                    .iter()
+                    .zip(&lying_hashes)
+                    .enumerate()
+                    .all(|(index, (before, after))| (before != after)
+                        == (index == lying.checkpoint_index)),
+            "a corrupted claim's list differs from the honest one elsewhere than at `{stage}`"
+        );
+        let claim: inference_artifacts::checks::ClaimSubmission =
+            read_json(&lying.submission_path)?;
+        let posting = crate::posting::PreparedPosting::read(&scenario.dir.join("corrupted-claim"))?;
+        ensure!(
+            claim.claimer == liar
+                && inference_artifacts::availability::check_holds(
+                    &posting.contents()?,
+                    &inference_artifacts::availability::RequiredPosting::of(&claim),
+                )
+                .is_ok(),
+            "a corrupted claim's data is not the liar's own"
+        );
+        ensure!(
+            corrupt("result", "corrupted-result").is_err(),
+            "a claim that states another result was written as one a contract would take"
+        );
+
+        // The lies no replay shows: a checkpoint that names a program outside
+        // the approved set, one whose input is not its producer's output, one
+        // that names other fixed data than the procedure pins, and one
+        // that names a run input the claim did not post. A contract takes
+        // each claim, since nothing at arrival reads that checkpoint. A challenger who reads the claim back finds the
+        // fault by auditing it, with nothing run, at the checkpoint that
+        // lies.
+        let layer = crate::posting::open_layer(None)?;
+        let procedure = crate::claim_check::spec_procedure(&specification, None)?;
+        for (fault, out, expected) in [
+            (
+                crate::lies::CorruptFault::Program,
+                "corrupted-program",
+                "UnapprovedProgram",
+            ),
+            (
+                crate::lies::CorruptFault::Input(None),
+                "corrupted-input",
+                "NotAnEarlierOutput",
+            ),
+            // An input the program is given from fixed data, here the
+            // model's tokenizer: the stage checks it as it runs, but a
+            // challenger has no such bytes to run the stage on.
+            (
+                crate::lies::CorruptFault::Input(Some(String::from("tokenizer"))),
+                "corrupted-pinned",
+                "NotAPinnedValue",
+            ),
+            // An input the run gives, here the range's token marks: the
+            // claim posted its real marks, and this checkpoint names others,
+            // which nobody but the claimer has.
+            (
+                crate::lies::CorruptFault::Input(Some(String::from("marks"))),
+                "corrupted-posted",
+                "NotAPostedValue",
+            ),
+        ] {
+            let lie = crate::lies::corrupt_claim(crate::lies::CorruptClaimOptions {
+                submission_path: honest_submission.clone(),
+                selection: CorruptCheckpointSelection::Stage(stage.to_string()),
+                fault,
+                claimer: Some(liar.to_string()),
+                out_dir: scenario.dir.join(out),
+            })?;
+            let mut claim: inference_artifacts::checks::ClaimSubmission =
+                read_json(&lie.submission_path)?;
+            claim.availability = crate::posting::PreparedPosting::read(&scenario.dir.join(out))?
+                .post(layer.as_ref())
+                .with_context(|| format!("`{out}`: posting the lying claim's data"))?;
+            inference_artifacts::write_json(&lie.submission_path, &claim)?;
+            let posted = inference_artifacts::availability::check_claim_availability(
+                layer.as_ref(),
+                inference_artifacts::availability::AvailabilityParameters::default(),
+                &claim.availability,
+                &inference_artifacts::availability::RequiredPosting::of(&claim),
+                crate::posting::now()?,
+            )
+            .map_err(|rejection| {
+                anyhow::anyhow!(
+                    "`{out}`: a contract does not take the lying claim's data: {rejection}"
+                )
+            })?;
+            inference_artifacts::checks::check_stated_records(&procedure.programs, &claim, &posted)
+                .map_err(|rejection| {
+                    anyhow::anyhow!(
+                        "`{out}`: a contract does not take the lying claim: {rejection}"
+                    )
+                })?;
+            let fetched = crate::posted::fetch_claim(crate::posted::FetchClaimOptions {
+                submission_path: lie.submission_path.clone(),
+                specification_path: specification.to_path_buf(),
+                pins_path: None,
+                da_dir: None,
+                out_dir: scenario.dir.join(format!("{out}-fetched")),
+            })
+            .with_context(|| format!("`{out}`: reading the lying claim back from the layer"))?;
+            let audit = crate::audit::audit_claim(crate::audit::AuditClaimOptions {
+                submission_path: fetched.submission_path,
+                specification_path: specification.to_path_buf(),
+                pins_path: None,
+            })?;
+            let found = audit
+                .faults
+                .first()
+                .with_context(|| format!("`{out}`: an audit of the lying claim found no fault"))?;
+            ensure!(
+                found.checkpoint as usize == lie.checkpoint_index && found.fault == expected,
+                "`{out}`: an audit found {} at checkpoint {}, and the lie is {expected} at {}",
+                found.fault,
+                found.checkpoint,
+                lie.checkpoint_index
+            );
+        }
+    }
+
+    // A false result. The result stage is a handful of steps, under the
+    // replay window, so the scenario checks only that recomputation finds it.
+    {
+        let mut lying = honest_trace.clone();
+        let stated = lying
+            .checkpoints
+            .last_mut()
+            .filter(|checkpoint| checkpoint.stage == "result")
+            .context("the honest claim does not end in the result stage")?;
+        stated.output_sha256 = "5a".repeat(32);
+        let found = locate_divergence(
+            &honest.checkpoint_list_path,
+            &lying,
+            &honest.checkpoint_list_path,
+            &honest_trace,
+        )
+        .context("a false result did not differ from honest execution")?;
+        ensure!(
+            found.stage == "result",
+            "a false result first differs at `{}`",
+            found.stage
+        );
+        replays.push(json!({"case": "falsified-result", "stage": "result", "replayed": false}));
+    }
+
+    // Correct execution over ids that are not the greedy output: every
+    // checkpoint agrees, and the claim's own record refutes it.
+    let not_greedy = not_greedy_ids(scenario)?;
+    let refuted = claim(
+        scenario,
+        "not-greedy",
+        &specification,
+        Some(not_greedy.clone()),
+    )?;
+    let log = challenge(
+        scenario,
+        "not-greedy",
+        &specification,
+        &refuted.claim_bundle_path,
+        &refuted.checkpoint_hashes_path,
+    )?;
+    ensure!(
+        has_line(&log, "no divergence found; claimed output rejected"),
+        "a non-greedy claim was not rejected on its final record"
+    );
+
+    replays.extend(posted_lies(scenario, &specification, &honest, &refuted)?);
+
+    // An honest claimer that ran a different model. Nothing of that model is
+    // available to the challenger, and the run differs at the first stage that
+    // names it.
+    // A second specification of the same case.
+    let other_specification = scenario.dir.join("other-model.toml");
+    write_specification(&other_specification, &other_path, scenario.case)?;
+    let elsewhere = claim(scenario, "other-model", &other_specification, None)?;
+    replays.push(expect_claim_found(
+        scenario,
+        "other-model",
+        &specification,
+        &elsewhere,
+        &honest_trace,
+        "prompt_bind_p0",
+    )?);
+    let log = fs::read_to_string(scenario.dir.join("other-model/challenge/challenge.log"))?;
+    ensure!(
+        log.contains("warning: the claim names model"),
+        "the challenger did not report that the claim names another model"
+    );
+
+    // A claim of the honest run whose checkpoints came from something else:
+    // its inputs, one model input at a time, or its stages' connections.
+    // The first range claims its last piece the other way: a token starting
+    // there, or not.
+    let other_marks = {
+        let mut marks = inputs.marks.clone();
+        let last = marks[0]
+            .last_mut()
+            .context("the first prompt range has no pieces")?;
+        *last ^= 1;
+        marks
+    };
+    let mut other_budget = inputs.config.clone();
+    other_budget.max_new_tokens += 1;
+    let doctored = [
+        (
+            "other-text",
+            "prompt_bind_p0",
+            RunInputs {
+                text: format!("{} ", inputs.text),
+                ..inputs.clone()
+            },
+        ),
+        (
+            "other-config",
+            "prompt_bind_p0",
+            RunInputs {
+                config: other_budget,
+                ..inputs.clone()
+            },
+        ),
+        (
+            "other-schedule",
+            "prompt_bind_p0",
+            RunInputs {
+                schedule_skew: [1, 0],
+                ..inputs.clone()
+            },
+        ),
+        (
+            "other-text-digest",
+            "prompt_bind_p0",
+            RunInputs {
+                other_text_hash: true,
+                ..inputs.clone()
+            },
+        ),
+        (
+            "other-marks",
+            "prompt_check_p0",
+            RunInputs {
+                marks: other_marks,
+                ..inputs.clone()
+            },
+        ),
+        (
+            "other-ids",
+            "embed_c0",
+            RunInputs {
+                ids: not_greedy,
+                ..inputs.clone()
+            },
+        ),
+    ];
+    for (name, stage, run) in doctored {
+        let manifest = render(
+            scenario.model_path,
+            scenario.model,
+            &run,
+            &scenario.dir.join(name).join("run"),
+        )?;
+        replays.push(expect_found(
+            scenario,
+            name,
+            &specification,
+            context,
+            &honest_trace,
+            &manifest,
+            stage,
+        )?);
+    }
+
+    // What range 0 is given where a later range takes the range before it.
+    let empty = |stage, key| binding_value(&honest_manifest, stage, key);
+    let take = |stage, key| take_binding(&honest_manifest, &other_manifest, stage, key);
+    let table = |header| take_table(&honest_manifest, &other_manifest, header);
+    let wire = |stage, key, line: &str| replace_binding(&honest_manifest, stage, key, line);
+    // Sparse verification authenticates reads, not unused tokenizer content.
+    // Change every bucket so each of these consuming stages sees a real mutation.
+    let changed_tokenizer = tokenizer_substitution_binding(
+        &honest_manifest,
+        &scenario.dir.join("tokenizer-substitution-inputs"),
+    )?;
+    // A family whose layers take no per-layer input has no auxiliary stage to
+    // give another model's table to, and none to bind to the wrong range.
+    let auxiliary = scenario.model.family()?.has_auxiliary_stages();
+    let mut substituted = vec![
+        (
+            "tokenizer-at-bind",
+            "prompt_bind_p0",
+            wire("prompt_bind_p{j}", "tokenizer", &changed_tokenizer)?,
+        ),
+        (
+            "tokenizer-at-check",
+            "prompt_check_p0",
+            wire("prompt_check_p{j}", "tokenizer", &changed_tokenizer)?,
+        ),
+        (
+            "embedding-in-prompt",
+            "embed_p0",
+            take("embed_p{j}", "embedding")?,
+        ),
+        (
+            "embedding-in-claim",
+            "embed_c0",
+            take("embed_c{k}", "embedding")?,
+        ),
+        ("other-head", "check_c0", take("check_c{k}", "head")?),
+        // The first check is the first stage to read the decoder table: every
+        // check states the output record of the transcript so far.
+        ("other-decoder", "check_c0", take("check_c{k}", "decoder")?),
+    ];
+    if auxiliary {
+        substituted.push(("other-ple", "aux_p0_l0", table("[chain.input.aux_layer]")?));
+    }
+    substituted.push((
+        "other-weights",
+        "range_p0_l0",
+        table("[chain.input.transformer_layer]")?,
+    ));
+    // Transformer layers have no such case: their caches differ by attention
+    // type and donor, so a stage given another layer's weights stops, and
+    // the claimer has no output to post.
+    if auxiliary {
+        substituted.push((
+            "swapped-ple",
+            "aux_p0_l0",
+            swapped_ple(scenario, &honest_manifest)?,
+        ));
+    }
+    substituted.extend([
+        (
+            "repeated-context",
+            "prompt_check_p1",
+            wire(
+                "prompt_check_p{j}",
+                "previous",
+                &empty("prompt_check_p0", "previous")?,
+            )?,
+        ),
+        (
+            "dropped-verdict",
+            "check_c1",
+            wire("check_c{k}", "prior", &empty("check_c0", "prior")?)?,
+        ),
+        // No wiring presents an earlier range's record as the claim's: the
+        // final record is the last check's own output, and the three-path
+        // scenario checks that an earlier check's record carries a fault.
+        (
+            "first-prompt-context",
+            "check_c0",
+            wire("check_c{k}", "prompt", r#"{ from = "prompt_check_p0" }"#)?,
+        ),
+    ]);
+    for (name, stage, manifest) in &substituted {
+        replays.push(expect_found(
+            scenario,
+            name,
+            &specification,
+            context,
+            &honest_trace,
+            manifest,
+            stage,
+        )?);
+    }
+
+    for (name, _, manifest) in substituted
+        .iter()
+        .filter(|(name, _, _)| *name != "other-decoder")
+    {
+        replays.push(expect_semantic_rejection(
+            scenario,
+            &format!("{name}-self-replay"),
+            manifest,
+        )?);
+    }
+
+    // Self-replay the same dishonest model inputs. Agreement is expected;
+    // rejection must come from the committed semantic fault.
+    let (changed_decoder, changed_proof) = decoder_substitution_manifests(
+        &honest_manifest,
+        &scenario.dir.join("decoder-substitution-inputs"),
+    )?;
+    replays.push(expect_semantic_rejection(
+        scenario,
+        "decoder-self-replay",
+        &changed_decoder,
+    )?);
+    replays.push(expect_semantic_rejection(
+        scenario,
+        "decoder-and-proof-self-replay",
+        &changed_proof,
+    )?);
+
+    // Execute the dishonest wiring itself in both engines. Agreement must end
+    // in a committed invalid verdict, even when the altered chain runs honestly.
+    let mut rewired = vec![
+        (
+            "restarted-positions",
+            wire("embed_p{j}", "previous", &empty("embed_p0", "previous")?)?,
+        ),
+        (
+            "dropped-cache",
+            wire(
+                "range_p{j}_l{l}",
+                "prior_kv",
+                &empty("range_p0_l{l}", "prior_kv")?,
+            )?,
+        ),
+    ];
+    if auxiliary {
+        rewired.push((
+            "wrong-auxiliary-range",
+            wire("range_c{k}_l{l}", "ple", r#"{ from = "aux_p0_l{l}" }"#)?,
+        ));
+    }
+    rewired.extend([
+        (
+            "stale-cache-range",
+            wire(
+                "range_c{k}_l{l}",
+                "prior_kv",
+                r#"{ from = "range_p0_l{l}" }"#,
+            )?,
+        ),
+        (
+            "stale-predicting-row",
+            wire("check_c{k}", "previous", r#"{ from = "range_p0_l3" }"#)?,
+        ),
+        (
+            "claim-embedding-reset",
+            wire("embed_c{k}", "previous", r#"{ from = "embed_p0" }"#)?,
+        ),
+    ]);
+    for (name, manifest) in &rewired {
+        replays.push(expect_semantic_rejection(
+            scenario,
+            &format!("{name}-self-replay"),
+            manifest,
+        )?);
+    }
+
+    Ok(json!(replays))
+}
+
+fn has_line(log: &str, wanted: &str) -> bool {
+    log.lines().any(|line| line.trim() == wanted)
+}
+
+fn claim(
+    scenario: &Scenario,
+    name: &str,
+    specification: &Path,
+    ids: Option<Vec<u32>>,
+) -> Result<ClaimBuildResult> {
+    let base_dir = scenario.dir.join(name).join("claim");
+    fs::create_dir_all(&base_dir)?;
+    build_posted_claim(ClaimBuildOptions {
+        base_dir,
+        case_path: Some(case_beside(&specification)),
+        specification_path: specification.to_path_buf(),
+        current_exe: scenario.exe.to_path_buf(),
+        staged_backend: StagedExecutionBackend::InProcess,
+        claimed_token_ids: ids,
+        direct_output_ids: None,
+        claimer: None,
+    })
+    .with_context(|| format!("claim `{name}`"))
+}
+
+/// Runs `challenge build` the way a challenger does and returns its output.
+fn challenge(
+    scenario: &Scenario,
+    name: &str,
+    specification: &Path,
+    context: &Path,
+    hashes: &Path,
+) -> Result<String> {
+    let (built, log) = attempt_challenge(scenario, name, specification, context, hashes)?;
+    built.with_context(|| format!("challenge `{name}`"))?;
+    Ok(log)
+}
+
+/// Runs `challenge build` and returns whether it built a challenge and what
+/// it printed either way.
+fn attempt_challenge(
+    scenario: &Scenario,
+    name: &str,
+    specification: &Path,
+    context: &Path,
+    hashes: &Path,
+) -> Result<(Result<f64>, String)> {
+    let dir = scenario.dir.join(name).join("challenge");
+    fs::create_dir_all(&dir)?;
+    let log = dir.join("challenge.log");
+    let mut run = command(scenario.exe, scenario.root);
+    run.current_dir(&dir)
+        .args(["challenge", "build", "--specification"])
+        .arg(specification)
+        .arg("--claim-context")
+        .arg(context)
+        .arg("--checkpoints")
+        .arg(hashes);
+    let built = logged(run, &log);
+    Ok((built, fs::read_to_string(log)?))
+}
+
+/// A claim built somewhere else. Recomputation must first differ from its
+/// checkpoints at this stage, and a stage long enough to challenge must also
+/// replay. For a shorter one the challenger's command is still run, for what
+/// it reports before the replay it cannot finish.
+fn expect_claim_found(
+    scenario: &Scenario,
+    name: &str,
+    specification: &Path,
+    claim: &ClaimBuildResult,
+    honest: &CheckpointList,
+    stage: &str,
+) -> Result<Value> {
+    let claimed = read_checkpoint_list(&claim.checkpoint_list_path)?;
+    let found = locate_divergence(
+        &claim.checkpoint_list_path,
+        &claimed,
+        &claim.checkpoint_list_path,
+        honest,
+    )
+    .with_context(|| format!("`{name}` did not differ from honest execution"))?;
+    ensure!(
+        found.stage == stage,
+        "`{name}` first differs at `{}`, not `{stage}`",
+        found.stage
+    );
+    let (context, hashes) = (&claim.claim_bundle_path, &claim.checkpoint_hashes_path);
+    if long_enough_to_challenge(stage) {
+        let outcome = expect_divergence(scenario, name, specification, context, hashes, stage)?;
+        return dispute_tie(scenario, name, &claimed, honest, stage, outcome);
+    }
+    // The replay of a stage this short is refused, so whether the command
+    // built a challenge is not this case's result.
+    let (_built, _log) = attempt_challenge(scenario, name, specification, context, hashes)?;
+    Ok(json!({"case": name, "stage": stage, "replayed": false}))
+}
+
+/// The challenge must name this stage. `challenge build` only succeeds once the
+/// authenticated replay matches the challenger's native checkpoint and differs
+/// from the claim's.
+fn expect_divergence(
+    scenario: &Scenario,
+    name: &str,
+    specification: &Path,
+    context: &Path,
+    hashes: &Path,
+    stage: &str,
+) -> Result<Value> {
+    let started = Instant::now();
+    let log = challenge(scenario, name, specification, context, hashes)?;
+    ensure!(
+        has_line(&log, &format!("divergence found: {stage}")),
+        "challenge `{name}` did not find `{stage}`: {}",
+        log.lines()
+            .find(|line| line.starts_with("divergence found") || line.starts_with("no divergence"))
+            .unwrap_or("it reported no outcome")
+    );
+    let replay = scenario
+        .dir
+        .join(name)
+        .join("challenge/target/staged-infer/runs");
+    let run = fs::read_dir(&replay)?
+        .next()
+        .with_context(|| format!("challenge `{name}` recorded no run"))??
+        .path();
+    let commitment = CommitmentFile::read_memory(
+        &run.join("challenge")
+            .join(stage)
+            .join("raster-replay")
+            .join(stage)
+            .join("commit.bin"),
+    )?;
+    ensure!(
+        commitment.window_size() == REPLAY_WINDOW,
+        "challenge `{name}` replayed at window {}",
+        commitment.window_size()
+    );
+    Ok(json!({
+        "case": name,
+        "stage": stage,
+        "replayed": true,
+        "trace_steps": commitment.len(),
+        "seconds": started.elapsed().as_secs_f64(),
+    }))
+}
+
+/// A claimer runs this manifest natively. Recomputation must first differ from
+/// its checkpoints at this stage, and a stage long enough to challenge must
+/// also replay.
+#[allow(clippy::too_many_arguments)]
+fn expect_found(
+    scenario: &Scenario,
+    name: &str,
+    specification: &Path,
+    context: &Path,
+    honest: &CheckpointList,
+    manifest: &str,
+    stage: &str,
+) -> Result<Value> {
+    let (hashes, claimed) = claimed_run(scenario, name, manifest)?;
+    let found = locate_divergence(&hashes, &claimed, &hashes, honest)
+        .with_context(|| format!("`{name}` did not differ from honest execution"))?;
+    ensure!(
+        found.stage == stage,
+        "`{name}` first differs at `{}`, not `{stage}`",
+        found.stage
+    );
+    if long_enough_to_challenge(stage) {
+        let outcome = expect_divergence(scenario, name, specification, context, &hashes, stage)?;
+        return dispute_tie(scenario, name, &claimed, honest, stage, outcome);
+    }
+    Ok(json!({"case": name, "stage": stage, "replayed": false}))
+}
+
+/// Where the challenger's authenticated replay of `stage` was written.
+fn replay_stage_dir(scenario: &Scenario, name: &str, stage: &str) -> Result<PathBuf> {
+    let runs = scenario
+        .dir
+        .join(name)
+        .join("challenge/target/staged-infer/runs");
+    let run = fs::read_dir(&runs)?
+        .next()
+        .with_context(|| format!("challenge `{name}` recorded no run"))??
+        .path();
+    Ok(run
+        .join("challenge")
+        .join(stage)
+        .join("raster-replay")
+        .join(stage))
+}
+
+/// Ties the challenger's replay to the claimer's own checkpoint for the stage,
+/// as a contract would. Records which rule settles the difference between the
+/// claimed checkpoint and the honest one. When that rule is a replay, the
+/// Raster stage challenge built from the claimer's checkpoint and the
+/// challenger's trace must be one Raster itself admits, about that checkpoint.
+fn dispute_tie(
+    scenario: &Scenario,
+    name: &str,
+    claimed: &CheckpointList,
+    honest: &CheckpointList,
+    stage: &str,
+    mut outcome: Value,
+) -> Result<Value> {
+    let of = |list: &CheckpointList| list.checkpoints.iter().find(|c| c.stage == stage).cloned();
+    let (Some(claimed), Some(honest)) = (of(claimed), of(honest)) else {
+        outcome["settled_by"] = json!("missing checkpoint");
+        return Ok(outcome);
+    };
+    let rule = settlement(&claimed, &honest);
+    outcome["settled_by"] = json!(match rule {
+        Settlement::StageOrder => "stage order",
+        Settlement::ProgramCheck => "program check",
+        Settlement::Inputs => "inputs",
+        Settlement::Replay => "replay",
+        Settlement::Nothing => "nothing",
+    });
+    if rule != Settlement::Replay {
+        return Ok(outcome);
+    }
+    let replay = replay_stage_dir(scenario, name, stage)?;
+    let commitment = CommitmentFile::read_memory(&replay.join("commit.bin"))?;
+    let challenge = stage_challenge(
+        &claimed,
+        commitment.header(),
+        &file_sha256(&replay.join("output.bin"))?,
+    )
+    .with_context(|| {
+        format!("`{name}`: no Raster challenge can be built from the claimed checkpoint")
+    })?;
+    let admitted = raster_prover::challenge::verify_challenge(&challenge)
+        .map_err(|refusal| anyhow::anyhow!("`{name}`: Raster refuses the challenge: {refusal}"))?;
+    ensure!(
+        Some(admitted.chain_digest) == dispute_digest(&claimed)
+            && hex::encode(&admitted.stage.program_commitment) == claimed.program_commitment
+            && hex::encode(&admitted.stage.input_manifest_commitment) == claimed.input_commitment,
+        "`{name}`: the admitted challenge is not about the claimed checkpoint"
+    );
+    // The same trace against the honest checkpoint disputes nothing, and
+    // Raster refuses it: a challenge has to state another output.
+    let undisputed = stage_challenge(
+        &honest,
+        commitment.header(),
+        &file_sha256(&replay.join("output.bin"))?,
+    )
+    .context("no Raster challenge can be built from the honest checkpoint")?;
+    ensure!(
+        raster_prover::challenge::verify_challenge(&undisputed).is_err(),
+        "`{name}`: Raster admitted a challenge that disputes nothing"
+    );
+    outcome["raster_admits"] = json!(true);
+    Ok(outcome)
+}
+
+/// The challenge of a lying checkpoint as a contract receives it. The liar
+/// posts its own checkpoint list and submits its claim, which a contract
+/// takes: nothing at arrival tells a false output from a true one. The
+/// challenger posts its trace body and submits the Raster stage challenge
+/// about the claimer's checkpoint. A contract admits it; one whose body was
+/// not posted, or is gone before a defender's window ends, it refuses.
+fn contract_challenge(
+    scenario: &Scenario,
+    name: &str,
+    specification: &Path,
+    honest: &ClaimBuildResult,
+    lying: &CheckpointList,
+    stage: &str,
+    challenge_as_posted: bool,
+    mut outcome: Value,
+) -> Result<Value> {
+    use inference_artifacts::checks::{ClaimSubmission, CLAIM_SUBMISSION_JSON};
+
+    let dir = scenario.dir.join(name).join("contract");
+    fs::create_dir_all(&dir)?;
+    let list_path = dir.join(inference_artifacts::CHECKPOINTS_TXT);
+    write_checkpoint_hashes(&list_path, &checkpoint_hashes(lying)?)?;
+    inference_artifacts::write_json(&dir.join(inference_artifacts::CHECKPOINT_LIST_JSON), lying)?;
+    let mut claim: ClaimSubmission = read_json(
+        honest
+            .claim_submission_path
+            .as_ref()
+            .context("the honest claim wrote no submission")?,
+    )?;
+    claim.checkpoint_count = lying.checkpoints.len() as u32;
+    claim.checkpoints_root = inference_artifacts::checkpoints_root(&checkpoint_hashes(lying)?)?;
+    let claim_path = dir.join(CLAIM_SUBMISSION_JSON);
+    let procedure = crate::claim_check::spec_procedure(specification, None)?;
+    let layer = crate::posting::open_layer(None)?;
+    let layer = layer.as_ref();
+    let now = crate::posting::now()?;
+
+    // What the liar posts: the honest claim's data, with the lying hashes and
+    // checkpoints in place of the honest ones.
+    let posting = crate::posting::PreparedPosting::read(&honest.chain_dir)?.with_checkpoints(
+        &claim.claimer,
+        &fs::read(&list_path)?,
+        &fs::read(dir.join(inference_artifacts::CHECKPOINT_LIST_JSON))?,
+    )?;
+    claim.availability = posting
+        .post(layer)
+        .with_context(|| format!("`{name}`: posting the lying claim's data"))?;
+    inference_artifacts::write_json(&claim_path, &claim)?;
+    let posted = inference_artifacts::availability::check_claim_availability(
+        layer,
+        inference_artifacts::availability::AvailabilityParameters::default(),
+        &claim.availability,
+        &inference_artifacts::availability::RequiredPosting::of(&claim),
+        now,
+    )
+    .map_err(|rejection| {
+        anyhow::anyhow!("`{name}`: a contract does not take the lying claim's data: {rejection}")
+    })?;
+    inference_artifacts::checks::check_stated_records(&procedure.programs, &claim, &posted)
+        .map_err(|rejection| {
+            anyhow::anyhow!("`{name}`: a contract does not take the lying claim: {rejection}")
+        })?;
+
+    let index = lying
+        .checkpoints
+        .iter()
+        .position(|checkpoint| checkpoint.stage == stage)
+        .with_context(|| format!("the lying claim has no `{stage}`"))?;
+    let replay = replay_stage_dir(scenario, name, stage)?;
+    let challenger = "0x000000000000000000000000000000000000c4a1";
+    let submission = crate::claim_check::challenge_submission(
+        &claim.checkpoints_root,
+        index as u32,
+        &lying.checkpoints[index],
+        &replay.join("commit.bin"),
+        &file_sha256(&replay.join("output.bin"))?,
+        challenger,
+        layer,
+    )?;
+    inference_artifacts::write_json(
+        &dir.join(inference_artifacts::checks::CHALLENGE_SUBMISSION_JSON),
+        &submission,
+    )?;
+    let check = |submission: &inference_artifacts::checks::ChallengeSubmission, at: u64| {
+        crate::claim_check::check_challenge(&procedure, &claim_path, submission, layer, at)
+            .map(|report| report.rejection())
+    };
+    if let Some(rejection) = check(&submission, now)? {
+        anyhow::bail!("`{name}`: a contract refuses the challenge: {rejection}");
+    }
+    let mut unposted = submission.clone();
+    unposted.availability.clear();
+    // The same challenge and body under another address: a copied challenge.
+    let mut copied = submission.clone();
+    copied.challenger = String::from("0x00000000000000000000000000000000000c0b1e");
+    let late = now + inference_artifacts::availability::DEFAULT_RETENTION_SECS;
+    for (case, rejection) in [
+        ("unposted", check(&unposted, now)?),
+        ("late", check(&submission, late)?),
+        ("copied", check(&copied, now)?),
+    ] {
+        ensure!(
+            rejection
+                .as_deref()
+                .is_some_and(|rejection| rejection.starts_with("challenge: trace body posted")),
+            "`{name}`: a contract does not refuse the {case} challenge for its body: {rejection:?}"
+        );
+    }
+    // The challenger's side of the same claim: read back from the layer into
+    // a directory that holds nothing else, it is the liar's hashes and
+    // checkpoints exactly, with every stage's input manifest.
+    let fetched = crate::posted::fetch_claim(crate::posted::FetchClaimOptions {
+        submission_path: claim_path.clone(),
+        specification_path: specification.to_path_buf(),
+        pins_path: None,
+        da_dir: None,
+        out_dir: dir.join("fetched"),
+    })
+    .with_context(|| format!("`{name}`: reading the lying claim back from the layer"))?;
+    let fetched_dir = fetched
+        .submission_path
+        .parent()
+        .context("the fetched claim has no directory")?;
+    for file in [
+        inference_artifacts::CHECKPOINTS_TXT,
+        inference_artifacts::CHECKPOINT_LIST_JSON,
+    ] {
+        ensure!(
+            fs::read(fetched_dir.join(file))? == fs::read(dir.join(file))?,
+            "`{name}`: the {file} read back from the layer is not the one posted"
+        );
+    }
+    for checkpoint in &lying.checkpoints {
+        let manifest = Path::new(&checkpoint.stage).join("input_manifest.json");
+        ensure!(
+            fs::read(fetched_dir.join(&manifest))? == fs::read(honest.chain_dir.join(&manifest))?,
+            "`{name}`: the input manifest of `{}` read back from the layer is not the claim's",
+            checkpoint.stage
+        );
+    }
+    // What the claim put on the layer, measured there: every byte of the
+    // blobs it names, with the hashes and the checkpoints at the sizes of the
+    // files that were posted.
+    let measured = crate::measure::measure_posting(&claim_path, None)
+        .with_context(|| format!("`{name}`: measuring what the lying claim posted"))?;
+    let posted: inference_artifacts::checks::ClaimSubmission = read_json(&claim_path)?;
+    ensure!(
+        measured["bytes"].as_u64()
+            == Some(posted.availability.iter().map(|blob| blob.length).sum()),
+        "`{name}`: the bytes measured on the layer are not the blobs the claim names"
+    );
+    let checkpoints = measured["blobs"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .flat_map(|blob| blob["parts"].as_array().into_iter().flatten())
+        .find(|part| part["kind"] == "checkpoints")
+        .with_context(|| format!("`{name}`: no checkpoints were measured on the layer"))?;
+    ensure!(
+        checkpoints["checkpoint_hashes_bytes"].as_u64()
+            == Some(fs::metadata(dir.join(inference_artifacts::CHECKPOINTS_TXT))?.len())
+            && checkpoints["checkpoint_list_bytes"].as_u64()
+                == Some(fs::metadata(dir.join(inference_artifacts::CHECKPOINT_LIST_JSON))?.len()),
+        "`{name}`: the checkpoints measured on the layer are not the size of the ones posted"
+    );
+    outcome["posted_bytes"] = measured["bytes"].clone();
+    // A lie about a stage's output is no fault to point at: every program is
+    // approved and every input is its producer's output, so the claim is
+    // disputed by a replay or not at all.
+    let audit = crate::audit::audit_claim(crate::audit::AuditClaimOptions {
+        submission_path: fetched.submission_path.clone(),
+        specification_path: specification.to_path_buf(),
+        pins_path: None,
+    })?;
+    ensure!(
+        audit.faults.is_empty() && audit.programs_approved == lying.checkpoints.len(),
+        "`{name}`: an audit of a claim that lies only about an output found {} fault(s)",
+        audit.faults.len()
+    );
+    outcome["audited_inputs"] = json!(audit.inputs_linked);
+    outcome["read_back_from_the_layer"] = json!(true);
+    if challenge_as_posted {
+        // And a challenge built from that directory alone, with nothing of
+        // the claimer's run: the run is prepared from the case the claim
+        // posted, and it finds and replays the same stage.
+        let posted_dir = scenario.dir.join(name).join("posted-challenge");
+        fs::create_dir_all(&posted_dir)?;
+        let log = posted_dir.join("challenge.log");
+        let mut run = command(scenario.exe, scenario.root);
+        run.current_dir(&posted_dir)
+            .args(["challenge", "build", "--specification"])
+            .arg(specification)
+            .arg("--submission")
+            .arg(&fetched.submission_path);
+        logged(run, &log).with_context(|| format!("`{name}`: challenge of the posted claim"))?;
+        ensure!(
+            has_line(
+                &fs::read_to_string(&log)?,
+                &format!("divergence found: {stage}")
+            ),
+            "`{name}`: a challenge built from the posted claim did not find `{stage}`"
+        );
+        outcome["challenged_from_the_layer"] = json!(true);
+    }
+    outcome["contract_takes_the_lying_claim"] = json!(true);
+    outcome["contract_admits"] = json!(true);
+    outcome["trace_body_bytes"] = json!(submission.availability[0].length);
+    Ok(outcome)
+}
+
+/// The lying claims that no comparison voids and that a challenger's run of
+/// the chain as the template arranges it would not dispute: each is settled
+/// by a replay of one stage on the inputs the claim's own checkpoint names.
+///
+/// Four give a stage a value the claim is allowed to name, in a place the
+/// chain does not give it: another layer's weights, another range's marks,
+/// another stage's output, and the empty value where an earlier stage's
+/// output belongs. Each states the output of a run that was given the right
+/// value. A contract takes the claim and an audit finds nothing, since every
+/// input is one a challenger holds. The challenger runs every stage on what
+/// its checkpoint names, differs at the stage that lies, and replays that
+/// stage on those inputs: Raster admits the challenge as one about the
+/// liar's checkpoint, and so does a contract.
+///
+/// The fifth is the lie of a claimer whose claimed output is not the
+/// model's: its last check states a valid record, and the result stage is
+/// run on that. It arrives with a valid record. The challenger differs at
+/// the check. The check of the pinned model is under the replay window, so
+/// the scenario checks only that the challenger goes to replay it. The same holds
+/// of the layer stage given another layer's weights on the small model of a
+/// family with no auxiliary stages.
+fn posted_lies(
+    scenario: &Scenario,
+    specification: &Path,
+    honest: &ClaimBuildResult,
+    not_greedy: &ClaimBuildResult,
+) -> Result<Vec<Value>> {
+    use crate::lies::CorruptFault;
+    use inference_artifacts::checks::ClaimSubmission;
+
+    let layer = crate::posting::open_layer(None)?;
+    let layer = layer.as_ref();
+    let procedure = crate::claim_check::spec_procedure(specification, None)?;
+    let now = crate::posting::now()?;
+    let liar = "0x00000000000000000000000000000000000011a3";
+    let challenger = "0x000000000000000000000000000000000000c4a2";
+    let submission_of = |claim: &ClaimBuildResult, what: &str| {
+        claim
+            .claim_submission_path
+            .clone()
+            .with_context(|| format!("the {what} claim wrote no submission"))
+    };
+    let honest_submission = submission_of(honest, "honest")?;
+    let not_greedy_submission = submission_of(not_greedy, "not-greedy")?;
+    let unforged: ClaimSubmission = read_json(&not_greedy_submission)?;
+    ensure!(
+        unforged
+            .inferences
+            .iter()
+            .all(|inference| !inference.record.valid),
+        "a claim of ids that are not the greedy output states a valid record as it is"
+    );
+    // The check the result stage reads.
+    let last_check = {
+        let list = read_checkpoint_list(&not_greedy.checkpoint_list_path)?;
+        let result = list
+            .checkpoints
+            .last()
+            .context("the not-greedy claim has no checkpoints")?;
+        let position = *result
+            .input_sources
+            .values()
+            .next()
+            .context("the not-greedy claim's last stage reads no check")?;
+        list.checkpoints[position as usize].stage.clone()
+    };
+    let arranged = |input: &str| CorruptFault::Arrangement(Some(input.to_string()));
+    let cases = [
+        (
+            "arranged-pinned",
+            &honest_submission,
+            "range_p1_l2",
+            arranged("layer"),
+        ),
+        (
+            "arranged-posted",
+            &honest_submission,
+            "prompt_check_p1",
+            arranged("marks"),
+        ),
+        (
+            "arranged-chained",
+            &honest_submission,
+            "prompt_check_p1",
+            arranged("bound"),
+        ),
+        (
+            "arranged-empty",
+            &honest_submission,
+            "prompt_check_p1",
+            arranged("previous"),
+        ),
+        (
+            "forged-verdict",
+            &not_greedy_submission,
+            last_check.as_str(),
+            CorruptFault::Verdict,
+        ),
+    ];
+
+    let mut outcomes = Vec::new();
+    for (name, source, stage, fault) in cases {
+        let forged = fault == CorruptFault::Verdict;
+        let dir = scenario.dir.join(name);
+        let lie = crate::lies::corrupt_claim(crate::lies::CorruptClaimOptions {
+            submission_path: source.clone(),
+            selection: CorruptCheckpointSelection::Stage(stage.to_string()),
+            fault,
+            claimer: Some(liar.to_string()),
+            out_dir: dir.join("claim"),
+        })
+        .with_context(|| format!("`{name}`: writing the lying claim"))?;
+        let mut claim: ClaimSubmission = read_json(&lie.submission_path)?;
+        claim.availability = crate::posting::PreparedPosting::read(&dir.join("claim"))?
+            .post(layer)
+            .with_context(|| format!("`{name}`: posting the lying claim's data"))?;
+        inference_artifacts::write_json(&lie.submission_path, &claim)?;
+        let posted = inference_artifacts::availability::check_claim_availability(
+            layer,
+            inference_artifacts::availability::AvailabilityParameters::default(),
+            &claim.availability,
+            &inference_artifacts::availability::RequiredPosting::of(&claim),
+            now,
+        )
+        .map_err(|rejection| {
+            anyhow::anyhow!(
+                "`{name}`: a contract does not take the lying claim's data: {rejection}"
+            )
+        })?;
+        inference_artifacts::checks::check_stated_records(&procedure.programs, &claim, &posted)
+            .map_err(|rejection| {
+                anyhow::anyhow!("`{name}`: a contract does not take the lying claim: {rejection}")
+            })?;
+        ensure!(
+            !forged
+                || claim
+                    .inferences
+                    .iter()
+                    .all(|inference| inference.record.valid),
+            "`{name}`: the forged claim does not arrive with a valid record"
+        );
+
+        let fetched = crate::posted::fetch_claim(crate::posted::FetchClaimOptions {
+            submission_path: lie.submission_path.clone(),
+            specification_path: specification.to_path_buf(),
+            pins_path: None,
+            da_dir: None,
+            out_dir: dir.join("fetched"),
+        })
+        .with_context(|| format!("`{name}`: reading the lying claim back from the layer"))?;
+        let audit = crate::audit::audit_claim(crate::audit::AuditClaimOptions {
+            submission_path: fetched.submission_path.clone(),
+            specification_path: specification.to_path_buf(),
+            pins_path: None,
+        })?;
+        ensure!(
+            audit.faults.is_empty(),
+            "`{name}`: an audit voids a claim whose every input is one a challenger holds: {} at \
+             checkpoint {}",
+            audit.faults[0].fault,
+            audit.faults[0].checkpoint
+        );
+
+        let challenge_dir = dir.join("challenge");
+        fs::create_dir_all(&challenge_dir)?;
+        let log = challenge_dir.join("challenge.log");
+        let mut run = command(scenario.exe, scenario.root);
+        run.current_dir(&challenge_dir)
+            .args(["challenge", "build", "--specification"])
+            .arg(specification)
+            .arg("--submission")
+            .arg(&fetched.submission_path);
+        let built = logged(run, &log);
+        let text = fs::read_to_string(&log)?;
+        ensure!(
+            has_line(&text, &format!("stage to replay: {stage}")),
+            "`{name}`: the challenger did not go to replay `{stage}`"
+        );
+        let mut outcome = json!({
+            "case": name,
+            "stage": stage,
+            "contract_takes_the_lying_claim": true,
+            "audit_faults": 0,
+            "replayed": false,
+        });
+        // Two stages are under the replay window on the pinned models, so
+        // their replay does not commit: the last check, and the layer stage
+        // of a family with no auxiliary stages when it is given another
+        // layer's weights. That stage states the fault and passes no rows
+        // on, and what is left of it on a model this small is a few dozen
+        // steps. On a real model of that family the same stage is long
+        // enough, and the blockchain tier replays it there.
+        let short_here = !long_enough_to_challenge(stage)
+            || (name == "arranged-pinned" && !scenario.model.family()?.has_auxiliary_stages());
+        if let Err(error) = built {
+            ensure!(
+                short_here && text.contains("trace length outside commitment limits"),
+                "`{name}`: challenge of the posted claim: {error:#}"
+            );
+            outcomes.push(outcome);
+            continue;
+        }
+        ensure!(
+            has_line(&text, &format!("divergence found: {stage}")),
+            "`{name}`: the challenge is not of `{stage}`"
+        );
+        let lying = read_checkpoint_list(
+            &dir.join("claim")
+                .join(inference_artifacts::CHECKPOINT_LIST_JSON),
+        )?;
+        let claimed = &lying.checkpoints[lie.checkpoint_index];
+        let replay = replay_stage_dir(scenario, name, stage)?;
+        let output_sha256 = file_sha256(&replay.join("output.bin"))?;
+        // The replay ran on the input list the liar's checkpoint commits to.
+        ensure!(
+            file_sha256(&replay.join("input_manifest.json"))? == claimed.input_commitment,
+            "`{name}`: the replay is not on the inputs the lying checkpoint names"
+        );
+        let commitment = CommitmentFile::read_memory(&replay.join("commit.bin"))?;
+        let challenge = stage_challenge(claimed, commitment.header(), &output_sha256)
+            .with_context(|| {
+                format!("`{name}`: no Raster challenge can be built from the lying checkpoint")
+            })?;
+        let admitted =
+            raster_prover::challenge::verify_challenge(&challenge).map_err(|refusal| {
+                anyhow::anyhow!("`{name}`: Raster refuses the challenge: {refusal}")
+            })?;
+        ensure!(
+            Some(admitted.chain_digest) == dispute_digest(claimed)
+                && hex::encode(&admitted.stage.program_commitment) == claimed.program_commitment
+                && hex::encode(&admitted.stage.input_manifest_commitment)
+                    == claimed.input_commitment,
+            "`{name}`: the admitted challenge is not about the lying checkpoint"
+        );
+        let submission = crate::claim_check::challenge_submission(
+            &claim.checkpoints_root,
+            lie.checkpoint_index as u32,
+            claimed,
+            &replay.join("commit.bin"),
+            &output_sha256,
+            challenger,
+            layer,
+        )?;
+        let rejection = crate::claim_check::check_challenge(
+            &procedure,
+            &lie.submission_path,
+            &submission,
+            layer,
+            now,
+        )?
+        .rejection();
+        ensure!(
+            rejection.is_none(),
+            "`{name}`: a contract refuses the challenge: {rejection:?}"
+        );
+        outcome["replayed"] = json!(true);
+        outcome["raster_admits"] = json!(true);
+        outcome["contract_admits"] = json!(true);
+        outcomes.push(outcome);
+    }
+    Ok(outcomes)
+}
+
+/// What the honest claim binds: the same text, procedure, cuts and ids a
+/// claim's preparation wrote.
+fn honest_inputs(scenario: &Scenario) -> Result<RunInputs> {
+    let prompt = &scenario.prepared.prepared_run.first()?.prompt;
+    let range_size = scenario.model.range_size;
+    let model_dir = scenario
+        .model_path
+        .parent()
+        .context("model manifest has no parent directory")?;
+    let tokenizer: Value = read_json(&model_dir.join(&scenario.model.bundle.tokenizer_path))?;
+    let ranges = run_prep::marked_ranges(
+        &prompt.initial_pieces,
+        range_size as usize,
+        &run_prep::prompt_tokenizer(&tokenizer)?,
+    )?;
+    Ok(RunInputs {
+        text: prompt.resolved_prompt.clone(),
+        config: RunConfig {
+            model_id: scenario.model.model_id.clone(),
+            raw_prompt: scenario.case.raw_prompt,
+            max_new_tokens: scenario.case.tokens,
+            range_size,
+        },
+        marks: ranges.into_iter().map(|range| range.marks).collect(),
+        ids: scenario.claimed.to_vec(),
+        schedule_skew: [0; 2],
+        other_text_hash: false,
+    })
+}
+
+fn not_greedy_ids(scenario: &Scenario) -> Result<Vec<u32>> {
+    let mut ids = scenario.claimed.to_vec();
+    let first = ids
+        .first_mut()
+        .context("the pinned case claims no tokens")?;
+    *first = (*first + 1) % scenario.model.shape.vocab_size() as u32;
+    Ok(ids)
+}
+
+/// This model's chain over these inputs.
+fn render(model_path: &Path, model: &ModelManifest, run: &RunInputs, dir: &Path) -> Result<String> {
+    let (template_path, segment) = model.verified_raster_template(model_path)?;
+    let template = inference_artifacts::ProcedureKind::Single.chain_template(&[&segment])?;
+    let range_size = run.config.range_size as usize;
+    let mark_files = run_prep::write_marks(&run.marks, dir)?;
+    let claimed_files = run_prep::write_claimed_ranges(&run.ids, range_size, dir)?;
+    let tokenizer: Value = read_json(
+        &model_path
+            .parent()
+            .context("model manifest has no parent directory")?
+            .join(&model.bundle.tokenizer_path),
+    )?;
+    let (slices, mut text_digest) = run_prep::text_for_ranges(
+        &run.text,
+        run.config.raw_prompt,
+        range_size,
+        &run_prep::prompt_tokenizer(&tokenizer)?,
+        run.marks.len(),
+    )?;
+    if run.other_text_hash {
+        text_digest.input_text_sha256 = "00".repeat(32);
+    }
+    render_ranged_manifest(
+        &template,
+        template_path
+            .parent()
+            .context("manifest template has no parent directory")?,
+        &run_prep::write_text_slices(&slices, dir)?,
+        &run_prep::write_run_config(&run.config, dir)?,
+        &run_prep::write_run_schedule(
+            (mark_files.len() as i64 + run.schedule_skew[0]) as usize,
+            (claimed_files.len() as i64 + run.schedule_skew[1]) as usize,
+            dir,
+        )?,
+        &run_prep::write_text_digest(&text_digest, dir)?,
+        None,
+        &run_prep::write_result_forms(&[], dir)?,
+        &mark_files,
+        &claimed_files,
+    )
+}
+
+/// The checkpoints a claimer gets from running this manifest natively.
+fn claimed_run(
+    scenario: &Scenario,
+    name: &str,
+    manifest: &str,
+) -> Result<(PathBuf, CheckpointList)> {
+    let dir = scenario.dir.join(name);
+    fs::create_dir_all(&dir)?;
+    let manifest_path = dir.join("Raster.toml");
+    fs::write(&manifest_path, manifest)?;
+    let run = CheckpointedInferenceExecutor
+        .run(CheckpointedInferenceConfig {
+            base_dir: dir.clone(),
+            manifest_path: manifest_path.clone(),
+            current_exe: scenario.exe.to_path_buf(),
+            staged_backend: StagedExecutionBackend::InProcess,
+            parity_policy: ParityPolicy::Skip,
+        })
+        .with_context(|| format!("substituted claim `{name}`"))?;
+    let list = build_checkpoint_list(&run.chain_dir, &manifest_path)?;
+    let hashes = dir.join("checkpoints.txt");
+    write_checkpoint_hashes(&hashes, &checkpoint_hashes(&list)?)?;
+    Ok((hashes, list))
+}
+
+/// Imports the pinned bundle with its weights and tokenizer changed, so every
+/// model input commits to something else.
+fn import_other_model(scenario: &Scenario) -> Result<(PathBuf, ModelManifest)> {
+    let source = scenario
+        .root
+        .join("model-bundles")
+        .join(scenario.model.family()?.parity_bundle());
+    let bundle = scenario.dir.join("other-bundle");
+    fs::create_dir_all(&bundle)?;
+    fs::copy(source.join("config.json"), bundle.join("config.json"))?;
+    let mut weights = fs::read(source.join("model.detwgt"))?;
+    change_every_tensor(&mut weights)?;
+    fs::write(bundle.join("model.detwgt"), weights)?;
+    let mut tokenizer: Value = read_json(&source.join("tokenizer.json"))?;
+    let vocab = &mut tokenizer["model"]["vocab"];
+    let (a, b) = (vocab["a"].take(), vocab["b"].take());
+    ensure!(
+        a.is_u64() && b.is_u64(),
+        "the pinned vocabulary lacks `a` and `b`"
+    );
+    (vocab["a"], vocab["b"]) = (b, a);
+    fs::write(
+        bundle.join("tokenizer.json"),
+        serde_json::to_vec(&tokenizer)?,
+    )?;
+
+    let artifact_root = scenario.dir.join("other-artifacts");
+    let mut import = command(scenario.exe, scenario.root);
+    import
+        .args(["model", "import", "--model"])
+        .arg(&bundle)
+        .arg("--artifact-root")
+        .arg(&artifact_root)
+        .args(["--model-id", "other-model", "--no-stage-fixtures"])
+        .args(["--range-size", &scenario.model.range_size.to_string()]);
+    logged(import, &scenario.dir.join("other-import.log"))?;
+    let path = artifact_root.join("other-model/manifest.json");
+    let model = ModelManifest::load_verified(&path)?;
+    Ok((path, model))
+}
+
+/// Flips the low bit of one weight in every tensor of a `.detwgt`. Byte 8 of a
+/// payload is the low byte of a 16- or 32-bit value, and a value byte of a Q8
+/// block. A tensor too small to have one changes at its first value.
+fn change_every_tensor(bytes: &mut [u8]) -> Result<()> {
+    const PAYLOAD_ALIGNMENT: usize = 64;
+    fn u32_at(bytes: &[u8], at: usize) -> Result<u32> {
+        let field = bytes.get(at..at + 4).context("weights ended mid-record")?;
+        Ok(u32::from_le_bytes(field.try_into()?))
+    }
+    fn u64_at(bytes: &[u8], at: usize) -> Result<u64> {
+        let field = bytes.get(at..at + 8).context("weights ended mid-record")?;
+        Ok(u64::from_le_bytes(field.try_into()?))
+    }
+    let tensors = u64_at(bytes, 16)?;
+    let mut at = 24;
+    for _ in 0..tensors {
+        let name = u32_at(bytes, at)? as usize;
+        at += 4 + name;
+        let rank = u32_at(bytes, at)? as usize;
+        // Dimensions, element count, element width.
+        at += 4 + 8 * rank + 8 + 4;
+        let payload = u64_at(bytes, at)? as usize;
+        // Payload length, largest row mass.
+        at += 16;
+        at = at.next_multiple_of(PAYLOAD_ALIGNMENT);
+        let value = if payload > 8 { 8 } else { 0 };
+        *bytes
+            .get_mut(at + value)
+            .context("weights ended mid-tensor")? ^= 1;
+        at += payload;
+    }
+    ensure!(at == bytes.len(), "weights have trailing bytes");
+    Ok(())
+}
+
+/// Whether a manifest table is this stage: the repeated entry of that name,
+/// or the plain stage its range 0 is written out as.
+fn is_stage(block: &[&str], stage: &str) -> bool {
+    let name = block_name(block);
+    name == stage || name == stage.replace("{j}", "0").replace("{k}", "0")
+}
+
+/// How this table binds `key`, as the manifest writes it.
+fn binding_value(manifest: &str, table: &str, key: &str) -> Result<String> {
+    let prefix = format!("inputs.{key} =");
+    manifest_blocks(manifest)
+        .iter()
+        .filter(|block| block_name(block) == table)
+        .flatten()
+        .find_map(|line| line.trim_start().strip_prefix(&prefix))
+        .map(|value| value.trim().to_string())
+        .with_context(|| format!("no table `{table}` binds `{key}`"))
+}
+
+/// The manifest with `key`'s binding replaced in every block of this stage.
+fn replace_binding(manifest: &str, stage: &str, key: &str, value: &str) -> Result<String> {
+    let line = format!("inputs.{key} = {value}");
+    replace_binding_line(manifest, stage, key, &line)
+}
+
+fn replace_binding_line(manifest: &str, stage: &str, key: &str, line: &str) -> Result<String> {
+    let prefix = format!("inputs.{key} =");
+    let mut replaced = 0;
+    let mut out = Vec::new();
+    for block in manifest_blocks(manifest) {
+        let matches = is_stage(&block, stage);
+        for &original in &block {
+            if matches && original.trim_start().starts_with(&prefix) {
+                replaced += 1;
+                out.push(line);
+            } else {
+                out.push(original);
+            }
+        }
+    }
+    ensure!(replaced > 0, "no stage `{stage}` binds `{key}`");
+    Ok(out.join("\n") + "\n")
+}
+
+/// The manifest with this stage's `key` bound as another run binds it.
+fn take_binding(manifest: &str, other: &str, stage: &str, key: &str) -> Result<String> {
+    let prefix = format!("inputs.{key} =");
+    let blocks = manifest_blocks(other);
+    let line = blocks
+        .iter()
+        .filter(|block| is_stage(block, stage))
+        .flatten()
+        .find(|line| line.trim_start().starts_with(&prefix))
+        .with_context(|| format!("no stage `{stage}` binds `{key}`"))?;
+    replace_binding_line(manifest, stage, key, line)
+}
+
+/// The manifest with this `[chain.input]` table taken from another run.
+fn take_table(manifest: &str, other: &str, header: &str) -> Result<String> {
+    let blocks = manifest_blocks(other);
+    let table = blocks
+        .iter()
+        .find(|block| block[0].trim() == header)
+        .with_context(|| format!("no table {header}"))?;
+    let mut out = Vec::new();
+    for block in manifest_blocks(manifest) {
+        out.extend(if block[0].trim() == header {
+            table.clone()
+        } else {
+            block
+        });
+    }
+    Ok(out.join("\n") + "\n")
+}
+
+/// The manifest with layers 0 and 1 of the PLE table exchanged, weights and
+/// commitments together, so each file still proves what the table says.
+fn swapped_ple(scenario: &Scenario, manifest: &str) -> Result<String> {
+    let model_dir = scenario
+        .model_path
+        .parent()
+        .context("model manifest has no parent directory")?;
+    let source = model_dir.join("raster/prefill-prepare-aux");
+    let target = scenario.dir.join("swapped-ple/weights");
+    fs::create_dir_all(&target)?;
+    for layer in 0..scenario.model.shape.num_hidden_layers() {
+        let read_as = match layer {
+            0 => 1,
+            1 => 0,
+            other => other,
+        };
+        for extension in ["rastered", "rindex"] {
+            fs::copy(
+                source.join(format!("layer{read_as}.{extension}")),
+                target.join(format!("layer{layer}.{extension}")),
+            )?;
+        }
+    }
+    let (source, target) = (
+        source.to_str().context("path is not UTF-8")?,
+        target.to_str().context("path is not UTF-8")?,
+    );
+    let mut out = Vec::new();
+    for block in manifest_blocks(manifest) {
+        if block[0].trim() != "[chain.input.aux_layer]" {
+            out.extend(block.iter().map(|line| line.to_string()));
+            continue;
+        }
+        let commitment = |layer: &str| {
+            block
+                .iter()
+                .find(|line| line.trim_end().ends_with(layer))
+                .map(|line| line.to_string())
+                .with_context(|| format!("the PLE table has no commitment {layer}"))
+        };
+        let (first, second) = (commitment("# l0")?, commitment("# l1")?);
+        for line in &block {
+            out.push(if line.trim_end().ends_with("# l0") {
+                second.clone()
+            } else if line.trim_end().ends_with("# l1") {
+                first.clone()
+            } else {
+                line.replace(source, target)
+            });
+        }
+    }
+    Ok(out.join("\n") + "\n")
+}
+
+/// Change all complete buckets without changing any matching rule. This tests
+/// membership even when the numerical/tokenization result happens to be equal.
+fn tokenizer_substitution_binding(manifest: &str, dir: &Path) -> Result<String> {
+    use sequence_check::prompt::{BpeMerge, PromptTokenizer, TokenEntry};
+    let parsed: toml::Value = toml::from_str(manifest)?;
+    let stage = parsed["chain"]["repeat"]
+        .as_array()
+        .context("missing repeats")?
+        .iter()
+        .filter_map(|repeat| repeat["stage"].as_array())
+        .flatten()
+        .find(|s| s["name"].as_str() == Some("prompt_bind_p{j}"))
+        .context("missing prompt bind")?;
+    let external = &stage["inputs"]["tokenizer"]["external"];
+    let data = Path::new(
+        external["path"]
+            .as_str()
+            .context("missing tokenizer path")?,
+    );
+    let index = Path::new(
+        external["index_path"]
+            .as_str()
+            .context("missing tokenizer index")?,
+    );
+    ensure!(
+        data.is_absolute() && index.is_absolute(),
+        "mutation fixture paths must be absolute"
+    );
+    let value =
+        raster_runtime::read_raster_value(data, index, &raster_runtime::ReadLimits::unbounded())?;
+    let mut tokenizer: PromptTokenizer =
+        serde_json::from_value(super::compare::value_json(&value)?)?;
+    for bucket in tokenizer.vocab_buckets.iter_mut() {
+        let mut entries = bucket.entries.as_slice().to_vec();
+        entries.push(TokenEntry {
+            token: "\0iris-model-substitution".into(),
+            id: u32::MAX,
+        });
+        bucket.entries = entries.into();
+    }
+    for bucket in tokenizer.merge_buckets.iter_mut() {
+        let mut rules = bucket.rules.as_slice().to_vec();
+        rules.push(BpeMerge {
+            left: "\0iris-model-substitution".into(),
+            right: "\0iris-model-substitution".into(),
+            merged: "\0iris-model-substitution".into(),
+            rank: u32::MAX,
+        });
+        bucket.rules = rules.into();
+    }
+    fs::create_dir_all(dir)?;
+    let data = dir.join("tokenizer.rastered");
+    let index = dir.join("tokenizer.rindex");
+    let root = raster::write_raster_files(&tokenizer, &data, &index)?;
+    Ok(format!(
+        "{{ external = {{ path = {}, index_path = {}, commitment = {} }} }}",
+        serde_json::to_string(&data)?,
+        serde_json::to_string(&index)?,
+        serde_json::to_string(&root)?
+    ))
+}
+
+/// Change every entry, including hidden text, so every consumed token tests
+/// membership. Changes confined to unread entries need not alter execution.
+fn decoder_substitution_manifests(manifest: &str, dir: &Path) -> Result<(String, String)> {
+    let parsed: toml::Value = toml::from_str(manifest)?;
+    let stage = parsed["chain"]["stage"]
+        .as_array()
+        .context("missing stages")?
+        .iter()
+        .find(|stage| stage["name"].as_str() == Some("check_c0"))
+        .context("missing the first check stage")?;
+    let external = &stage["inputs"]["decoder"]["external"];
+    let data = Path::new(external["path"].as_str().context("missing decoder path")?);
+    let index = Path::new(
+        external["index_path"]
+            .as_str()
+            .context("missing decoder index")?,
+    );
+    ensure!(
+        data.is_absolute() && index.is_absolute(),
+        "mutation fixture paths must be absolute"
+    );
+    let artifact =
+        raster_runtime::read_raster_value(data, index, &raster_runtime::ReadLimits::unbounded())?;
+    let table: sequence_check::input::DecoderTable =
+        serde_json::from_value(super::compare::value_json(&artifact)?)?;
+    let tokens = table
+        .tokens
+        .iter()
+        .cloned()
+        .map(|mut token| {
+            token.token.push_str("model-identity-substitution");
+            token
+        })
+        .collect::<Vec<_>>();
+    let table = sequence_check::input::DecoderTable {
+        tokens: tokens.into(),
+    };
+    let witness = sequence_check::decoder_witness(&table).map_err(|f| anyhow::anyhow!("{f:?}"))?;
+    fs::create_dir_all(dir)?;
+    let binding = |name: &str, root: String| -> Result<String> {
+        Ok(format!(
+            "{{ external = {{ path = {}, index_path = {}, commitment = {} }} }}",
+            serde_json::to_string(&dir.join(format!("{name}.rastered")))?,
+            serde_json::to_string(&dir.join(format!("{name}.rindex")))?,
+            serde_json::to_string(&root)?
+        ))
+    };
+    let decoder_root = raster::write_raster_files(
+        &table,
+        &dir.join("decoder.rastered"),
+        &dir.join("decoder.rindex"),
+    )?;
+    let witness_root = raster::write_raster_files(
+        &witness,
+        &dir.join("witness.rastered"),
+        &dir.join("witness.rindex"),
+    )?;
+    let changed = replace_binding(
+        manifest,
+        "check_c{k}",
+        "decoder",
+        &binding("decoder", decoder_root)?,
+    )?;
+    let changed_proof = replace_binding(
+        &changed,
+        "check_c{k}",
+        "witness",
+        &binding("witness", witness_root)?,
+    )?;
+    Ok((changed, changed_proof))
+}
+
+fn expect_semantic_rejection(scenario: &Scenario, name: &str, manifest: &str) -> Result<Value> {
+    replay_semantic_rejection(
+        scenario.root,
+        scenario.dir.join(name),
+        scenario.exe,
+        scenario.raster,
+        &scenario.model.model_id,
+        name,
+        manifest,
+    )
+}
+
+fn replay_semantic_rejection(
+    root: &Path,
+    dir: PathBuf,
+    exe: &Path,
+    raster: &Path,
+    expected_model_id: &str,
+    name: &str,
+    manifest: &str,
+) -> Result<Value> {
+    fs::create_dir_all(&dir)?;
+    let manifest_path = dir.join("Raster.toml");
+    fs::write(&manifest_path, manifest)?;
+    let native = CheckpointedInferenceExecutor.run(CheckpointedInferenceConfig {
+        base_dir: dir.clone(),
+        manifest_path: manifest_path.clone(),
+        current_exe: exe.to_path_buf(),
+        staged_backend: StagedExecutionBackend::InProcess,
+        parity_policy: ParityPolicy::Skip,
+    })?;
+    let raster_dir = dir.join("raster");
+    fs::create_dir(&raster_dir)?;
+    let mut run = command(raster, root);
+    run.args(["raster", "chain", "run"])
+        .arg(&manifest_path)
+        .args(["--no-auth", "--run"])
+        .arg(&raster_dir);
+    logged(run, &dir.join("raster.log"))?;
+    let order =
+        inference_artifacts::read_stage_order(&raster_dir)?.context("missing stage inventory")?;
+    let raster_outputs = super::read_boundaries(&raster_dir, &order, false)?;
+    let native_outputs = super::read_boundaries(&native.chain_dir, &order, false)?;
+    for stage in &order {
+        super::compare(stage, &raster_outputs[stage], &native_outputs[stage])?;
+    }
+    let result = native.final_result.context("missing final record")?;
+    ensure!(
+        result.model_id == expected_model_id,
+        "substitution replaced the statement model ID"
+    );
+    ensure!(
+        result.model_fault != 0,
+        "substitution produced a clean model/execution binding verdict"
+    );
+    let rejection = crate::challenge::claimed_output_rejection(Some(&result))?
+        .context("matching dishonest execution was accepted")?;
+    ensure!(!rejection.is_empty(), "missing semantic rejection");
+    Ok(
+        json!({"name": name, "matching_checkpoints": order.len(), "model_fault": result.model_fault, "rejected": true}),
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[ignore = "requires retained three-path parity fixtures; set IRIS_PARITY_RUN"]
+    fn decoder_self_replay_rejects_matching_dishonest_execution() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .canonicalize()
+            .unwrap();
+        let base = std::path::PathBuf::from(
+            std::env::var_os("IRIS_PARITY_RUN").expect("set IRIS_PARITY_RUN"),
+        );
+        let model: inference_artifacts::ModelManifest = inference_artifacts::read_json(
+            &base.join("model-artifacts/parity-gemma/manifest.json"),
+        )
+        .unwrap();
+        let challenges = base.join("over-window/challenges");
+        let changed =
+            std::fs::read_to_string(challenges.join("other-decoder/Raster.toml")).unwrap();
+        let (changed, changed_proof) = super::decoder_substitution_manifests(
+            &changed,
+            &base.join(format!("decoder-mutation-inputs-{}", std::process::id())),
+        )
+        .unwrap();
+        let cases = [
+            ("decoder-self-replay", changed),
+            ("decoder-and-proof-self-replay", changed_proof),
+        ];
+        for (name, manifest) in cases {
+            let dir = base.join(format!("{name}-{}", std::process::id()));
+            let result = super::replay_semantic_rejection(
+                &root,
+                dir,
+                &root.join("target/release/iris"),
+                &root.join("target/parity-tools/release/cargo-raster"),
+                &model.model_id,
+                name,
+                &manifest,
+            )
+            .unwrap();
+            assert_eq!(result["rejected"], true);
+        }
+    }
+
+    #[test]
+    #[ignore = "replays retained chain attacks through native and Raster; set IRIS_PARITY_RUN"]
+    fn chain_wiring_self_replays_reject_matching_execution() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .canonicalize()
+            .unwrap();
+        let base = PathBuf::from(std::env::var_os("IRIS_PARITY_RUN").expect("set IRIS_PARITY_RUN"));
+        let model: ModelManifest =
+            read_json(&base.join("model-artifacts/parity-gemma/manifest.json")).unwrap();
+        for case in [
+            "repeated-context",
+            "dropped-verdict",
+            "first-prompt-context",
+            "restarted-positions",
+            "dropped-cache",
+            "wrong-auxiliary-range",
+            "stale-cache-range",
+            "stale-predicting-row",
+            "claim-embedding-reset",
+        ] {
+            let name = format!("{case}-self-replay");
+            let manifest = fs::read_to_string(
+                base.join("over-window/challenges")
+                    .join(&name)
+                    .join("Raster.toml"),
+            )
+            .unwrap();
+            let result = replay_semantic_rejection(
+                &root,
+                base.join(format!("binding-{case}-{}", std::process::id())),
+                &root.join("target/release/iris"),
+                &root.join("target/parity-tools/release/cargo-raster"),
+                &model.model_id,
+                &name,
+                &manifest,
+            )
+            .unwrap();
+            assert_eq!(result["rejected"], true);
+        }
+    }
+
+    #[test]
+    #[ignore = "requires retained parity fixtures; set IRIS_PARITY_RUN"]
+    fn tokenizer_substitutions_touch_consumed_buckets() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .canonicalize()
+            .unwrap();
+        let base = PathBuf::from(std::env::var_os("IRIS_PARITY_RUN").expect("set IRIS_PARITY_RUN"))
+            .canonicalize()
+            .unwrap();
+        let model: ModelManifest =
+            read_json(&base.join("model-artifacts/parity-gemma/manifest.json")).unwrap();
+        let runs = base.join("over-window/target/iris/runs");
+        let prepared = fs::read_dir(runs).unwrap().next().unwrap().unwrap().path();
+        let manifest = fs::read_to_string(prepared.join("Raster.toml")).unwrap();
+        let work = base.join(format!("sparse-tokenizer-native-{}", std::process::id()));
+        let binding = tokenizer_substitution_binding(&manifest, &work.join("inputs")).unwrap();
+        for (name, stage) in [("bind", "prompt_bind_p{j}"), ("check", "prompt_check_p{j}")] {
+            let dir = work.join(name);
+            fs::create_dir_all(&dir).unwrap();
+            let path = dir.join("Raster.toml");
+            fs::write(
+                &path,
+                replace_binding(&manifest, stage, "tokenizer", &binding).unwrap(),
+            )
+            .unwrap();
+            let run = CheckpointedInferenceExecutor
+                .run(CheckpointedInferenceConfig {
+                    base_dir: dir,
+                    manifest_path: path,
+                    current_exe: root.join("target/release/iris"),
+                    staged_backend: StagedExecutionBackend::InProcess,
+                    parity_policy: ParityPolicy::Skip,
+                })
+                .unwrap();
+            let result = run.final_result.unwrap();
+            assert_eq!(result.model_id, model.model_id);
+            assert_ne!(
+                result.model_fault, 0,
+                "{name} must consume a mutated bucket"
+            );
+        }
+    }
+
+    const MANIFEST: &str = "[chain]\nname = \"iris\"\n\n[chain.input.layers]\nindex = \"l\"\npath = \"a/layer{l}.rastered\"\ncommitments = [\n  \"one\", # l0\n  \"two\", # l1\n]\n\n[[chain.stage]]\nname = \"first\"\ninputs.value = { from = \"source\" }\n\n[[chain.repeat]]\nname = \"more\"\n\n  [[chain.repeat.stage]]\nname = \"later_{j}\"\ninputs.value = { from = \"first\" }\ninputs.other = { from = \"first\" }\n";
+
+    #[test]
+    fn a_binding_changes_in_the_named_stage_only() {
+        let changed =
+            replace_binding(MANIFEST, "later_{j}", "value", r#"{ from = "source" }"#).unwrap();
+        assert_eq!(
+            changed,
+            MANIFEST.replace(
+                "name = \"later_{j}\"\ninputs.value = { from = \"first\" }",
+                "name = \"later_{j}\"\ninputs.value = { from = \"source\" }"
+            )
+        );
+        assert!(replace_binding(MANIFEST, "absent", "value", "{}").is_err());
+        assert!(replace_binding(MANIFEST, "first", "absent", "{}").is_err());
+    }
+
+    #[test]
+    fn a_table_and_a_binding_come_from_the_other_manifest() {
+        let other = MANIFEST
+            .replace("a/layer", "b/layer")
+            .replace("{ from = \"source\" }", "{ from = \"elsewhere\" }");
+        let table = take_table(MANIFEST, &other, "[chain.input.layers]").unwrap();
+        assert_eq!(table, MANIFEST.replace("a/layer", "b/layer"));
+        let binding = take_binding(MANIFEST, &other, "first", "value").unwrap();
+        assert_eq!(
+            binding,
+            MANIFEST.replace("{ from = \"source\" }", "{ from = \"elsewhere\" }")
+        );
+    }
+
+    #[test]
+    fn every_tensor_changes_by_one_bit() {
+        // Two tensors: header, then name, rank, dims, count, width, payload
+        // length and row mass, padded to a 64-byte offset.
+        let mut bytes = b"DNWGTV0\0".to_vec();
+        bytes.extend(3_u32.to_le_bytes());
+        bytes.extend(1_u32.to_le_bytes());
+        bytes.extend(2_u64.to_le_bytes());
+        for name in ["a", "bc"] {
+            bytes.extend((name.len() as u32).to_le_bytes());
+            bytes.extend(name.as_bytes());
+            bytes.extend(1_u32.to_le_bytes());
+            bytes.extend(8_u64.to_le_bytes());
+            bytes.extend(8_u64.to_le_bytes());
+            bytes.extend(16_u32.to_le_bytes());
+            bytes.extend(16_u64.to_le_bytes());
+            bytes.extend(0_u64.to_le_bytes());
+            bytes.resize(bytes.len().next_multiple_of(64), 0);
+            bytes.extend([0_u8; 16]);
+        }
+        let original = bytes.clone();
+        change_every_tensor(&mut bytes).unwrap();
+        let changed: Vec<usize> = (0..bytes.len())
+            .filter(|&i| bytes[i] != original[i])
+            .collect();
+        assert_eq!(changed.len(), 2);
+        for at in changed {
+            assert_eq!(bytes[at] ^ original[at], 1);
+            assert_eq!(at % 64, 8);
+        }
+        bytes.push(0);
+        assert!(change_every_tensor(&mut bytes).is_err());
+    }
+}

@@ -2557,6 +2557,7 @@ dependencies = [
  "postcard",
  "prompt-core",
  "raster-core",
+ "result-core",
  "serde",
  "serde_json",
  "sha2",
@@ -2641,6 +2642,7 @@ dependencies = [
  "raster-core",
  "raster-prover",
  "raster-runtime",
+ "result-core",
  "risc0-zkvm",
  "run-prep",
  "sequence-check",
@@ -4260,6 +4262,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "result-core"
+version = "0.1.0"
+dependencies = [
+ "raster",
+ "serde",
+ "sha2",
+]
+
+[[package]]
 name = "rfc6979"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4731,6 +4742,7 @@ dependencies = [
  "input-embedding",
  "prompt-check",
  "raster",
+ "result-core",
  "sequence-check",
  "serde",
  "serde_json",

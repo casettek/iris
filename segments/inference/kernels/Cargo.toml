@@ -1,0 +1,24 @@
+[package]
+name = "inference-kernels"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+# Runs the layer's Q8_0 matrix products on an NVIDIA GPU, with results
+# identical to the CPU's. Building it needs the CUDA toolkit (see build.rs).
+gpu-kernels = []
+
+[dependencies]
+model-identity = { path = "../../common/identity", default-features = false }
+anyhow = "1.0"
+det-num = { path = "../numerics" }
+input-embedding = { path = "../../../raster-stages/input-embedding" }
+prefill-range = { path = "../../../raster-stages/prefill-range" }
+layer-mistral = { path = "../../../raster-stages/layer-mistral" }
+prefill-prepare-aux = { path = "../../../raster-stages/prefill-prepare-aux" }
+prompt-check = { path = "../../../raster-stages/prompt-check" }
+sequence-check = { path = "../../../raster-stages/sequence-check" }
+raster = { path = "../../../../raster/crates/raster" }
+rayon = "1.10"
+sha2 = "0.10"
+serde = { version = "1.0", features = ["derive"] }

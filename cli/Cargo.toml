@@ -1,0 +1,55 @@
+[package]
+name = "iris-cli"
+version = "0.1.0"
+edition = "2021"
+default-run = "iris"
+
+[[bin]]
+name = "iris"
+path = "src/main.rs"
+
+[features]
+# NVIDIA acceleration for local RISC0 proof generation.
+cuda = ["risc0-zkvm/cuda", "raster-backend-risc0/cuda"]
+# NVIDIA acceleration for native inference: the layer's Q8_0 matrix products run
+# on the GPU with results identical to the CPU's. Independent of `cuda`.
+gpu-kernels = ["direct-infer/gpu-kernels", "staged-infer/gpu-kernels"]
+# Optional standalone stage profiling command; challenge profiling is always available.
+replay-profile = []
+
+[dependencies]
+raster = { path = "../../raster/crates/raster" }
+sequence-check = { path = "../raster-stages/sequence-check" }
+raster-core = { path = "../../raster/crates/raster-core" }
+raster-prover = { path = "../../raster/crates/raster-prover" }
+raster-compiler = { path = "../../raster/crates/raster-compiler" }
+raster-backend = { path = "../../raster/crates/raster-backend" }
+raster-backend-risc0 = { path = "../../raster/crates/raster-backend-risc0" }
+risc0-zkvm = { version = "3.0", default-features = false, features = ["prove", "std"] }
+postcard = { version = "1", features = ["alloc"] }
+anyhow = "1.0"
+clap = { version = "4.5", features = ["derive"] }
+direct-infer = { path = "../segments/inference/generation" }
+det-num = { path = "../segments/inference/numerics" }
+staged-infer = { path = "../procedure/staged" }
+hex = "0.4"
+k256 = { version = "0.13", default-features = false, features = ["ecdsa"] }
+inference-artifacts = { path = "../crates/inference/artifacts" }
+iris-celestia = { path = "../blockchain/celestia" }
+iris-evm = { path = "../blockchain/evm" }
+model-import = { path = "../segments/inference/import" }
+raster-runtime = { path = "../../raster/crates/raster-runtime" }
+raster-analysis = { path = "../../raster/crates/raster-analysis" }
+run-prep = { path = "../procedure/prepare" }
+serde = { version = "1.0", features = ["derive"] }
+source-core = { path = "../segments/source", features = ["sign"] }
+result-core = { path = "../segments/result" }
+serde_json = "1.0"
+sha2 = "0.10"
+
+toml = "0.8"
+
+[dev-dependencies]
+postcard = { version = "1", default-features = false, features = ["alloc"] }
+
+model-identity = { path = "../segments/common/identity" }

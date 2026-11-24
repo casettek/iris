@@ -12,8 +12,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
+use result_core::Form;
 use serde::{Deserialize, Serialize};
-use source_core::{DocumentName, Field, Form, Recipe, SignerKey};
+use source_core::{DocumentName, Field, Recipe, SignerKey};
 
 use crate::procedure_kind::ProcedureKind;
 

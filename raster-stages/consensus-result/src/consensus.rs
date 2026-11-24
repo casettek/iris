@@ -1,1 +1,1 @@
-../../../crates/source-core/src/consensus.rs
+../../../segments/result/src/consensus.rs

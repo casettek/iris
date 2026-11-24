@@ -1,1 +1,1 @@
-../../../crates/source-core/src/source.rs
+../../../segments/source/src/source.rs

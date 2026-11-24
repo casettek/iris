@@ -169,7 +169,7 @@ check's record, which already says whether the output is complete.
 
 ## Where the logic lives
 
-One crate, `crates/source-core`, holds every function the two new stages compute: the
+Two crates, `segments/source` and `segments/result`, hold every function the two new stages compute: the
 attestation message, the field scan, the text fold, the form match. Tiles call it, the
 native stage twins call it and direct calls it, as with `prompt-core`.
 
@@ -246,7 +246,7 @@ until the notary replaces it.
 Step 1, on November 16. No stage program, lock or manifest version changed, and the fast
 test tier's lock check passes.
 
-- `crates/source-core`: the attestation, the field scan, the text and recipe hashes, the
+- `segments/source`: the attestation, the field scan, the text and recipe hashes, the
   record and the form match, one function per step a stage would take. It builds without
   the standard library. It is a workspace member through `run-prep`'s dependency on it and
   is not yet listed in the root `Cargo.toml`, because Raster's lock check reads that file
@@ -354,7 +354,7 @@ The result stage and the contract, the same day: `raster-stages/claim-result`, w
 lock, at manifest version 18.
 
 - **The stage.** Three tiles: a seed, a loop over the forms, and one that states the
-  record. Its logic is `crates/source-core/src/forms.rs`, which the stage compiles on its
+  record. Its logic is `segments/result/src/forms.rs`, which the stage compiles on its
   own, direct inference calls and the native routine calls. It reads the last check's
   output through its own copy of the edge type, and a test holds the copy to the check's
   commitment. The forms are a run input, empty for a run that names none, so every chain

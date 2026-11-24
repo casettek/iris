@@ -47,7 +47,7 @@ pub struct Procedure {
     pub source: Option<RequiredSource>,
     /// The texts an output is read by, in order. May be empty.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub forms: Vec<source_core::Form>,
+    pub forms: Vec<result_core::Form>,
 }
 
 impl Procedure {

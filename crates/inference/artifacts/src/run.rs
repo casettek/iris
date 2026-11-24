@@ -75,7 +75,7 @@ pub struct PreparedPrompt {
     /// The texts the result stage compares the output with. Empty for a run
     /// that names none.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub forms: Vec<source_core::Form>,
+    pub forms: Vec<result_core::Form>,
 }
 
 /// Frozen normalization/segmentation output. Old sentinel-based inputs cannot

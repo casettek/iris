@@ -223,7 +223,7 @@ IRIS_TEST_CELESTIA=1 just test-parity
 | `deploy.sh` | Deploys the contracts and writes `deployment.json`. |
 
 Two commands of the iris binary drive the stack
-(`crates/inference/cli/src/blockchain/devstack/`): `iris test devstack submit` sends a claim,
+(`cli/src/blockchain/devstack/`): `iris test devstack submit` sends a claim,
 a challenge, a fault proof or a fault, and `iris test devstack replay` compares
 the contracts with iris, case by case. `deploy.sh` writes `deployment.json`
 with `iris test devstack deployment`.

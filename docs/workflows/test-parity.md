@@ -23,7 +23,7 @@ generation. Each execution owns its intermediate outputs and runtime state.
 All three fixed cases run every time. There are no numerical tolerances.
 
 Independent exact-ID tokenizer references are in `tests/tokenizer/`, checked by
-`crates/inference/staged/tests/tokenizer.rs`.
+`procedure/staged/tests/tokenizer.rs`.
 
 The sibling `../raster` checkout and its normal Rust/RISC Zero build prerequisites
 must be available, as required by this workspace's path dependencies. The gate
@@ -176,7 +176,7 @@ honest claimer would convict itself.
 ## Source scenario
 
 Before the three cases, the gate builds one claim whose prompt comes from two signed
-documents (`crates/inference/cli/src/parity/source.rs`). The documents, the recipe and
+documents (`cli/src/parity/source.rs`). The documents, the recipe and
 the signing key are made in the run. The recipe takes values from both documents, one of
 them through an array and a key with a dot in it.
 
@@ -215,7 +215,7 @@ and no replay is asked for.
 ## Consensus scenario
 
 After the source scenario the gate builds one claim of the `consensus`
-[procedure kind](../protocol/procedure-kinds.md) (`crates/inference/cli/src/parity/consensus.rs`).
+[procedure kind](../protocol/procedure-kinds.md) (`cli/src/parity/consensus.rs`).
 Its first model is the gate's own. Its second is the other family's bundle,
 imported into the run, so one chain holds both families' stage programs under
 their labels. The prompt is the source scenario's, built from its two signed
@@ -391,7 +391,7 @@ stage binaries in release mode into the same directory, with `RISC0_SKIP_BUILD=1
 for this host-only test. Then run (use the configured Python executable on Windows):
 
 ```sh
-python crates/inference/staged/tests/selective_ple_parity.py \
+python procedure/staged/tests/selective_ple_parity.py \
   --bin-dir target/windows/release --output target/selective-ple-parity
 ```
 
@@ -437,7 +437,7 @@ Preserve release builds before editing and after embedding-only implementation.
 Then run the complete pinned small-model gate against those builds:
 
 ```powershell
-python crates/inference/staged/tests/paged_weights_parity.py `
+python procedure/staged/tests/paged_weights_parity.py `
   --baseline-bin target/staged-pages-validation/baseline-bin `
   --embedding-bin target/staged-pages-validation/embedding-bin `
   --bin-dir target/windows/release `
