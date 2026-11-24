@@ -1,5 +1,6 @@
 //! The local blockchains: `iris test devstack`, under the test tools.
 
+use crate::blockchain::devstack;
 use crate::*;
 
 /// What a `devstack submit` sends.
@@ -21,9 +22,9 @@ pub(crate) enum ReplayWhat {
 
 #[derive(Debug, Subcommand)]
 pub(crate) enum DevstackCommand {
-    /// Write the deployment file `devstack/deploy.sh` leaves: where the
-    /// contracts are, what they were deployed with, and their errors by
-    /// selector.
+    /// Write the deployment file `blockchain/devstack/deploy.sh` leaves:
+    /// where the contracts are, what they were deployed with, and their
+    /// errors by selector.
     Deployment {
         /// The file to write.
         #[arg(long)]

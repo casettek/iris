@@ -32,7 +32,7 @@ Each of these had two meanings. It now has the one given here.
 | Blockchain | Celestia, or the EVM network the contracts are on | |
 | Pipeline | Nothing in iris for now. Raster will take the word for what is a chain today, and iris will follow | A procedure kind. The code still says `Pipeline` for that |
 | Contract | Code on a blockchain | A file format |
-| Format | The layout of a file or a record iris writes. [Formats and versions](internals/formats.md) lists them | |
+| Format | The layout of a file or a record iris writes. [Formats and versions](protocol/formats.md) lists them | |
 | Window | A span of trace items, as Raster proves them | A span of time. That is a period |
 | Trace | The events one run of a program emits. Raster's word | A claim's checkpoints. That is the checkpoint list |
 

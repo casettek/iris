@@ -35,6 +35,8 @@ staged-infer = { path = "../staged" }
 hex = "0.4"
 k256 = { version = "0.13", default-features = false, features = ["ecdsa"] }
 inference-artifacts = { path = "../artifacts" }
+iris-celestia = { path = "../../../blockchain/celestia" }
+iris-evm = { path = "../../../blockchain/evm" }
 model-import = { path = "../../model/import" }
 raster-runtime = { path = "../../../../raster/crates/raster-runtime" }
 raster-analysis = { path = "../../../../raster/crates/raster-analysis" }

@@ -41,7 +41,7 @@ Elapsed time is informational; there is no timing threshold or CI integration.
 Before it builds anything the gate reads every stage program's control-flow
 schema and stops if a tile reads a value the schema does not pin: a literal
 argument, or a recur seed selected out of a larger value. See
-[Raster stage checks](../internals/development.md#raster-stage-checks).
+[Raster stage checks](../protocol/development.md#raster-stage-checks).
 
 ## What must agree
 
@@ -74,7 +74,7 @@ the chain then checks it.
   clean, and the native result artifact and direct's result are exactly this record
   with what the `result` stage states: code 0 and the hash of no forms, beside the
   same claim record.
-- The [contract checks](../internals/contract.md): the native claim's submission
+- The [contract checks](../protocol/contract.md): the native claim's submission
   passes the submission checks against the import's pins, every checkpoint names
   an approved program, every input a stage takes from an earlier stage is that
   stage's committed output, and the submitted record and result are the ones
@@ -84,7 +84,7 @@ the chain then checks it.
   and output commitments at every stage. The submission names its run's
   configuration and lists the blobs `claim build` posted to the gate's own
   stand-in data-availability layer (`stub-celestia` under the run directory).
-- The [availability cases](../internals/availability.md) on the same claim: it
+- The [availability cases](../protocol/availability.md) on the same claim: it
   is accepted when judged by a registry holding its configuration, and refused
   at the configuration check when the registry does not hold it or the
   submission names another one, and at the availability check when nothing
@@ -135,7 +135,7 @@ the chain then checks it.
   Run against a Celestia node
   (`IRIS_CELESTIA_RPC`), the gate leaves both posted there, and
   `iris test devstack replay` takes them to the contracts
-  ([the blockchains](../internals/chains.md)).
+  ([the blockchains](../blockchain/overview.md)).
 - Over wrong token marks, on the templated case: the prompt stages finish through
   both Raster and native-staged, agree byte for byte, and record the expected fault.
   This includes marks past the end of the prompt, a range with no marks, a token
@@ -215,7 +215,7 @@ and no replay is asked for.
 ## Consensus leg
 
 After the source leg the gate builds one claim of the `consensus`
-[pipeline](../internals/pipelines.md) (`crates/inference/cli/src/parity/consensus.rs`).
+[pipeline](../protocol/pipelines.md) (`crates/inference/cli/src/parity/consensus.rs`).
 Its first model is the gate's own. Its second is the other family's bundle,
 imported into the run, so one chain holds both families' stage programs under
 their labels. The prompt is the source leg's, built from its two signed

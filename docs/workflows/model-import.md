@@ -21,7 +21,7 @@ Inputs:
 
 - `model.detwgt`: deterministic weights, detwgt v3. The embedding tables, head,
   and attention and MLP matrices are `Q8_0` blocks; the rest is Q16.16 (see
-  [numerics](../internals/numerics.md)). Write one with `iris model convert`.
+  [numerics](../protocol/numerics.md)). Write one with `iris model convert`.
 - `config.json`: model shape, attention/window settings, softcap, and normalization parameters.
 - `tokenizer.json`: vocabulary, merges, added tokens, and EOS metadata.
 
@@ -29,7 +29,7 @@ A `mistral-dense` bundle (Ministral 3) imports with `--only-direct` and nothing 
 family has no stage programs yet, so a full import is refused. Convert its GGUF first, with
 `--metadata` naming a directory that holds Mistral's own `config.json` and `tokenizer.json`.
 
-The import works out the bundle's [model family](../internals/model-families.md) before it
+The import works out the bundle's [model family](../protocol/model-families.md) before it
 writes anything. It refuses a `config.json` whose `model_type` is not a family this build
 imports, and a bundle that holds language-model weights the family's import does not read.
 The second check is what stops a model with more in its layers than the family has, such as
@@ -37,10 +37,10 @@ expert matrices, from importing as a smaller model that computes something else.
 
 Outputs:
 
-- `runtime/model-artifacts/<model-id>/Raster.toml`, the model's prompt-free part of a [chain](../internals/raster-chain.md), saved on every full import: its chain inputs and its stages from the first bind to the last check, with the first bind given the constant source. It has no `source` or `result` stage. Those belong to the run's [pipeline](../internals/pipelines.md), which makes the chain template from this file. Its path and SHA-256 are recorded in the model manifest. `--range-size <positions>` (default 512) sets the largest range, in prompt tokens or claimed ids. It is recorded in the manifest and a run's configuration, so it is a per-model setting, not a per-claim one.
+- `runtime/model-artifacts/<model-id>/Raster.toml`, the model's prompt-free part of a [chain](../protocol/raster-chain.md), saved on every full import: its chain inputs and its stages from the first bind to the last check, with the first bind given the constant source. It has no `source` or `result` stage. Those belong to the run's [pipeline](../protocol/pipelines.md), which makes the chain template from this file. Its path and SHA-256 are recorded in the model manifest. `--range-size <positions>` (default 512) sets the largest range, in prompt tokens or claimed ids. It is recorded in the manifest and a run's configuration, so it is a per-model setting, not a per-claim one.
 - Reusable Raster externals under `runtime/model-artifacts/<model-id>/raster/*`, written as `.rastered` and `.rindex` pairs with manifest commitments.
 - `runtime/model-artifacts/<model-id>/manifest.json`, the prompt-free model manifest consumed by run specs.
-- `runtime/model-artifacts/<model-id>/contract_pins.json`, what a [contract](../internals/contract.md) of the `single` pipeline over this model would pin: the pipeline's name, a program entry and a model entry. The program entry holds the program id each stage project has locked and, read from the chain template of the `single` pipeline over this import, the inputs each program takes from earlier stages. The model entry holds the model id with the commitments it hashes, and the range size. Import from the repository root, after any re-lock: an import that cannot read the stage locks writes no pins and says so.
+- `runtime/model-artifacts/<model-id>/contract_pins.json`, what a [contract](../protocol/contract.md) of the `single` pipeline over this model would pin: the pipeline's name, a program entry and a model entry. The program entry holds the program id each stage project has locked and, read from the chain template of the `single` pipeline over this import, the inputs each program takes from earlier stages. The model entry holds the model id with the commitments it hashes, and the range size. Import from the repository root, after any re-lock: an import that cannot read the stage locks writes no pins and says so.
 
 ## Converting a GGUF model
 

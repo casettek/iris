@@ -11,7 +11,7 @@ The rules are in `inference_artifacts::availability` and
 checks in the order a contract makes them. The layer is behind one trait
 (`crates/inference/cli/src/posting.rs`), with two implementations: a
 stand-in directory, and a local Celestia node. Blobstream and the availability
-proof are still stand-ins run by a trusted host. [The blockchains](chains.md) says
+proof are still stand-ins run by a trusted host. [The blockchains](../blockchain/overview.md) says
 how the Celestia node and the contracts are used.
 
 ## What is posted, and what is not
@@ -28,7 +28,7 @@ challenger holds all three:
 So whenever two parties disagree about a stage, they ran it on the same
 inputs, and a replay settles it. A stage input that is none of the three is a
 fault of the checkpoint that names it, which a contract rules on with nothing
-run ([the blockchains](chains.md#the-ways-to-challenge-a-claim)).
+run ([the blockchains](../blockchain/overview.md#the-ways-to-challenge-a-claim)).
 
 **The run's own inputs** are everything a stage is given that neither an
 earlier stage nor the configuration fixes. A claim posts each as the value the
@@ -215,7 +215,7 @@ With `IRIS_CELESTIA_RPC` set and no `--da-dir`, the first two rows are the
 real thing: blobs go to a Celestia node and are named by Celestia's own
 commitment. The last two rows stay stand-ins there, in another form: a trusted
 relayer posts block roots to a contract, and a trusted attester signs what
-each blob holds ([the blockchains](chains.md)).
+each blob holds ([the blockchains](../blockchain/overview.md)).
 
 ## What is open
 

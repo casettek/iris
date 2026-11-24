@@ -42,7 +42,7 @@ without it a tier rebuilds that binary for the CPU. Variables such as
 | --- | --- | --- | --- |
 | fast | Formatting | Every host file is as `just fmt` leaves it. See [Formatting](#formatting). | none |
 | fast | Unit tests | The pieces behave: fixed-point arithmetic against independent vectors, the tokenizer against independent references, weight loading that refuses corrupted or forged data, worker and cache reuse. | 1 |
-| fast | Stage schema check (one of the unit tests) | No tile reads a value its program does not pin. See [Raster stage checks](../internals/development.md#raster-stage-checks). | 2 |
+| fast | Stage schema check (one of the unit tests) | No tile reads a value its program does not pin. See [Raster stage checks](../protocol/development.md#raster-stage-checks). | 2 |
 | fast | Stage locks | Every `Raster.lock` matches its stage's sources, the Raster checkout and the guest compiler. | 2, 3 |
 | full | [Parity gate](test-parity.md) | On each family's small synthetic model: three independent implementations agree byte for byte, bad inputs publish a fault instead of stopping a stage, and a challenger finds falsified claims at the expected stage. | 1, 2 |
 | full | Stage ladder | Each stage program a family runs compiles with and without `std`, gives the native output when run as Raster, and its authenticated trace commits and audits. Run after each family's gate, on that run's inputs. | 1, 2 |
@@ -73,7 +73,7 @@ just test-chain --real-model inference.toml
 ```
 
 The tier sends real transactions to the local EVM node and posts to the local
-Celestia node ([devstack](../../devstack/README.md)). It builds its own claims
+Celestia node ([devstack](../../blockchain/devstack/README.md)). It builds its own claims
 of the newest parity run's small model, for addresses no earlier run used, so
 it can be repeated on one deployment. `--deploy` deploys the contracts first.
 Everything it makes is kept under `target/chain-test/<run>`.

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Deploy iris's contracts to the local EVM node and write where they are to
-# devstack/deployment.json.
+# blockchain/devstack/deployment.json.
 #
 # The accounts are the local node's own test accounts, whose keys are
 # published with it: the first deploys, owns the registry, relays Celestia's
@@ -35,7 +35,7 @@ foundry forge build > /dev/null 2>&1 || {
   exit 1
 }
 
-iris="${IRIS_BINARY:-$here/../target/release/iris}"
+iris="${IRIS_BINARY:-$here/../../target/release/iris}"
 programs=$("$iris" evm proof-programs) || {
   echo "could not read Raster's proof programs from $iris: build iris first" >&2
   exit 1

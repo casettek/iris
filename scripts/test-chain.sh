@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Chain tier, a few minutes: claims against the contracts on the local blockchains
-# (devstack/README.md). An honest claim must stand, and a claim that lies in
-# each known way must be caught the way the protocol catches it:
+# Chain tier, a few minutes: claims against the contracts on the local
+# blockchains (blockchain/devstack/README.md). An honest claim must stand, and
+# a claim that lies in each known way must be caught the way the protocol
+# catches it:
 #
 #   - a checkpoint that names an unapproved program, or an input that is not
 #     an earlier stage's output, a pinned commitment or a posted value: the
@@ -35,7 +36,7 @@
 # deployment. Everything is kept under target/chain-test/<run>.
 # See docs/workflows/testing.md.
 source "$(dirname "${BASH_SOURCE[0]}")/test-env.sh"
-source "$repo_root/devstack/env.sh"
+source "$repo_root/blockchain/devstack/env.sh"
 
 deploy=0
 real_spec=""
@@ -69,13 +70,13 @@ fi
 step chain-build "release binary built" \
     cargo build --release --locked -p iris-cli --bin iris "${features[@]}"
 if [ $deploy -eq 1 ]; then
-    step chain-deploy "contracts built and deployed" bash "$repo_root/devstack/deploy.sh"
+    step chain-deploy "contracts built and deployed" bash "$repo_root/blockchain/devstack/deploy.sh"
 fi
 # The EVM node keeps nothing across a restart, so a deployment file can
 # outlive its contracts.
 deployed() {
     local claims code
-    claims=$(sed -n 's/.*"claims": *"\(0x[0-9a-fA-F]*\)".*/\1/p' "$repo_root/devstack/deployment.json" 2> /dev/null | head -1)
+    claims=$(sed -n 's/.*"claims": *"\(0x[0-9a-fA-F]*\)".*/\1/p' "$repo_root/blockchain/devstack/deployment.json" 2> /dev/null | head -1)
     [ -n "$claims" ] || return 1
     code=$(curl -s -m 5 -X POST -H 'content-type: application/json' \
         --data "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"eth_getCode\",\"params\":[\"$claims\",\"latest\"]}" \
@@ -110,7 +111,7 @@ echo "   kept under target/chain-test/$run_id"
 iris="$repo_root/target/release/iris"
 export IRIS_BINARY="$iris"
 # The cases run in directories of their own.
-export IRIS_CHAIN_DEPLOYMENT="$repo_root/devstack/deployment.json"
+export IRIS_CHAIN_DEPLOYMENT="$repo_root/blockchain/devstack/deployment.json"
 
 # A fresh address per run and name: twenty bytes of the hash of both.
 address() {
@@ -267,7 +268,7 @@ replayed_lie() (
 )
 
 step chain-contracts "contracts' own tests, with a real fault proof" \
-    bash "$repo_root/devstack/foundry.sh" forge test
+    bash "$repo_root/blockchain/devstack/foundry.sh" forge test
 
 # build_claims <prefix> <run spec>: an honest claim, and a claim of ids that
 # are not the model's output.

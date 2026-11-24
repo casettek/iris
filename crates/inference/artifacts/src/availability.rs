@@ -38,6 +38,7 @@ use crate::contract::{is_address, ClaimSubmission, ResultInOutput, SubmittedReco
 /// The first bytes of every blob iris posts.
 pub const BLOB_MAGIC: &[u8] = b"iris/blob/v3\n";
 /// A Celestia namespace: one version byte and 28 bytes of id.
+/// Blockchain-specific: the size is Celestia's.
 pub const NAMESPACE_BYTES: usize = 29;
 /// About how long Celestia keeps a blob retrievable after its block: the
 /// sampling window pruned nodes keep. To be confirmed against the network a
@@ -51,6 +52,8 @@ pub const DEFAULT_FAULT_PROOF_WINDOW_SECS: u64 = 2 * 24 * 60 * 60;
 /// Where a blob is: the block it was included in, its namespace and the
 /// layer's commitment to its bytes, all in lowercase hex where they are
 /// bytes. This is what Blobstream's inclusion proofs are about.
+/// Blockchain-specific: a height, a namespace and a commitment are how
+/// Celestia names a blob.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct BlobPointer {
     pub height: u64,
@@ -184,12 +187,14 @@ pub enum AvailabilityProof {
 
 /// A trusted host's word to a contract that a blob is in its block and holds
 /// what its contents state: the stand-in for a receipt a contract verifies.
+/// Blockchain-specific: the data root is a Celestia block's, and the
+/// signature is in the form the EVM contract checks.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct HostAttestation {
     /// The data root of the block the blob is in, in lowercase hex. A
     /// contract holds it to the root its oracle has for that height.
     pub data_root: String,
-    /// The attester's signature over [`crate::evm::attestation_digest`]: 65
+    /// The attester's signature over `iris_evm::attestation_digest`: 65
     /// bytes in hex, `r`, `s` and the recovery byte (27 or 28).
     pub signature: String,
 }
@@ -218,6 +223,7 @@ pub struct PostedBlob {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Blob {
     /// The address the blob is posted for: `0x` and 40 hex digits.
+    /// Blockchain-specific: an EVM address.
     pub submitter: String,
     pub entries: Vec<BlobEntry>,
 }
@@ -580,6 +586,8 @@ impl CheckpointPackage {
 /// the bytes. Celestia's own is a Merkle root over the blob's shares; the
 /// integration with a real network replaces this function and nothing that
 /// calls it.
+/// Blockchain-specific: it fills the commitment of a [`BlobPointer`], which
+/// is Celestia's.
 pub fn stub_blob_commitment(namespace: &[u8], bytes: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(b"iris/stub-celestia-blob/v1\0");

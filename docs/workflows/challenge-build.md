@@ -107,7 +107,7 @@ iris challenge build --run fetched/inference.toml --submission fetched/claim_sub
 
 `claim fetch` writes the claim's checkpoint list, checkpoints and input
 manifests as it posted them, the inputs its run was given (`posted_run.bin`),
-and a run spec over them ([the blockchains](../internals/chains.md#starting-from-the-blockchains)).
+and a run spec over them ([the blockchains](../blockchain/overview.md#starting-from-the-blockchains)).
 `challenge build --submission` runs every stage on the inputs the claim's
 checkpoint names for it, each of which the claim posted, the configuration
 pins or an earlier stage made. It tokenizes nothing and runs no direct

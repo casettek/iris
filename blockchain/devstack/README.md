@@ -74,13 +74,13 @@ just test-chain --real-model inference.toml  # with a real model's claim, a few 
 
 The chain tier makes an honest claim and a claim of each known lie, and holds
 the contracts to what iris says of each
-([testing](../docs/workflows/testing.md#the-chain-tier)). The sections below
+([testing](../../docs/workflows/testing.md#the-chain-tier)). The sections below
 are the same steps by hand.
 
 ## Submit a claim
 
 ```bash
-source devstack/env.sh
+source blockchain/devstack/env.sh
 iris claim build --run spec.toml --claimer 0x...   # builds the claim, posts nothing
 iris claim post --submission <dir>/claim_submission.json   # posts its data to Celestia
 iris test devstack submit claim --run spec.toml --submission <dir>/claim_submission.json
@@ -94,7 +94,7 @@ A challenge goes the same way: `iris challenge post`, then `iris test devstack
 submit challenge --submission <claim_submission.json> --challenge
 <dir>/challenge_submission.json`.
 
-The commands read where the contracts are from `devstack/deployment.json`.
+The commands read where the contracts are from `blockchain/devstack/deployment.json`.
 Run them from the repository's root, or name that file with
 `IRIS_CHAIN_DEPLOYMENT`.
 
@@ -130,7 +130,7 @@ A defender reads a challenge's trace back the same way: `iris challenge fetch
 `iris da contents --submission <submission>` measures what a claim or a
 challenge put on Celestia: every blob read back, and its size split among
 what it holds.
-[The blockchains](../docs/internals/chains.md#starting-from-the-blockchains) says what
+[The blockchains](../../docs/blockchain/overview.md#starting-from-the-blockchains) says what
 each of these checks.
 
 ## Point at a fault no replay shows
@@ -182,7 +182,7 @@ a built iris, and a deployment made before a Raster update refuses proofs
 made after it. Deploy again.
 
 `just contracts-test` runs the contract's own test of this on a real proof
-kept in `contracts/test/fault_proof.json`. It needs Docker and no chain.
+kept in `blockchain/contracts/test/fault_proof.json`. It needs Docker and no chain.
 
 ## Check the contracts against iris
 
@@ -223,7 +223,7 @@ IRIS_TEST_CELESTIA=1 just test-parity
 | `deploy.sh` | Deploys the contracts and writes `deployment.json`. |
 
 Two commands of the iris binary drive the stack
-(`crates/inference/cli/src/devstack/`): `iris test devstack submit` sends a claim,
+(`crates/inference/cli/src/blockchain/devstack/`): `iris test devstack submit` sends a claim,
 a challenge, a fault proof or a fault, and `iris test devstack replay` compares
 the contracts with iris, case by case. `deploy.sh` writes `deployment.json`
 with `iris test devstack deployment`.

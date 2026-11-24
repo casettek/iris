@@ -297,9 +297,9 @@ pub fn claim(node: &Node, layer: &dyn PostingLayer, spec: &Path, path: &Path) ->
     let base_dir = std::env::current_dir().context("failed to resolve current directory")?;
     let mut replay = Replay::default();
 
-    crate::evm::attest_submission(path, layer)?;
+    crate::blockchain::evm::attest_submission(path, layer)?;
     let honest: Value = inference_artifacts::read_json(path)?;
-    let built = crate::evm::claim_call(path)?;
+    let built = crate::blockchain::evm::claim_call(path)?;
     register(node, spec)?;
     relay(node, layer, &heights_of(&built))?;
 
@@ -318,7 +318,8 @@ pub fn claim(node: &Node, layer: &dyn PostingLayer, spec: &Path, path: &Path) ->
         } else {
             None
         };
-        let contract = contract_verdict(node, &crate::evm::claim_call(submission)?, at)?;
+        let contract =
+            contract_verdict(node, &crate::blockchain::evm::claim_call(submission)?, at)?;
         Ok((iris, contract))
     };
 
@@ -355,7 +356,7 @@ pub fn claim(node: &Node, layer: &dyn PostingLayer, spec: &Path, path: &Path) ->
      -> Result<()> {
         let copy = changed(path, name, &honest, change)?;
         if attest {
-            crate::evm::attest_submission(&copy, layer)?;
+            crate::blockchain::evm::attest_submission(&copy, layer)?;
         }
         let (iris, contract) = verdicts(&copy, at, contract_only.is_none())?;
         replay.record(name, iris.as_ref(), &contract, contract_only);
@@ -551,15 +552,15 @@ pub fn challenge(
 
     // The disputed claim, as the contract holds it. A contract takes a claim
     // with a false checkpoint: that is what a challenge is for.
-    crate::evm::attest_submission(claim_path, layer)?;
-    let claim = crate::evm::claim_call(claim_path)?;
+    crate::blockchain::evm::attest_submission(claim_path, layer)?;
+    let claim = crate::blockchain::evm::claim_call(claim_path)?;
     register(node, spec)?;
     relay(node, layer, &heights_of(&claim))?;
     hold_claim(node, &claim)?;
 
-    crate::evm::attest_submission(path, layer)?;
+    crate::blockchain::evm::attest_submission(path, layer)?;
     let honest: Value = inference_artifacts::read_json(path)?;
-    let built = crate::evm::challenge_call(path, claim_path)?;
+    let built = crate::blockchain::evm::challenge_call(path, claim_path)?;
     relay(node, layer, &heights_of(&built))?;
 
     let verdicts = |submission: &Path, at: Option<u64>, ask_iris: bool| -> Result<_> {
@@ -579,7 +580,7 @@ pub fn challenge(
         };
         let contract = contract_verdict(
             node,
-            &crate::evm::challenge_call(submission, claim_path)?,
+            &crate::blockchain::evm::challenge_call(submission, claim_path)?,
             at,
         )?;
         Ok((iris, contract))
@@ -689,7 +690,11 @@ pub fn challenge(
     replay.record(
         "unknown-claim",
         None,
-        &contract_verdict(node, &crate::evm::challenge_call(path, &unknown)?, None)?,
+        &contract_verdict(
+            node,
+            &crate::blockchain::evm::challenge_call(path, &unknown)?,
+            None,
+        )?,
         Some("UnknownClaim"),
     );
     // The contract's alone: the Rust rules keep no clock for a claim yet.
@@ -740,7 +745,7 @@ pub fn challenge(
 pub fn faults(node: &Node, layer: &dyn PostingLayer, spec: &Path, path: &Path) -> Result<()> {
     let mut replay = Replay::default();
 
-    let claim = crate::evm::claim_call(path)?;
+    let claim = crate::blockchain::evm::claim_call(path)?;
     let claim_id = id_of(&claim, "claim")?;
     register(node, spec)?;
     relay(node, layer, &heights_of(&claim))?;

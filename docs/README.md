@@ -1,26 +1,26 @@
 # Documentation
 
-Three kinds of page. Start with [how iris works](internals/overview.md). The
+Three kinds of page. Start with [how iris works](protocol/overview.md). The
 [glossary](glossary.md) gives each word its one meaning.
 
 ## How it works
 
-- [How iris works](internals/overview.md): the whole of it from the top: what
+- [How iris works](protocol/overview.md): the whole of it from the top: what
   is pinned, what a claim is, the one rule, and what catches each way a claim
   can be wrong.
-- [The pipeline](internals/raster-chain.md): the stages a run is made of,
+- [The pipeline](protocol/raster-chain.md): the stages a run is made of,
   what each checks, and the schedule that holds them in order.
-- [Pipelines](internals/pipelines.md): a run of one model, and a consensus of
+- [Pipelines](protocol/pipelines.md): a run of one model, and a consensus of
   two.
-- [What a contract holds and checks](internals/contract.md): the rules, as
+- [What a contract holds and checks](protocol/contract.md): the rules, as
   the Rust states them.
-- [Blockchain](internals/chains.md): Celestia and the EVM contracts: what
+- [Blockchain](blockchain/overview.md): Celestia and the EVM contracts: what
   each call checks, what it costs, and which parts are a trusted host.
-- [Data availability](internals/availability.md): what a claim and a
+- [Data availability](protocol/availability.md): what a claim and a
   challenge post, and the configuration registry.
-- [Formats and versions](internals/formats.md): every versioned format and
+- [Formats and versions](protocol/formats.md): every versioned format and
   hash tag, in one table.
-- [What is open](internals/open.md): every known gap, in one list.
+- [What is open](protocol/open.md): every known gap, in one list.
 
 ## How to run it
 
@@ -29,7 +29,7 @@ Three kinds of page. Start with [how iris works](internals/overview.md). The
 - [Claim build](workflows/claim-build.md)
 - [Challenge build](workflows/challenge-build.md)
 - [Fault proving](workflows/fault-prove.md)
-- [The local blockchains](../devstack/README.md): a claim and a challenge taken
+- [The local blockchains](../blockchain/devstack/README.md): a claim and a challenge taken
   through Celestia and the contracts.
 - [Testing](workflows/testing.md): the tiers, and what a pass of each check
   means.
@@ -41,12 +41,12 @@ The [README](../README.md) lists every command by who runs it.
 
 ## Working on it
 
-- [Development](internals/development.md): workspace commands and the checks
+- [Development](protocol/development.md): workspace commands and the checks
   a stage program has to pass.
-- [Model families](internals/model-families.md): what a new model family
+- [Model families](protocol/model-families.md): what a new model family
   needs.
-- [Numerics](internals/numerics.md)
-- [Artifacts](internals/artifacts.md): the files a run leaves.
+- [Numerics](protocol/numerics.md)
+- [Artifacts](protocol/artifacts.md): the files a run leaves.
 - [Raster issues](issues/README.md): gaps that are Raster's to close.
 
 ## Design notes

@@ -1,5 +1,6 @@
 //! The data-availability layer: `iris da`.
 
+use crate::blockchain::evm;
 use crate::*;
 
 #[derive(Debug, Subcommand)]

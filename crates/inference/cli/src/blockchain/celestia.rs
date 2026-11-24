@@ -1,10 +1,10 @@
 //! Celestia as the data-availability layer: blobs posted to and read from a
 //! celestia-node's blob API over JSON-RPC.
 //!
-//! The node is the local one of `devstack/` (or any node whose key can pay
-//! for blobs). A blob is named by the block it was included in, its namespace
-//! and Celestia's own commitment to its bytes, which iris computes itself
-//! (`inference_artifacts::celestia`) before it posts and checks on what it
+//! The node is the local one of `blockchain/devstack/` (or any node whose
+//! key can pay for blobs). A blob is named by the block it was included in,
+//! its namespace and Celestia's own commitment to its bytes, which iris
+//! computes itself (`iris_celestia`) before it posts and checks on what it
 //! reads back.
 //!
 //! What is still the host's word here: that a block's data root is one
@@ -20,7 +20,7 @@ use anyhow::{bail, ensure, Context, Result};
 use inference_artifacts::availability::{
     AvailabilityLayer, AvailabilityProof, BlobPointer, PostedBlob, NAMESPACE_BYTES,
 };
-use inference_artifacts::celestia::blob_commitment;
+use iris_celestia::blob_commitment;
 use serde_json::{json, Value};
 
 use crate::posting::{contents_of, BlockRoot, PostingLayer};
@@ -367,9 +367,9 @@ mod tests {
     }
 
     /// Against a running node: `IRIS_CELESTIA_RPC=http://127.0.0.1:26658`,
-    /// with the stack of `devstack/` up.
+    /// with the stack of `blockchain/devstack/` up.
     #[test]
-    #[ignore = "needs the local Celestia node of devstack/"]
+    #[ignore = "needs the local Celestia node of blockchain/devstack/"]
     fn a_blob_is_posted_read_back_and_found_in_its_block() {
         let layer = CelestiaLayer::open(&std::env::var(CELESTIA_RPC_ENV).unwrap()).unwrap();
         let blobs = vec![b"a blob of iris's".to_vec(), vec![7u8; 5_000]];

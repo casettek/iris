@@ -12,13 +12,13 @@ use std::path::Path;
 use anyhow::{ensure, Context, Result};
 use inference_artifacts::availability::{AvailabilityProof, HostAttestation, PostedBlob};
 use inference_artifacts::contract::{ChallengeSubmission, ClaimSubmission};
-use inference_artifacts::evm::{
-    abi_encode, attestation_digest, call_with_bytes, challenge_id, challenge_token, claim_id,
-    claim_token, configuration_token, fault_proof_token, read_fault_journal, FaultVerdict,
-};
 use inference_artifacts::{
     checkpoint_opening, read_checkpoint_hashes, read_checkpoint_trace, read_json, CHECKPOINTS_TXT,
     CHECKPOINT_TRACE_JSON,
+};
+use iris_evm::{
+    abi_encode, attestation_digest, call_with_bytes, challenge_id, challenge_token, claim_id,
+    claim_token, configuration_token, fault_proof_token, read_fault_journal, FaultVerdict,
 };
 use serde_json::{json, Value};
 
@@ -84,7 +84,7 @@ struct OpenedChallenge {
 }
 
 impl OpenedChallenge {
-    fn token(&self) -> Result<inference_artifacts::evm::Token> {
+    fn token(&self) -> Result<iris_evm::Token> {
         challenge_token(
             &self.claim_id,
             &self.challenge,

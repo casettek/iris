@@ -8,15 +8,13 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 
 mod arrangement;
 mod audit;
-mod celestia;
+mod blockchain;
 mod challenge;
 mod challenge_profile;
 mod checks;
 mod claim;
 mod commands;
 mod convert;
-mod devstack;
-mod evm;
 mod fault;
 mod infer;
 mod lies;
@@ -433,7 +431,7 @@ mod tests {
 
         let table = include_str!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../../../docs/internals/formats.md"
+            "/../../../docs/protocol/formats.md"
         ));
         let blob = std::str::from_utf8(BLOB_MAGIC).unwrap().trim_end();
         let blob_version: u32 = blob.rsplit("/v").next().unwrap().parse().unwrap();
@@ -467,5 +465,86 @@ mod tests {
                 "no row for {constant}"
             );
         }
+    }
+
+    /// The core does not depend on the blockchain code: of the crates under
+    /// `crates/` and `raster-stages/`, only this one names a path that leads
+    /// into `blockchain/`.
+    #[test]
+    fn nothing_but_the_cli_depends_on_blockchain() {
+        fn manifests(dir: &Path, found: &mut Vec<PathBuf>) {
+            for entry in fs::read_dir(dir).unwrap() {
+                let path = entry.unwrap().path();
+                // A linked directory is searched where it really is.
+                if path.is_symlink() {
+                    continue;
+                }
+                if path.is_dir() {
+                    if !path.ends_with("target") {
+                        manifests(&path, found);
+                    }
+                } else if path.ends_with("Cargo.toml") {
+                    found.push(path);
+                }
+            }
+        }
+        // Every `path = "..."` of a manifest, whichever table it is in.
+        fn paths(value: &toml::Value, found: &mut Vec<String>) {
+            match value {
+                toml::Value::Table(table) => {
+                    for (key, value) in table {
+                        match value {
+                            toml::Value::String(path) if key == "path" => found.push(path.clone()),
+                            other => paths(other, found),
+                        }
+                    }
+                }
+                toml::Value::Array(values) => values.iter().for_each(|value| paths(value, found)),
+                _ => {}
+            }
+        }
+        // The path with its `..` steps taken, whether or not it exists.
+        fn resolved(base: &Path, path: &str) -> PathBuf {
+            let mut out = PathBuf::new();
+            for part in base.join(path).components() {
+                match part {
+                    std::path::Component::ParentDir => {
+                        out.pop();
+                    }
+                    std::path::Component::CurDir => {}
+                    other => out.push(other),
+                }
+            }
+            out
+        }
+
+        let here = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let root = resolved(here, "../../..");
+        let blockchain = root.join("blockchain");
+        let reaches_blockchain = |manifest: &Path| {
+            let text = fs::read_to_string(manifest).unwrap();
+            let mut named = Vec::new();
+            paths(&toml::from_str(&text).unwrap(), &mut named);
+            named
+                .iter()
+                .any(|path| resolved(manifest.parent().unwrap(), path).starts_with(&blockchain))
+        };
+        let mut found = Vec::new();
+        manifests(&root.join("crates"), &mut found);
+        manifests(&root.join("raster-stages"), &mut found);
+        let own = here.join("Cargo.toml");
+        assert!(found.contains(&own), "the search did not find this crate");
+        assert!(
+            reaches_blockchain(&own),
+            "the check does not see this crate's own dependency on blockchain/"
+        );
+        let others: Vec<&PathBuf> = found
+            .iter()
+            .filter(|manifest| **manifest != own && reaches_blockchain(manifest))
+            .collect();
+        assert!(
+            others.is_empty(),
+            "only the CLI may depend on blockchain/: {others:?}"
+        );
     }
 }

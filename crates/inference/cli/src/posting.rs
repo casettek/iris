@@ -163,10 +163,14 @@ pub fn open_layer(da_dir: Option<&Path>) -> Result<Box<dyn PostingLayer>> {
     if let Some(dir) = da_dir {
         return Ok(Box::new(StubLayer::open(dir)));
     }
-    Ok(match std::env::var(crate::celestia::CELESTIA_RPC_ENV) {
-        Ok(url) if !url.is_empty() => Box::new(crate::celestia::CelestiaLayer::open(&url)?),
-        _ => Box::new(StubLayer::open(da_dir_default())),
-    })
+    Ok(
+        match std::env::var(crate::blockchain::celestia::CELESTIA_RPC_ENV) {
+            Ok(url) if !url.is_empty() => {
+                Box::new(crate::blockchain::celestia::CelestiaLayer::open(&url)?)
+            }
+            _ => Box::new(StubLayer::open(da_dir_default())),
+        },
+    )
 }
 
 /// The stand-in layer, kept in a directory.

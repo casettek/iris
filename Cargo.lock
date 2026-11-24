@@ -2610,6 +2610,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6a756c3fac73139e83f14c2d742155dd2b78d3ee56597b419a0579b7bdd6dd78"
 
 [[package]]
+name = "iris-celestia"
+version = "0.1.0"
+dependencies = [
+ "hex",
+ "sha2",
+]
+
+[[package]]
 name = "iris-cli"
 version = "0.1.0"
 dependencies = [
@@ -2619,6 +2627,8 @@ dependencies = [
  "direct-infer",
  "hex",
  "inference-artifacts",
+ "iris-celestia",
+ "iris-evm",
  "k256",
  "model-identity",
  "model-import",
@@ -2640,6 +2650,17 @@ dependencies = [
  "source-core",
  "staged-infer",
  "toml",
+]
+
+[[package]]
+name = "iris-evm"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "hex",
+ "inference-artifacts",
+ "raster-core",
+ "sha2",
 ]
 
 [[package]]

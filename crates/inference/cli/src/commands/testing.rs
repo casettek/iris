@@ -45,8 +45,9 @@ pub(crate) enum TestCommand {
     CorruptChallenge(fault::CorruptArgs),
     /// Measure guest cycles and select a heavy fault window from a completed challenge.
     Profile(challenge_profile::ProfileArgs),
-    /// Drive the local blockchains (devstack/README.md): send iris's calls to the
-    /// contracts deployed there, and hold the contracts to iris.
+    /// Drive the local blockchains (blockchain/devstack/README.md): send
+    /// iris's calls to the contracts deployed there, and hold the contracts
+    /// to iris.
     /// Transactions go out through an account the development node keeps
     /// unlocked, so this works against a development node and nothing else.
     Devstack {

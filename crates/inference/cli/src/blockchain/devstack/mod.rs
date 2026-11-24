@@ -1,6 +1,6 @@
 //! The local blockchains, as a test drives them: iris sending its own calls to
-//! the contracts `devstack/deploy.sh` deployed, and holding the contracts'
-//! answers to its own.
+//! the contracts `blockchain/devstack/deploy.sh` deployed, and holding the
+//! contracts' answers to its own.
 //!
 //! Everywhere else iris sends nothing and holds no wallet: it writes the
 //! calldata of a call and whoever runs it sends that. Here it sends, through
@@ -15,14 +15,15 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use anyhow::{bail, ensure, Context, Result};
-use inference_artifacts::evm::keccak256;
+use iris_evm::keccak256;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-/// Names the file `devstack/deploy.sh` wrote: where the contracts are.
+/// Names the file `blockchain/devstack/deploy.sh` wrote: where the contracts
+/// are.
 pub const DEPLOYMENT_ENV: &str = "IRIS_CHAIN_DEPLOYMENT";
 /// That file, from the repository's root.
-pub const DEFAULT_DEPLOYMENT: &str = "devstack/deployment.json";
+pub const DEFAULT_DEPLOYMENT: &str = "blockchain/devstack/deployment.json";
 
 /// Where the contracts are and what they were deployed with.
 #[derive(Debug, Clone, Deserialize)]
@@ -112,7 +113,7 @@ impl Node {
     fn rpc(&self, method: &str, params: Value) -> Result<std::result::Result<Value, Value>> {
         let body = json!({"jsonrpc": "2.0", "id": 1, "method": method, "params": params});
         let response: Value = serde_json::from_slice(
-            &crate::celestia::http_post(&self.address, &body.to_string())
+            &crate::blockchain::celestia::http_post(&self.address, &body.to_string())
                 .with_context(|| format!("{method}: is the EVM node up (`just devstack-up`)?"))?,
         )
         .with_context(|| format!("{method}: the node's answer is not JSON"))?;

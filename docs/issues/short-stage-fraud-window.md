@@ -63,7 +63,7 @@ steps and one per form. It was made a stage of its own knowingly, as the place a
 larger result step will grow from, and the claim is arranged so that nothing rests
 on its checkpoint: the claim's record and verdict are the last check's, and a
 contract takes the comparison with the forms on the submitted text itself
-(`check_origin`, see [the contract](../internals/contract.md)). A false `result`
+(`check_origin`, see [the contract](../protocol/contract.md)). A false `result`
 checkpoint is found by a challenger's recomputation and cannot be replayed. The
 result stage of a consensus chain, `consensus-result`, is short the same way, and
 a contract takes its comparison on the two submitted texts as well. The
@@ -84,7 +84,7 @@ version 11 `prompt_origin`, produced the empty values the first range starts fro
 They were short at any size and came first in the chain, so a claim whose first
 false checkpoint was one of them could not be challenged. They are gone: the empty
 values are committed constants written by the import, and range 0's stages bind
-them directly (see [raster-chain.md](../internals/raster-chain.md)). A claim that
+them directly (see [raster-chain.md](../protocol/raster-chain.md)). A claim that
 binds another constant differs from honest execution at the stage that reads it.
 
 `output_finalize` held the output commitment and was three steps a token and ten

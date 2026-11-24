@@ -66,7 +66,7 @@ pub struct ClaimAudit {
 /// claim is void: there is no challenge to post and nothing to answer.
 pub fn audit_claim(options: AuditClaimOptions) -> Result<ClaimAudit> {
     use inference_artifacts::contract::{CheckpointList, LinkCheck, StageAdmission};
-    use inference_artifacts::evm::{abi_encode, checkpoint_fault_token, claim_id, InputQuestion};
+    use iris_evm::{abi_encode, checkpoint_fault_token, claim_id, InputQuestion};
 
     let submission: ClaimSubmission = read_json(&options.submission_path)?;
     let configuration =
@@ -117,7 +117,7 @@ pub fn audit_claim(options: AuditClaimOptions) -> Result<ClaimAudit> {
                 .map_err(refused)?,
             StageAdmission::Disputed { .. }
         );
-        let mut asked = crate::evm::call(
+        let mut asked = crate::blockchain::evm::call(
             "voidClaim",
             &abi_encode(&checkpoint_fault_token(
                 &claim, position, checkpoint, &path, None,
@@ -190,7 +190,7 @@ pub fn audit_claim(options: AuditClaimOptions) -> Result<ClaimAudit> {
                         .map(|path| (listed, path))
                 })
                 .transpose()?;
-            let mut asked = crate::evm::call(
+            let mut asked = crate::blockchain::evm::call(
                 "voidClaim",
                 &abi_encode(&checkpoint_fault_token(
                     &claim,

@@ -19,7 +19,7 @@
 //! front, each segment's first bind taking its record, and the pipeline's
 //! result stage behind.
 //!
-//! See `docs/internals/pipelines.md`.
+//! See `docs/protocol/pipelines.md`.
 
 use anyhow::{ensure, Context, Result};
 use serde::{Deserialize, Serialize};

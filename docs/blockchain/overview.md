@@ -8,9 +8,9 @@ What is built: a claim arrives and is accepted or refused, a claim with a
 fault a contract can read is void on the spot, a challenge arrives and is
 admitted or refused, and a fault proof dismisses a challenge whose trace is
 wrong. What follows from any of those (clocks, bonds, finality) is not built
-([what is open](open.md)).
+([what is open](../protocol/open.md)).
 
-Both chains run locally from [`devstack/`](../../devstack/README.md).
+Both chains run locally from [`blockchain/devstack/`](../../blockchain/devstack/README.md).
 
 ## Who does what
 
@@ -60,7 +60,7 @@ parity gate.
 A blob is named by its height, namespace and commitment. The commitment is
 Celestia's own: the blob split into 512-byte shares, a namespaced Merkle tree
 over them in subtrees, and a Merkle root over the subtree roots. iris computes
-it itself (`inference_artifacts::celestia::blob_commitment`), so a pointer can
+it itself (`iris_celestia::blob_commitment`), so a pointer can
 be checked before anything is posted. The tests reproduce seven commitments
 the local node gave.
 
@@ -121,7 +121,7 @@ challenge of it, with a 38 KB trace posted, about 278,000.
 
 ## The contracts
 
-Four contracts, in [`contracts/src`](../../contracts/src):
+Four contracts, in [`blockchain/contracts/src`](../../blockchain/contracts/src):
 
 | Contract | Holds | Entry points |
 | --- | --- | --- |
@@ -132,7 +132,7 @@ Four contracts, in [`contracts/src`](../../contracts/src):
 
 Each entry point takes one `bytes` argument, the ABI encoding of one struct
 (`IrisTypes.sol`), and decodes it itself. iris writes that encoding
-(`inference_artifacts::evm`), with its own ABI encoder: no ABI library is
+(`iris_evm`), with its own ABI encoder: no ABI library is
 involved on either side of the format.
 
 **The registry** recomputes a configuration's id from what it is given, with
@@ -169,7 +169,7 @@ source record's digest, the forms and their result, the stated records.
 
 ### The ways to challenge a claim
 
-[How iris works](overview.md#what-catches-each-way-a-claim-can-be-wrong) has
+[How iris works](../protocol/overview.md#what-catches-each-way-a-claim-can-be-wrong) has
 the table: a claim that names an unapproved program or an input nobody else
 holds is void on the spot (`voidClaim`), and a claim whose stage output is
 wrong is challenged with a replay (`submitChallenge`), which the claimer can
@@ -317,19 +317,19 @@ inputs, is true of every trace.
 
 The challenge is then marked dismissed, with the time. Anyone may send the
 proof: it says the same whoever holds it. No clock is read, and nothing
-follows from a dismissal yet (see [what is open](open.md)).
+follows from a dismissal yet (see [what is open](../protocol/open.md)).
 
 **The journal.** A fault proof's journal is Raster's `TransitionJournal` as
 RISC Zero wrote it, and it begins with the window's opening state, whose size
 depends on where the window opens. `RasterJournal.sol` finds the fields above
 by walking it. `iris evm fault-proof` makes the same reading of the bytes
-(`inference_artifacts::evm::read_fault_journal`) and holds it to the decoded
+(`iris_evm::read_fault_journal`) and holds it to the decoded
 journal every time it writes a call, and a unit test holds it to RISC Zero's
 own encoding, so a change of Raster's journal is caught before a contract
 reads one wrongly.
 
 **The verifier.** `RasterVerifier` is RISC Zero's `RiscZeroGroth16Verifier`,
-unchanged, from `risc0-ethereum` v3.0.1 (`contracts/lib`, with the one
+unchanged, from `risc0-ethereum` v3.0.1 (`blockchain/contracts/lib`, with the one
 OpenZeppelin file it imports). That release takes proofs of the RISC Zero
 circuits Raster is built with. A deployment also pins the ids of Raster's two
 proof programs, which `iris evm proof-programs` prints, so it takes fault
@@ -465,9 +465,9 @@ A few cases are the contract's alone, and the replay prints them as such:
   the one the submission names.
 
 A fault proof is tested apart from the replay, since a real one takes a
-prover to make. `contracts/test/FaultProof.t.sol` (`just contracts-test`, a
+prover to make. `blockchain/contracts/test/FaultProof.t.sol` (`just contracts-test`, a
 few seconds, in the Foundry image) gives `submitFaultProof` a real Groth16
-fault proof of a small stage, kept as `contracts/test/fault_proof.json`:
+fault proof of a small stage, kept as `blockchain/contracts/test/fault_proof.json`:
 RISC Zero's verifier takes it, the challenge it is about is dismissed once,
 and the same proof is refused against a challenge of another trace, another
 program or other inputs, under other pinned programs, and with its journal or
@@ -482,7 +482,7 @@ the contract answers each as iris does: it refuses to void an honest stage
 with the same error, and takes a fault iris found. A fault found is then
 sent, and the claim must read as void of that fault. An honest claim is the
 case that matters most: a rule a little stricter than what honest claims do
-would let anyone void one. `contracts/test/InputManifest.t.sol` holds the
+would let anyone void one. `blockchain/contracts/test/InputManifest.t.sol` holds the
 input list's form, and the trace's shape, to the same cases as the Rust
 tests.
 
@@ -505,4 +505,4 @@ record the claim names.
 ## What is open
 
 What is not built around these contracts, and every other known gap, is in
-[one list](open.md).
+[one list](../protocol/open.md).

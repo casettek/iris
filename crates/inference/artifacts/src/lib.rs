@@ -1,12 +1,10 @@
 pub mod availability;
-pub mod celestia;
 pub mod challenge;
 pub mod checkpoint;
 pub mod claim;
 pub mod contract;
 pub mod direct;
 pub mod encoding;
-pub mod evm;
 pub mod inference;
 pub mod io;
 pub mod manifest;

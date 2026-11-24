@@ -63,7 +63,7 @@ pub(crate) fn heights_of(call: &Value) -> Vec<u64> {
 /// Register the run's configuration unless it is registered. Its id.
 pub fn register(node: &Node, run_spec: &Path) -> Result<String> {
     let configuration = crate::checks::spec_configuration(run_spec, None)?;
-    let call = crate::evm::configuration_call(&configuration)?;
+    let call = crate::blockchain::evm::configuration_call(&configuration)?;
     let id = call["configuration"]
         .as_str()
         .context("the configuration call has no id")?
@@ -109,9 +109,9 @@ pub fn claim(
     before: Before,
 ) -> Result<Value> {
     if before.attest {
-        crate::evm::attest_submission(submission, layer)?;
+        crate::blockchain::evm::attest_submission(submission, layer)?;
     }
-    let call = crate::evm::claim_call(submission)?;
+    let call = crate::blockchain::evm::claim_call(submission)?;
     let mut outcome = json!({"claim": call["claim"]});
     if before.register {
         let run_spec = run_spec.context("registering a claim's configuration needs --run")?;
@@ -132,9 +132,9 @@ pub fn challenge(
     before: Before,
 ) -> Result<Value> {
     if before.attest {
-        crate::evm::attest_submission(challenge, layer)?;
+        crate::blockchain::evm::attest_submission(challenge, layer)?;
     }
-    let call = crate::evm::challenge_call(challenge, claim_submission)?;
+    let call = crate::blockchain::evm::challenge_call(challenge, claim_submission)?;
     let outcome = json!({"claim": call["claim"], "challenge": call["challenge"]});
     if before.relay {
         relay(node, layer, &heights_of(&call))?;
@@ -150,7 +150,7 @@ pub fn fault_proof(
     challenge: &Path,
     receipt: &Path,
 ) -> Result<Value> {
-    let call = crate::evm::fault_proof_call(challenge, claim_submission, receipt)?;
+    let call = crate::blockchain::evm::fault_proof_call(challenge, claim_submission, receipt)?;
     let outcome = json!({
         "challenge": call["challenge"],
         "expected_rejection": call["rejection"],

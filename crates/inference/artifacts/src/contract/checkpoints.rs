@@ -258,6 +258,8 @@ struct ManifestEntry {
 
 /// Text a contract reads as it stands: printable ASCII with no quote and no
 /// backslash, so that nothing in it is escaped.
+/// Blockchain-specific: the limit is there so that the EVM contract can read
+/// an input manifest's bytes itself.
 fn plain(text: &str) -> bool {
     text.bytes()
         .all(|byte| (0x20..0x7f).contains(&byte) && byte != b'"' && byte != b'\\')

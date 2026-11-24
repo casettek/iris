@@ -113,7 +113,7 @@ cargo run --release -p iris-cli -- claim build --run inference.toml
 ```
 
 The local blockchains, and a claim and a challenge taken through them, are in
-[devstack/README.md](devstack/README.md). `just --list` shows the shortcuts.
+[blockchain/devstack/README.md](blockchain/devstack/README.md). `just --list` shows the shortcuts.
 
 ## Tests
 
@@ -150,8 +150,11 @@ crates/
     detwgt/                 # the weight format's readers
   prompt-core/, source-core/, det-num/   # the tokenizer, sources and results, deterministic numbers
 raster-stages/              # one Raster program per kind of stage, each with its Raster.lock
-contracts/                  # the Solidity contracts and their tests
-devstack/                   # the local Celestia and EVM blockchains
+blockchain/
+  evm/                      # what iris sends to its contracts: the ABI encoding and the calldata
+  celestia/                 # Celestia's commitment to a blob, as iris computes it
+  contracts/                # the Solidity contracts and their tests
+  devstack/                 # the local Celestia and EVM blockchains
 model-bundles/              # the small models the tests run
 runtime/                    # imported models
 scripts/                    # the test tiers and the formatter

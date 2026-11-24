@@ -1,25 +1,25 @@
 //! What iris sends to its contracts: a configuration, a claim and a
-//! challenge in the ABI encoding `contracts/src/IrisTypes.sol` declares, and
-//! the calldata of the calls that carry them.
+//! challenge in the ABI encoding `blockchain/contracts/src/IrisTypes.sol`
+//! declares, and the calldata of the calls that carry them.
 //!
 //! The contracts take each as one `bytes` argument and decode it themselves,
 //! so a call is a selector and one byte string. The structs here are written
 //! field for field as the Solidity ones; a field out of order is a claim the
-//! contract reads wrongly, and the end-to-end run in `devstack/` is what
-//! holds the two together.
+//! contract reads wrongly, and the end-to-end run in `blockchain/devstack/`
+//! is what holds the two together.
 
 use anyhow::{bail, ensure, Context, Result};
 use sha2::{Digest, Sha256};
 
-use crate::availability::{
+use inference_artifacts::availability::{
     AvailabilityProof, BlobContents, PostedBlob, StatedRecords, NAMESPACE_BYTES,
 };
-use crate::checkpoint::Checkpoint;
-use crate::contract::{
+use inference_artifacts::checkpoint::Checkpoint;
+use inference_artifacts::contract::{
     ChallengeSubmission, ClaimSubmission, SubmittedConsensus, SubmittedRecord, SubmittedResult,
 };
-use crate::encoding::{parse_hash, Encoder};
-use crate::registry::Configuration;
+use inference_artifacts::encoding::{parse_hash, Encoder};
+use inference_artifacts::registry::Configuration;
 
 /// One ABI value.
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -1,0 +1,11 @@
+[package]
+name = "iris-evm"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "1.0"
+hex = "0.4"
+inference-artifacts = { path = "../../crates/inference/artifacts" }
+raster-core = { path = "../../../raster/crates/raster-core" }
+sha2 = "0.10"

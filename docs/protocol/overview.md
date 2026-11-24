@@ -4,7 +4,7 @@ A claimer says what a model answered. Anyone can check it, and a contract acts
 on it if nobody shows it wrong. This page is the whole of that from the top:
 what exists before a claim, what a claim is, the one rule that makes a claim
 checkable, and what catches each way a claim can be wrong. The other pages
-under `internals/` each go into one part.
+under `protocol/` and `blockchain/` each go into one part.
 
 ## Who takes part
 
@@ -98,7 +98,7 @@ checkpoint names and replaying the first whose output differs
 The second and third rows need no replay and have no answer: the contract
 reads the claim's own checkpoint, its configuration and what it posted, and
 there is nothing to wait for. They are two questions of one call, with five
-recorded faults ([the blockchains](chains.md#what-voidclaim-checks)).
+recorded faults ([the blockchains](../blockchain/overview.md#what-voidclaim-checks)).
 
 There is one proof in all of this: Raster's fault proof, in the last row.
 

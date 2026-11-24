@@ -155,6 +155,7 @@ pub struct ClaimSubmission {
     /// The address the claim is attributed to: `0x` and 40 hex digits. The
     /// claimer's choice. Every blob the claim posted names it, so nobody can
     /// submit this claim's blobs under another address.
+    /// Blockchain-specific: an EVM address.
     pub claimer: String,
     /// The claimer's commitment to the input it ran. Today the SHA-256 of the
     /// prompt text. The contract takes it as given. Every inference's
@@ -208,6 +209,7 @@ pub const NO_ADDRESS: &str = "0x0000000000000000000000000000000000000000";
 
 /// Whether text is an address as a submission states one: `0x` and 40
 /// lowercase hex digits.
+/// Blockchain-specific: an EVM address.
 pub fn is_address(text: &str) -> bool {
     text.strip_prefix("0x").is_some_and(|digits| {
         digits.len() == 40

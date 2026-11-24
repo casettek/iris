@@ -2,8 +2,8 @@
 
 This page is the rules a contract holds a claim to: what it pins, what a
 claimer submits, and each check it makes, as `inference_artifacts::contract`
-states them in Rust. The contracts in `contracts/src` make the same checks on
-chain ([the blockchains](chains.md)), and `iris claim check` runs them on the host.
+states them in Rust. The contracts in `blockchain/contracts/src` make the same checks on
+chain ([the blockchains](../blockchain/overview.md)), and `iris claim check` runs them on the host.
 [How iris works](overview.md) is the short version.
 
 The contract verifies no proof and runs no stage. It makes one statement about a
@@ -49,7 +49,7 @@ of one family under one pipeline differ in those alone.
 | For each chained input, the programs that may produce it | The chain template |
 | For each chained input, the empty values it may hold | The fixed externals the chain's first stages are given in its place |
 | Each program's run inputs | The chain template: an input bound `{ run = ... }`, or to a file under the run placeholder directory. A checkpoint may name for such an input only a value the claim posted ([availability](availability.md#what-is-posted-and-what-is-not)) |
-| Each program's pinned inputs, with the commitments each may hold | The chain template: an input bound to a file the import wrote, or to a chain input of such files, which lists one commitment per layer. A checkpoint may name nothing else for such an input ([the blockchains](chains.md#the-ways-to-challenge-a-claim)) |
+| Each program's pinned inputs, with the commitments each may hold | The chain template: an input bound to a file the import wrote, or to a chain input of such files, which lists one commitment per layer. A checkpoint may name nothing else for such an input ([the blockchains](../blockchain/overview.md#the-ways-to-challenge-a-claim)) |
 
 **A model entry** is true of one model.
 
@@ -196,7 +196,7 @@ made of each inference, against the model the configuration pins for it
    blobs hold the claim's checkpoint list. The run inputs they hold are
    recorded and not judged here: a stage input that was not posted is a fault
    of the checkpoint that names it, shown with no replay
-   ([the blockchains](chains.md#the-ways-to-challenge-a-claim)).
+   ([the blockchains](../blockchain/overview.md#the-ways-to-challenge-a-claim)).
 7. **Records are its checkpoints'** (`check_stated_records`). A claim ends in
    its pipeline's result stage: its last checkpoint's program must be that
    pipeline's result program. That checkpoint names, for each inference, the
@@ -250,7 +250,7 @@ and fields must also be plain text, printable ASCII with no quote and no
 backslash: the EVM contract reads the list byte by byte and unescapes nothing.
 
 Both comparisons are on the EVM contract as one call, `voidClaim`
-([the blockchains](chains.md#the-ways-to-challenge-a-claim)).
+([the blockchains](../blockchain/overview.md#the-ways-to-challenge-a-claim)).
 
 Which earlier stage is the right producer is not the contract's to judge. Every
 output says which step produced it, and the consuming stage checks that against
@@ -283,7 +283,7 @@ when the field is empty. Everything is SHA-256. The code is
 
 A stage's input manifest stays Raster's canonical JSON, which a contract
 cannot read as JSON. The contract reads it byte by byte in its one canonical
-form ([the blockchains](chains.md#what-voidclaim-checks)).
+form ([the blockchains](../blockchain/overview.md#what-voidclaim-checks)).
 Records are read out of stage outputs by the claim's availability proof, and a
 contract only compares them.
 
@@ -374,7 +374,7 @@ availability check from then on.
 submission `iris challenge post` wrote.
 
 The contracts on a local EVM blockchain make these checks too, and are tested
-against these two commands case by case ([the blockchains](chains.md)).
+against these two commands case by case ([the blockchains](../blockchain/overview.md)).
 
 Add `--raster-run <dir>` with a Raster chain run of the same claim to hold every
 checkpoint to the boundary that run committed: the same stages in the same order,

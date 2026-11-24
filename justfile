@@ -84,21 +84,21 @@ test-parity *args:
 build-raster-stages:
     bash scripts/build-raster-stages.sh
 
-# The local blockchains (devstack/README.md): a Celestia validator and bridge node, and an EVM node.
+# The local blockchains (blockchain/devstack/README.md): a Celestia validator and bridge node, and an EVM node.
 devstack-up:
-    docker compose -f devstack/docker-compose.yml up -d --wait
+    docker compose -f blockchain/devstack/docker-compose.yml up -d --wait
 
 # Stop the local blockchains and delete their state.
 devstack-down:
-    docker compose -f devstack/docker-compose.yml down -v
+    docker compose -f blockchain/devstack/docker-compose.yml down -v
 
-# Build and deploy the contracts to the local EVM node; writes devstack/deployment.json.
+# Build and deploy the contracts to the local EVM node; writes blockchain/devstack/deployment.json.
 devstack-deploy:
-    bash devstack/deploy.sh
+    bash blockchain/devstack/deploy.sh
 
 # The contracts' own tests, in the Foundry image: a real fault proof against `submitFaultProof`.
 contracts-test:
-    bash devstack/foundry.sh forge test
+    bash blockchain/devstack/foundry.sh forge test
 
 # Hold the contracts to iris on one posted claim: <run spec> <claim_submission.json>
 devstack-replay run submission:
