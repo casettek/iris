@@ -8,19 +8,20 @@ follows, so this page says which is which until they agree.
 
 | Word | Meaning | In the code today, where it differs |
 | --- | --- | --- |
-| Procedure | The registered way a judgment is made: the stage programs, the models and the parameters a claim must have run under. A contract judges a claim by the procedure the claim names | `Procedure`, and `iris registry` |
-| Procedure kind | The arrangement a procedure's segments follow. Two exist: `single`, one inference on one model, and `consensus`, the same inference on two models and whether they agree | `ProcedureKind`, and `procedure_kind = "..."` in a run spec |
+| Procedure | The registered way a judgment is made: the stage programs, the models and the parameters a claim must have run under. A contract judges a claim by the procedure the claim names | |
+| Procedure kind | The arrangement a procedure's segments follow. Two exist: `single`, one inference on one model, and `consensus`, the same inference on two models and whether they agree | |
 | Specification | The document that defines a procedure | Three files: the run spec, the recipe file and the signer file |
 | Case | One run of a procedure: what a claim is about | No word |
 | Claim | What a claimer posts about a case: the statement, the checkpoint list and what the procedure requires beside them | |
 | Claimer, challenger, defender | Who posts a claim, who disputes one of its stages, and who answers that dispute | |
-| Segment | The stages that share one purpose. A procedure has a source segment, one inference segment per model, and a result segment | `part` and `parts` |
+| Segment | The stages that share one purpose. A procedure has a source segment, one inference segment per model, and a result segment | |
 | Stage | One program's place in a chain | |
 | Checkpoint | What a claim commits to for one stage: its program, its inputs and its output | |
-| Checkpoint list | A claim's checkpoints, one per stage, in order | `checkpoint_list.json`, `CheckpointList` |
+| Checkpoint list | A claim's checkpoints, one per stage, in order | |
+| Checkpoint hashes | One hash per checkpoint of the list, in order (`checkpoints.txt`). A claim commits to its checkpoint list by the root of the tree over them | |
 | Challenge period | How long a claim stays open to challenge after it is submitted | |
-| Fault-proof period | How long a defender has to answer a challenge | `fault_proof_window_secs`, `faultProofWindow` |
-| Scenario | One test of the parity gate | Leg |
+| Fault-proof period | How long a defender has to answer a challenge | |
+| Scenario | One test of the parity gate | |
 
 ## Words kept apart
 
@@ -30,7 +31,7 @@ Each of these had two meanings. It now has the one given here.
 | --- | --- | --- |
 | Chain | A Raster chain: programs run in order, each output linked to the next input | Celestia or an EVM network. Those are blockchains. "On chain" stays, for where a contract runs |
 | Blockchain | Celestia, or the EVM network the contracts are on | |
-| Procedure kind | Nothing in iris for now. Raster will take the word for what is a chain today, and iris will follow | A procedure kind. The code still says `ProcedureKind` for that |
+| Pipeline | Nothing in iris for now. Raster will take the word for what is a chain today, and iris will follow | A procedure kind |
 | Contract | Code on a blockchain | A file format |
 | Format | The layout of a file or a record iris writes. [Formats and versions](protocol/formats.md) lists them | |
 | Window | A span of trace items, as Raster proves them | A span of time. That is a period |
