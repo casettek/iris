@@ -122,16 +122,16 @@ pub struct RequiredParameters {
 impl ContractPins {
     /// The pins of an import: its model, and the procedure kind its chain template
     /// describes, with the program id each stage project has locked.
-    pub fn from_import(manifest: &ModelManifest, part: &str) -> Result<Self> {
-        Self::of(ProcedureKind::Single, &[(manifest, part)])
+    pub fn from_import(manifest: &ModelManifest, segment: &str) -> Result<Self> {
+        Self::of(ProcedureKind::Single, &[(manifest, segment)])
     }
 
     /// The pins of a procedure kind over imported models: each model as its import
     /// identifies it, and the stage programs of the procedure kind's chain over the
     /// imports' segments, with the program id each stage project has locked now.
     pub fn of(procedure_kind: ProcedureKind, imports: &[(&ModelManifest, &str)]) -> Result<Self> {
-        let parts: Vec<&str> = imports.iter().map(|(_, part)| *part).collect();
-        let template = procedure_kind.chain_template(&parts)?;
+        let segments: Vec<&str> = imports.iter().map(|(_, segment)| *segment).collect();
+        let template = procedure_kind.chain_template(&segments)?;
         let mut families: Vec<&str> = Vec::new();
         for (manifest, _) in imports {
             if !families.contains(&manifest.family.as_str()) {

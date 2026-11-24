@@ -424,7 +424,7 @@ struct RunModel {
     manifest: ModelManifest,
     template_path: PathBuf,
     /// The model's segment of a chain, as its import wrote it.
-    part: String,
+    segment: String,
     tokenizer: serde_json::Value,
     prompt: inference_artifacts::PreparedPrompt,
 }
@@ -476,7 +476,7 @@ fn prepare_run(
     for manifest in run_spec.model_manifests() {
         let manifest_path = absolute(run_spec_dir, manifest);
         let manifest = ModelManifest::load_verified(&manifest_path)?;
-        let (template_path, part) = manifest.verified_raster_template(&manifest_path)?;
+        let (template_path, segment) = manifest.verified_raster_template(&manifest_path)?;
         let model_manifest_dir = manifest_path
             .parent()
             .ok_or_else(|| anyhow::anyhow!("model manifest has no parent directory"))?;
@@ -493,7 +493,7 @@ fn prepare_run(
             manifest_path,
             manifest,
             template_path,
-            part,
+            segment,
             tokenizer,
             prompt,
         });
@@ -544,8 +544,8 @@ fn prepare_run(
     let postable = given.is_some() || source_values.is_some() == source_inputs.is_some();
     // The imports wrote each model's segment of a chain. The procedure kind makes the
     // chain's template from them.
-    let parts: Vec<&str> = models.iter().map(|model| model.part.as_str()).collect();
-    let template = procedure_kind.chain_template(&parts)?;
+    let segments: Vec<&str> = models.iter().map(|model| model.segment.as_str()).collect();
+    let template = procedure_kind.chain_template(&segments)?;
     let template_dir = first
         .template_path
         .parent()

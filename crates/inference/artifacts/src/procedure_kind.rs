@@ -94,20 +94,20 @@ impl ProcedureKind {
         }
     }
 
-    /// The chain template of this procedure kind over model imports: `parts` are
+    /// The chain template of this procedure kind over model imports: `segments` are
     /// the templates the imports wrote, one per inference, in order.
     ///
     /// The template always has the source stage. A run whose text is taken as
     /// given removes it when it renders its own chain.
-    pub fn chain_template(self, parts: &[&str]) -> Result<String> {
+    pub fn chain_template(self, segments: &[&str]) -> Result<String> {
         ensure!(
-            parts.len() == self.inferences(),
+            segments.len() == self.inferences(),
             "the `{self}` procedure kind makes {} inference(s), and {} model(s) were given",
             self.inferences(),
-            parts.len()
+            segments.len()
         );
-        let labels: Vec<String> = (0..parts.len()).map(|n| self.label(n)).collect();
-        let stages_dir = stage_projects_dir(parts[0])?;
+        let labels: Vec<String> = (0..segments.len()).map(|n| self.label(n)).collect();
+        let stages_dir = stage_projects_dir(segments[0])?;
         // What the result stage reads of each inference: its last check.
         let checks: String = self
             .result_inputs()
@@ -129,7 +129,7 @@ impl ProcedureKind {
             run_input("recipe", "source_recipe"),
             run_input("documents", "source_documents"),
         );
-        assemble(parts, &labels, &source, &result)
+        assemble(segments, &labels, &source, &result)
     }
 }
 
@@ -176,8 +176,8 @@ fn project_line(stages_dir: &str, program: &str) -> String {
 
 /// Where the stage projects are, read from the first stage a segment names:
 /// they are side by side, and a procedure kind's own stages are beside a model's.
-fn stage_projects_dir(part: &str) -> Result<String> {
-    let line = part
+fn stage_projects_dir(segment: &str) -> Result<String> {
+    let line = segment
         .lines()
         .map(str::trim)
         .find_map(|line| line.strip_prefix("project ="))
@@ -193,13 +193,13 @@ fn stage_projects_dir(part: &str) -> Result<String> {
 /// One segment with every name that is its own given the label: its chain
 /// inputs, its stages and repeats, what its stages take from each other, and
 /// the marks a run replaces with its range counts.
-fn labelled(part: &str, label: &str) -> String {
+fn labelled(segment: &str, label: &str) -> String {
     if label.is_empty() {
-        return part.to_string();
+        return segment.to_string();
     }
     let mut table = "";
     let mut out = Vec::new();
-    for line in part.lines() {
+    for line in segment.lines() {
         let trimmed = line.trim_start();
         let indent = &line[..line.len() - trimmed.len()];
         if trimmed.starts_with('[') {
@@ -233,17 +233,17 @@ fn labelled(part: &str, label: &str) -> String {
 /// The whole template: the `[chain]` table, every segment's chain inputs, the
 /// source stage, every segment's stages with its first bind taking the source
 /// stage's record, and the result stage.
-fn assemble(parts: &[&str], labels: &[String], source: &str, result: &str) -> Result<String> {
+fn assemble(segments: &[&str], labels: &[String], source: &str, result: &str) -> Result<String> {
     let mut chain: Option<String> = None;
     let mut inputs = String::new();
     let mut stages = String::new();
-    for (part, label) in parts.iter().zip(labels) {
-        let part = labelled(part, label);
+    for (segment, label) in segments.iter().zip(labels) {
+        let segment = labelled(segment, label);
         // A segment is its tables up to the first stage or repeat, then those.
-        let cut = part
+        let cut = segment
             .find("\n[[chain.")
             .context("the chain template of a model import has no stages")?;
-        let (head, body) = part.split_at(cut);
+        let (head, body) = segment.split_at(cut);
         let at = head.find("\n[chain.input.").unwrap_or(head.len());
         let (table, part_inputs) = head.split_at(at);
         // The chain is named as the first import names it.

@@ -219,7 +219,7 @@ inputs.layer = { input = "transformer_layer_{l}" }
 fn two_inferences_of_one_chain_are_wired_to_their_own_programs() {
     // Two inferences whose layer stages have one name and different
     // programs: each takes its layers' outputs from its own.
-    let part = |label: &str, layer: &str| {
+    let segment = |label: &str, layer: &str| {
         format!(
             r#"
 [[chain.stage]]
@@ -253,8 +253,8 @@ inputs.second = { from = "m1_check_c@m1_LAST_CLAIMED_RANGE@" }
 "#;
     let template = format!(
         "[chain]\nname = \"iris\"\n{}{}{result}",
-        part("m0_", "prefill-range"),
-        part("m1_", "layer-mistral")
+        segment("m0_", "prefill-range"),
+        segment("m1_", "layer-mistral")
     );
     let wiring = chain_wiring(&template).unwrap();
     let producers = |project: &str, input: &str| -> Vec<String> {

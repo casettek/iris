@@ -132,8 +132,8 @@ fn run_imports(
         .map(|manifest| {
             let path = absolute(run_spec_dir, manifest);
             let manifest = ModelManifest::load_verified(&path)?;
-            let part = manifest.verified_raster_template(&path)?.1;
-            Ok((path, manifest, part))
+            let segment = manifest.verified_raster_template(&path)?.1;
+            Ok((path, manifest, segment))
         })
         .collect()
 }
@@ -146,7 +146,7 @@ pub fn run_pins(base_dir: &Path, run_spec_path: &Path) -> Result<ContractPins> {
     let imports = run_imports(&run_spec_path, &run_spec)?;
     let imports: Vec<(&ModelManifest, &str)> = imports
         .iter()
-        .map(|(_, manifest, part)| (manifest, part.as_str()))
+        .map(|(_, manifest, segment)| (manifest, segment.as_str()))
         .collect();
     ContractPins::of(run_spec.procedure_kind, &imports)
 }
@@ -210,7 +210,7 @@ fn contract_of(
                 imports => {
                     let imports: Vec<(&ModelManifest, &str)> = imports
                         .iter()
-                        .map(|(_, manifest, part)| (manifest, part.as_str()))
+                        .map(|(_, manifest, segment)| (manifest, segment.as_str()))
                         .collect();
                     ContractPins::of(procedure_kind, &imports)?
                 }
