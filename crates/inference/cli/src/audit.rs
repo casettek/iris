@@ -8,8 +8,7 @@ use std::path::PathBuf;
 use anyhow::{ensure, Context, Result};
 use inference_artifacts::checks::ClaimSubmission;
 use inference_artifacts::{
-    read_checkpoint_hashes, read_checkpoint_trace, read_json, CHECKPOINTS_TXT,
-    CHECKPOINT_TRACE_JSON,
+    read_checkpoint_hashes, read_checkpoint_list, read_json, CHECKPOINTS_TXT, CHECKPOINT_LIST_JSON,
 };
 
 use crate::posted::{parent, stage_dir_name, INPUT_MANIFEST_JSON};
@@ -89,13 +88,13 @@ pub fn audit_claim(options: AuditClaimOptions) -> Result<ClaimAudit> {
     )
     .map_err(|refusal| anyhow::anyhow!("{}: {refusal}", hashes_path.display()))?;
     let hashes = read_checkpoint_hashes(&hashes_path)?;
-    let trace = read_checkpoint_trace(&dir.join(CHECKPOINT_TRACE_JSON))?;
+    let list = read_checkpoint_list(&dir.join(CHECKPOINT_LIST_JSON))?;
     ensure!(
-        trace.checkpoints.len() == hashes.len(),
-        "{} lists {} checkpoints, and {CHECKPOINT_TRACE_JSON} holds {}",
+        list.checkpoints.len() == hashes.len(),
+        "{} lists {} checkpoints, and {CHECKPOINT_LIST_JSON} holds {}",
         hashes_path.display(),
         hashes.len(),
-        trace.checkpoints.len()
+        list.checkpoints.len()
     );
     let claim = claim_id(&submission)?;
     let posted = submission.posted_run_inputs();
@@ -107,7 +106,7 @@ pub fn audit_claim(options: AuditClaimOptions) -> Result<ClaimAudit> {
         faults: Vec::new(),
         calls: Vec::new(),
     };
-    for (index, checkpoint) in trace.checkpoints.iter().enumerate() {
+    for (index, checkpoint) in list.checkpoints.iter().enumerate() {
         let position = index as u32;
         let path = inference_artifacts::checkpoint_opening(&hashes, index)?;
         let refused =
@@ -174,7 +173,7 @@ pub fn audit_claim(options: AuditClaimOptions) -> Result<ClaimAudit> {
         })?;
         for input in held {
             let producer = checkpoint.input_sources.get(input).and_then(|producer| {
-                let listed = trace.checkpoints.get(*producer as usize)?;
+                let listed = list.checkpoints.get(*producer as usize)?;
                 Some((*producer as usize, listed))
             });
             let verdict = opened.check_link(

@@ -297,7 +297,7 @@ pub(super) fn run_consensus_leg(
     fs::create_dir_all(dir.join("challenges"))?;
     corrupt_checkpoint_hashes(CorruptCheckpointHashesOptions {
         hashes_path: built.checkpoint_hashes_path.clone(),
-        trace_path: Some(built.checkpoint_trace_path.clone()),
+        list_path: Some(built.checkpoint_list_path.clone()),
         output_path: Some(falsified.clone()),
         selection: CorruptCheckpointSelection::Stage(FALSIFIED_STAGE.to_string()),
     })?;
@@ -308,7 +308,7 @@ pub(super) fn run_consensus_leg(
         ),
         "a false checkpoint in the second inference was not found at `{FALSIFIED_STAGE}`"
     );
-    let honest_trace = inference_artifacts::read_checkpoint_trace(&built.checkpoint_trace_path)?;
+    let honest_trace = inference_artifacts::read_checkpoint_list(&built.checkpoint_list_path)?;
     let mut lying = honest_trace.clone();
     lying
         .checkpoints
@@ -316,9 +316,9 @@ pub(super) fn run_consensus_leg(
         .context("the claim has no checkpoints")?
         .output_sha256 = "5a".repeat(32);
     let found = locate_divergence(
-        &built.checkpoint_trace_path,
+        &built.checkpoint_list_path,
         &lying,
-        &built.checkpoint_trace_path,
+        &built.checkpoint_list_path,
         &honest_trace,
     )
     .context("a false consensus result did not differ from honest execution")?;

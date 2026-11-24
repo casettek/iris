@@ -776,7 +776,7 @@ fn challenge_cleanup_child() {
         })
         .unwrap();
     assert_eq!(result.divergence.unwrap().checkpoint_index, stop);
-    assert_eq!(result.recomputed_trace.checkpoints.len(), stop + 1);
+    assert_eq!(result.recomputed_list.checkpoints.len(), stop + 1);
     assert!(!result.chain_dir.join("range_c1_l0").exists());
     let mut system = sysinfo::System::new();
     system.refresh_processes(sysinfo::ProcessesToUpdate::All, true);

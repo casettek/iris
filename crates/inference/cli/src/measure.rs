@@ -16,7 +16,7 @@ use crate::posting::open_layer;
 /// the magic, the submitter and the lengths. A run's inputs are split into
 /// the text, the token marks, the claimed ids, the documents' bytes and the
 /// rest (the run's settings, the forms, and a source's attestations, recipe
-/// and signer's key), and a claim's checkpoints into the list, the
+/// and signer's key), and a claim's checkpoints into the hashes, the
 /// checkpoints and the input manifests.
 pub fn measure_posting(submission_path: &Path, da_dir: Option<&Path>) -> Result<serde_json::Value> {
     #[derive(serde::Deserialize)]
@@ -92,7 +92,7 @@ pub fn measure_posting(submission_path: &Path, da_dir: Option<&Path>) -> Result<
                     "kind": "checkpoints",
                     "bytes": size,
                     "checkpoint_hashes_bytes": package.hashes.len(),
-                    "trace_bytes": package.trace.len(),
+                    "checkpoint_list_bytes": package.list.len(),
                     "input_manifests": package.input_manifests.len(),
                     "input_manifest_bytes":
                         package.input_manifests.iter().map(Vec::len).sum::<usize>(),

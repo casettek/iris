@@ -152,24 +152,24 @@ pub(crate) fn print_challenge_result(result: &ChallengeBuildResult) {
     match &result.outcome {
         ChallengeBuildOutcome::NoDivergence {
             claimed_reference_path,
-            recomputed_trace_path,
+            recomputed_list_path,
             recomputed_chain_dir,
         } => {
             println!("no divergence found");
             println!("claimed reference: {}", claimed_reference_path.display());
-            println!("recomputed trace: {}", recomputed_trace_path.display());
+            println!("recomputed list: {}", recomputed_list_path.display());
             println!("recomputed chain: {}", recomputed_chain_dir.display());
         }
         ChallengeBuildOutcome::ClaimedOutputRejected {
             reason,
             claimed_reference_path,
-            recomputed_trace_path,
+            recomputed_list_path,
             recomputed_chain_dir,
         } => {
             println!("no divergence found; claimed output rejected");
             println!("reason: {reason}");
             println!("claimed reference: {}", claimed_reference_path.display());
-            println!("recomputed trace: {}", recomputed_trace_path.display());
+            println!("recomputed list: {}", recomputed_list_path.display());
             println!("recomputed chain: {}", recomputed_chain_dir.display());
         }
         ChallengeBuildOutcome::DivergenceBuilt {

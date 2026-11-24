@@ -8,8 +8,8 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{bail, Context, Result};
 use inference_artifacts::{
-    checkpoint_hash, read_checkpoint_from_stage_dir, Checkpoint, CheckpointTrace, Divergence,
-    DivergenceReason, CHECKPOINT_TRACE_JSON,
+    checkpoint_hash, read_checkpoint_from_stage_dir, Checkpoint, CheckpointList, Divergence,
+    DivergenceReason, CHECKPOINT_LIST_JSON,
 };
 use raster_core::input::payload_structural_root;
 use rayon::prelude::*;
@@ -111,13 +111,13 @@ pub fn expanded_stages(manifest_path: &Path) -> Result<Vec<ExpandedStage>> {
 #[derive(Debug)]
 pub struct CheckpointVerifiedRun {
     pub run: HybridRun,
-    pub recomputed_trace: CheckpointTrace,
+    pub recomputed_list: CheckpointList,
     pub divergence: Option<Divergence>,
 }
 
 struct ChainRunOutput {
     run: HybridRun,
-    recomputed_trace: Option<CheckpointTrace>,
+    recomputed_list: Option<CheckpointList>,
     divergence: Option<Divergence>,
 }
 
@@ -377,7 +377,7 @@ impl CheckpointVerifierState {
         checkpoint_index: usize,
         stage_name: &str,
         stage_dir: &Path,
-        recomputed_trace_path: &Path,
+        recomputed_list_path: &Path,
     ) -> Result<bool> {
         if self.divergence.is_some() {
             return Ok(true);
@@ -412,9 +412,9 @@ impl CheckpointVerifierState {
                 checkpoint_index,
                 stage: stage_name.to_string(),
                 reason,
-                claimed_trace_path: None,
+                claimed_list_path: None,
                 claimed_checkpoint_hashes_path: Some(self.claimed_hashes_path.clone()),
-                recomputed_trace_path: recomputed_trace_path.to_path_buf(),
+                recomputed_list_path: recomputed_list_path.to_path_buf(),
                 claimed_hash,
                 recomputed_hash: Some(recomputed_hash),
                 claimed: None,
@@ -424,7 +424,7 @@ impl CheckpointVerifierState {
         Ok(self.divergence.is_some())
     }
 
-    fn finish(&mut self, recomputed_trace_path: &Path) {
+    fn finish(&mut self, recomputed_list_path: &Path) {
         if self.divergence.is_some() {
             return;
         }
@@ -435,9 +435,9 @@ impl CheckpointVerifierState {
                 checkpoint_index,
                 stage: format!("<checkpoint-{checkpoint_index}>"),
                 reason: DivergenceReason::MissingRecomputedHash,
-                claimed_trace_path: None,
+                claimed_list_path: None,
                 claimed_checkpoint_hashes_path: Some(self.claimed_hashes_path.clone()),
-                recomputed_trace_path: recomputed_trace_path.to_path_buf(),
+                recomputed_list_path: recomputed_list_path.to_path_buf(),
                 claimed_hash: Some(claimed_hash),
                 recomputed_hash: None,
                 claimed: None,
@@ -446,8 +446,8 @@ impl CheckpointVerifierState {
         }
     }
 
-    fn trace(&self) -> CheckpointTrace {
-        CheckpointTrace {
+    fn list(&self) -> CheckpointList {
+        CheckpointList {
             checkpoints: self.recomputed_checkpoints.clone(),
         }
     }
@@ -513,8 +513,8 @@ pub fn run_until_hash_divergence(
     )?;
     Ok(CheckpointVerifiedRun {
         run: output.run,
-        recomputed_trace: output
-            .recomputed_trace
+        recomputed_list: output
+            .recomputed_list
             .expect("verified run always records recomputed checkpoints"),
         divergence: output.divergence,
     })
@@ -637,7 +637,7 @@ fn run_inner(
         last_checks: std::collections::BTreeMap::new(),
         checkpoint_verifier: checkpoint_verifier.map(CheckpointVerifierState::new),
     };
-    let recomputed_trace_path = chain_dir.join(CHECKPOINT_TRACE_JSON);
+    let recomputed_list_path = chain_dir.join(CHECKPOINT_LIST_JSON);
 
     let mut idx = 0;
     while idx < manifest.chain.stage.len() {
@@ -651,7 +651,7 @@ fn run_inner(
                 current_exe,
                 staged_backend,
                 raster_stage,
-                &recomputed_trace_path,
+                &recomputed_list_path,
                 &mut state,
             )?;
             if state.has_divergence() {
@@ -670,7 +670,7 @@ fn run_inner(
             current_exe,
             staged_backend,
             raster_stage,
-            &recomputed_trace_path,
+            &recomputed_list_path,
             &mut state,
         )?;
         if state.has_divergence() {
@@ -699,7 +699,7 @@ fn run_inner(
     )?;
     let chain_wall_duration = chain_started.elapsed();
     if let Some(verifier) = state.checkpoint_verifier.as_mut() {
-        verifier.finish(&recomputed_trace_path);
+        verifier.finish(&recomputed_list_path);
     }
     if state.has_divergence() {
         if let Some(divergence) = state.divergence() {
@@ -730,10 +730,10 @@ fn run_inner(
         bail!("selected Raster reference stage did not run");
     }
 
-    let recomputed_trace = state
+    let recomputed_list = state
         .checkpoint_verifier
         .as_ref()
-        .map(CheckpointVerifierState::trace);
+        .map(CheckpointVerifierState::list);
     let divergence = state
         .checkpoint_verifier
         .as_ref()
@@ -746,7 +746,7 @@ fn run_inner(
             final_output: state.last_output,
             final_checks: state.last_checks.into_values().collect(),
         },
-        recomputed_trace,
+        recomputed_list,
         divergence,
     })
 }
@@ -1065,7 +1065,7 @@ fn run_one_stage(
     current_exe: &Path,
     staged_backend: StagedExecutionBackend,
     raster_stage: Option<&str>,
-    recomputed_trace_path: &Path,
+    recomputed_list_path: &Path,
     state: &mut ChainRunState,
 ) -> Result<()> {
     let stage = &stages[idx];
@@ -1109,7 +1109,7 @@ fn run_one_stage(
         stage_index,
         stage_run,
         stage_dir,
-        recomputed_trace_path,
+        recomputed_list_path,
         state,
     )
 }
@@ -1177,7 +1177,7 @@ fn finish_stage(
     stage_index: &BTreeMap<String, usize>,
     stage_run: DirectStageRun,
     stage_dir: PathBuf,
-    recomputed_trace_path: &Path,
+    recomputed_list_path: &Path,
     state: &mut ChainRunState,
 ) -> Result<()> {
     if let Some(timings) = stage_run.timings {
@@ -1210,7 +1210,7 @@ fn finish_stage(
     }
     print_stage_output(&output);
     state.output_commitments[idx] = Some(output.structural_commitment);
-    observe_checkpoint(idx, &stage.name, &stage_dir, recomputed_trace_path, state)?;
+    observe_checkpoint(idx, &stage.name, &stage_dir, recomputed_list_path, state)?;
     Ok(())
 }
 
@@ -1247,11 +1247,11 @@ fn observe_checkpoint(
     idx: usize,
     stage_name: &str,
     stage_dir: &Path,
-    recomputed_trace_path: &Path,
+    recomputed_list_path: &Path,
     state: &mut ChainRunState,
 ) -> Result<()> {
     if let Some(verifier) = state.checkpoint_verifier.as_mut() {
-        verifier.observe_stage(idx, stage_name, stage_dir, recomputed_trace_path)?;
+        verifier.observe_stage(idx, stage_name, stage_dir, recomputed_list_path)?;
     }
     Ok(())
 }
@@ -1294,7 +1294,7 @@ fn run_aux_wave(
     current_exe: &Path,
     staged_backend: StagedExecutionBackend,
     raster_stage: Option<&str>,
-    recomputed_trace_path: &Path,
+    recomputed_list_path: &Path,
     state: &mut ChainRunState,
 ) -> Result<()> {
     println!(
@@ -1336,7 +1336,7 @@ fn run_aux_wave(
             current_exe,
             staged_backend,
             raster_stage,
-            recomputed_trace_path,
+            recomputed_list_path,
             state,
         )?;
         if state.has_divergence() {
@@ -1389,7 +1389,7 @@ fn run_aux_wave(
             result.idx,
             &result.name,
             &result.stage_dir,
-            recomputed_trace_path,
+            recomputed_list_path,
             state,
         )?;
         if state.has_divergence() {
@@ -2573,7 +2573,7 @@ inputs.edge = { from = "claimed.edge" }
     fn checkpoint_verifier_detects_hash_mismatch() {
         let base = test_base_dir();
         let stage_dir = write_checkpoint_stage(&base, "stage_a", "commit-a", b"output-a");
-        let trace_path = base.join(CHECKPOINT_TRACE_JSON);
+        let list_path = base.join(CHECKPOINT_LIST_JSON);
         let expected = read_checkpoint_from_stage_dir("stage_a", &stage_dir).unwrap();
         let expected_hash = checkpoint_hash(&expected).unwrap();
         let claimed_hash = corrupt_hash(&expected_hash);
@@ -2584,17 +2584,17 @@ inputs.edge = { from = "claimed.edge" }
         });
 
         assert!(verifier
-            .observe_stage(0, "stage_a", &stage_dir, &trace_path)
+            .observe_stage(0, "stage_a", &stage_dir, &list_path)
             .unwrap());
 
-        let trace = verifier.trace();
+        let list = verifier.list();
         let divergence = verifier.divergence.unwrap();
         assert_eq!(divergence.checkpoint_index, 0);
         assert_eq!(divergence.stage, "stage_a");
         assert_eq!(divergence.reason, DivergenceReason::CheckpointHash);
         assert_eq!(divergence.claimed_hash, Some(claimed_hash));
         assert_eq!(divergence.recomputed_hash, Some(expected_hash));
-        assert_eq!(trace.checkpoints, vec![expected]);
+        assert_eq!(list.checkpoints, vec![expected]);
 
         fs::remove_dir_all(base).unwrap();
     }
@@ -2603,7 +2603,7 @@ inputs.edge = { from = "claimed.edge" }
     fn checkpoint_verifier_detects_missing_claimed_hash_immediately() {
         let base = test_base_dir();
         let stage_dir = write_checkpoint_stage(&base, "stage_a", "commit-a", b"output-a");
-        let trace_path = base.join(CHECKPOINT_TRACE_JSON);
+        let list_path = base.join(CHECKPOINT_LIST_JSON);
         let mut verifier = CheckpointVerifierState::new(CheckpointHashVerifier {
             claimed_hashes_path: base.join("checkpoints.txt"),
             claimed_hashes: Vec::new(),
@@ -2611,7 +2611,7 @@ inputs.edge = { from = "claimed.edge" }
         });
 
         assert!(verifier
-            .observe_stage(0, "stage_a", &stage_dir, &trace_path)
+            .observe_stage(0, "stage_a", &stage_dir, &list_path)
             .unwrap());
 
         let divergence = verifier.divergence.unwrap();
@@ -2627,7 +2627,7 @@ inputs.edge = { from = "claimed.edge" }
     fn checkpoint_verifier_detects_missing_recomputed_hash_at_end() {
         let base = test_base_dir();
         let stage_dir = write_checkpoint_stage(&base, "stage_a", "commit-a", b"output-a");
-        let trace_path = base.join(CHECKPOINT_TRACE_JSON);
+        let list_path = base.join(CHECKPOINT_LIST_JSON);
         let expected = read_checkpoint_from_stage_dir("stage_a", &stage_dir).unwrap();
         let expected_hash = checkpoint_hash(&expected).unwrap();
         let extra_hash =
@@ -2639,9 +2639,9 @@ inputs.edge = { from = "claimed.edge" }
         });
 
         assert!(!verifier
-            .observe_stage(0, "stage_a", &stage_dir, &trace_path)
+            .observe_stage(0, "stage_a", &stage_dir, &list_path)
             .unwrap());
-        verifier.finish(&trace_path);
+        verifier.finish(&list_path);
 
         let divergence = verifier.divergence.unwrap();
         assert_eq!(divergence.checkpoint_index, 1);

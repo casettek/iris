@@ -195,10 +195,7 @@ pub(crate) fn build(options: ClaimBuildOptions, run_spec_path: PathBuf) -> Resul
         (Some(final_result), None) => print_infer_result(final_result, Some(&run_spec_path), 0),
         (None, _) => {}
     }
-    println!(
-        "checkpoint trace: {}",
-        result.checkpoint_trace_path.display()
-    );
+    println!("checkpoint list: {}", result.checkpoint_list_path.display());
     println!("checkpoints: {}", result.checkpoint_hashes_path.display());
     println!("claim bundle: {}", result.claim_bundle_path.display());
     if let Some(path) = result.claim_submission_path.as_ref() {

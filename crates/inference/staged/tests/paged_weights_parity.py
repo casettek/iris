@@ -72,11 +72,11 @@ def main():
                                      "sampled_peak_rss_bytes": perf["sampled_peak_rss_bytes"],
                                      "budget_bytes": budget, "workers": workers, "parallel": parallel}
         source_chain = chains["baseline"]
-        trace = read(source_chain / "checkpoint_trace.json")
+        trace = read(source_chain / "checkpoint_list.json")
         names = [entry["stage"] for entry in trace]
         expected_names(names)
         for chain in chains.values():
-            assert read(chain / "checkpoint_trace.json") == trace
+            assert read(chain / "checkpoint_list.json") == trace
             hashes = compare(source_chain, chain, names)
             assert (chain / "checkpoints.txt").read_text().splitlines() == hashes
         replay = directory / "authenticated-raster"

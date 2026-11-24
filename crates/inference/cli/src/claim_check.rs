@@ -4,7 +4,7 @@
 //! The rules themselves are in `inference_artifacts::checks`. This module
 //! finds their inputs: the pins beside the model manifest a run spec names,
 //! the parameters that spec requires, and the claim directory `claim build`
-//! wrote, which holds the submission, the checkpoint list, the checkpoints and
+//! wrote, which holds the submission, the checkpoint hashes, the checkpoints and
 //! the outputs of the last check and of the result stage after it.
 
 use std::fs;
@@ -24,8 +24,8 @@ use inference_artifacts::checks::{
 };
 use inference_artifacts::registry::{Procedure, Registry};
 use inference_artifacts::{
-    read_checkpoint_trace, read_json, read_run_spec, Checkpoint, CheckpointTrace, InferenceRunSpec,
-    ModelManifest, PreparedRun, ProcedureKind, CHECKPOINTS_TXT, CHECKPOINT_TRACE_JSON,
+    read_checkpoint_list, read_json, read_run_spec, Checkpoint, CheckpointList, InferenceRunSpec,
+    ModelManifest, PreparedRun, ProcedureKind, CHECKPOINTS_TXT, CHECKPOINT_LIST_JSON,
 };
 use raster::core::chain::ChainCommitment;
 
@@ -367,7 +367,7 @@ pub fn check_claim(options: ClaimCheckOptions) -> Result<ClaimCheckReport> {
             .with_context(|| format!("failed to parse {}", commitment_path.display()))?;
         report.lines.push(CheckLine {
             check: "every checkpoint is the boundary the Raster run committed",
-            rejection: raster_boundary_mismatch(&claim_trace(&submission_path)?, &chain),
+            rejection: raster_boundary_mismatch(&claim_list(&submission_path)?, &chain),
         });
     }
     Ok(report)
@@ -379,8 +379,8 @@ fn claim_dir(submission_path: &Path) -> Result<&Path> {
         .context("the claim submission has no parent directory")
 }
 
-fn claim_trace(submission_path: &Path) -> Result<CheckpointTrace> {
-    read_checkpoint_trace(&claim_dir(submission_path)?.join(CHECKPOINT_TRACE_JSON))
+fn claim_list(submission_path: &Path) -> Result<CheckpointList> {
+    read_checkpoint_list(&claim_dir(submission_path)?.join(CHECKPOINT_LIST_JSON))
 }
 
 /// The submission checks, then the comparisons a contract makes against the
@@ -480,7 +480,7 @@ fn check_claim_dir(
     let list_path = dir.join(CHECKPOINTS_TXT);
     let hashes =
         fs::read(&list_path).with_context(|| format!("failed to read {}", list_path.display()))?;
-    let trace = claim_trace(submission_path)?;
+    let list = claim_list(submission_path)?;
     let refusal = |refusal: ChallengeRefusal| {
         anyhow::anyhow!(
             "the files in {} are not this claim's: {refusal}",
@@ -489,20 +489,20 @@ fn check_claim_dir(
     };
     let hashes = CheckpointHashes::open(&submission, &hashes).map_err(refusal)?;
     ensure!(
-        hashes.len() == trace.checkpoints.len(),
+        hashes.len() == list.checkpoints.len(),
         "{} lists {} checkpoints, {} holds {}",
         list_path.display(),
         hashes.len(),
-        CHECKPOINT_TRACE_JSON,
-        trace.checkpoints.len()
+        CHECKPOINT_LIST_JSON,
+        list.checkpoints.len()
     );
 
     // A challenger would point the contract at the first stage that names a
-    // program outside the set. Every other stage is opened too, so a trace
-    // that is not the listed one is found here and not at a challenge.
-    let unapproved = first_unapproved_stage(pins, &trace);
+    // program outside the set. Every other stage is opened too, so a list
+    // that is not the one the hashes name is found here and not at a challenge.
+    let unapproved = first_unapproved_stage(pins, &list);
     let mut rejection = None;
-    for (stage, checkpoint) in trace.checkpoints.iter().enumerate() {
+    for (stage, checkpoint) in list.checkpoints.iter().enumerate() {
         let admission = hashes
             .admit_stage_challenge(pins, stage as u32, checkpoint)
             .map_err(refusal)?;
@@ -530,7 +530,7 @@ fn check_claim_dir(
     // a challenger would point. A stage naming an unapproved program has no
     // inputs to check and is reported above.
     let mut rejection = None;
-    'stages: for (stage, checkpoint) in trace.checkpoints.iter().enumerate() {
+    'stages: for (stage, checkpoint) in list.checkpoints.iter().enumerate() {
         let Some(program) = pins.program(&checkpoint.program_commitment) else {
             continue;
         };
@@ -541,7 +541,7 @@ fn check_claim_dir(
             let producer = checkpoint
                 .input_sources
                 .get(&input.name)
-                .and_then(|index| trace.checkpoints.get(*index as usize));
+                .and_then(|index| list.checkpoints.get(*index as usize));
             match hashes.check_link(
                 pins,
                 stage as u32,
@@ -654,10 +654,10 @@ pub fn check_challenge_submission(options: ChallengeCheckOptions) -> Result<Clai
 pub fn post_challenge(options: ChallengePostOptions) -> Result<ChallengePosted> {
     let procedure = spec_procedure(&options.run_spec_path, options.pins_path.as_deref())?;
     let claim: ClaimSubmission = read_json(&options.submission_path)?;
-    let trace = claim_trace(&options.submission_path)?;
+    let list = claim_list(&options.submission_path)?;
     let bundle = inference_artifacts::read_challenge_bundle(&options.challenge_bundle_path)?;
     let replay: inference_artifacts::ChallengeTrace = read_json(&bundle.challenge_trace_path)?;
-    let stage = trace
+    let stage = list
         .checkpoints
         .iter()
         .position(|checkpoint| checkpoint.stage == bundle.stage)
@@ -675,7 +675,7 @@ pub fn post_challenge(options: ChallengePostOptions) -> Result<ChallengePosted> 
     let submission = challenge_submission(
         &claim.checkpoints_root,
         stage as u32,
-        &trace.checkpoints[stage],
+        &list.checkpoints[stage],
         options
             .commitment_path
             .as_deref()
@@ -757,7 +757,7 @@ pub fn check_challenge(
 ) -> Result<ClaimCheckReport> {
     let claim: ClaimSubmission = read_json(claim_submission_path)?;
     let dir = claim_dir(claim_submission_path)?;
-    let trace = claim_trace(claim_submission_path)?;
+    let list = claim_list(claim_submission_path)?;
     let list_path = dir.join(CHECKPOINTS_TXT);
     let hashes_bytes =
         fs::read(&list_path).with_context(|| format!("failed to read {}", list_path.display()))?;
@@ -775,7 +775,7 @@ pub fn check_challenge(
             )
         }),
     });
-    let checkpoint = trace.checkpoints.get(submission.stage as usize);
+    let checkpoint = list.checkpoints.get(submission.stage as usize);
     let admission = match (&hashes, checkpoint) {
         (Some(hashes), Some(checkpoint)) => {
             Some(hashes.admit_stage_challenge(&procedure.programs, submission.stage, checkpoint))

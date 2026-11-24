@@ -348,7 +348,7 @@ reads every blob the submission names and writes a new directory:
 | File | What it is |
 | --- | --- |
 | `claim_submission.json` | The submission, as given |
-| `checkpoints.txt`, `checkpoint_trace.json` | The claim's list and checkpoints, byte for byte as posted |
+| `checkpoints.txt`, `checkpoint_list.json` | The claim's checkpoint hashes and its checkpoint list, byte for byte as posted |
 | `<stage>/input_manifest.json` | Each stage's input manifest |
 | `posted_run.bin` | The inputs the claim's run was given, as it posted them |
 | `inference.toml` | The reader's run spec over what the claim posted |

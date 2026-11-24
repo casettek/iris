@@ -9,10 +9,10 @@ use staged_infer::chain_runner::StagedExecutionBackend;
 use staged_infer::{CheckpointHashChallengeConfig, CheckpointedInferenceExecutor};
 
 use inference_artifacts::{
-    checkpoint_hashes, read_challenge_bundle, read_checkpoint_hashes, read_checkpoint_trace,
+    checkpoint_hashes, read_challenge_bundle, read_checkpoint_hashes, read_checkpoint_list,
     read_claim_bundle, verify_file_sha256, write_challenge_artifacts,
-    write_checkpoint_trace_artifact, ChallengeBundle, ChallengeSourcePath, Checkpoint,
-    CheckpointTrace, Divergence, DivergenceReason, InferenceRunSpec, PreparedRun, ReplayPackage,
+    write_checkpoint_list_artifact, ChallengeBundle, ChallengeSourcePath, Checkpoint,
+    CheckpointList, Divergence, DivergenceReason, InferenceRunSpec, PreparedRun, ReplayPackage,
 };
 use raster_runtime::{read_raster_artifact_from_bytes, ReadLimits};
 
@@ -61,14 +61,14 @@ pub struct ChallengeBuildResult {
 pub enum ChallengeBuildOutcome {
     NoDivergence {
         claimed_reference_path: PathBuf,
-        recomputed_trace_path: PathBuf,
+        recomputed_list_path: PathBuf,
         recomputed_chain_dir: PathBuf,
     },
     /// Every checkpoint matched, but the claim's own final record refutes it.
     ClaimedOutputRejected {
         reason: String,
         claimed_reference_path: PathBuf,
-        recomputed_trace_path: PathBuf,
+        recomputed_list_path: PathBuf,
         recomputed_chain_dir: PathBuf,
     },
     DivergenceBuilt {
@@ -83,8 +83,8 @@ pub enum ChallengeBuildOutcome {
 }
 
 pub fn build_challenge(options: ChallengeBuildOptions) -> Result<ChallengeBuildResult> {
-    let checkpoint_trace_started = Instant::now();
-    challenge_progress("checkpoint-trace", None, None)?;
+    let checkpoint_list_started = Instant::now();
+    challenge_progress("checkpoint-list", None, None)?;
     let claimed_input = load_claimed_input(&options.input)?;
     let (manifest_path, prepared_run) = challenge_run(&options, &claimed_input)?;
     // A posted claim's chain is run as the claim arranges it, so that every
@@ -110,23 +110,23 @@ pub fn build_challenge(options: ChallengeBuildOptions) -> Result<ChallengeBuildR
         claimed_hashes: claimed_input.hashes.clone(),
         claimed_sources: posted_claim.as_ref().map(|posted| {
             posted
-                .trace
+                .list
                 .checkpoints
                 .iter()
                 .map(|checkpoint| checkpoint.input_sources.clone())
                 .collect()
         }),
     })?;
-    let (recomputed_chain_dir, recomputed_trace, divergence, final_result, consensus) = (
+    let (recomputed_chain_dir, recomputed_list, divergence, final_result, consensus) = (
         recomputed.chain_dir,
-        recomputed.recomputed_trace,
+        recomputed.recomputed_list,
         recomputed.divergence,
         recomputed.final_result,
         recomputed.consensus,
     );
-    let recomputed_trace_path =
-        write_checkpoint_trace_artifact(&recomputed_chain_dir, &recomputed_trace)?;
-    let checkpoint_trace_duration = checkpoint_trace_started.elapsed();
+    let recomputed_list_path =
+        write_checkpoint_list_artifact(&recomputed_chain_dir, &recomputed_list)?;
+    let checkpoint_list_duration = checkpoint_list_started.elapsed();
 
     let Some(divergence) = divergence else {
         // Every checkpoint agrees, so there is no stage to dispute. A claim can
@@ -147,7 +147,7 @@ pub fn build_challenge(options: ChallengeBuildOptions) -> Result<ChallengeBuildR
                     outcome: ChallengeBuildOutcome::ClaimedOutputRejected {
                         reason,
                         claimed_reference_path: claimed_input.hashes_path.clone(),
-                        recomputed_trace_path,
+                        recomputed_list_path,
                         recomputed_chain_dir,
                     },
                 });
@@ -156,7 +156,7 @@ pub fn build_challenge(options: ChallengeBuildOptions) -> Result<ChallengeBuildR
         return Ok(ChallengeBuildResult {
             outcome: ChallengeBuildOutcome::NoDivergence {
                 claimed_reference_path: claimed_input.hashes_path.clone(),
-                recomputed_trace_path,
+                recomputed_list_path,
                 recomputed_chain_dir,
             },
         });
@@ -164,7 +164,7 @@ pub fn build_challenge(options: ChallengeBuildOptions) -> Result<ChallengeBuildR
 
     let recomputed_checkpoint = divergence.recomputed.as_ref().ok_or_else(|| {
         anyhow::anyhow!(
-            "cannot build a Raster challenge for `{}` because the recomputed trace has no matching checkpoint",
+            "cannot build a Raster challenge for `{}` because the recomputed checkpoint list has no matching checkpoint",
             divergence.stage
         )
     })?;
@@ -186,7 +186,7 @@ pub fn build_challenge(options: ChallengeBuildOptions) -> Result<ChallengeBuildR
     if let Some(posted) = &posted_claim {
         use inference_artifacts::checks::{settlement, Settlement};
         let claimed = posted
-            .trace
+            .list
             .checkpoints
             .get(divergence.checkpoint_index)
             .with_context(|| {
@@ -225,15 +225,15 @@ pub fn build_challenge(options: ChallengeBuildOptions) -> Result<ChallengeBuildR
         .join(sanitize_stage_name(&divergence.stage));
     let replay_run_dir = challenge_dir.join("raster-replay");
     println!("stage to replay: {}", divergence.stage);
-    challenge_progress("replay-preparing", Some(checkpoint_trace_duration), None)?;
+    challenge_progress("replay-preparing", Some(checkpoint_list_duration), None)?;
     seed_replay_directory(
         &recomputed_chain_dir,
-        &recomputed_trace,
+        &recomputed_list,
         divergence.checkpoint_index,
         &replay_run_dir,
     )?;
     let raster_replay_started = Instant::now();
-    challenge_progress("raster-replay", Some(checkpoint_trace_duration), None)?;
+    challenge_progress("raster-replay", Some(checkpoint_list_duration), None)?;
     let replay_package = run_raster_replay(
         &options.base_dir,
         &manifest_path,
@@ -264,14 +264,14 @@ pub fn build_challenge(options: ChallengeBuildOptions) -> Result<ChallengeBuildR
     }
     challenge_progress(
         "validating",
-        Some(checkpoint_trace_duration),
+        Some(checkpoint_list_duration),
         Some(raster_replay_duration),
     )?;
     let (divergence_path, replay_package_path, challenge_trace_path, challenge_bundle_path) =
         write_challenge_artifacts(
             &challenge_dir,
             ChallengeSourcePath::CheckpointHashes(&claimed_input.hashes_path),
-            &recomputed_trace_path,
+            &recomputed_list_path,
             &divergence,
             &replay_package,
         )?;
@@ -281,7 +281,7 @@ pub fn build_challenge(options: ChallengeBuildOptions) -> Result<ChallengeBuildR
             "version": 1,
             "stage": divergence.stage,
             "checkpoint_index": divergence.checkpoint_index,
-            "checkpoint_trace_duration_ms": checkpoint_trace_duration.as_secs_f64() * 1000.0,
+            "checkpoint_list_duration_ms": checkpoint_list_duration.as_secs_f64() * 1000.0,
             "raster_replay_duration_ms": raster_replay_duration.as_secs_f64() * 1000.0,
         }),
     )?;
@@ -304,7 +304,7 @@ pub fn build_challenge(options: ChallengeBuildOptions) -> Result<ChallengeBuildR
 
 /// A posted claim, with the chain its checkpoints describe.
 struct PostedClaim {
-    trace: CheckpointTrace,
+    list: CheckpointList,
     manifest_path: PathBuf,
 }
 
@@ -318,14 +318,14 @@ fn arrange_posted_claim(
     let claim_dir = submission_path
         .parent()
         .context("the claim submission has no parent directory")?;
-    let trace = read_checkpoint_trace(&claim_dir.join(inference_artifacts::CHECKPOINT_TRACE_JSON))?;
+    let list = read_checkpoint_list(&claim_dir.join(inference_artifacts::CHECKPOINT_LIST_JSON))?;
     ensure!(
-        checkpoint_hashes(&trace)? == claimed.hashes,
+        checkpoint_hashes(&list)? == claimed.hashes,
         "the checkpoints in {} are not the ones {} lists",
         claim_dir.display(),
         claimed.hashes_path.display()
     );
-    let arranged = crate::arrangement::arrange(run_manifest_path, &trace, claim_dir)?;
+    let arranged = crate::arrangement::arrange(run_manifest_path, &list, claim_dir)?;
     for found in &arranged.rearranged {
         println!(
             "checkpoint {} (`{}`) gives `{}` another value than the chain does",
@@ -336,7 +336,7 @@ fn arrange_posted_claim(
     fs::write(&manifest_path, &arranged.manifest)
         .with_context(|| format!("failed to write {}", manifest_path.display()))?;
     Ok(PostedClaim {
-        trace,
+        list,
         manifest_path,
     })
 }
@@ -350,14 +350,14 @@ fn file_sha256_hex(path: &Path) -> Result<String> {
 
 fn challenge_progress(
     phase: &str,
-    checkpoint_trace_duration: Option<Duration>,
+    checkpoint_list_duration: Option<Duration>,
     raster_replay_duration: Option<Duration>,
 ) -> Result<()> {
     let progress = serde_json::json!({
         "version": 1,
         "phase": phase,
         "started_at_ms": SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis(),
-        "checkpoint_trace_duration_ms": checkpoint_trace_duration.map(|d| d.as_secs_f64() * 1000.0),
+        "checkpoint_list_duration_ms": checkpoint_list_duration.map(|d| d.as_secs_f64() * 1000.0),
         "raster_replay_duration_ms": raster_replay_duration.map(|d| d.as_secs_f64() * 1000.0),
     });
     let mut stdout = std::io::stdout().lock();
@@ -546,10 +546,10 @@ fn frozen_claimed_ids(manifest_path: &Path, label: &str) -> Result<Vec<u32>> {
 }
 
 pub fn locate_divergence(
-    claimed_trace_path: &Path,
-    claimed: &CheckpointTrace,
-    recomputed_trace_path: &Path,
-    recomputed: &CheckpointTrace,
+    claimed_list_path: &Path,
+    claimed: &CheckpointList,
+    recomputed_list_path: &Path,
+    recomputed: &CheckpointList,
 ) -> Option<Divergence> {
     let checkpoint_count = claimed.checkpoints.len().max(recomputed.checkpoints.len());
     for index in 0..checkpoint_count {
@@ -563,13 +563,13 @@ pub fn locate_divergence(
             .map(|checkpoint| checkpoint.stage.clone())
             .unwrap_or_else(|| String::from("<unknown>"));
         return Some(Divergence {
-            version: 1,
+            version: 2,
             checkpoint_index: index,
             stage,
             reason,
-            claimed_trace_path: Some(claimed_trace_path.to_path_buf()),
+            claimed_list_path: Some(claimed_list_path.to_path_buf()),
             claimed_checkpoint_hashes_path: None,
-            recomputed_trace_path: recomputed_trace_path.to_path_buf(),
+            recomputed_list_path: recomputed_list_path.to_path_buf(),
             claimed_hash: None,
             recomputed_hash: None,
             claimed: claimed_checkpoint.cloned(),
@@ -846,7 +846,7 @@ fn replay_package(stage: &str, replay_run_dir: &Path) -> Result<ReplayPackage> {
 
 pub(crate) fn seed_replay_directory(
     source_chain_dir: &Path,
-    trace: &CheckpointTrace,
+    list: &CheckpointList,
     checkpoint_index: usize,
     replay_run_dir: &Path,
 ) -> Result<()> {
@@ -856,7 +856,7 @@ pub(crate) fn seed_replay_directory(
     }
     fs::create_dir_all(replay_run_dir)
         .with_context(|| format!("failed to create {}", replay_run_dir.display()))?;
-    for checkpoint in trace.checkpoints.iter().take(checkpoint_index) {
+    for checkpoint in list.checkpoints.iter().take(checkpoint_index) {
         let source_stage_dir = source_chain_dir.join(&checkpoint.stage);
         copy_dir_recursive(&source_stage_dir, &replay_run_dir.join(&checkpoint.stage))
             .with_context(|| format!("failed to seed producer `{}`", checkpoint.stage))?;
@@ -954,15 +954,15 @@ mod tests {
     }
 
     #[test]
-    fn identical_traces_have_no_divergence() {
-        let trace = trace(vec![checkpoint("stage_a", "aaa", "111")]);
+    fn identical_lists_have_no_divergence() {
+        let list = list(vec![checkpoint("stage_a", "aaa", "111")]);
 
         assert_eq!(
             locate_divergence(
                 Path::new("claimed.json"),
-                &trace,
+                &list,
                 Path::new("recomputed.json"),
-                &trace,
+                &list,
             ),
             None
         );
@@ -970,11 +970,11 @@ mod tests {
 
     #[test]
     fn commitment_mismatch_is_first_divergence() {
-        let claimed = trace(vec![
+        let claimed = list(vec![
             checkpoint("stage_a", "aaa", "111"),
             checkpoint("stage_b", "bbb", "222"),
         ]);
-        let recomputed = trace(vec![
+        let recomputed = list(vec![
             checkpoint("stage_a", "aaa", "111"),
             checkpoint("stage_b", "ccc", "222"),
         ]);
@@ -994,7 +994,7 @@ mod tests {
 
     #[test]
     fn a_stage_that_names_another_program_is_a_divergence() {
-        let recomputed = trace(vec![
+        let recomputed = list(vec![
             checkpoint("stage_a", "aaa", "111"),
             checkpoint("stage_b", "bbb", "222"),
         ]);
@@ -1017,8 +1017,8 @@ mod tests {
 
     #[test]
     fn missing_checkpoint_is_divergence() {
-        let claimed = trace(vec![checkpoint("stage_a", "aaa", "111")]);
-        let recomputed = trace(vec![
+        let claimed = list(vec![checkpoint("stage_a", "aaa", "111")]);
+        let recomputed = list(vec![
             checkpoint("stage_a", "aaa", "111"),
             checkpoint("stage_b", "bbb", "222"),
         ]);
@@ -1046,14 +1046,14 @@ mod tests {
         fs::create_dir_all(&source_run).unwrap();
         write_stage_dir(&source_run, "stage_a");
         write_stage_dir(&source_run, "stage_b");
-        let trace = CheckpointTrace {
+        let list = CheckpointList {
             checkpoints: vec![
                 checkpoint("stage_a", "aaa", "111"),
                 checkpoint("stage_b", "bbb", "222"),
             ],
         };
 
-        seed_replay_directory(&source_run, &trace, 1, &replay_run).unwrap();
+        seed_replay_directory(&source_run, &list, 1, &replay_run).unwrap();
 
         assert!(replay_run.join("stage_a").join("output.bin").is_file());
         assert!(!replay_run.join("stage_b").exists());
@@ -1381,8 +1381,8 @@ mod tests {
         fs::remove_dir_all(base).unwrap();
     }
 
-    fn trace(checkpoints: Vec<Checkpoint>) -> CheckpointTrace {
-        CheckpointTrace { checkpoints }
+    fn list(checkpoints: Vec<Checkpoint>) -> CheckpointList {
+        CheckpointList { checkpoints }
     }
 
     fn checkpoint(stage: &str, commitment: &str, sha: &str) -> Checkpoint {

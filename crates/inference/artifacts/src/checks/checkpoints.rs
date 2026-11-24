@@ -9,7 +9,7 @@ use ::model_identity::context::parse_id;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::checkpoint::{checkpoint_hash, checkpoints_root, Checkpoint, CheckpointTrace};
+use crate::checkpoint::{checkpoint_hash, checkpoints_root, Checkpoint, CheckpointList};
 
 use super::*;
 
@@ -505,9 +505,8 @@ impl CheckpointHashes {
 
 /// The first stage of a claim that names a program outside the approved set,
 /// which is the stage a challenger would point a contract at.
-pub fn first_unapproved_stage(pins: &ProgramPins, trace: &CheckpointTrace) -> Option<u32> {
-    trace
-        .checkpoints
+pub fn first_unapproved_stage(pins: &ProgramPins, list: &CheckpointList) -> Option<u32> {
+    list.checkpoints
         .iter()
         .position(|checkpoint| !pins.approves(&checkpoint.program_commitment))
         .map(|index| index as u32)

@@ -41,9 +41,9 @@ pub use claim::{
 pub use claim_check::{check_claim, CheckLine, ClaimCheckOptions, ClaimCheckReport};
 pub use infer::run_infer;
 pub use inference_artifacts::{
-    build_checkpoint_trace, write_claim_artifacts, ChallengeBundle, ChallengeTrace, Checkpoint,
-    CheckpointTrace, ClaimBundle, ClaimEndpoint, Divergence, DivergenceReason, ReplayPackage,
-    CHALLENGE_BUNDLE_JSON, CHALLENGE_TRACE_JSON, CHECKPOINT_HASHES_TXT, CHECKPOINT_TRACE_JSON,
+    build_checkpoint_list, write_claim_artifacts, ChallengeBundle, ChallengeTrace, Checkpoint,
+    CheckpointList, ClaimBundle, ClaimEndpoint, Divergence, DivergenceReason, ReplayPackage,
+    CHALLENGE_BUNDLE_JSON, CHALLENGE_TRACE_JSON, CHECKPOINT_HASHES_TXT, CHECKPOINT_LIST_JSON,
     CLAIM_BUNDLE_JSON, DIVERGENCE_JSON, REPLAY_PACKAGE_JSON,
 };
 #[cfg(feature = "replay-profile")]

@@ -4,7 +4,7 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
 use crate::checkpoint::{
-    build_checkpoint_trace, write_checkpoint_hashes_artifact, CHECKPOINT_TRACE_JSON,
+    build_checkpoint_list, write_checkpoint_hashes_artifact, CHECKPOINT_LIST_JSON,
 };
 use crate::io::{read_json, write_json};
 
@@ -14,7 +14,7 @@ pub const CLAIM_BUNDLE_JSON: &str = "claim_bundle.json";
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ClaimBundle {
     pub version: u32,
-    pub checkpoint_trace_path: PathBuf,
+    pub checkpoint_list_path: PathBuf,
     pub input: ClaimEndpoint,
     pub output: ClaimEndpoint,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -43,22 +43,20 @@ pub fn write_claim_artifacts_with_prepared_run(
     manifest_path: &Path,
     prepared_run_path: Option<&Path>,
 ) -> Result<(PathBuf, PathBuf, PathBuf)> {
-    let trace = build_checkpoint_trace(chain_dir, manifest_path)?;
-    let trace_path = chain_dir.join(CHECKPOINT_TRACE_JSON);
-    write_json(&trace_path, &trace)?;
-    let hashes_path = write_checkpoint_hashes_artifact(chain_dir, &trace)?;
+    let list = build_checkpoint_list(chain_dir, manifest_path)?;
+    let list_path = chain_dir.join(CHECKPOINT_LIST_JSON);
+    write_json(&list_path, &list)?;
+    let hashes_path = write_checkpoint_hashes_artifact(chain_dir, &list)?;
 
-    let first = trace
-        .checkpoints
-        .first()
-        .ok_or_else(|| anyhow::anyhow!("cannot build a claim bundle from an empty trace"))?;
-    let last = trace
-        .checkpoints
-        .last()
-        .ok_or_else(|| anyhow::anyhow!("cannot build a claim bundle from an empty trace"))?;
+    let first = list.checkpoints.first().ok_or_else(|| {
+        anyhow::anyhow!("cannot build a claim bundle from an empty checkpoint list")
+    })?;
+    let last = list.checkpoints.last().ok_or_else(|| {
+        anyhow::anyhow!("cannot build a claim bundle from an empty checkpoint list")
+    })?;
     let bundle = ClaimBundle {
-        version: 1,
-        checkpoint_trace_path: PathBuf::from(CHECKPOINT_TRACE_JSON),
+        version: 2,
+        checkpoint_list_path: PathBuf::from(CHECKPOINT_LIST_JSON),
         input: ClaimEndpoint {
             stage: first.stage.clone(),
             commitment: first.input_commitment.clone(),
@@ -71,5 +69,5 @@ pub fn write_claim_artifacts_with_prepared_run(
     };
     let bundle_path = chain_dir.join(CLAIM_BUNDLE_JSON);
     write_json(&bundle_path, &bundle)?;
-    Ok((trace_path, hashes_path, bundle_path))
+    Ok((list_path, hashes_path, bundle_path))
 }

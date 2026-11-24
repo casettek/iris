@@ -46,7 +46,7 @@ from, and its output.
 
 | Where | What |
 | --- | --- |
-| Posted to Celestia | Every input the run gave its stages (the text, the token marks, the claimed output ids, the settings, a source's documents), the checkpoint list, every checkpoint, and every stage's input list. |
+| Posted to Celestia | Every input the run gave its stages (the text, the token marks, the claimed output ids, the settings, a source's documents), the checkpoint hashes, every checkpoint, and every stage's input list. |
 | In the transaction | The procedure's id, the claimer, the input text's hash, the source record, each inference's output text with its record and result, the checkpoint count and root, and where each blob is with the host's signature over what it holds. |
 | Kept by the contract | The claim's procedure, claimer, checkpoint count and root, when it arrived, and one hash of the commitments of the run inputs it posted. |
 

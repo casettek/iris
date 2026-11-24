@@ -622,8 +622,8 @@ pub fn challenge(
     let stage = honest["stage"]
         .as_u64()
         .context("the challenge names no stage")? as usize;
-    let trace = inference_artifacts::read_checkpoint_trace(
-        &claim_path.with_file_name(inference_artifacts::CHECKPOINT_TRACE_JSON),
+    let trace = inference_artifacts::read_checkpoint_list(
+        &claim_path.with_file_name(inference_artifacts::CHECKPOINT_LIST_JSON),
     )?;
     let stated = hex::decode(
         &trace

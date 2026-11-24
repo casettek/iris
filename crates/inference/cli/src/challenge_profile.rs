@@ -1,7 +1,7 @@
 //! Observability of a frozen challenge using Raster's existing run/replay interfaces.
 use anyhow::{ensure, Context, Result};
 use inference_artifacts::{
-    file_sha256, read_json, write_json, ChallengeBundle, CheckpointTrace, ClaimBundle, PreparedRun,
+    file_sha256, read_json, write_json, ChallengeBundle, CheckpointList, ClaimBundle, PreparedRun,
     ReplayPackage,
 };
 use raster_analysis::replay_profile::ReplayProfile;
@@ -149,7 +149,7 @@ pub(crate) fn summarize(
         for call in &tile.replayed {
             ensure!(
                 call.exec_index > 0 && call.exec_index <= length as u64,
-                "replay index outside trace"
+                "replay index outside the checkpoint list"
             );
             calls.push(json!({"tile_id":tile_id,"exec_index":call.exec_index,
                 "coordinates":call.coordinates,"user_cycles":call.user_cycles,"padded_cycles":call.padded_cycles,
@@ -211,7 +211,7 @@ pub fn run(args: ProfileArgs) -> Result<PathBuf> {
     let bundle: ChallengeBundle = read_json(&challenge_path)?;
     let claim: ClaimBundle = read_json(&claim_path)?;
     ensure!(
-        bundle.version == 1 && claim.version == 1,
+        bundle.version == 2 && claim.version == 2,
         "unsupported bundle version"
     );
     let prepared: PreparedRun = read_json(&reference(
@@ -252,15 +252,14 @@ pub fn run(args: ProfileArgs) -> Result<PathBuf> {
     );
     let baseline =
         inference_artifacts::read_checkpoint_from_stage_dir(&bundle.stage, &package.stage_dir)?;
-    let trace: CheckpointTrace = read_json(&reference(&claim_path, &claim.checkpoint_trace_path))?;
+    let list: CheckpointList = read_json(&reference(&claim_path, &claim.checkpoint_list_path))?;
     ensure!(
-        trace
-            .checkpoints
+        list.checkpoints
             .iter()
             .filter(|c| c.stage == bundle.stage)
             .count()
             == 1
-            && trace.checkpoints.iter().any(|c| c.same_boundary(&baseline)),
+            && list.checkpoints.iter().any(|c| c.same_boundary(&baseline)),
         "challenge differs from claim checkpoint"
     );
     let original_path = fs::canonicalize(reference(&challenge_path, &bundle.raster_commit_path))?;

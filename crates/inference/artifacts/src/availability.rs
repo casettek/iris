@@ -32,7 +32,7 @@ use sha2::{Digest, Sha256};
 
 pub use prompt_core::{PromptText, RunConfig, RunSchedule, TextClaim};
 
-use crate::checkpoint::{checkpoint_hash, checkpoints_root, CheckpointTrace};
+use crate::checkpoint::{checkpoint_hash, checkpoints_root, CheckpointList};
 use crate::checks::{is_address, ClaimSubmission, ResultInOutput, SubmittedRecord};
 
 /// The first bytes of every blob iris posts.
@@ -368,8 +368,8 @@ pub fn posted_inputs_digest(commitments: &[String]) -> Option<String> {
 pub struct CheckpointPackage {
     /// The claim's `checkpoints.txt`, exactly.
     pub hashes: Vec<u8>,
-    /// The claim's `checkpoint_trace.json`, exactly.
-    pub trace: Vec<u8>,
+    /// The claim's `checkpoint_list.json`, exactly.
+    pub list: Vec<u8>,
     /// Each distinct `input_manifest.json` a checkpoint commits to, exactly.
     pub input_manifests: Vec<Vec<u8>>,
 }
@@ -497,8 +497,9 @@ impl CheckpointPackage {
         reader: &dyn OutputReader,
         outputs: &[WitnessedOutput],
     ) -> Result<StatedRecords, BlobFault> {
-        let trace: CheckpointTrace = serde_json::from_slice(&self.trace)
-            .map_err(|_| BlobFault::MalformedCheckpoints(String::from("trace is not JSON")))?;
+        let list: CheckpointList = serde_json::from_slice(&self.list).map_err(|_| {
+            BlobFault::MalformedCheckpoints(String::from("the checkpoint list is not JSON"))
+        })?;
         // The bytes of the output given for a position, when they are the
         // ones its checkpoint commits to.
         let output = |position: u32| -> Result<Option<(Vec<u8>, Vec<u8>)>, BlobFault> {
@@ -508,7 +509,7 @@ impl CheckpointPackage {
             let fault = BlobFault::NotTheOutput {
                 checkpoint: position,
             };
-            let checkpoint = trace
+            let checkpoint = list
                 .checkpoints
                 .get(position as usize)
                 .ok_or(fault.clone())?;
@@ -519,9 +520,9 @@ impl CheckpointPackage {
             }
             Ok(Some((payload, index)))
         };
-        let last = trace.checkpoints.len().saturating_sub(1) as u32;
+        let last = list.checkpoints.len().saturating_sub(1) as u32;
         let fault = BlobFault::NotTheOutput { checkpoint: last };
-        let last_checkpoint = trace.checkpoints.last().ok_or(fault.clone())?;
+        let last_checkpoint = list.checkpoints.last().ok_or(fault.clone())?;
         let (payload, index) = output(last)?.ok_or(fault.clone())?;
         let results = reader.results(&payload, &index).ok_or(fault)?;
         let mut checks = Vec::new();
@@ -533,7 +534,7 @@ impl CheckpointPackage {
             if let Some(record) = reader.check_record(&payload, &index) {
                 checks.push(StatedCheck {
                     checkpoint: *position,
-                    program: trace.checkpoints[*position as usize]
+                    program: list.checkpoints[*position as usize]
                         .program_commitment
                         .clone(),
                     record,
@@ -556,9 +557,9 @@ impl CheckpointPackage {
         let hashes =
             std::str::from_utf8(&self.hashes).map_err(|_| fault("the hashes are not text"))?;
         let lines: Vec<String> = hashes.lines().map(String::from).collect();
-        let trace: CheckpointTrace =
-            serde_json::from_slice(&self.trace).map_err(|_| fault("trace is not JSON"))?;
-        if lines.len() != trace.checkpoints.len() {
+        let list: CheckpointList = serde_json::from_slice(&self.list)
+            .map_err(|_| fault("the checkpoint list is not JSON"))?;
+        if lines.len() != list.checkpoints.len() {
             return Err(fault("lists another number of checkpoints than it holds"));
         }
         let manifests: Vec<String> = self
@@ -566,7 +567,7 @@ impl CheckpointPackage {
             .iter()
             .map(|manifest| hex::encode(Sha256::digest(manifest)))
             .collect();
-        for (line, checkpoint) in lines.iter().zip(&trace.checkpoints) {
+        for (line, checkpoint) in lines.iter().zip(&list.checkpoints) {
             let hash = checkpoint_hash(checkpoint)
                 .map_err(|_| fault("holds a checkpoint that does not encode"))?;
             if *line != hash {
@@ -895,17 +896,17 @@ mod tests {
 
     fn package() -> CheckpointPackage {
         let manifest = b"{}".to_vec();
-        let trace = CheckpointTrace {
+        let list = CheckpointList {
             checkpoints: vec![Checkpoint {
                 stage: String::from("source"),
                 input_commitment: hex::encode(Sha256::digest(&manifest)),
                 ..Checkpoint::default()
             }],
         };
-        let hashes = checkpoint_hashes(&trace).unwrap().join("\n") + "\n";
+        let hashes = checkpoint_hashes(&list).unwrap().join("\n") + "\n";
         CheckpointPackage {
             hashes: hashes.into_bytes(),
-            trace: serde_json::to_vec(&trace).unwrap(),
+            list: serde_json::to_vec(&list).unwrap(),
             input_manifests: vec![manifest],
         }
     }
@@ -1051,16 +1052,16 @@ mod tests {
             output_sha256: hex::encode(Sha256::digest(output)),
             ..Checkpoint::default()
         };
-        let trace = CheckpointTrace {
+        let list = CheckpointList {
             checkpoints: vec![
                 checkpoint("check_c0", &check_output, &[]),
                 checkpoint("result", &last_output, &[("check", 0)]),
             ],
         };
-        let hashes = checkpoint_hashes(&trace).unwrap().join("\n") + "\n";
+        let hashes = checkpoint_hashes(&list).unwrap().join("\n") + "\n";
         let package = CheckpointPackage {
             hashes: hashes.into_bytes(),
-            trace: serde_json::to_vec(&trace).unwrap(),
+            list: serde_json::to_vec(&list).unwrap(),
             input_manifests: vec![manifest],
         };
         let posted = blob(vec![BlobEntry::Checkpoints(package)]);
@@ -1079,12 +1080,12 @@ mod tests {
             stated.records,
             vec![StatedRecords {
                 checkpoints_root: bare.checkpoint_lists[0].clone(),
-                result_program: trace.checkpoints[1].program_commitment.clone(),
-                result_inputs: trace.checkpoints[1].input_sources.clone(),
+                result_program: list.checkpoints[1].program_commitment.clone(),
+                result_inputs: list.checkpoints[1].input_sources.clone(),
                 results,
                 checks: vec![StatedCheck {
                     checkpoint: 0,
-                    program: trace.checkpoints[0].program_commitment.clone(),
+                    program: list.checkpoints[0].program_commitment.clone(),
                     record: record(true),
                 }],
             }]

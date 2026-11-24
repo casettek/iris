@@ -111,7 +111,7 @@ can replay any one stage in Raster from the claimer's own boundary and show
 where it leaves what the claimer committed for the next. No chain-wide Raster
 commitment is involved.
 
-`checkpoint_trace.json` holds the checkpoints. `checkpoints.txt` holds one
+`checkpoint_list.json` holds the checkpoints. `checkpoints.txt` holds one
 hash per checkpoint. The claim's commitment to all of them is the root of a
 tree over those hashes, with their count: `checkpoints_root`. See
 [the encodings](#the-encodings-a-contract-recomputes).
@@ -138,7 +138,7 @@ tree over those hashes, with their count: `checkpoints_root`. See
 | `consensus` | For a `consensus` claim: `same_input`, `agree` and `code`, as its result stage states them. Absent for `single` |
 | `checkpoint_count` | How many checkpoints the claim has |
 | `checkpoints_root` | The claim's commitment to its checkpoint list: the count and the root of the tree over the checkpoint hashes |
-| `availability` | The blobs the claimer posted: the inputs its run was given, and the checkpoint list with every checkpoint, each with where it is, what it holds and its availability proof ([availability](availability.md)) |
+| `availability` | The blobs the claimer posted: the inputs its run was given, and the checkpoint hashes with every checkpoint, each with where it is, what it holds and its availability proof ([availability](availability.md)) |
 
 The three `record` values are the claim record an inference's last check states
 in its output (`ClaimRecord` in `raster-stages/sequence-check/src/input.rs`). The

@@ -18,10 +18,10 @@ pub struct Divergence {
     pub stage: String,
     pub reason: DivergenceReason,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub claimed_trace_path: Option<PathBuf>,
+    pub claimed_list_path: Option<PathBuf>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub claimed_checkpoint_hashes_path: Option<PathBuf>,
-    pub recomputed_trace_path: PathBuf,
+    pub recomputed_list_path: PathBuf,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub claimed_hash: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -78,10 +78,10 @@ pub struct ChallengeBundle {
     pub version: u32,
     pub stage: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub source_trace_path: Option<PathBuf>,
+    pub source_list_path: Option<PathBuf>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source_checkpoint_hashes_path: Option<PathBuf>,
-    pub recomputed_trace_path: PathBuf,
+    pub recomputed_list_path: PathBuf,
     pub divergence_path: PathBuf,
     pub challenge_trace_path: PathBuf,
     pub replay_package_path: PathBuf,
@@ -101,7 +101,7 @@ pub enum ChallengeSourcePath<'a> {
 pub fn write_challenge_artifacts(
     challenge_dir: &Path,
     source_path: ChallengeSourcePath<'_>,
-    recomputed_trace_path: &Path,
+    recomputed_list_path: &Path,
     divergence: &Divergence,
     replay_package: &ReplayPackage,
 ) -> Result<(PathBuf, PathBuf, PathBuf, PathBuf)> {
@@ -163,16 +163,16 @@ pub fn write_challenge_artifacts(
     let challenge_trace_path = challenge_dir.join(CHALLENGE_TRACE_JSON);
     write_json(&challenge_trace_path, &challenge_trace)?;
 
-    let (source_trace_path, source_checkpoint_hashes_path) = match source_path {
+    let (source_list_path, source_checkpoint_hashes_path) = match source_path {
         ChallengeSourcePath::Trace(path) => (Some(path.to_path_buf()), None),
         ChallengeSourcePath::CheckpointHashes(path) => (None, Some(path.to_path_buf())),
     };
     let bundle = ChallengeBundle {
-        version: 1,
+        version: 2,
         stage: replay_package.stage.clone(),
-        source_trace_path,
+        source_list_path,
         source_checkpoint_hashes_path,
-        recomputed_trace_path: recomputed_trace_path.to_path_buf(),
+        recomputed_list_path: recomputed_list_path.to_path_buf(),
         divergence_path: divergence_path.clone(),
         challenge_trace_path: challenge_trace_path.clone(),
         replay_package_path: replay_package_path.clone(),

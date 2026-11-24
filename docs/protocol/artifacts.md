@@ -42,7 +42,7 @@ an instruction to re-import.
 
 ## Checkpoints
 
-A checkpoint trace is an ordered list of per-stage records:
+A checkpoint list is an ordered list of per-stage records:
 
 - Stage name.
 - The stage program's id, as its project's `Raster.lock` holds it. The native runner records it in the stage directory as `program.json`; a stage whose project is not locked names none.
@@ -63,12 +63,12 @@ Every checkpointed stage directory must include:
 
 `claim build` writes:
 
-- `checkpoint_trace.json`
+- `checkpoint_list.json`
 - `checkpoints.txt`
 - `claim_bundle.json`
 - `claim_submission.json`
 
-The claim bundle records the first checkpoint input commitment, final checkpoint output commitment, checkpoint trace path, and prepared-run metadata path.
+The claim bundle records the first checkpoint input commitment, final checkpoint output commitment, checkpoint list path, and prepared-run metadata path.
 
 The claim submission is what a claimer would post to a [contract](checks.md): the procedure kind, the input text hash, the source record of a run that has one, for each inference its output text, its last check's claim record (statement digest, output text hash, valid flag) and its result code, for a consensus the agreement, the claimer's address, and the root of the checkpoint list, which commits to every stage boundary. A model import's `contract_pins.json` is the other side: what a contract of the `single` procedure kind over that model pins, as the procedure kind's name, a program entry (the stage programs and the inputs each takes from earlier stages) and a model entry. `iris claim pins` writes the same file for any procedure kind over the models a run spec names.
 

@@ -3,7 +3,7 @@
 //! were built in.
 //!
 //! A challenger has the procedure and the models. [`fetch_claim`] gives
-//! it the rest: the claim's checkpoint list, checkpoints and input
+//! it the rest: the claim's checkpoint hashes, checkpoints and input
 //! manifests, and the inputs the claim's run was given, with a run spec over
 //! them. A defender has its own run of the disputed stage.
 //! [`fetch_challenge`] gives it the trace the challenge names.
@@ -18,8 +18,8 @@ use inference_artifacts::availability::{
 };
 use inference_artifacts::checks::{ChallengeSubmission, ClaimSubmission, CLAIM_SUBMISSION_JSON};
 use inference_artifacts::{
-    read_json, read_run_spec, write_json, CheckpointTrace, SourceDocumentSpec, CHECKPOINTS_TXT,
-    CHECKPOINT_TRACE_JSON, INFERENCE_RUN_SPEC_TOML,
+    read_json, read_run_spec, write_json, CheckpointList, SourceDocumentSpec, CHECKPOINTS_TXT,
+    CHECKPOINT_LIST_JSON, INFERENCE_RUN_SPEC_TOML,
 };
 use sha2::{Digest, Sha256};
 
@@ -99,7 +99,7 @@ pub(crate) fn stage_dir_name(stage: &str) -> Result<&str> {
 /// not fix.
 ///
 /// The directory holds the submission, the claim's `checkpoints.txt` and
-/// `checkpoint_trace.json`, every stage's `input_manifest.json`, the inputs
+/// `checkpoint_list.json`, every stage's `input_manifest.json`, the inputs
 /// the claim's run was given (`posted_run.bin`), and `inference.toml`: the
 /// reader's run spec over the prompt text, or the source's documents, that
 /// those inputs hold. Nothing is written unless the blobs are the claimer's
@@ -245,32 +245,32 @@ pub fn fetch_claim(options: FetchClaimOptions) -> Result<FetchedClaim> {
         toml::to_string(&spec).context("the run spec does not encode")?,
     )
     .with_context(|| format!("failed to write {}", run_spec_path.display()))?;
-    let trace: CheckpointTrace = serde_json::from_slice(&package.trace)?;
+    let list: CheckpointList = serde_json::from_slice(&package.list)?;
     Ok(FetchedClaim {
         submission_path,
         run_spec_path,
         blobs: submission.availability.len(),
         bytes: bytes_read,
-        checkpoints: trace.checkpoints.len(),
+        checkpoints: list.checkpoints.len(),
         input_manifests: package.input_manifests.len(),
     })
 }
 
-/// A checkpoint package as the files of a claim's directory: the list, the
+/// A checkpoint package as the files of a claim's directory: the hashes, the
 /// checkpoints, and each stage's input manifest in the stage's directory.
 fn write_package(dir: &Path, package: &CheckpointPackage) -> Result<()> {
     let write = |path: PathBuf, bytes: &[u8]| {
         fs::write(&path, bytes).with_context(|| format!("failed to write {}", path.display()))
     };
     write(dir.join(CHECKPOINTS_TXT), &package.hashes)?;
-    write(dir.join(CHECKPOINT_TRACE_JSON), &package.trace)?;
+    write(dir.join(CHECKPOINT_LIST_JSON), &package.list)?;
     let manifests: BTreeMap<String, &Vec<u8>> = package
         .input_manifests
         .iter()
         .map(|manifest| (hex::encode(Sha256::digest(manifest)), manifest))
         .collect();
-    let trace: CheckpointTrace = serde_json::from_slice(&package.trace)?;
-    for checkpoint in &trace.checkpoints {
+    let list: CheckpointList = serde_json::from_slice(&package.list)?;
+    for checkpoint in &list.checkpoints {
         let manifest = manifests
             .get(&checkpoint.input_commitment)
             .with_context(|| {

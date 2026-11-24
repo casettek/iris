@@ -20,11 +20,11 @@ pub use challenge::{
     CHALLENGE_TRACE_JSON, DIVERGENCE_JSON, REPLAY_PACKAGE_JSON,
 };
 pub use checkpoint::{
-    build_checkpoint_trace, checkpoint_hash, checkpoint_hashes, checkpoint_opening,
-    checkpoints_root, read_checkpoint_from_stage_dir, read_checkpoint_hashes,
-    read_checkpoint_trace, read_stage_order, verify_checkpoint_opening, write_checkpoint_hashes,
-    write_checkpoint_hashes_artifact, write_checkpoint_trace_artifact, write_stage_program,
-    Checkpoint, CheckpointTrace, CHECKPOINTS_TXT, CHECKPOINT_HASHES_TXT, CHECKPOINT_TRACE_JSON,
+    build_checkpoint_list, checkpoint_hash, checkpoint_hashes, checkpoint_opening,
+    checkpoints_root, read_checkpoint_from_stage_dir, read_checkpoint_hashes, read_checkpoint_list,
+    read_stage_order, verify_checkpoint_opening, write_checkpoint_hashes,
+    write_checkpoint_hashes_artifact, write_checkpoint_list_artifact, write_stage_program,
+    Checkpoint, CheckpointList, CHECKPOINTS_TXT, CHECKPOINT_HASHES_TXT, CHECKPOINT_LIST_JSON,
     EXECUTION_TIMES_JSON, STAGE_PROGRAM_JSON,
 };
 pub use claim::{
@@ -71,22 +71,21 @@ mod tests {
 
         let manifest_path = base.join("Raster.toml");
         fs::write(&manifest_path, "[chain]\nname = \"test\"\n").unwrap();
-        let (trace_path, hashes_path, bundle_path) =
+        let (list_path, hashes_path, bundle_path) =
             write_claim_artifacts(&base, &manifest_path).unwrap();
-        assert_eq!(trace_path.file_name().unwrap(), CHECKPOINT_TRACE_JSON);
+        assert_eq!(list_path.file_name().unwrap(), CHECKPOINT_LIST_JSON);
         assert_eq!(hashes_path.file_name().unwrap(), CHECKPOINT_HASHES_TXT);
         assert_eq!(bundle_path.file_name().unwrap(), CLAIM_BUNDLE_JSON);
 
-        let trace: CheckpointTrace =
-            serde_json::from_slice(&fs::read(&trace_path).unwrap()).unwrap();
+        let list: CheckpointList = serde_json::from_slice(&fs::read(&list_path).unwrap()).unwrap();
         let bundle: ClaimBundle = serde_json::from_slice(&fs::read(&bundle_path).unwrap()).unwrap();
 
-        assert_eq!(trace.checkpoints[0].stage, "stage_b");
-        assert_eq!(trace.checkpoints[0].output_commitment, "bbb");
-        assert_eq!(trace.checkpoints[1].stage, "stage_a");
-        assert_eq!(checkpoint_hashes(&trace).unwrap().len(), 2);
+        assert_eq!(list.checkpoints[0].stage, "stage_b");
+        assert_eq!(list.checkpoints[0].output_commitment, "bbb");
+        assert_eq!(list.checkpoints[1].stage, "stage_a");
+        assert_eq!(checkpoint_hashes(&list).unwrap().len(), 2);
         assert_eq!(fs::read_to_string(&hashes_path).unwrap().lines().count(), 2);
-        assert!(trace_path.is_file());
+        assert!(list_path.is_file());
         assert!(hashes_path.is_file());
         let input_commitment = format!("{:x}", Sha256::digest(b"input-manifest"));
         assert_eq!(bundle.input.stage, "stage_b");
@@ -103,7 +102,7 @@ mod tests {
     }
 
     #[test]
-    fn checkpoint_trace_without_execution_times_uses_stage_name_order() {
+    fn checkpoint_list_without_execution_times_uses_stage_name_order() {
         let base = temp_dir("claim-artifacts-fallback-order");
         fs::create_dir_all(&base).unwrap();
         write_stage(&base, "stage_b", "bbb", b"stage-b");
@@ -113,11 +112,10 @@ mod tests {
 
         let manifest_path = base.join("Raster.toml");
         fs::write(&manifest_path, "[chain]\nname = \"test\"\n").unwrap();
-        let trace = build_checkpoint_trace(&base, &manifest_path).unwrap();
+        let list = build_checkpoint_list(&base, &manifest_path).unwrap();
 
         assert_eq!(
-            trace
-                .checkpoints
+            list.checkpoints
                 .iter()
                 .map(|checkpoint| checkpoint.stage.as_str())
                 .collect::<Vec<_>>(),
@@ -164,10 +162,9 @@ mod tests {
         .unwrap();
         assert!(!base.join(EXECUTION_TIMES_JSON).exists());
         assert_eq!(read_stage_order(&base).unwrap(), Some(expected.clone()));
-        let trace = build_checkpoint_trace(&base, &base.join("Raster.toml")).unwrap();
+        let list = build_checkpoint_list(&base, &base.join("Raster.toml")).unwrap();
         assert_eq!(
-            trace
-                .checkpoints
+            list.checkpoints
                 .iter()
                 .map(|c| c.stage.clone())
                 .collect::<Vec<_>>(),
@@ -226,7 +223,7 @@ mod tests {
 
     #[test]
     fn claim_artifacts_round_trip_as_json() {
-        let trace = CheckpointTrace {
+        let list = CheckpointList {
             checkpoints: vec![Checkpoint {
                 stage: String::from("check_c0"),
                 program_commitment: String::from("program"),
@@ -238,7 +235,7 @@ mod tests {
         };
         let bundle = ClaimBundle {
             version: 1,
-            checkpoint_trace_path: PathBuf::from("checkpoint_trace.json"),
+            checkpoint_list_path: PathBuf::from("checkpoint_list.json"),
             input: ClaimEndpoint {
                 stage: String::from("prompt_bind"),
                 commitment: String::from("input"),
@@ -251,9 +248,8 @@ mod tests {
         };
 
         assert_eq!(
-            serde_json::from_slice::<CheckpointTrace>(&serde_json::to_vec(&trace).unwrap())
-                .unwrap(),
-            trace
+            serde_json::from_slice::<CheckpointList>(&serde_json::to_vec(&list).unwrap()).unwrap(),
+            list
         );
         assert_eq!(
             serde_json::from_slice::<ClaimBundle>(&serde_json::to_vec(&bundle).unwrap()).unwrap(),
@@ -657,10 +653,7 @@ mod tests {
         let bundle: ChallengeBundle =
             serde_json::from_slice(&fs::read(&bundle_path).unwrap()).unwrap();
         assert_eq!(bundle.stage, "stage_a");
-        assert_eq!(
-            bundle.source_trace_path,
-            Some(PathBuf::from("claimed.json"))
-        );
+        assert_eq!(bundle.source_list_path, Some(PathBuf::from("claimed.json")));
         assert_eq!(bundle.source_checkpoint_hashes_path, None);
         assert_eq!(bundle.raster_commit_path, replay_package.commit_path);
 
@@ -683,7 +676,7 @@ mod tests {
         let (_, _, _, bundle_path) = write_challenge_artifacts(
             &base.join("challenge"),
             ChallengeSourcePath::CheckpointHashes(Path::new("checkpoints.txt")),
-            &divergence.recomputed_trace_path,
+            &divergence.recomputed_list_path,
             &divergence,
             &replay_package,
         )
@@ -733,7 +726,7 @@ mod tests {
             let error = write_challenge_artifacts(
                 &base.join("challenge"),
                 source,
-                &divergence.recomputed_trace_path,
+                &divergence.recomputed_list_path,
                 &divergence,
                 &replay_package,
             )
@@ -785,7 +778,7 @@ mod tests {
             let error = write_challenge_artifacts(
                 &base.join("challenge"),
                 ChallengeSourcePath::Trace(Path::new("claimed.json")),
-                &divergence.recomputed_trace_path,
+                &divergence.recomputed_list_path,
                 &divergence,
                 &replay_package,
             )
@@ -808,7 +801,7 @@ mod tests {
         let error = write_challenge_artifacts(
             &base.join("challenge"),
             ChallengeSourcePath::Trace(Path::new("claimed.json")),
-            &divergence.recomputed_trace_path,
+            &divergence.recomputed_list_path,
             &divergence,
             &replay_package,
         )
@@ -838,9 +831,9 @@ mod tests {
             checkpoint_index: 0,
             stage: String::from("stage_a"),
             reason: DivergenceReason::OutputCommitment,
-            claimed_trace_path: Some(PathBuf::from("claimed.json")),
+            claimed_list_path: Some(PathBuf::from("claimed.json")),
             claimed_checkpoint_hashes_path: None,
-            recomputed_trace_path: PathBuf::from("recomputed.json"),
+            recomputed_list_path: PathBuf::from("recomputed.json"),
             claimed_hash: None,
             recomputed_hash: None,
             claimed: Some(claimed),
@@ -866,7 +859,7 @@ mod tests {
 
     fn use_hash_claim(divergence: &mut Divergence) {
         divergence.reason = DivergenceReason::CheckpointHash;
-        divergence.claimed_trace_path = None;
+        divergence.claimed_list_path = None;
         divergence.claimed_checkpoint_hashes_path = Some(PathBuf::from("checkpoints.txt"));
         divergence.claimed_hash =
             Some(checkpoint_hash(&divergence.claimed.take().unwrap()).unwrap());

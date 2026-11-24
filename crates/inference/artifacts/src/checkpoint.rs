@@ -10,7 +10,7 @@ use sha2::{Digest, Sha256};
 use crate::encoding::{parse_hash, root_from_path, tree_path, tree_root, Encoder};
 use crate::io::{read_json, write_json};
 
-pub const CHECKPOINT_TRACE_JSON: &str = "checkpoint_trace.json";
+pub const CHECKPOINT_LIST_JSON: &str = "checkpoint_list.json";
 pub const CHECKPOINTS_TXT: &str = "checkpoints.txt";
 pub const CHECKPOINT_HASHES_TXT: &str = CHECKPOINTS_TXT;
 pub const EXECUTION_TIMES_JSON: &str = "execution-times.json";
@@ -22,7 +22,7 @@ pub const STAGE_PROGRAM_JSON: &str = "program.json";
 /// Ordered routine-boundary checkpoints from one checkpointed inference run.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(transparent)]
-pub struct CheckpointTrace {
+pub struct CheckpointList {
     pub checkpoints: Vec<Checkpoint>,
 }
 
@@ -85,7 +85,7 @@ struct StageExecutionTime {
     name: String,
 }
 
-pub fn read_checkpoint_trace(path: &Path) -> Result<CheckpointTrace> {
+pub fn read_checkpoint_list(path: &Path) -> Result<CheckpointList> {
     read_json(path)
 }
 
@@ -99,21 +99,18 @@ pub fn read_checkpoint_hashes(path: &Path) -> Result<Vec<String>> {
         .collect()
 }
 
-pub fn write_checkpoint_trace_artifact(
-    chain_dir: &Path,
-    trace: &CheckpointTrace,
-) -> Result<PathBuf> {
-    let trace_path = chain_dir.join(CHECKPOINT_TRACE_JSON);
-    write_json(&trace_path, trace)?;
-    Ok(trace_path)
+pub fn write_checkpoint_list_artifact(chain_dir: &Path, list: &CheckpointList) -> Result<PathBuf> {
+    let list_path = chain_dir.join(CHECKPOINT_LIST_JSON);
+    write_json(&list_path, list)?;
+    Ok(list_path)
 }
 
 pub fn write_checkpoint_hashes_artifact(
     chain_dir: &Path,
-    trace: &CheckpointTrace,
+    list: &CheckpointList,
 ) -> Result<PathBuf> {
     let hashes_path = chain_dir.join(CHECKPOINTS_TXT);
-    let mut output = checkpoint_hashes(trace)?.join("\n");
+    let mut output = checkpoint_hashes(list)?.join("\n");
     if !output.is_empty() {
         output.push('\n');
     }
@@ -130,8 +127,8 @@ pub fn write_checkpoint_hashes(path: &Path, hashes: &[String]) -> Result<()> {
     fs::write(path, output).with_context(|| format!("failed to write {}", path.display()))
 }
 
-pub fn checkpoint_hashes(trace: &CheckpointTrace) -> Result<Vec<String>> {
-    trace.checkpoints.iter().map(checkpoint_hash).collect()
+pub fn checkpoint_hashes(list: &CheckpointList) -> Result<Vec<String>> {
+    list.checkpoints.iter().map(checkpoint_hash).collect()
 }
 
 /// A checkpoint's hash: its fields in order, in the encoding a contract
@@ -221,7 +218,7 @@ fn validate_checkpoint_hash(hash: &str, line_number: usize) -> Result<String> {
     Ok(hash.to_ascii_lowercase())
 }
 
-pub fn build_checkpoint_trace(chain_dir: &Path, _manifest_path: &Path) -> Result<CheckpointTrace> {
+pub fn build_checkpoint_list(chain_dir: &Path, _manifest_path: &Path) -> Result<CheckpointList> {
     let stage_order = read_stage_order(chain_dir)?.map(StageOrderIndex::from);
 
     let mut checkpoints = Vec::new();
@@ -251,7 +248,7 @@ pub fn build_checkpoint_trace(chain_dir: &Path, _manifest_path: &Path) -> Result
         None => left.stage.cmp(&right.stage),
     });
 
-    Ok(CheckpointTrace { checkpoints })
+    Ok(CheckpointList { checkpoints })
 }
 
 pub fn read_checkpoint_from_stage_dir(stage: &str, stage_dir: &Path) -> Result<Checkpoint> {

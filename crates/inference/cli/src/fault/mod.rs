@@ -2,7 +2,7 @@
 
 use anyhow::{ensure, Context, Result};
 use inference_artifacts::{
-    file_sha256, read_json, write_json, ChallengeBundle, CheckpointTrace, ClaimBundle, PreparedRun,
+    file_sha256, read_json, write_json, ChallengeBundle, CheckpointList, ClaimBundle, PreparedRun,
     ReplayPackage,
 };
 use raster_core::transition::{TransitionJournal, TransitionState};
@@ -89,7 +89,7 @@ fn flip_entry(value: &mut CommitmentFile, entry: usize) -> Result<(usize, usize,
 pub fn corrupt(args: CorruptArgs) -> Result<()> {
     let challenge_path = fs::canonicalize(args.challenge)?;
     let bundle: ChallengeBundle = read_json(&challenge_path)?;
-    ensure!(bundle.version == 1, "unsupported challenge version");
+    ensure!(bundle.version == 2, "unsupported challenge version");
     let source = reference(&challenge_path, &bundle.raster_commit_path);
     let mut value = commitment(&source)?;
 
@@ -184,7 +184,7 @@ pub fn prove(args: ProveArgs) -> Result<()> {
     let bundle: ChallengeBundle = read_json(&challenge_path)?;
     let claim: ClaimBundle = read_json(&claim_path)?;
     ensure!(
-        bundle.version == 1 && claim.version == 1,
+        bundle.version == 2 && claim.version == 2,
         "unsupported bundle version"
     );
     let prepared_path = reference(
@@ -214,16 +214,16 @@ pub fn prove(args: ProveArgs) -> Result<()> {
             "frozen model",
         )?;
     }
-    let claim_trace: CheckpointTrace =
-        read_json(&reference(&claim_path, &claim.checkpoint_trace_path))?;
+    let claim_list: CheckpointList =
+        read_json(&reference(&claim_path, &claim.checkpoint_list_path))?;
     ensure!(
-        claim_trace.checkpoints.iter().all(|c| !c.stage.is_empty()
+        claim_list.checkpoints.iter().all(|c| !c.stage.is_empty()
             && c.stage
                 .chars()
                 .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '-')),
         "unsafe checkpoint stage name"
     );
-    let index = claim_trace
+    let index = claim_list
         .checkpoints
         .iter()
         .position(|c| c.stage == bundle.stage)
@@ -236,13 +236,13 @@ pub fn prove(args: ProveArgs) -> Result<()> {
     // The replayed stage directory is Raster's: it states the boundary and
     // not the program id or producers the claimer's checkpoint also names.
     ensure!(
-        baseline.same_boundary(&claim_trace.checkpoints[index]),
+        baseline.same_boundary(&claim_list.checkpoints[index]),
         "challenge does not match original claimer checkpoint"
     );
     let disputed = commitment(&disputed_path)?;
     // The challenge as Raster states it, about the claimer's checkpoint: the
     // disputed trace commitment, and the output the challenger's run ended in.
-    let claimed_checkpoint = &claim_trace.checkpoints[index];
+    let claimed_checkpoint = &claim_list.checkpoints[index];
     let challenge = inference_artifacts::checks::stage_challenge(
         claimed_checkpoint,
         disputed.header(),

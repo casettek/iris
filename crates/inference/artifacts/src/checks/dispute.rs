@@ -14,24 +14,21 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::availability::PostedBlob;
-use crate::checkpoint::{Checkpoint, CheckpointTrace};
+use crate::checkpoint::{Checkpoint, CheckpointList};
 
 /// Where a claim's checkpoints are not the boundaries a Raster chain run of
 /// the same claim committed, or `None` when every one is: the same stages in
 /// the same order, each with Raster's program id, input manifest commitment,
 /// producers and output commitments.
-pub fn raster_boundary_mismatch(
-    trace: &CheckpointTrace,
-    chain: &ChainCommitment,
-) -> Option<String> {
-    if trace.checkpoints.len() != chain.stages.len() {
+pub fn raster_boundary_mismatch(list: &CheckpointList, chain: &ChainCommitment) -> Option<String> {
+    if list.checkpoints.len() != chain.stages.len() {
         return Some(format!(
             "the claim has {} checkpoints, the Raster run {} stages",
-            trace.checkpoints.len(),
+            list.checkpoints.len(),
             chain.stages.len()
         ));
     }
-    for (index, (checkpoint, stage)) in trace.checkpoints.iter().zip(&chain.stages).enumerate() {
+    for (index, (checkpoint, stage)) in list.checkpoints.iter().zip(&chain.stages).enumerate() {
         let raster_sources = stage
             .input_bindings
             .iter()

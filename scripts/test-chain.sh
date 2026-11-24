@@ -164,7 +164,7 @@ other_ids() {
 
 # The last check stage of a claim: the stage its verdict is stated by.
 last_check() {
-    grep -o '"stage": *"[A-Za-z0-9_.-]*check_c[0-9]*"' "$(dirname "$1")/checkpoint_trace.json" |
+    grep -o '"stage": *"[A-Za-z0-9_.-]*check_c[0-9]*"' "$(dirname "$1")/checkpoint_list.json" |
         tail -1 | sed 's/.*"\([^"]*\)"$/\1/'
 }
 

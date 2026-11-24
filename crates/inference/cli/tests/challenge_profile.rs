@@ -147,17 +147,17 @@ risc0-zkvm={{path={:?}}}
         "inferences":[{"model_manifest_path":model,"model_id":"",
         "model_manifest_sha256":file_sha256(&model).unwrap(),"prompt":{"resolved_prompt":"","rendered_prompt":"","initial_pieces":[],"eos_token_ids":[]}}],
         "tokens":1,"run_manifest_path":manifest,"run_manifest_sha256":file_sha256(&manifest).unwrap()})).unwrap();
-    let checkpoints = dir.join("checkpoint_trace.json");
+    let checkpoints = dir.join("checkpoint_list.json");
     write_json(&checkpoints, &json!([checkpoint])).unwrap();
     let claim = dir.join("claim.json");
-    write_json(&claim,&json!({"version":1,"checkpoint_trace_path":checkpoints,"prepared_run_path":prepared,
+    write_json(&claim,&json!({"version":2,"checkpoint_list_path":checkpoints,"prepared_run_path":prepared,
         "input":{"stage":stage,"commitment":checkpoint.input_commitment},"output":{"stage":stage,"commitment":checkpoint.output_commitment}})).unwrap();
     let package = dir.join("replay_package.json");
     write_json(&package,&json!({"version":1,"stage":stage,"replay_run_dir":stage_dir.parent(),
         "stage_dir":stage_dir,"input_path":input,"input_manifest_path":inputs,"output_path":stage_dir.join("output.bin"),
         "output_index_path":stage_dir.join("output.rindex"),"output_manifest_path":stage_dir.join("output_manifest.json"),"commit_path":original})).unwrap();
     let challenge = dir.join("challenge.json");
-    write_json(&challenge,&json!({"version":1,"stage":stage,"recomputed_trace_path":checkpoints,
+    write_json(&challenge,&json!({"version":2,"stage":stage,"recomputed_list_path":checkpoints,
         "divergence_path":dir.join("unused.json"),"challenge_trace_path":dir.join("unused.json"),"replay_package_path":package,"raster_commit_path":original})).unwrap();
     let iris = env!("CARGO_BIN_EXE_iris");
     let profile_dir = dir.join("profile");

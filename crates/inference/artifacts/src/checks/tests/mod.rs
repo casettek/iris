@@ -13,7 +13,7 @@ use raster_core::transition::{TraceCommitmentHeader, TransitionJournal};
 use sha2::{Digest, Sha256};
 
 use crate::availability::{BlobContents, PostedBlob};
-use crate::checkpoint::{checkpoints_root, Checkpoint, CheckpointTrace};
+use crate::checkpoint::{checkpoints_root, Checkpoint, CheckpointList};
 use crate::direct::{model_id_of, ModelCommitment, ModelManifest};
 
 use crate::procedure_kind::ProcedureKind;
@@ -163,8 +163,8 @@ fn checkpoint(
     }
 }
 
-fn checkpoints_txt(trace: &CheckpointTrace) -> Vec<u8> {
-    let mut text = crate::checkpoint::checkpoint_hashes(trace)
+fn checkpoints_txt(list: &CheckpointList) -> Vec<u8> {
+    let mut text = crate::checkpoint::checkpoint_hashes(list)
         .unwrap()
         .join("\n");
     text.push('\n');
@@ -175,7 +175,7 @@ fn checkpoints_txt(trace: &CheckpointTrace) -> Vec<u8> {
 /// result, with each stage's input list.
 struct Claim {
     submission: ClaimSubmission,
-    trace: CheckpointTrace,
+    list: CheckpointList,
     hashes: Vec<u8>,
     manifests: Vec<Vec<u8>>,
 }
@@ -184,8 +184,8 @@ impl Claim {
     fn of(checkpoints: Vec<Checkpoint>, manifests: Vec<Vec<u8>>) -> Self {
         let pins = pins();
         let input = hex::encode([5; 32]);
-        let trace = CheckpointTrace { checkpoints };
-        let hashes = checkpoints_txt(&trace);
+        let list = CheckpointList { checkpoints };
+        let hashes = checkpoints_txt(&list);
         let submission = ClaimSubmission {
             version: CLAIM_SUBMISSION_VERSION,
             procedure_kind: ProcedureKind::Single,
@@ -196,9 +196,9 @@ impl Claim {
             input_text_sha256: input,
             source_sha256: "00".repeat(32),
             source: None,
-            checkpoint_count: trace.checkpoints.len() as u32,
+            checkpoint_count: list.checkpoints.len() as u32,
             checkpoints_root: checkpoints_root(
-                &crate::checkpoint::checkpoint_hashes(&trace).unwrap(),
+                &crate::checkpoint::checkpoint_hashes(&list).unwrap(),
             )
             .unwrap(),
             // The run inputs the claim posted: its text and its forms.
@@ -219,7 +219,7 @@ impl Claim {
         };
         Self {
             submission,
-            trace,
+            list,
             hashes,
             manifests,
         }
@@ -271,11 +271,11 @@ impl Claim {
     /// The link check as a challenger pointing at `stage` and `input`
     /// would have a contract make it.
     fn link(&self, stage: u32, input: &str) -> std::result::Result<LinkCheck, ChallengeRefusal> {
-        let checkpoint = &self.trace.checkpoints[stage as usize];
+        let checkpoint = &self.list.checkpoints[stage as usize];
         let producer = checkpoint
             .input_sources
             .get(input)
-            .and_then(|index| self.trace.checkpoints.get(*index as usize));
+            .and_then(|index| self.list.checkpoints.get(*index as usize));
         self.opened().check_link(
             &pins().programs,
             stage,
@@ -291,7 +291,7 @@ impl Claim {
 /// be the submission's, and each record in the checks that stage names,
 /// taken in the order of the procedure kind's inferences.
 fn stated_records(claim: &Claim) -> crate::availability::StatedRecords {
-    let last = claim.trace.checkpoints.last().unwrap();
+    let last = claim.list.checkpoints.last().unwrap();
     let inputs = claim.submission.procedure_kind.result_inputs();
     crate::availability::StatedRecords {
         checkpoints_root: claim.submission.checkpoints_root.clone(),
@@ -305,7 +305,7 @@ fn stated_records(claim: &Claim) -> crate::availability::StatedRecords {
                 let position = *last.input_sources.get(*input)?;
                 Some(crate::availability::StatedCheck {
                     checkpoint: position,
-                    program: claim.trace.checkpoints[position as usize]
+                    program: claim.list.checkpoints[position as usize]
                         .program_commitment
                         .clone(),
                     record: claim.submission.inferences.get(inference)?.record.clone(),
@@ -372,7 +372,7 @@ fn consensus_claim(second_output: &str) -> Claim {
         ("second", &output_commitment(OTHER_CHECK_OUTPUT)),
         ("forms", &hex::encode([6; 32])),
     ]));
-    let mut checkpoints = single.trace.checkpoints[..3].to_vec();
+    let mut checkpoints = single.list.checkpoints[..3].to_vec();
     for (stage, name) in ["prompt_bind_p0", "range_p0_l0", "check_c0"]
         .iter()
         .enumerate()

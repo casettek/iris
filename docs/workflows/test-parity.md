@@ -357,7 +357,7 @@ persistent workers, and standalone staged execution. An unset variable means
 `ple_loading` in `staged-performance.json`. For a real-model comparison, run the
 same release binary and run spec with `eager`, then `selective`, keeping the
 weight-cache budget, worker count, and Rayon thread count identical. Compare
-every entry in `checkpoint_trace.json` and `checkpoints.txt`; repeat in reversed
+every entry in `checkpoint_list.json` and `checkpoints.txt`; repeat in reversed
 order to assess OS-cache effects. On PowerShell, set the mode with:
 
 ```powershell
@@ -487,7 +487,7 @@ Remove-Item Env:RASTER_PARALLELISM -ErrorAction SilentlyContinue
 
 Use fresh output directories on repeats and reverse build order to assess OS
 cache effects. Each `result.json` identifies its `chain_dir`. Compare every
-entry of `checkpoint_trace.json` and `checkpoints.txt`, not just final text or
+entry of `checkpoint_list.json` and `checkpoints.txt`, not just final text or
 EOS, and inspect `staged-performance.json` for embedding/check timings
 and sampled process-tree memory. Then repeat the original full-length run.
 

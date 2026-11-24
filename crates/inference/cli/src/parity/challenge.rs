@@ -13,8 +13,8 @@ use std::time::Instant;
 use anyhow::{ensure, Context, Result};
 use inference_artifacts::checks::{dispute_digest, settlement, stage_challenge, Settlement};
 use inference_artifacts::{
-    build_checkpoint_trace, checkpoint_hashes, file_sha256, read_checkpoint_trace, read_json,
-    write_checkpoint_hashes, CheckpointTrace, ModelManifest,
+    build_checkpoint_list, checkpoint_hashes, file_sha256, read_checkpoint_list, read_json,
+    write_checkpoint_hashes, CheckpointList, ModelManifest,
 };
 use raster_prover::commitment_file::CommitmentFile;
 use run_prep::RunConfig;
@@ -92,7 +92,7 @@ pub(super) fn run_challenge_leg(leg: &Leg) -> Result<Value> {
 
     let honest = claim(leg, "honest", &spec, Some(leg.claimed.to_vec()))?;
     let context = honest.claim_bundle_path.as_path();
-    let honest_trace = read_checkpoint_trace(&honest.checkpoint_trace_path)?;
+    let honest_trace = read_checkpoint_list(&honest.checkpoint_list_path)?;
     let mut replays = Vec::new();
 
     // An honest claim has nothing to dispute and nothing to reject.
@@ -115,7 +115,7 @@ pub(super) fn run_challenge_leg(leg: &Leg) -> Result<Value> {
         let hashes = dir.join("checkpoints.txt");
         corrupt_checkpoint_hashes(CorruptCheckpointHashesOptions {
             hashes_path: honest.checkpoint_hashes_path.clone(),
-            trace_path: Some(honest.checkpoint_trace_path.clone()),
+            list_path: Some(honest.checkpoint_list_path.clone()),
             output_path: Some(hashes.clone()),
             selection: CorruptCheckpointSelection::Stage(stage.to_string()),
         })?;
@@ -150,7 +150,7 @@ pub(super) fn run_challenge_leg(leg: &Leg) -> Result<Value> {
     }
 
     // The command that stages such a claim (`test corrupt-claim --submission`)
-    // writes one a contract takes: the honest list with one hash changed,
+    // writes one a contract takes: the honest hashes with one changed,
     // posted for the liar. A lie about the result is refused there, since
     // the claim's records are read from that output and no proof would
     // state them.
@@ -307,9 +307,9 @@ pub(super) fn run_challenge_leg(leg: &Leg) -> Result<Value> {
             .context("the honest claim does not end in the result stage")?;
         stated.output_sha256 = "5a".repeat(32);
         let found = locate_divergence(
-            &honest.checkpoint_trace_path,
+            &honest.checkpoint_list_path,
             &lying,
-            &honest.checkpoint_trace_path,
+            &honest.checkpoint_list_path,
             &honest_trace,
         )
         .context("a false result did not differ from honest execution")?;
@@ -687,14 +687,14 @@ fn expect_claim_found(
     name: &str,
     spec: &Path,
     claim: &ClaimBuildResult,
-    honest: &CheckpointTrace,
+    honest: &CheckpointList,
     stage: &str,
 ) -> Result<Value> {
-    let claimed = read_checkpoint_trace(&claim.checkpoint_trace_path)?;
+    let claimed = read_checkpoint_list(&claim.checkpoint_list_path)?;
     let found = locate_divergence(
-        &claim.checkpoint_trace_path,
+        &claim.checkpoint_list_path,
         &claimed,
-        &claim.checkpoint_trace_path,
+        &claim.checkpoint_list_path,
         honest,
     )
     .with_context(|| format!("`{name}` did not differ from honest execution"))?;
@@ -772,7 +772,7 @@ fn expect_found(
     name: &str,
     spec: &Path,
     context: &Path,
-    honest: &CheckpointTrace,
+    honest: &CheckpointList,
     manifest: &str,
     stage: &str,
 ) -> Result<Value> {
@@ -816,12 +816,12 @@ fn replay_stage_dir(leg: &Leg, name: &str, stage: &str) -> Result<PathBuf> {
 fn dispute_tie(
     leg: &Leg,
     name: &str,
-    claimed: &CheckpointTrace,
-    honest: &CheckpointTrace,
+    claimed: &CheckpointList,
+    honest: &CheckpointList,
     stage: &str,
     mut outcome: Value,
 ) -> Result<Value> {
-    let of = |trace: &CheckpointTrace| trace.checkpoints.iter().find(|c| c.stage == stage).cloned();
+    let of = |list: &CheckpointList| list.checkpoints.iter().find(|c| c.stage == stage).cloned();
     let (Some(claimed), Some(honest)) = (of(claimed), of(honest)) else {
         outcome["settled_by"] = json!("missing checkpoint");
         return Ok(outcome);
@@ -882,7 +882,7 @@ fn contract_challenge(
     name: &str,
     spec: &Path,
     honest: &ClaimBuildResult,
-    lying: &CheckpointTrace,
+    lying: &CheckpointList,
     stage: &str,
     challenge_as_posted: bool,
     mut outcome: Value,
@@ -893,7 +893,7 @@ fn contract_challenge(
     fs::create_dir_all(&dir)?;
     let list_path = dir.join(inference_artifacts::CHECKPOINTS_TXT);
     write_checkpoint_hashes(&list_path, &checkpoint_hashes(lying)?)?;
-    inference_artifacts::write_json(&dir.join(inference_artifacts::CHECKPOINT_TRACE_JSON), lying)?;
+    inference_artifacts::write_json(&dir.join(inference_artifacts::CHECKPOINT_LIST_JSON), lying)?;
     let mut claim: ClaimSubmission = read_json(
         honest
             .claim_submission_path
@@ -908,12 +908,12 @@ fn contract_challenge(
     let layer = layer.as_ref();
     let now = crate::posting::now()?;
 
-    // What the liar posts: the honest claim's data, with the lying list and
+    // What the liar posts: the honest claim's data, with the lying hashes and
     // checkpoints in place of the honest ones.
     let posting = crate::posting::PreparedPosting::read(&honest.chain_dir)?.with_checkpoints(
         &claim.claimer,
         &fs::read(&list_path)?,
-        &fs::read(dir.join(inference_artifacts::CHECKPOINT_TRACE_JSON))?,
+        &fs::read(dir.join(inference_artifacts::CHECKPOINT_LIST_JSON))?,
     )?;
     claim.availability = posting
         .post(layer)
@@ -980,7 +980,7 @@ fn contract_challenge(
         );
     }
     // The challenger's side of the same claim: read back from the layer into
-    // a directory that holds nothing else, it is the liar's list and
+    // a directory that holds nothing else, it is the liar's hashes and
     // checkpoints exactly, with every stage's input manifest.
     let fetched = crate::posted::fetch_claim(crate::posted::FetchClaimOptions {
         submission_path: claim_path.clone(),
@@ -996,7 +996,7 @@ fn contract_challenge(
         .context("the fetched claim has no directory")?;
     for file in [
         inference_artifacts::CHECKPOINTS_TXT,
-        inference_artifacts::CHECKPOINT_TRACE_JSON,
+        inference_artifacts::CHECKPOINT_LIST_JSON,
     ] {
         ensure!(
             fs::read(fetched_dir.join(file))? == fs::read(dir.join(file))?,
@@ -1012,7 +1012,7 @@ fn contract_challenge(
         );
     }
     // What the claim put on the layer, measured there: every byte of the
-    // blobs it names, with the list and the checkpoints at the sizes of the
+    // blobs it names, with the hashes and the checkpoints at the sizes of the
     // files that were posted.
     let measured = crate::measure::measure_posting(&claim_path, None)
         .with_context(|| format!("`{name}`: measuring what the lying claim posted"))?;
@@ -1032,8 +1032,8 @@ fn contract_challenge(
     ensure!(
         checkpoints["checkpoint_hashes_bytes"].as_u64()
             == Some(fs::metadata(dir.join(inference_artifacts::CHECKPOINTS_TXT))?.len())
-            && checkpoints["trace_bytes"].as_u64()
-                == Some(fs::metadata(dir.join(inference_artifacts::CHECKPOINT_TRACE_JSON))?.len()),
+            && checkpoints["checkpoint_list_bytes"].as_u64()
+                == Some(fs::metadata(dir.join(inference_artifacts::CHECKPOINT_LIST_JSON))?.len()),
         "`{name}`: the checkpoints measured on the layer are not the size of the ones posted"
     );
     outcome["posted_bytes"] = measured["bytes"].clone();
@@ -1135,8 +1135,8 @@ fn posted_lies(
     );
     // The check the result stage reads.
     let last_check = {
-        let trace = read_checkpoint_trace(&not_greedy.checkpoint_trace_path)?;
-        let result = trace
+        let list = read_checkpoint_list(&not_greedy.checkpoint_list_path)?;
+        let result = list
             .checkpoints
             .last()
             .context("the not-greedy claim has no checkpoints")?;
@@ -1145,7 +1145,7 @@ fn posted_lies(
             .values()
             .next()
             .context("the not-greedy claim's last stage reads no check")?;
-        trace.checkpoints[position as usize].stage.clone()
+        list.checkpoints[position as usize].stage.clone()
     };
     let arranged = |input: &str| CorruptFault::Arrangement(Some(input.to_string()));
     let cases = [
@@ -1287,9 +1287,9 @@ fn posted_lies(
             has_line(&text, &format!("divergence found: {stage}")),
             "`{name}`: the challenge is not of `{stage}`"
         );
-        let lying = read_checkpoint_trace(
+        let lying = read_checkpoint_list(
             &dir.join("claim")
-                .join(inference_artifacts::CHECKPOINT_TRACE_JSON),
+                .join(inference_artifacts::CHECKPOINT_LIST_JSON),
         )?;
         let claimed = &lying.checkpoints[lie.checkpoint_index];
         let replay = replay_stage_dir(leg, name, stage)?;
@@ -1427,7 +1427,7 @@ fn render(model_path: &Path, model: &ModelManifest, run: &RunInputs, dir: &Path)
 }
 
 /// The checkpoints a claimer gets from running this manifest natively.
-fn claimed_run(leg: &Leg, name: &str, manifest: &str) -> Result<(PathBuf, CheckpointTrace)> {
+fn claimed_run(leg: &Leg, name: &str, manifest: &str) -> Result<(PathBuf, CheckpointList)> {
     let dir = leg.dir.join(name);
     fs::create_dir_all(&dir)?;
     let manifest_path = dir.join("Raster.toml");
@@ -1441,10 +1441,10 @@ fn claimed_run(leg: &Leg, name: &str, manifest: &str) -> Result<(PathBuf, Checkp
             parity_policy: ParityPolicy::Skip,
         })
         .with_context(|| format!("substituted claim `{name}`"))?;
-    let trace = build_checkpoint_trace(&run.chain_dir, &manifest_path)?;
+    let list = build_checkpoint_list(&run.chain_dir, &manifest_path)?;
     let hashes = dir.join("checkpoints.txt");
-    write_checkpoint_hashes(&hashes, &checkpoint_hashes(&trace)?)?;
-    Ok((hashes, trace))
+    write_checkpoint_hashes(&hashes, &checkpoint_hashes(&list)?)?;
+    Ok((hashes, list))
 }
 
 /// Imports the pinned bundle with its weights and tokenizer changed, so every

@@ -8,31 +8,31 @@ fn a_challenged_stage_is_disputed_or_void_by_its_own_program_id() {
     assert_eq!(
         claim
             .opened()
-            .admit_stage_challenge(&pins().programs, 2, &claim.trace.checkpoints[2]),
+            .admit_stage_challenge(&pins().programs, 2, &claim.list.checkpoints[2]),
         Ok(StageAdmission::Disputed {
             program_commitment: hex::encode(CHECK)
         })
     );
-    assert_eq!(first_unapproved_stage(&pins().programs, &claim.trace), None);
+    assert_eq!(first_unapproved_stage(&pins().programs, &claim.list), None);
 
     // A claimer that swapped a program in the middle of its chain, or
     // named none, and committed to that.
     for program in [hex::encode([3; 32]), String::new()] {
-        let mut checkpoints = claim.trace.checkpoints.clone();
+        let mut checkpoints = claim.list.checkpoints.clone();
         checkpoints[1].program_commitment = program.clone();
         let swapped = Claim::of(checkpoints, claim.manifests.clone());
         assert_eq!(
             swapped.opened().admit_stage_challenge(
                 &pins().programs,
                 1,
-                &swapped.trace.checkpoints[1]
+                &swapped.list.checkpoints[1]
             ),
             Ok(StageAdmission::UnapprovedProgram {
                 program_commitment: program
             })
         );
         assert_eq!(
-            first_unapproved_stage(&pins().programs, &swapped.trace),
+            first_unapproved_stage(&pins().programs, &swapped.list),
             Some(1)
         );
         // The stages around it are still ordinary disputes.
@@ -40,7 +40,7 @@ fn a_challenged_stage_is_disputed_or_void_by_its_own_program_id() {
             swapped.opened().admit_stage_challenge(
                 &pins().programs,
                 2,
-                &swapped.trace.checkpoints[2]
+                &swapped.list.checkpoints[2]
             ),
             Ok(StageAdmission::Disputed { .. })
         ));
@@ -67,7 +67,7 @@ fn a_challenge_must_present_the_list_and_the_checkpoint_the_claim_committed() {
     let opened = claim.opened();
     assert_eq!(opened.len(), 4);
     assert_eq!(
-        opened.admit_stage_challenge(&pins().programs, 4, &claim.trace.checkpoints[2]),
+        opened.admit_stage_challenge(&pins().programs, 4, &claim.list.checkpoints[2]),
         Err(ChallengeRefusal::UnknownStage {
             challenged: 4,
             stages: 4
@@ -75,7 +75,7 @@ fn a_challenge_must_present_the_list_and_the_checkpoint_the_claim_committed() {
     );
     // A challenger cannot present a checkpoint of its own for a stage: a
     // program id the claimer did not commit to proves nothing.
-    let mut forged = claim.trace.checkpoints[1].clone();
+    let mut forged = claim.list.checkpoints[1].clone();
     forged.program_commitment = hex::encode([3; 32]);
     assert!(matches!(
         opened.admit_stage_challenge(&pins().programs, 1, &forged),
@@ -101,10 +101,10 @@ fn a_challenge_must_present_the_list_and_the_checkpoint_the_claim_committed() {
 
     // What a contract does with the root alone: open one checkpoint
     // with its path.
-    let hashes = crate::checkpoint::checkpoint_hashes(&claim.trace).unwrap();
+    let hashes = crate::checkpoint::checkpoint_hashes(&claim.list).unwrap();
     let root = &claim.submission.checkpoints_root;
     let count = claim.submission.checkpoint_count;
-    for (index, checkpoint) in claim.trace.checkpoints.iter().enumerate() {
+    for (index, checkpoint) in claim.list.checkpoints.iter().enumerate() {
         let path = crate::checkpoint::checkpoint_opening(&hashes, index).unwrap();
         let opens = |index: u32, checkpoint: &Checkpoint, count: u32| {
             crate::checkpoint::verify_checkpoint_opening(root, count, index, checkpoint, &path)
@@ -135,7 +135,7 @@ fn with_check(inputs: &[(&str, &str)], sources: &[(&str, u32)]) -> Claim {
     let honest = Claim::honest();
     let mut manifests = honest.manifests;
     manifests[2] = manifest(inputs);
-    let mut checkpoints = honest.trace.checkpoints;
+    let mut checkpoints = honest.list.checkpoints;
     checkpoints[2] = checkpoint("check_c0", CHECK, &manifests[2], sources, b"last");
     Claim::of(checkpoints, manifests)
 }
@@ -253,7 +253,7 @@ fn an_input_list_that_reads_two_ways_voids_the_claim() {
         let honest = Claim::honest();
         let mut manifests = honest.manifests;
         manifests[2] = bytes;
-        let mut checkpoints = honest.trace.checkpoints;
+        let mut checkpoints = honest.list.checkpoints;
         checkpoints[2] = checkpoint(
             "check_c0",
             CHECK,
@@ -286,7 +286,7 @@ fn an_input_bound_to_fixed_data_must_name_a_pinned_commitment() {
         ("activations", &output_commitment(b"bound")),
         ("layer", &hex::encode([0x66; 32])),
     ]);
-    let mut checkpoints = honest.trace.checkpoints;
+    let mut checkpoints = honest.list.checkpoints;
     checkpoints[1] = checkpoint(
         "range_p0_l0",
         LAYER,
@@ -324,7 +324,7 @@ fn an_input_the_run_gives_must_be_one_the_claim_posted() {
     let honest = Claim::honest();
     let mut manifests = honest.manifests;
     manifests[0] = manifest(&[("text", &hex::encode([0x77; 32]))]);
-    let mut checkpoints = honest.trace.checkpoints;
+    let mut checkpoints = honest.list.checkpoints;
     checkpoints[0] = checkpoint("prompt_bind_p0", BIND, &manifests[0], &[], b"bound");
     let lying = Claim::of(checkpoints, manifests);
     assert_eq!(
@@ -349,7 +349,7 @@ fn an_input_the_run_gives_must_be_one_the_claim_posted() {
 fn a_link_challenge_must_present_what_the_claim_committed() {
     let claim = Claim::honest();
     let opened = claim.opened();
-    let check = &claim.trace.checkpoints[2];
+    let check = &claim.list.checkpoints[2];
     // Another stage's input list.
     assert!(matches!(
         opened.check_link(
@@ -358,7 +358,7 @@ fn a_link_challenge_must_present_what_the_claim_committed() {
             check,
             &claim.manifests[1],
             "activations",
-            Some(&claim.trace.checkpoints[1])
+            Some(&claim.list.checkpoints[1])
         ),
         Err(ChallengeRefusal::NotTheInputManifest { stage: 2, .. })
     ));
@@ -384,7 +384,7 @@ fn a_link_challenge_must_present_what_the_claim_committed() {
             check,
             &claim.manifests[2],
             "activations",
-            Some(&claim.trace.checkpoints[0])
+            Some(&claim.list.checkpoints[0])
         ),
         Err(ChallengeRefusal::NotTheCheckpoint { stage: 1, .. })
     ));
@@ -392,9 +392,9 @@ fn a_link_challenge_must_present_what_the_claim_committed() {
 
 #[test]
 fn only_a_differing_output_is_settled_by_a_replay() {
-    let recomputed = Claim::honest().trace.checkpoints[2].clone();
+    let recomputed = Claim::honest().list.checkpoints[2].clone();
     let claimed = |change: fn(&mut Checkpoint)| {
-        let mut claimed = Claim::honest().trace.checkpoints[2].clone();
+        let mut claimed = Claim::honest().list.checkpoints[2].clone();
         change(&mut claimed);
         settlement(&claimed, &recomputed)
     };

@@ -48,7 +48,7 @@ claim() {
 
 compare() {
     local reference=$1 out=$2 trace checkpoints line
-    trace=$(sed -n 's/^checkpoint trace: //p' "$out/claim.log" | head -1)
+    trace=$(sed -n 's/^checkpoint list: //p' "$out/claim.log" | head -1)
     checkpoints="$(dirname "$trace")/checkpoints.txt"
     cp "$checkpoints" "$out/checkpoints.txt"
     if [ $update -eq 1 ]; then
@@ -107,7 +107,7 @@ for reference in "${references[@]}"; do
     out="$repo_root/target/real-model/$name"
     mkdir -p "$out"
     step "real-model-$name-claim" "$name: an honest claim builds with no fault" claim "$reference" "$out"
-    [ -f "$out/claim.log" ] && grep -q "^checkpoint trace: " "$out/claim.log" || continue
+    [ -f "$out/claim.log" ] && grep -q "^checkpoint list: " "$out/claim.log" || continue
     meaning="$name: every checkpoint matches the reference"
     [ $update -eq 1 ] && meaning="$name: reference checkpoints rewritten from this run"
     step "real-model-$name-checkpoints" "$meaning" compare "$reference" "$out"

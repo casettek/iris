@@ -154,9 +154,9 @@ pub(crate) struct CorruptCheckpointsArgs {
     #[arg(long)]
     output: Option<PathBuf>,
 
-    /// A checkpoint trace, used only to find `--stage` in the list.
+    /// A checkpoint list, used only to find `--stage`.
     #[arg(long)]
-    trace: Option<PathBuf>,
+    list: Option<PathBuf>,
 
     #[command(flatten)]
     checkpoint: CheckpointSelectionArgs,
@@ -224,7 +224,7 @@ pub(crate) fn run(command: TestCommand) -> Result<ExitCode> {
             let result = corrupt_checkpoint_hashes(CorruptCheckpointHashesOptions {
                 selection: args.checkpoint.selection()?,
                 hashes_path: args.checkpoints,
-                trace_path: args.trace,
+                list_path: args.list,
                 output_path: args.output,
             })?;
             println!(

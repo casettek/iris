@@ -14,8 +14,8 @@ use anyhow::{ensure, Context, Result};
 use inference_artifacts::availability::{check_holds, RequiredPosting};
 use inference_artifacts::checks::{is_address, ClaimSubmission, CLAIM_SUBMISSION_JSON};
 use inference_artifacts::{
-    checkpoint_hashes, checkpoints_root, read_checkpoint_hashes, read_checkpoint_trace, read_json,
-    write_checkpoint_hashes, write_json, CHECKPOINTS_TXT, CHECKPOINT_TRACE_JSON,
+    checkpoint_hashes, checkpoints_root, read_checkpoint_hashes, read_checkpoint_list, read_json,
+    write_checkpoint_hashes, write_json, CHECKPOINTS_TXT, CHECKPOINT_LIST_JSON,
 };
 use sha2::{Digest, Sha256};
 
@@ -90,27 +90,27 @@ pub struct CorruptedClaim {
 /// output; neither is a lie a replay shows, and a contract takes the claim
 /// all the same unless the checkpoint is one its records are read from.
 ///
-/// A checkpoint list is posted with the checkpoints it names, so a changed
+/// Checkpoint hashes are posted with the checkpoints they name, so a changed
 /// hash alone is no claim: the lie is a checkpoint that states something
-/// false, and the list and its root follow from it. The directory written
-/// is ready for `claim post`: the submission, the list, the checkpoints, and
-/// the honest claim's blobs with the lying list and checkpoints in place of
-/// the honest ones.
+/// false, and the hashes and their root follow from it. The directory
+/// written is ready for `claim post`: the submission, the hashes, the
+/// checkpoints, and the honest claim's blobs with the lying hashes and
+/// checkpoints in place of the honest ones.
 pub fn corrupt_claim(options: CorruptClaimOptions) -> Result<CorruptedClaim> {
     let honest: ClaimSubmission = read_json(&options.submission_path)?;
     let dir = parent(&options.submission_path)?;
     let honest_hashes_path = dir.join(CHECKPOINTS_TXT);
     let honest_hashes = read_checkpoint_hashes(&honest_hashes_path)?;
-    let mut trace = read_checkpoint_trace(&dir.join(CHECKPOINT_TRACE_JSON))?;
+    let mut list = read_checkpoint_list(&dir.join(CHECKPOINT_LIST_JSON))?;
     ensure!(
-        honest_hashes.len() == trace.checkpoints.len(),
-        "{} lists {} checkpoints, and {CHECKPOINT_TRACE_JSON} holds {}",
+        honest_hashes.len() == list.checkpoints.len(),
+        "{} lists {} checkpoints, and {CHECKPOINT_LIST_JSON} holds {}",
         honest_hashes_path.display(),
         honest_hashes.len(),
-        trace.checkpoints.len()
+        list.checkpoints.len()
     );
-    let index = select_checkpoint_index(&options.selection, &honest_hashes, Some(&trace))?;
-    let stage = trace.checkpoints[index].stage.clone();
+    let index = select_checkpoint_index(&options.selection, &honest_hashes, Some(&list))?;
+    let stage = list.checkpoints[index].stage.clone();
     // Input lists the lying claim posts beside the honest ones, each with
     // its stage, and the input the lie is about.
     let mut lying_manifests: Vec<(String, Vec<u8>)> = Vec::new();
@@ -134,15 +134,15 @@ pub fn corrupt_claim(options: CorruptClaimOptions) -> Result<CorruptedClaim> {
     };
     match &options.fault {
         CorruptFault::Output => {
-            trace.checkpoints[index].output_sha256 =
-                corrupt_hash(&trace.checkpoints[index].output_sha256);
+            list.checkpoints[index].output_sha256 =
+                corrupt_hash(&list.checkpoints[index].output_sha256);
         }
         CorruptFault::Program => {
-            trace.checkpoints[index].program_commitment =
-                corrupt_hash(&trace.checkpoints[index].program_commitment);
+            list.checkpoints[index].program_commitment =
+                corrupt_hash(&list.checkpoints[index].program_commitment);
         }
         CorruptFault::Input(named) => {
-            let checkpoint = &mut trace.checkpoints[index];
+            let checkpoint = &mut list.checkpoints[index];
             let input = match named {
                 Some(input) => input.clone(),
                 None => checkpoint
@@ -179,16 +179,16 @@ pub fn corrupt_claim(options: CorruptClaimOptions) -> Result<CorruptedClaim> {
             lied_input = Some(input);
         }
         CorruptFault::Arrangement(named) => {
-            let mut entries = read_list(&trace.checkpoints[index], index)?;
-            let program = &trace.checkpoints[index].program_commitment;
+            let mut entries = read_list(&list.checkpoints[index], index)?;
+            let program = &list.checkpoints[index].program_commitment;
             // The nearest earlier stage of the same program that is given
             // another value for an input.
             let mut found = None;
             'donors: for donor in (0..index).rev() {
-                if &trace.checkpoints[donor].program_commitment != program {
+                if &list.checkpoints[donor].program_commitment != program {
                     continue;
                 }
-                let given = read_list(&trace.checkpoints[donor], donor)?;
+                let given = read_list(&list.checkpoints[donor], donor)?;
                 for (input, entry) in &entries {
                     if named.as_ref().is_some_and(|named| named != input) {
                         continue;
@@ -215,8 +215,8 @@ pub fn corrupt_claim(options: CorruptClaimOptions) -> Result<CorruptedClaim> {
                 .expect("found above") = value;
             // The pointer goes with the value: the stage the donor took it
             // from, or none for a value no stage made.
-            let pointer = trace.checkpoints[donor].input_sources.get(&input).copied();
-            let checkpoint = &mut trace.checkpoints[index];
+            let pointer = list.checkpoints[donor].input_sources.get(&input).copied();
+            let checkpoint = &mut list.checkpoints[index];
             match pointer {
                 Some(producer) => checkpoint.input_sources.insert(input.clone(), producer),
                 None => checkpoint.input_sources.remove(&input),
@@ -227,8 +227,8 @@ pub fn corrupt_claim(options: CorruptClaimOptions) -> Result<CorruptedClaim> {
             lied_input = Some(input);
         }
         CorruptFault::Verdict => {
-            let last = trace.checkpoints.len() - 1;
-            let reads: Vec<String> = trace.checkpoints[last]
+            let last = list.checkpoints.len() - 1;
+            let reads: Vec<String> = list.checkpoints[last]
                 .input_sources
                 .iter()
                 .filter(|(_, producer)| **producer as usize == index)
@@ -240,19 +240,19 @@ pub fn corrupt_claim(options: CorruptClaimOptions) -> Result<CorruptedClaim> {
                  pick the last check"
             );
             ensure!(
-                trace.checkpoints[..last].iter().all(|checkpoint| checkpoint
+                list.checkpoints[..last].iter().all(|checkpoint| checkpoint
                     .input_sources
                     .values()
                     .all(|producer| *producer as usize != index)),
                 "a stage before the last reads the output of checkpoint {index} (`{stage}`), \
                  and only the last stage is run again here"
             );
-            let result_stage = trace.checkpoints[last].stage.clone();
+            let result_stage = list.checkpoints[last].stage.clone();
             let forged = forge_valid_verdict(
                 &dir.join(stage_dir_name(&stage)?),
                 &dir.join(stage_dir_name(&result_stage)?),
             )?;
-            let mut entries = read_list(&trace.checkpoints[last], last)?;
+            let mut entries = read_list(&list.checkpoints[last], last)?;
             for input in &reads {
                 *entries
                     .get_mut(input)
@@ -267,15 +267,15 @@ pub fn corrupt_claim(options: CorruptClaimOptions) -> Result<CorruptedClaim> {
                     checkpoint.output_commitment = output.structural_commitment.clone();
                     checkpoint.output_sha256 = hex::encode(Sha256::digest(&output.data));
                 };
-            stated(&mut trace.checkpoints[index], &forged.check);
-            stated(&mut trace.checkpoints[last], &forged.result);
-            trace.checkpoints[last].input_commitment = hex::encode(Sha256::digest(&lying));
+            stated(&mut list.checkpoints[index], &forged.check);
+            stated(&mut list.checkpoints[last], &forged.result);
+            list.checkpoints[last].input_commitment = hex::encode(Sha256::digest(&lying));
             lying_manifests.push((result_stage, lying));
             forged_outputs.push((index, forged.check));
             forged_outputs.push((last, forged.result));
         }
     }
-    let hashes = checkpoint_hashes(&trace)?;
+    let hashes = checkpoint_hashes(&list)?;
 
     let claimer = options.claimer.unwrap_or_else(|| honest.claimer.clone());
     ensure!(
@@ -291,8 +291,8 @@ pub fn corrupt_claim(options: CorruptClaimOptions) -> Result<CorruptedClaim> {
     fresh_dir(&options.out_dir)?;
     let hashes_path = options.out_dir.join(CHECKPOINTS_TXT);
     write_checkpoint_hashes(&hashes_path, &hashes)?;
-    let trace_path = options.out_dir.join(CHECKPOINT_TRACE_JSON);
-    write_json(&trace_path, &trace)?;
+    let list_path = options.out_dir.join(CHECKPOINT_LIST_JSON);
+    write_json(&list_path, &list)?;
     for (stage, manifest) in &lying_manifests {
         let stage_dir = options.out_dir.join(stage_dir_name(stage)?);
         fs::create_dir_all(&stage_dir)
@@ -300,7 +300,7 @@ pub fn corrupt_claim(options: CorruptClaimOptions) -> Result<CorruptedClaim> {
         fs::write(stage_dir.join(INPUT_MANIFEST_JSON), manifest)?;
     }
     let mut posting = PreparedPosting::read(dir)?
-        .with_checkpoints(&claimer, &fs::read(&hashes_path)?, &fs::read(&trace_path)?)?
+        .with_checkpoints(&claimer, &fs::read(&hashes_path)?, &fs::read(&list_path)?)?
         .with_input_manifests(
             lying_manifests
                 .into_iter()

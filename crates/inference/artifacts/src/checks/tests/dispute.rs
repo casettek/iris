@@ -4,7 +4,7 @@ use super::*;
 
 #[test]
 fn a_checkpoint_is_the_boundary_a_raster_run_commits() {
-    let trace = Claim::honest().trace;
+    let list = Claim::honest().list;
     let stage = |checkpoint: &Checkpoint| StageCheckpoint {
         name: checkpoint.stage.clone(),
         program_commitment: hex::decode(&checkpoint.program_commitment).unwrap(),
@@ -32,18 +32,18 @@ fn a_checkpoint_is_the_boundary_a_raster_run_commits() {
             repeats: Vec::new(),
         },
     };
-    let raster = chain(trace.checkpoints.iter().map(stage).collect());
-    assert_eq!(raster_boundary_mismatch(&trace, &raster), None);
+    let raster = chain(list.checkpoints.iter().map(stage).collect());
+    assert_eq!(raster_boundary_mismatch(&list, &raster), None);
 
     let mut other_program = raster.clone();
     other_program.stages[2].program_commitment = vec![3; 32];
-    assert!(raster_boundary_mismatch(&trace, &other_program)
+    assert!(raster_boundary_mismatch(&list, &other_program)
         .unwrap()
         .contains("stage 2 (check_c0): the checkpoint's program"));
 
     let mut other_input = raster.clone();
     other_input.stages[0].input_manifest_commitment = vec![3; 32];
-    assert!(raster_boundary_mismatch(&trace, &other_input)
+    assert!(raster_boundary_mismatch(&list, &other_input)
         .unwrap()
         .contains("input manifest commitment"));
 
@@ -52,12 +52,12 @@ fn a_checkpoint_is_the_boundary_a_raster_run_commits() {
         String::from("activations"),
         InputBindingSource::Chained { stage: 0 },
     );
-    assert!(raster_boundary_mismatch(&trace, &other_producer)
+    assert!(raster_boundary_mismatch(&list, &other_producer)
         .unwrap()
         .contains("producers"));
 
-    let shorter = chain(vec![stage(&trace.checkpoints[0])]);
-    assert!(raster_boundary_mismatch(&trace, &shorter)
+    let shorter = chain(vec![stage(&list.checkpoints[0])]);
+    assert!(raster_boundary_mismatch(&list, &shorter)
         .unwrap()
         .contains("4 checkpoints"));
 }
@@ -112,7 +112,7 @@ fn journal(checkpoint: &Checkpoint, state: TransitionState, output: &[u8]) -> Tr
 
 #[test]
 fn a_dispute_commitment_is_the_checkpoint_and_nothing_else() {
-    let checkpoint = Claim::honest().trace.checkpoints[2].clone();
+    let checkpoint = Claim::honest().list.checkpoints[2].clone();
     let bytes = dispute_commitment(&checkpoint).unwrap();
 
     // The layout a contract writes out by hand.
@@ -151,7 +151,7 @@ fn a_dispute_commitment_is_the_checkpoint_and_nothing_else() {
     // Each of the three things a dispute reads moves the digest; where the
     // inputs came from does not, since the input manifest hash covers them.
     let digest = |change: fn(&mut Checkpoint)| {
-        let mut changed = Claim::honest().trace.checkpoints[2].clone();
+        let mut changed = Claim::honest().list.checkpoints[2].clone();
         change(&mut changed);
         dispute_digest(&changed)
     };
@@ -170,7 +170,7 @@ fn a_dispute_commitment_is_the_checkpoint_and_nothing_else() {
 
 #[test]
 fn a_proof_dismisses_a_challenge_only_when_it_is_about_the_checkpoint() {
-    let checkpoint = Claim::honest().trace.checkpoints[1].clone();
+    let checkpoint = Claim::honest().list.checkpoints[1].clone();
     let stated = hex::encode([0x13; 32]);
     let challenge = stage_challenge(&checkpoint, trace_header(), &stated).unwrap();
     let defence = |journal: &TransitionJournal| {
@@ -252,7 +252,7 @@ fn a_proof_dismisses_a_challenge_only_when_it_is_about_the_checkpoint() {
 
     // A challenge built for another checkpoint is not this one's to
     // answer, whatever the proof says.
-    let other = Claim::honest().trace.checkpoints[2].clone();
+    let other = Claim::honest().list.checkpoints[2].clone();
     assert_eq!(
         check_defence(
             &other,
@@ -267,7 +267,7 @@ fn a_proof_dismisses_a_challenge_only_when_it_is_about_the_checkpoint() {
 #[test]
 fn a_contract_takes_a_fault_proof_only_of_the_challenge_it_holds() {
     const AUTHORIZATION_ID: [u8; 32] = [0xa0; 32];
-    let checkpoint = Claim::honest().trace.checkpoints[1].clone();
+    let checkpoint = Claim::honest().list.checkpoints[1].clone();
     let challenge = stage_challenge(&checkpoint, trace_header(), &hex::encode([0x13; 32])).unwrap();
     let check = |journal: &TransitionJournal| {
         check_fault_proof(&challenge, journal, &TRANSITION_ID, &AUTHORIZATION_ID)

@@ -42,9 +42,9 @@ Per-stage checkpoint files live under `target/staged-infer/runs/<run>/<stage>/`:
 
 Claim files live beside the generated checkpoint tree:
 
-- `checkpoint_trace.json`: ordered checkpoint records.
+- `checkpoint_list.json`: ordered checkpoint records.
 - `checkpoints.txt`: one SHA-256 per checkpoint record.
-- `claim_bundle.json`: whole-claim input/output commitments plus the checkpoint trace and prepared-run metadata references.
+- `claim_bundle.json`: whole-claim input/output commitments plus the checkpoint list and prepared-run metadata references.
 - `claim_submission.json`: what a claimer would submit to a [contract](../protocol/checks.md): the input text hash, the source record of a run that has one, for each inference its plaintext, its claim record and its result code with the hash of the forms it was read by, for a consensus the agreement, the address the claim is attributed to, and the root of the checkpoint list. Claim build fails if a contract holding the import's pins would not accept the claim: its statement, its output, its source and result against what the run spec names, the program every checkpoint names, every input a stage takes from an earlier stage, each record in its inference's last check's output and the results in the last stage's. `iris claim check --run <spec> --submission <file>` makes the same checks afterwards. Before the checks, claim build names the run's procedure in the submission and prepares the data the claim has to post: the new information the run was given (its source's documents, attestations and recipe, or the prompt text of a run with no source) and the checkpoint list with every checkpoint and input manifest. Every blob names the claimer's address (`--claimer`, or `IRIS_CLAIMER`). No file a stage loads is posted ([availability](../protocol/availability.md)).
 - `posting-blob-<n>.bin` and `posting-outputs.json`: the blobs to post, and the stage outputs their proof is given. Claim build posts nothing. `iris claim post --submission <file>` posts the blobs to the data-availability layer and lists where they are under the submission's `availability`; it can be run again if a post fails. The layer is the stand-in directory, or a Celestia node when `IRIS_CELESTIA_RPC` is set ([the blockchains](../blockchain/overview.md)).
 
@@ -58,7 +58,7 @@ cargo run --release -p iris-cli -- test corrupt-checkpoints \
 just corrupt target/staged-infer/runs/.../checkpoints.txt
 ```
 
-The helper writes a corrupted hash list plus a local `*.corruption.json` manifest that records the selected checkpoint for debugging. Stage-based selection is also available when `checkpoint_trace.json` is beside the hash list:
+The helper writes a corrupted hash list plus a local `*.corruption.json` manifest that records the selected checkpoint for debugging. Stage-based selection is also available when `checkpoint_list.json` is beside the hash list:
 
 ```bash
 cargo run --release -p iris-cli -- test corrupt-checkpoints \

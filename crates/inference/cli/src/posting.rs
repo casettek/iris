@@ -25,7 +25,7 @@ use inference_artifacts::availability::{
     NAMESPACE_BYTES,
 };
 use inference_artifacts::checks::{ResultInOutput, SubmittedRecord};
-use inference_artifacts::{CheckpointTrace, PreparedRun, CHECKPOINTS_TXT, CHECKPOINT_TRACE_JSON};
+use inference_artifacts::{CheckpointList, PreparedRun, CHECKPOINTS_TXT, CHECKPOINT_LIST_JSON};
 use raster::core::trace::TraceCommitment;
 use raster_prover::trace::TraceCommitmentExt;
 use serde::{Deserialize, Serialize};
@@ -542,24 +542,19 @@ impl PreparedPosting {
         })
     }
 
-    /// This posting for another claim of the same run: `hashes` and `trace` in
-    /// place of the checkpoint list and the checkpoints, and every blob
+    /// This posting for another claim of the same run: `hashes` and `list` in
+    /// place of the checkpoint hashes and the checkpoints, and every blob
     /// posted for `submitter`. The new information and the input manifests
     /// stay. It is what a claimer posts who states another output for a
     /// checkpoint of an honest run.
-    pub fn with_checkpoints(
-        mut self,
-        submitter: &str,
-        hashes: &[u8],
-        trace: &[u8],
-    ) -> Result<Self> {
+    pub fn with_checkpoints(mut self, submitter: &str, hashes: &[u8], list: &[u8]) -> Result<Self> {
         let mut replaced = 0;
         for blob in &mut self.blobs {
             blob.submitter = submitter.to_string();
             for entry in &mut blob.entries {
                 if let BlobEntry::Checkpoints(package) = entry {
                     package.hashes = hashes.to_vec();
-                    package.trace = trace.to_vec();
+                    package.list = list.to_vec();
                     replaced += 1;
                 }
             }
@@ -619,13 +614,13 @@ pub fn claim_blobs(
 ) -> Result<PreparedPosting> {
     let hashes = fs::read(claim_dir.join(CHECKPOINTS_TXT))
         .with_context(|| format!("{} has no {CHECKPOINTS_TXT}", claim_dir.display()))?;
-    let trace_bytes = fs::read(claim_dir.join(CHECKPOINT_TRACE_JSON))
-        .with_context(|| format!("{} has no {CHECKPOINT_TRACE_JSON}", claim_dir.display()))?;
-    let trace: CheckpointTrace = serde_json::from_slice(&trace_bytes)?;
+    let list_bytes = fs::read(claim_dir.join(CHECKPOINT_LIST_JSON))
+        .with_context(|| format!("{} has no {CHECKPOINT_LIST_JSON}", claim_dir.display()))?;
+    let list: CheckpointList = serde_json::from_slice(&list_bytes)?;
 
     let mut manifests = Vec::new();
     let mut manifest_hashes = BTreeSet::new();
-    for checkpoint in &trace.checkpoints {
+    for checkpoint in &list.checkpoints {
         let manifest_path = claim_dir
             .join(&checkpoint.stage)
             .join("input_manifest.json");
@@ -637,15 +632,15 @@ pub fn claim_blobs(
     }
     // The outputs the claim's records are read from: its last stage's, and
     // those of the stages that one read.
-    let last = trace
+    let last = list
         .checkpoints
         .last()
         .context("the claim has no checkpoints")?;
     let mut positions: BTreeSet<u32> = last.input_sources.values().copied().collect();
-    positions.insert(trace.checkpoints.len() as u32 - 1);
+    positions.insert(list.checkpoints.len() as u32 - 1);
     let outputs = positions
         .into_iter()
-        .filter_map(|position| Some((position, trace.checkpoints.get(position as usize)?)))
+        .filter_map(|position| Some((position, list.checkpoints.get(position as usize)?)))
         .map(|(position, checkpoint)| {
             let read = |file: &str| {
                 let path = claim_dir.join(&checkpoint.stage).join(file);
@@ -662,7 +657,7 @@ pub fn claim_blobs(
     let mut entries: Vec<BlobEntry> = new_information.into_iter().collect();
     entries.push(BlobEntry::Checkpoints(CheckpointPackage {
         hashes,
-        trace: trace_bytes,
+        list: list_bytes,
         input_manifests: manifests,
     }));
     Ok(PreparedPosting {

@@ -155,7 +155,7 @@ fn a_claim_that_does_not_end_in_its_checks_and_the_result_stage_is_refused() {
     let programs = pins().programs;
 
     // A claim that stops at the check: its last stage is no result stage.
-    let mut checkpoints = honest.trace.checkpoints.clone();
+    let mut checkpoints = honest.list.checkpoints.clone();
     checkpoints.pop();
     let claim = Claim::of(checkpoints, honest.manifests[..3].to_vec());
     let mut stated = stated_records(&claim);
@@ -168,7 +168,7 @@ fn a_claim_that_does_not_end_in_its_checks_and_the_result_stage_is_refused() {
     );
 
     // A result stage that read something that is no check.
-    let mut checkpoints = honest.trace.checkpoints.clone();
+    let mut checkpoints = honest.list.checkpoints.clone();
     checkpoints[3] = checkpoint(
         "result",
         RESULT,
@@ -187,7 +187,7 @@ fn a_claim_that_does_not_end_in_its_checks_and_the_result_stage_is_refused() {
     );
 
     // A result stage that names no check at all.
-    let mut checkpoints = honest.trace.checkpoints.clone();
+    let mut checkpoints = honest.list.checkpoints.clone();
     checkpoints[3] = checkpoint("result", RESULT, &honest.manifests[3], &[], b"result");
     let claim = Claim::of(checkpoints, honest.manifests.clone());
     assert_eq!(
@@ -327,7 +327,7 @@ fn a_consensus_claim_states_each_record_of_its_own_last_check() {
     let claim = consensus_claim(" ZK\n");
     let submission = &claim.submission;
     let opened = claim.opened();
-    let last = &claim.trace.checkpoints[6];
+    let last = &claim.list.checkpoints[6];
     let honest = stated_records(&claim);
     let check = |records: &crate::availability::StatedRecords| {
         check_stated_records(&programs, submission, &posted(records.clone()))
@@ -375,7 +375,7 @@ fn a_consensus_claim_states_each_record_of_its_own_last_check() {
 
     // Every stage names an approved program, and the result stage's two
     // checks are earlier checks' outputs.
-    assert_eq!(first_unapproved_stage(&programs, &claim.trace), None);
+    assert_eq!(first_unapproved_stage(&programs, &claim.list), None);
     for (input, producer) in [("first", 2), ("second", 5)] {
         assert_eq!(
             opened.check_link(
@@ -384,7 +384,7 @@ fn a_consensus_claim_states_each_record_of_its_own_last_check() {
                 last,
                 &claim.manifests[6],
                 input,
-                Some(&claim.trace.checkpoints[producer]),
+                Some(&claim.list.checkpoints[producer]),
             ),
             Ok(LinkCheck::Linked)
         );

@@ -17,7 +17,7 @@ follows, so this page says which is which until they agree.
 | Segment | The stages that share one purpose. A procedure has a source segment, one inference segment per model, and a result segment | `part` and `parts` |
 | Stage | One program's place in a chain | |
 | Checkpoint | What a claim commits to for one stage: its program, its inputs and its output | |
-| Checkpoint list | A claim's checkpoints, one per stage, in order | `checkpoint_trace.json`, `CheckpointTrace` |
+| Checkpoint list | A claim's checkpoints, one per stage, in order | `checkpoint_list.json`, `CheckpointList` |
 | Challenge period | How long a claim stays open to challenge after it is submitted | |
 | Fault-proof period | How long a defender has to answer a challenge | `fault_proof_window_secs`, `faultProofWindow` |
 | Scenario | One test of the parity gate | Leg |

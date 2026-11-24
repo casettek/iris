@@ -16,7 +16,7 @@ use std::path::Path;
 
 use anyhow::{bail, ensure, Context, Result};
 use inference_artifacts::checks::read_input_manifest;
-use inference_artifacts::CheckpointTrace;
+use inference_artifacts::CheckpointList;
 use sha2::{Digest, Sha256};
 use staged_infer::chain_runner::{expanded_stages, ExpandedInput, ExpandedStage};
 
@@ -59,7 +59,7 @@ const AUDIT: &str = "Audit the claim (`iris claim audit`): a program outside the
 /// elsewhere the pointer says nothing of what the stage ran on.
 pub(crate) fn arrange(
     run_manifest: &Path,
-    claimed: &CheckpointTrace,
+    claimed: &CheckpointList,
     claim_dir: &Path,
 ) -> Result<Arranged> {
     let template = expanded_stages(run_manifest)?;
@@ -275,7 +275,7 @@ inputs.state = { from = "layer_l{l-1}", first = "first" }
     fn fixture(
         name: &str,
         lists: &[(&str, &[(&str, &str)], &[(&str, u32)])],
-    ) -> (std::path::PathBuf, CheckpointTrace, std::path::PathBuf) {
+    ) -> (std::path::PathBuf, CheckpointList, std::path::PathBuf) {
         let dir = std::env::temp_dir().join(format!(
             "iris-arrangement-{name}-{}-{}",
             std::process::id(),
@@ -318,8 +318,8 @@ inputs.state = { from = "layer_l{l-1}", first = "first" }
                 output_sha256: format!("sha-{stage}"),
             });
         }
-        let trace = CheckpointTrace { checkpoints };
-        (run_manifest, trace, claim_dir)
+        let list = CheckpointList { checkpoints };
+        (run_manifest, list, claim_dir)
     }
 
     fn written(name: &str, arranged: &Arranged) -> Vec<ExpandedStage> {
@@ -333,7 +333,7 @@ inputs.state = { from = "layer_l{l-1}", first = "first" }
 
     #[test]
     fn a_claim_arranged_as_the_chain_is_the_chain() {
-        let (run, trace, claim) = fixture(
+        let (run, list, claim) = fixture(
             "honest",
             &[
                 ("first", &[("text", "11")], &[]),
@@ -349,7 +349,7 @@ inputs.state = { from = "layer_l{l-1}", first = "first" }
                 ),
             ],
         );
-        let arranged = arrange(&run, &trace, &claim).unwrap();
+        let arranged = arrange(&run, &list, &claim).unwrap();
         assert!(arranged.rearranged.is_empty());
         assert_eq!(written("honest", &arranged), expanded_stages(&run).unwrap());
     }
@@ -358,7 +358,7 @@ inputs.state = { from = "layer_l{l-1}", first = "first" }
     fn a_stage_is_bound_to_what_its_checkpoint_names() {
         // The second layer is given the first layer's weights and the first
         // stage's output: both are values the chain holds.
-        let (run, trace, claim) = fixture(
+        let (run, list, claim) = fixture(
             "rearranged",
             &[
                 ("first", &[("text", "11")], &[]),
@@ -374,7 +374,7 @@ inputs.state = { from = "layer_l{l-1}", first = "first" }
                 ),
             ],
         );
-        let arranged = arrange(&run, &trace, &claim).unwrap();
+        let arranged = arrange(&run, &list, &claim).unwrap();
         assert_eq!(
             arranged
                 .rearranged
@@ -402,7 +402,7 @@ inputs.state = { from = "layer_l{l-1}", first = "first" }
     fn a_pointer_that_does_not_lead_to_what_is_loaded_is_not_followed() {
         // The text is a file of the run. A pointer beside it says nothing of
         // what the stage ran on.
-        let (run, trace, claim) = fixture(
+        let (run, list, claim) = fixture(
             "pointer",
             &[
                 ("first", &[("text", "11")], &[]),
@@ -413,13 +413,13 @@ inputs.state = { from = "layer_l{l-1}", first = "first" }
                 ),
             ],
         );
-        let arranged = arrange(&run, &trace, &claim).unwrap();
+        let arranged = arrange(&run, &list, &claim).unwrap();
         assert!(arranged.rearranged.is_empty());
     }
 
     #[test]
     fn a_value_nobody_holds_is_left_to_the_audit() {
-        let (run, trace, claim) = fixture(
+        let (run, list, claim) = fixture(
             "unheld",
             &[
                 ("first", &[("text", "11")], &[]),
@@ -430,7 +430,7 @@ inputs.state = { from = "layer_l{l-1}", first = "first" }
                 ),
             ],
         );
-        let refused = arrange(&run, &trace, &claim).unwrap_err().to_string();
+        let refused = arrange(&run, &list, &claim).unwrap_err().to_string();
         assert!(refused.contains("is no value the chain holds"), "{refused}");
     }
 }

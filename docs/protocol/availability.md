@@ -74,7 +74,7 @@ both from the value. On a 1,209-token prompt the files are about 130 KB of
 data and 620 KB of indexes, and the values are about a tenth of the data.
 
 The claimer also posts what only it can state: **its checkpoints**, the
-checkpoint list, every checkpoint in it, and every input manifest a checkpoint
+checkpoint hashes, every checkpoint they name, and every input manifest a checkpoint
 commits to. A challenger finds the first checkpoint it disagrees with by hash,
 and a challenge is built from the claimer's checkpoint at that position. That
 checkpoint fixes which step the position is: its stage, program, producers and
@@ -106,7 +106,7 @@ own, which the original submitter is ahead of.
 | Entry | What the proof states of it |
 | --- | --- |
 | The run's inputs (`PostedRun`): the source stage's, the forms, and each inference's procedure, schedule, text claim, text slices, marks and claimed ids | The commitment a stage's input list names each one by: the root of the Raster file written from it |
-| The checkpoint list, with every checkpoint and every input manifest a checkpoint commits to | The root of the list, which is the submission's `checkpoints_root`, and that every listed checkpoint and its manifest are there |
+| The checkpoint hashes, with every checkpoint and every input manifest a checkpoint commits to | The root of the hashes, which is the submission's `checkpoints_root`, and that every checkpoint they name and its manifest are there |
 
 A contract keeps one hash of the run inputs' commitments, in the order the
 blobs state them (`posted_inputs_digest`). A challenger that says a stage's

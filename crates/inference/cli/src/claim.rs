@@ -12,9 +12,9 @@ use staged_infer::{
 
 use inference_artifacts::checks::{ClaimSubmission, CLAIM_SUBMISSION_JSON};
 use inference_artifacts::{
-    file_sha256 as sha256_file, read_checkpoint_hashes, read_checkpoint_trace, read_json,
+    file_sha256 as sha256_file, read_checkpoint_hashes, read_checkpoint_list, read_json,
     read_run_spec, write_checkpoint_hashes, write_claim_artifacts_with_prepared_run, write_json,
-    InferenceResult, InferenceRunSpec, ModelManifest, PreparedRun, CHECKPOINT_TRACE_JSON,
+    InferenceResult, InferenceRunSpec, ModelManifest, PreparedRun, CHECKPOINT_LIST_JSON,
     PREPARED_RUN_JSON,
 };
 use serde::Serialize;
@@ -55,7 +55,7 @@ pub struct ClaimBuildResult {
     /// The procedure kind the claim is of.
     pub procedure_kind: inference_artifacts::ProcedureKind,
     pub chain_dir: PathBuf,
-    pub checkpoint_trace_path: PathBuf,
+    pub checkpoint_list_path: PathBuf,
     pub checkpoint_hashes_path: PathBuf,
     pub claim_bundle_path: PathBuf,
     /// What a claimer would submit to a contract. Absent when the chain
@@ -77,7 +77,7 @@ pub enum CorruptCheckpointSelection {
 #[derive(Debug, Clone)]
 pub struct CorruptCheckpointHashesOptions {
     pub hashes_path: PathBuf,
-    pub trace_path: Option<PathBuf>,
+    pub list_path: Option<PathBuf>,
     pub output_path: Option<PathBuf>,
     pub selection: CorruptCheckpointSelection,
 }
@@ -221,17 +221,17 @@ pub fn corrupt_checkpoint_hashes(
         anyhow::bail!("cannot corrupt empty checkpoint hash file");
     }
 
-    let trace_path = resolve_trace_path(&options.hashes_path, options.trace_path.as_deref());
-    let trace = if trace_path.is_file() {
-        Some(read_checkpoint_trace(&trace_path)?)
+    let list_path = resolve_list_path(&options.hashes_path, options.list_path.as_deref());
+    let list = if list_path.is_file() {
+        Some(read_checkpoint_list(&list_path)?)
     } else {
         None
     };
-    let checkpoint_index = select_checkpoint_index(&options.selection, &hashes, trace.as_ref())?;
+    let checkpoint_index = select_checkpoint_index(&options.selection, &hashes, list.as_ref())?;
     let checkpoint_number = checkpoint_index + 1;
-    let stage = trace
+    let stage = list
         .as_ref()
-        .and_then(|trace| trace.checkpoints.get(checkpoint_index))
+        .and_then(|list| list.checkpoints.get(checkpoint_index))
         .map(|checkpoint| checkpoint.stage.clone());
     let original_hash = hashes[checkpoint_index].clone();
     let corrupted_hash = corrupt_hash(&original_hash);
@@ -279,7 +279,7 @@ fn write_claim_result(
         .as_ref()
         .and_then(|path| path.parent())
         .map(|dir| dir.join(PREPARED_RUN_JSON));
-    let (checkpoint_trace_path, checkpoint_hashes_path, claim_bundle_path) =
+    let (checkpoint_list_path, checkpoint_hashes_path, claim_bundle_path) =
         write_claim_artifacts_with_prepared_run(
             &checkpointed.chain_dir,
             manifest_path,
@@ -324,7 +324,7 @@ fn write_claim_result(
     Ok(ClaimBuildResult {
         procedure_kind: prepared_run.procedure_kind,
         chain_dir: checkpointed.chain_dir,
-        checkpoint_trace_path,
+        checkpoint_list_path,
         checkpoint_hashes_path,
         claim_bundle_path,
         claim_submission_path,
@@ -1128,7 +1128,7 @@ fn absolute(base: &Path, path: &Path) -> PathBuf {
 pub(crate) fn select_checkpoint_index(
     selection: &CorruptCheckpointSelection,
     hashes: &[String],
-    trace: Option<&inference_artifacts::CheckpointTrace>,
+    list: Option<&inference_artifacts::CheckpointList>,
 ) -> Result<usize> {
     match selection {
         CorruptCheckpointSelection::Index(index) => {
@@ -1141,17 +1141,17 @@ pub(crate) fn select_checkpoint_index(
             Ok(*index)
         }
         CorruptCheckpointSelection::Stage(stage) => {
-            let trace = trace.ok_or_else(|| {
+            let list = list.ok_or_else(|| {
                 anyhow::anyhow!(
-                    "stage selection requires a checkpoint trace; pass --trace or keep checkpoint_trace.json beside checkpoints.txt"
+                    "stage selection requires a checkpoint list; pass --list or keep checkpoint_list.json beside checkpoints.txt"
                 )
             })?;
-            let index = trace
+            let index = list
                 .checkpoints
                 .iter()
                 .position(|checkpoint| checkpoint.stage == *stage)
                 .ok_or_else(|| {
-                    anyhow::anyhow!("stage `{stage}` was not found in checkpoint trace")
+                    anyhow::anyhow!("stage `{stage}` was not found in the checkpoint list")
                 })?;
             if index >= hashes.len() {
                 anyhow::bail!(
@@ -1187,15 +1187,15 @@ pub(crate) fn corrupt_hash(hash: &str) -> String {
     String::from_utf8(bytes).expect("checkpoints are valid hex")
 }
 
-fn resolve_trace_path(hashes_path: &Path, trace_path: Option<&Path>) -> PathBuf {
-    trace_path
+fn resolve_list_path(hashes_path: &Path, list_path: Option<&Path>) -> PathBuf {
+    list_path
         .map(Path::to_path_buf)
         .or_else(|| {
             hashes_path
                 .parent()
-                .map(|parent| parent.join(CHECKPOINT_TRACE_JSON))
+                .map(|parent| parent.join(CHECKPOINT_LIST_JSON))
         })
-        .unwrap_or_else(|| PathBuf::from(CHECKPOINT_TRACE_JSON))
+        .unwrap_or_else(|| PathBuf::from(CHECKPOINT_LIST_JSON))
 }
 
 fn default_corrupted_hashes_path(source: &Path) -> PathBuf {
@@ -1220,7 +1220,7 @@ fn run_id(run_spec_path: &Path, rendered_prompt: &str, tokens: u32) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use inference_artifacts::{CHECKPOINT_TRACE_JSON, CLAIM_BUNDLE_JSON};
+    use inference_artifacts::{CHECKPOINT_LIST_JSON, CLAIM_BUNDLE_JSON};
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -1370,8 +1370,8 @@ mod tests {
 
         assert_eq!(result.chain_dir, base);
         assert_eq!(
-            result.checkpoint_trace_path.file_name().unwrap(),
-            CHECKPOINT_TRACE_JSON
+            result.checkpoint_list_path.file_name().unwrap(),
+            CHECKPOINT_LIST_JSON
         );
         assert_eq!(
             result.checkpoint_hashes_path.file_name().unwrap(),
@@ -1400,7 +1400,7 @@ mod tests {
 
         let result = corrupt_checkpoint_hashes(CorruptCheckpointHashesOptions {
             hashes_path: hashes_path.clone(),
-            trace_path: None,
+            list_path: None,
             output_path: Some(output_path.clone()),
             selection: CorruptCheckpointSelection::Index(1),
         })
@@ -1419,12 +1419,12 @@ mod tests {
     }
 
     #[test]
-    fn corrupt_checkpoint_hashes_can_select_stage_from_trace() {
+    fn corrupt_checkpoint_hashes_can_select_stage_from_list() {
         let base = temp_dir("corrupt-stage");
         fs::create_dir_all(&base).unwrap();
         let hashes_path = base.join("checkpoints.txt");
-        let trace_path = base.join(CHECKPOINT_TRACE_JSON);
-        let trace = inference_artifacts::CheckpointTrace {
+        let list_path = base.join(CHECKPOINT_LIST_JSON);
+        let list = inference_artifacts::CheckpointList {
             checkpoints: vec![
                 inference_artifacts::Checkpoint {
                     stage: String::from("stage_a"),
@@ -1444,13 +1444,13 @@ mod tests {
                 },
             ],
         };
-        inference_artifacts::write_json(&trace_path, &trace).unwrap();
-        let hashes = inference_artifacts::checkpoint_hashes(&trace).unwrap();
+        inference_artifacts::write_json(&list_path, &list).unwrap();
+        let hashes = inference_artifacts::checkpoint_hashes(&list).unwrap();
         inference_artifacts::write_checkpoint_hashes(&hashes_path, &hashes).unwrap();
 
         let result = corrupt_checkpoint_hashes(CorruptCheckpointHashesOptions {
             hashes_path: hashes_path.clone(),
-            trace_path: None,
+            list_path: None,
             output_path: Some(base.join("corrupted.txt")),
             selection: CorruptCheckpointSelection::Stage(String::from("stage_b")),
         })

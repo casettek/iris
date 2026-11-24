@@ -49,7 +49,7 @@ same bytes, so a tag that both sides compute changes in both.
 
 ## Not versioned
 
-- The checkpoint list (`checkpoints.txt`) and a stage's input list
+- The checkpoint hashes (`checkpoints.txt`) and a stage's input list
   (`input_manifest.json`) have one canonical form each and no version: a
   change to either is a change to `iris/checkpoint/v1` or to Raster.
 - A stage program has no version. Its identity is its `Raster.lock`, which

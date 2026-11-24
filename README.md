@@ -34,7 +34,7 @@ takes.
 | Command | What it does |
 | --- | --- |
 | `iris claim build` | Run the model stage by stage, write a checkpoint per stage, and write the claim and the data it has to post. Posts nothing. |
-| `iris claim post` | Post the claim's run inputs, checkpoint list and checkpoints to the data-availability layer. |
+| `iris claim post` | Post the claim's run inputs, checkpoint hashes and checkpoints to the data-availability layer. |
 | `iris claim check` | Make the checks a contract makes when a claim arrives. |
 | `iris evm claim` | Write the contract call that submits the claim. |
 

@@ -13,8 +13,8 @@ use anyhow::{ensure, Context, Result};
 use inference_artifacts::availability::{AvailabilityProof, HostAttestation, PostedBlob};
 use inference_artifacts::checks::{ChallengeSubmission, ClaimSubmission};
 use inference_artifacts::{
-    checkpoint_opening, read_checkpoint_hashes, read_checkpoint_trace, read_json, CHECKPOINTS_TXT,
-    CHECKPOINT_TRACE_JSON,
+    checkpoint_opening, read_checkpoint_hashes, read_checkpoint_list, read_json, CHECKPOINTS_TXT,
+    CHECKPOINT_LIST_JSON,
 };
 use iris_evm::{
     abi_encode, attestation_digest, call_with_bytes, challenge_id, challenge_token, claim_id,
@@ -110,7 +110,7 @@ impl OpenedChallenge {
         let dir = claim_submission_path
             .parent()
             .context("the claim submission has no directory")?;
-        let trace = read_checkpoint_trace(&dir.join(CHECKPOINT_TRACE_JSON))?;
+        let trace = read_checkpoint_list(&dir.join(CHECKPOINT_LIST_JSON))?;
         let hashes = read_checkpoint_hashes(&dir.join(CHECKPOINTS_TXT))?;
         let stage = challenge.stage as usize;
         let checkpoint = trace

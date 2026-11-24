@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
-use inference_artifacts::{CheckpointTrace, ConsensusOutcome, Divergence, InferenceResult};
+use inference_artifacts::{CheckpointList, ConsensusOutcome, Divergence, InferenceResult};
 
 use crate::cache::CachedStageValue;
 use crate::chain_runner::{self, CheckpointHashVerifier, StagedExecutionBackend};
@@ -50,7 +50,7 @@ pub struct CheckpointHashChallengeConfig {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CheckpointHashChallengeResult {
     pub chain_dir: PathBuf,
-    pub recomputed_trace: CheckpointTrace,
+    pub recomputed_list: CheckpointList,
     pub divergence: Option<Divergence>,
     /// The output record of the last check recomputation reached of the
     /// first inference. It is the claim's once the last claimed range is
@@ -128,7 +128,7 @@ impl CheckpointedInferenceExecutor {
             final_result,
             consensus,
             chain_dir: verified.run.chain_dir,
-            recomputed_trace: verified.recomputed_trace,
+            recomputed_list: verified.recomputed_list,
             divergence: verified.divergence,
         })
     }

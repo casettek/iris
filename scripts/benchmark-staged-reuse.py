@@ -1,4 +1,4 @@
-"""Compare two built iris binaries on one unchanged run spec and checkpoint trace.
+"""Compare two built iris binaries on one unchanged run spec and checkpoint list.
 
 Use an actual pre-change binary for --baseline, not --staged-subprocess: changing
 the main-process backend would confound the comparison. No tracked files change.
@@ -23,11 +23,11 @@ def run(label, binary, spec, cwd, output):
     elapsed = time.perf_counter() - started
     if result.returncode:
         raise RuntimeError(f"{label} failed ({result.returncode}); see {log}")
-    trace_paths = [line.removeprefix("checkpoint trace: ").strip()
+    trace_paths = [line.removeprefix("checkpoint list: ").strip()
                    for line in log.read_text(encoding="utf-8").splitlines()
-                   if line.startswith("checkpoint trace: ")]
+                   if line.startswith("checkpoint list: ")]
     if len(trace_paths) != 1:
-        raise RuntimeError(f"{label} did not report exactly one checkpoint trace")
+        raise RuntimeError(f"{label} did not report exactly one checkpoint list")
     trace = Path(trace_paths[0])
     if not trace.is_absolute():
         trace = cwd / trace
