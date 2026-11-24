@@ -542,18 +542,23 @@ impl PreparedPosting {
         })
     }
 
-    /// This posting for another claim of the same run: `list` and `trace` in
+    /// This posting for another claim of the same run: `hashes` and `trace` in
     /// place of the checkpoint list and the checkpoints, and every blob
     /// posted for `submitter`. The new information and the input manifests
     /// stay. It is what a claimer posts who states another output for a
     /// checkpoint of an honest run.
-    pub fn with_checkpoints(mut self, submitter: &str, list: &[u8], trace: &[u8]) -> Result<Self> {
+    pub fn with_checkpoints(
+        mut self,
+        submitter: &str,
+        hashes: &[u8],
+        trace: &[u8],
+    ) -> Result<Self> {
         let mut replaced = 0;
         for blob in &mut self.blobs {
             blob.submitter = submitter.to_string();
             for entry in &mut blob.entries {
                 if let BlobEntry::Checkpoints(package) = entry {
-                    package.list = list.to_vec();
+                    package.hashes = hashes.to_vec();
                     package.trace = trace.to_vec();
                     replaced += 1;
                 }
@@ -612,7 +617,7 @@ pub fn claim_blobs(
     claimer: &str,
     new_information: Option<BlobEntry>,
 ) -> Result<PreparedPosting> {
-    let list = fs::read(claim_dir.join(CHECKPOINTS_TXT))
+    let hashes = fs::read(claim_dir.join(CHECKPOINTS_TXT))
         .with_context(|| format!("{} has no {CHECKPOINTS_TXT}", claim_dir.display()))?;
     let trace_bytes = fs::read(claim_dir.join(CHECKPOINT_TRACE_JSON))
         .with_context(|| format!("{} has no {CHECKPOINT_TRACE_JSON}", claim_dir.display()))?;
@@ -656,7 +661,7 @@ pub fn claim_blobs(
 
     let mut entries: Vec<BlobEntry> = new_information.into_iter().collect();
     entries.push(BlobEntry::Checkpoints(CheckpointPackage {
-        list,
+        hashes,
         trace: trace_bytes,
         input_manifests: manifests,
     }));

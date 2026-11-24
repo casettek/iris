@@ -176,7 +176,7 @@ fn checkpoints_txt(trace: &CheckpointTrace) -> Vec<u8> {
 struct Claim {
     submission: ClaimSubmission,
     trace: CheckpointTrace,
-    list: Vec<u8>,
+    hashes: Vec<u8>,
     manifests: Vec<Vec<u8>>,
 }
 
@@ -185,7 +185,7 @@ impl Claim {
         let pins = pins();
         let input = hex::encode([5; 32]);
         let trace = CheckpointTrace { checkpoints };
-        let list = checkpoints_txt(&trace);
+        let hashes = checkpoints_txt(&trace);
         let submission = ClaimSubmission {
             version: CLAIM_SUBMISSION_VERSION,
             procedure_kind: ProcedureKind::Single,
@@ -220,7 +220,7 @@ impl Claim {
         Self {
             submission,
             trace,
-            list,
+            hashes,
             manifests,
         }
     }
@@ -264,8 +264,8 @@ impl Claim {
         )
     }
 
-    fn opened(&self) -> CheckpointList {
-        CheckpointList::open(&self.submission, &self.list).unwrap()
+    fn opened(&self) -> CheckpointHashes {
+        CheckpointHashes::open(&self.submission, &self.hashes).unwrap()
     }
 
     /// The link check as a challenger pointing at `stage` and `input`

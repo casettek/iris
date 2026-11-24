@@ -523,7 +523,7 @@ contract IrisClaims {
     /// earlier stage must be that stage's output; an input bound to fixed
     /// data, such as the model's, must be a commitment the procedure
     /// pins; an input the run gives must be one the claim posted. The checks
-    /// and their order are `CheckpointList::check_link`'s. Reverts with
+    /// and their order are `CheckpointHashes::check_link`'s. Reverts with
     /// `NoFault` when the checkpoint is as it should be.
     ///
     /// So a stage's inputs are always ones a challenger also holds, and two

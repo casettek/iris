@@ -15,8 +15,8 @@
 //!   checks made when it arrives ([`check_submission`], [`check_origin`],
 //!   [`check_stated_records`]).
 //! - `checkpoints`: what is read from the claim's own checkpoint list with
-//!   no replay ([`CheckpointList::admit_stage_challenge`],
-//!   [`CheckpointList::check_link`]): a stage that names an unapproved
+//!   no replay ([`CheckpointHashes::admit_stage_challenge`],
+//!   [`CheckpointHashes::check_link`]): a stage that names an unapproved
 //!   program, or an input that is not an earlier stage's output, a pinned
 //!   commitment or a posted value, voids the claim on the spot.
 //! - `dispute`: a dispute about one stage's execution: the challenge

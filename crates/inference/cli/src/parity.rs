@@ -2043,7 +2043,7 @@ fn run_availability_cases(dir: &Path, spec: &Path, submission_path: &Path) -> Re
     // refused when it arrives: which inputs a claim must have posted is not
     // judged there. Every checkpoint of it that names a run input is at
     // fault, which a challenger shows with no replay
-    // (`CheckpointList::check_link`; the challenge leg's `corrupted-posted`
+    // (`CheckpointHashes::check_link`; the challenge leg's `corrupted-posted`
     // case is a claim with one such checkpoint).
     let layer = crate::posting::open_layer(None)?;
     let layer = layer.as_ref();

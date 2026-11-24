@@ -65,7 +65,7 @@ pub struct ClaimAudit {
 /// found here is pointed at with `voidClaim`, and the
 /// claim is void: there is no challenge to post and nothing to answer.
 pub fn audit_claim(options: AuditClaimOptions) -> Result<ClaimAudit> {
-    use inference_artifacts::checks::{CheckpointList, LinkCheck, StageAdmission};
+    use inference_artifacts::checks::{CheckpointHashes, LinkCheck, StageAdmission};
     use iris_evm::{abi_encode, checkpoint_fault_token, claim_id, InputQuestion};
 
     let submission: ClaimSubmission = read_json(&options.submission_path)?;
@@ -82,7 +82,7 @@ pub fn audit_claim(options: AuditClaimOptions) -> Result<ClaimAudit> {
     let pins = &procedure.programs;
     let dir = parent(&options.submission_path)?;
     let hashes_path = dir.join(CHECKPOINTS_TXT);
-    let list = CheckpointList::open(
+    let opened = CheckpointHashes::open(
         &submission,
         &fs::read(&hashes_path)
             .with_context(|| format!("failed to read {}", hashes_path.display()))?,
@@ -113,7 +113,8 @@ pub fn audit_claim(options: AuditClaimOptions) -> Result<ClaimAudit> {
         let refused =
             |refusal| anyhow::anyhow!("checkpoint {index} (`{}`): {refusal}", checkpoint.stage);
         let approved = matches!(
-            list.admit_stage_challenge(pins, position, checkpoint)
+            opened
+                .admit_stage_challenge(pins, position, checkpoint)
                 .map_err(refused)?,
             StageAdmission::Disputed { .. }
         );
@@ -176,7 +177,7 @@ pub fn audit_claim(options: AuditClaimOptions) -> Result<ClaimAudit> {
                 let listed = trace.checkpoints.get(*producer as usize)?;
                 Some((*producer as usize, listed))
             });
-            let verdict = list.check_link(
+            let verdict = opened.check_link(
                 pins,
                 position,
                 checkpoint,

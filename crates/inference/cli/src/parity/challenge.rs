@@ -1030,7 +1030,7 @@ fn contract_challenge(
         .find(|part| part["kind"] == "checkpoints")
         .with_context(|| format!("`{name}`: no checkpoints were measured on the layer"))?;
     ensure!(
-        checkpoints["list_bytes"].as_u64()
+        checkpoints["checkpoint_hashes_bytes"].as_u64()
             == Some(fs::metadata(dir.join(inference_artifacts::CHECKPOINTS_TXT))?.len())
             && checkpoints["trace_bytes"].as_u64()
                 == Some(fs::metadata(dir.join(inference_artifacts::CHECKPOINT_TRACE_JSON))?.len()),

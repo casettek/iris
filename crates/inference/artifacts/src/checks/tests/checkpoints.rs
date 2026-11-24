@@ -56,12 +56,12 @@ fn a_challenged_stage_is_disputed_or_void_by_its_own_program_id() {
 #[test]
 fn a_challenge_must_present_the_list_and_the_checkpoint_the_claim_committed() {
     let claim = Claim::honest();
-    let mut other = claim.list.clone();
-    other.extend_from_slice(claim.list.split(|byte| *byte == b'\n').next().unwrap());
+    let mut other = claim.hashes.clone();
+    other.extend_from_slice(claim.hashes.split(|byte| *byte == b'\n').next().unwrap());
     other.push(b'\n');
     assert!(matches!(
-        CheckpointList::open(&claim.submission, &other),
-        Err(ChallengeRefusal::AnotherCheckpointList { .. })
+        CheckpointHashes::open(&claim.submission, &other),
+        Err(ChallengeRefusal::AnotherCheckpointHashes { .. })
     ));
 
     let opened = claim.opened();
@@ -84,19 +84,19 @@ fn a_challenge_must_present_the_list_and_the_checkpoint_the_claim_committed() {
 
     // Something that is not a hash list, and a list of nothing.
     assert_eq!(
-        CheckpointList::open(&claim.submission, b"not hashes\n"),
-        Err(ChallengeRefusal::MalformedCheckpointList)
+        CheckpointHashes::open(&claim.submission, b"not hashes\n"),
+        Err(ChallengeRefusal::MalformedCheckpointHashes)
     );
     assert_eq!(
-        CheckpointList::open(&claim.submission, b""),
-        Err(ChallengeRefusal::EmptyCheckpointList)
+        CheckpointHashes::open(&claim.submission, b""),
+        Err(ChallengeRefusal::EmptyCheckpointHashes)
     );
     // The same root over another count is another list.
     let mut miscounted = claim.submission.clone();
     miscounted.checkpoint_count += 1;
     assert!(matches!(
-        CheckpointList::open(&miscounted, &claim.list),
-        Err(ChallengeRefusal::AnotherCheckpointList { .. })
+        CheckpointHashes::open(&miscounted, &claim.hashes),
+        Err(ChallengeRefusal::AnotherCheckpointHashes { .. })
     ));
 
     // What a contract does with the root alone: open one checkpoint

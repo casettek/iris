@@ -262,7 +262,7 @@ fn write_package(dir: &Path, package: &CheckpointPackage) -> Result<()> {
     let write = |path: PathBuf, bytes: &[u8]| {
         fs::write(&path, bytes).with_context(|| format!("failed to write {}", path.display()))
     };
-    write(dir.join(CHECKPOINTS_TXT), &package.list)?;
+    write(dir.join(CHECKPOINTS_TXT), &package.hashes)?;
     write(dir.join(CHECKPOINT_TRACE_JSON), &package.trace)?;
     let manifests: BTreeMap<String, &Vec<u8>> = package
         .input_manifests

@@ -367,7 +367,7 @@ pub fn posted_inputs_digest(commitments: &[String]) -> Option<String> {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CheckpointPackage {
     /// The claim's `checkpoints.txt`, exactly.
-    pub list: Vec<u8>,
+    pub hashes: Vec<u8>,
     /// The claim's `checkpoint_trace.json`, exactly.
     pub trace: Vec<u8>,
     /// Each distinct `input_manifest.json` a checkpoint commits to, exactly.
@@ -381,8 +381,8 @@ pub enum BlobFault {
     NotABlob,
     /// The blob names no address.
     NoSubmitter,
-    /// A checkpoint package is not a list, the checkpoints it lists and their
-    /// input manifests.
+    /// A checkpoint package is not hashes, the checkpoints they name and
+    /// their input manifests.
     MalformedCheckpoints(String),
     /// A trace body is not a well-formed Raster trace commitment.
     MalformedTraceBody,
@@ -553,8 +553,9 @@ impl CheckpointPackage {
     /// list names, in order, and an input manifest for each.
     pub fn check(&self) -> Result<String, BlobFault> {
         let fault = |why: &str| BlobFault::MalformedCheckpoints(why.to_string());
-        let list = std::str::from_utf8(&self.list).map_err(|_| fault("list is not text"))?;
-        let lines: Vec<String> = list.lines().map(String::from).collect();
+        let hashes =
+            std::str::from_utf8(&self.hashes).map_err(|_| fault("the hashes are not text"))?;
+        let lines: Vec<String> = hashes.lines().map(String::from).collect();
         let trace: CheckpointTrace =
             serde_json::from_slice(&self.trace).map_err(|_| fault("trace is not JSON"))?;
         if lines.len() != trace.checkpoints.len() {
@@ -578,7 +579,7 @@ impl CheckpointPackage {
                 )));
             }
         }
-        checkpoints_root(&lines).map_err(|_| fault("list is not checkpoint hashes"))
+        checkpoints_root(&lines).map_err(|_| fault("the hashes are not one hash per line"))
     }
 }
 
@@ -765,7 +766,7 @@ pub fn check_posted(
 /// What a claim must have posted, and for whom: its checkpoint list. Its
 /// run inputs are not required here. A stage input that was not posted is a
 /// fault of the checkpoint that names it, which a challenger points at
-/// ([`crate::checks::CheckpointList::check_link`]).
+/// ([`crate::checks::CheckpointHashes::check_link`]).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RequiredPosting {
     /// The address the claim names as its claimer.
@@ -901,9 +902,9 @@ mod tests {
                 ..Checkpoint::default()
             }],
         };
-        let list = checkpoint_hashes(&trace).unwrap().join("\n") + "\n";
+        let hashes = checkpoint_hashes(&trace).unwrap().join("\n") + "\n";
         CheckpointPackage {
-            list: list.into_bytes(),
+            hashes: hashes.into_bytes(),
             trace: serde_json::to_vec(&trace).unwrap(),
             input_manifests: vec![manifest],
         }
@@ -936,7 +937,7 @@ mod tests {
     fn a_blob_states_the_commitments_it_holds_and_who_it_is_for() {
         let package = package();
         let root = checkpoints_root(
-            &std::str::from_utf8(&package.list)
+            &std::str::from_utf8(&package.hashes)
                 .unwrap()
                 .lines()
                 .map(String::from)
@@ -965,14 +966,14 @@ mod tests {
             Err(BlobFault::NoSubmitter)
         );
 
-        // A package missing a manifest, or holding a checkpoint the list does
-        // not name, holds no list.
+        // A package missing a manifest, or holding a checkpoint its hashes do
+        // not name, holds no checkpoint list.
         let mut no_manifest = package.clone();
         no_manifest.input_manifests.clear();
         assert!(no_manifest.check().is_err());
-        let mut other_list = package;
-        other_list.list = format!("{}\n", "00".repeat(32)).into_bytes();
-        assert!(other_list.check().is_err());
+        let mut other_hashes = package;
+        other_hashes.hashes = format!("{}\n", "00".repeat(32)).into_bytes();
+        assert!(other_hashes.check().is_err());
     }
 
     /// A run of one inference over two prompt ranges and one claimed range.
@@ -1056,9 +1057,9 @@ mod tests {
                 checkpoint("result", &last_output, &[("check", 0)]),
             ],
         };
-        let list = checkpoint_hashes(&trace).unwrap().join("\n") + "\n";
+        let hashes = checkpoint_hashes(&trace).unwrap().join("\n") + "\n";
         let package = CheckpointPackage {
-            list: list.into_bytes(),
+            hashes: hashes.into_bytes(),
             trace: serde_json::to_vec(&trace).unwrap(),
             input_manifests: vec![manifest],
         };

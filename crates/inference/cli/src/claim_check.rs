@@ -17,7 +17,7 @@ use inference_artifacts::availability::{
 };
 use inference_artifacts::checks::{
     check_origin, check_procedure_kind, check_stated_records, check_submission,
-    first_unapproved_stage, raster_boundary_mismatch, ChallengeRefusal, CheckpointList,
+    first_unapproved_stage, raster_boundary_mismatch, ChallengeRefusal, CheckpointHashes,
     ClaimSubmission, ContractPins, LinkCheck, RequiredOrigin, RequiredParameters, RequiredSource,
     ResultInOutput, StageAdmission, StatedInference, SubmittedConsensus, SubmittedRecord,
     SubmittedResult, CONTRACT_PINS_JSON,
@@ -478,7 +478,7 @@ fn check_claim_dir(
     });
 
     let list_path = dir.join(CHECKPOINTS_TXT);
-    let list =
+    let hashes =
         fs::read(&list_path).with_context(|| format!("failed to read {}", list_path.display()))?;
     let trace = claim_trace(submission_path)?;
     let refusal = |refusal: ChallengeRefusal| {
@@ -487,12 +487,12 @@ fn check_claim_dir(
             dir.display()
         )
     };
-    let list = CheckpointList::open(&submission, &list).map_err(refusal)?;
+    let hashes = CheckpointHashes::open(&submission, &hashes).map_err(refusal)?;
     ensure!(
-        list.len() == trace.checkpoints.len(),
+        hashes.len() == trace.checkpoints.len(),
         "{} lists {} checkpoints, {} holds {}",
         list_path.display(),
-        list.len(),
+        hashes.len(),
         CHECKPOINT_TRACE_JSON,
         trace.checkpoints.len()
     );
@@ -503,7 +503,7 @@ fn check_claim_dir(
     let unapproved = first_unapproved_stage(pins, &trace);
     let mut rejection = None;
     for (stage, checkpoint) in trace.checkpoints.iter().enumerate() {
-        let admission = list
+        let admission = hashes
             .admit_stage_challenge(pins, stage as u32, checkpoint)
             .map_err(refusal)?;
         if let StageAdmission::UnapprovedProgram { program_commitment } = admission {
@@ -542,7 +542,7 @@ fn check_claim_dir(
                 .input_sources
                 .get(&input.name)
                 .and_then(|index| trace.checkpoints.get(*index as usize));
-            match list.check_link(
+            match hashes.check_link(
                 pins,
                 stage as u32,
                 checkpoint,
@@ -759,16 +759,16 @@ pub fn check_challenge(
     let dir = claim_dir(claim_submission_path)?;
     let trace = claim_trace(claim_submission_path)?;
     let list_path = dir.join(CHECKPOINTS_TXT);
-    let list_bytes =
+    let hashes_bytes =
         fs::read(&list_path).with_context(|| format!("failed to read {}", list_path.display()))?;
     let mut lines = Vec::new();
 
-    let list = (submission.checkpoints_root == claim.checkpoints_root)
-        .then(|| CheckpointList::open(&claim, &list_bytes).ok())
+    let hashes = (submission.checkpoints_root == claim.checkpoints_root)
+        .then(|| CheckpointHashes::open(&claim, &hashes_bytes).ok())
         .flatten();
     lines.push(CheckLine {
         check: "challenge: of the claim's checkpoint list",
-        rejection: list.is_none().then(|| {
+        rejection: hashes.is_none().then(|| {
             format!(
                 "the challenge names checkpoint list {}, the claim stored {}",
                 submission.checkpoints_root, claim.checkpoints_root
@@ -776,9 +776,9 @@ pub fn check_challenge(
         }),
     });
     let checkpoint = trace.checkpoints.get(submission.stage as usize);
-    let admission = match (&list, checkpoint) {
-        (Some(list), Some(checkpoint)) => {
-            Some(list.admit_stage_challenge(&procedure.programs, submission.stage, checkpoint))
+    let admission = match (&hashes, checkpoint) {
+        (Some(hashes), Some(checkpoint)) => {
+            Some(hashes.admit_stage_challenge(&procedure.programs, submission.stage, checkpoint))
         }
         _ => None,
     };

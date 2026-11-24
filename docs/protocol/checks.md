@@ -276,7 +276,7 @@ when the field is empty. Everything is SHA-256. The code is
   `SHA-256(1 || left || right)`, an empty position 32 zero bytes. The
   commitment is the tag `iris/checkpoints/v1`, the count and the tree's root.
   One checkpoint opens at its position with 20 hashes
-  (`verify_checkpoint_opening`); the host's `CheckpointList` makes the same
+  (`verify_checkpoint_opening`); the host's `CheckpointHashes` makes the same
   comparison with the whole list in hand.
 - **A procedure's id** (`Procedure::id`): tag `iris/procedure/v3`
   and every field in the order it is declared.

@@ -91,7 +91,7 @@ pub fn measure_posting(submission_path: &Path, da_dir: Option<&Path>) -> Result<
                 BlobEntry::Checkpoints(package) => serde_json::json!({
                     "kind": "checkpoints",
                     "bytes": size,
-                    "list_bytes": package.list.len(),
+                    "checkpoint_hashes_bytes": package.hashes.len(),
                     "trace_bytes": package.trace.len(),
                     "input_manifests": package.input_manifests.len(),
                     "input_manifest_bytes":

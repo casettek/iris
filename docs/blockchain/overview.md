@@ -197,7 +197,7 @@ claim's procedure approves, or the claim is void (`UnapprovedProgram`).
 With an input named, the question is where that input comes from. The caller
 gives the bytes of the stage's input list, which the checkpoint commits to by
 hash, and the checkpoint the stage's own checkpoint names as the input's
-producer. The checks and their order are `CheckpointList::check_link`'s:
+producer. The checks and their order are `CheckpointHashes::check_link`'s:
 
 1. The list is the one the checkpoint commits to, the stage's program is
    approved, and the input is one the procedure lists for that program.

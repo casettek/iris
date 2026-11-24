@@ -17,15 +17,16 @@ use super::*;
 /// on. Not a verdict on the claim.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ChallengeRefusal {
-    /// The list presented is not the checkpoint list the submission stored.
-    AnotherCheckpointList {
+    /// The hashes presented are not those of the checkpoint list the
+    /// submission stored.
+    AnotherCheckpointHashes {
         stored: String,
         presented: String,
     },
-    /// The list is not one 32-byte hash per line.
-    MalformedCheckpointList,
-    /// The list has no checkpoints, so no stage and no last output.
-    EmptyCheckpointList,
+    /// The hashes are not one 32-byte hash per line.
+    MalformedCheckpointHashes,
+    /// There are no hashes, so no checkpoint, no stage and no last output.
+    EmptyCheckpointHashes,
     UnknownStage {
         challenged: u32,
         stages: usize,
@@ -66,9 +67,9 @@ impl ChallengeRefusal {
     /// checkpoint either opens against it or does not.
     pub fn name(&self) -> &'static str {
         match self {
-            Self::AnotherCheckpointList { .. }
-            | Self::MalformedCheckpointList
-            | Self::EmptyCheckpointList
+            Self::AnotherCheckpointHashes { .. }
+            | Self::MalformedCheckpointHashes
+            | Self::EmptyCheckpointHashes
             | Self::UnknownStage { .. }
             | Self::NotTheCheckpoint { .. } => "NotTheCheckpoint",
             Self::NotTheInputManifest { .. } => "NotTheInputManifest",
@@ -82,15 +83,15 @@ impl ChallengeRefusal {
 impl std::fmt::Display for ChallengeRefusal {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::AnotherCheckpointList { stored, presented } => write!(
+            Self::AnotherCheckpointHashes { stored, presented } => write!(
                 f,
-                "the checkpoint list presented has root {presented}, the submission stored \
+                "the checkpoint hashes presented have root {presented}, the submission stored \
                  {stored}"
             ),
-            Self::MalformedCheckpointList => {
-                write!(f, "the checkpoint list is not one 32-byte hash per line")
+            Self::MalformedCheckpointHashes => {
+                write!(f, "the checkpoint hashes are not one 32-byte hash per line")
             }
-            Self::EmptyCheckpointList => write!(f, "the checkpoint list is empty"),
+            Self::EmptyCheckpointHashes => write!(f, "there are no checkpoint hashes"),
             Self::UnknownStage { challenged, stages } => {
                 write!(f, "stage {challenged} is not one of the claim's {stages}")
             }
@@ -286,23 +287,23 @@ pub fn read_input_manifest(bytes: &[u8]) -> Option<BTreeMap<String, String>> {
     })
 }
 
-/// A claim's checkpoint list, held to the root its submission stored. Every
-/// challenge-time comparison starts from one.
+/// The hashes of a claim's checkpoint list, held to the root its submission
+/// stored. Every challenge-time comparison starts from them.
 ///
-/// The host holds the whole list. A contract holds only the root and opens
+/// The host holds every hash. A contract holds only the root and opens
 /// one checkpoint with a path
 /// ([`crate::checkpoint::verify_checkpoint_opening`]); every comparison
-/// here reads a checkpoint through [`CheckpointList::opened`], which is that
-/// opening with the list in hand.
+/// here reads a checkpoint through [`CheckpointHashes::opened`], which is that
+/// opening with the hashes in hand.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CheckpointList {
+pub struct CheckpointHashes {
     hashes: Vec<String>,
     /// The commitment of every run input the claim posted. A contract holds
     /// their digest, and is presented the commitments with a challenge.
     posted: Vec<String>,
 }
 
-impl CheckpointList {
+impl CheckpointHashes {
     /// Open the list a challenge presents: `checkpoints_txt` is the bytes of
     /// the claim's `checkpoints.txt`.
     pub fn open(
@@ -310,21 +311,21 @@ impl CheckpointList {
         checkpoints_txt: &[u8],
     ) -> std::result::Result<Self, ChallengeRefusal> {
         let text = std::str::from_utf8(checkpoints_txt)
-            .map_err(|_| ChallengeRefusal::MalformedCheckpointList)?;
+            .map_err(|_| ChallengeRefusal::MalformedCheckpointHashes)?;
         let hashes = text
             .lines()
             .map(|line| parse_id(line).map(|_| line.to_string()))
             .collect::<Option<Vec<_>>>()
-            .ok_or(ChallengeRefusal::MalformedCheckpointList)?;
+            .ok_or(ChallengeRefusal::MalformedCheckpointHashes)?;
         if hashes.is_empty() {
-            return Err(ChallengeRefusal::EmptyCheckpointList);
+            return Err(ChallengeRefusal::EmptyCheckpointHashes);
         }
         let presented =
-            checkpoints_root(&hashes).map_err(|_| ChallengeRefusal::MalformedCheckpointList)?;
+            checkpoints_root(&hashes).map_err(|_| ChallengeRefusal::MalformedCheckpointHashes)?;
         if submission.checkpoints_root != presented
             || submission.checkpoint_count as usize != hashes.len()
         {
-            return Err(ChallengeRefusal::AnotherCheckpointList {
+            return Err(ChallengeRefusal::AnotherCheckpointHashes {
                 stored: submission.checkpoints_root.clone(),
                 presented,
             });
