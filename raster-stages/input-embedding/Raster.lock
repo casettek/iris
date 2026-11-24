@@ -1,9 +1,9 @@
 {
   "format": 3,
-  "program_commitment": "c118d081a29e090de25670fbfe4dcd35befe8a0679f94d6b0c1e836579077acc",
+  "program_commitment": "32800a7c05c892add3e5180005b54ceb03823b5b9eb39e791eef76ca45a4b79b",
   "tiles": {
     "append_activation_row": {
-      "image_id": "dc4df93fbce357073b0932d379036d53dfab393c9926ff84415cebb7fe3bb129",
+      "image_id": "d41dcdf245fa501f13f4b31a4fa06b489d19fac9ed987a6e9e71330d1bcc4adb",
       "source_hash": "b4bd49ca43f2c02b0000000000001b59"
     },
     "assert_all_tokens_embedded": {
@@ -15,7 +15,7 @@
       "source_hash": "b4bd49ca43f2c02b0000000000001b59"
     },
     "begin_prompt_activations": {
-      "image_id": "d70c2563d897b42004c80970318c73cf018d59ab62b48b54b0870911636f6fad",
+      "image_id": "e17c5c9e6d7bb81aeaf40a54f888f41aebaed752da951cab41740dfa3212f43f",
       "source_hash": "b4bd49ca43f2c02b0000000000001b59"
     },
     "begin_row_count": {
@@ -27,7 +27,7 @@
       "source_hash": "b4bd49ca43f2c02b0000000000001b59"
     },
     "bind_embedding_token": {
-      "image_id": "8ea8c7da688f53c61869a6328d9e014a738cf3e884eebe22d3c23d5851caa41b",
+      "image_id": "e525b7d06c97e9ac34b75048a9e6b4092db232a778d6991c0a93fdf0d82610d6",
       "source_hash": "b4bd49ca43f2c02b0000000000001b59"
     },
     "count_row_chunk": {
@@ -39,7 +39,7 @@
       "source_hash": "b4bd49ca43f2c02b0000000000001b59"
     },
     "finish_embedding_binding": {
-      "image_id": "789e33c6dc76cbe1e1007fb503c5861a3abc1a5be47e85c9ca0e1171295d790b",
+      "image_id": "ab8da66657bbe2462e229295e00a3ac3687ae624eaf943e8180802ba924d12b8",
       "source_hash": "b4bd49ca43f2c02b0000000000001b59"
     },
     "identity_count_tokens": {
@@ -47,15 +47,15 @@
       "source_hash": "349de29ba2d9dd670000000000000708"
     },
     "identity_embedding_context": {
-      "image_id": "bd35b22a4c6b9216ec43c33b041f66dfc12487ad56730f6744fa9075ffc74187",
+      "image_id": "c28b2a078fca7290af23102b71067213c9ae70cab5bcd6bfe9f106b3fc7e3552",
       "source_hash": "349de29ba2d9dd670000000000000708"
     },
     "identity_sparse_header": {
-      "image_id": "bb6812f98842b6202fda7490764826901574ec0a7066474852d12b9791698b16",
+      "image_id": "1f70dedbaa10ca68053106099d9c3b7b55bdf51fd7514ecda7ec4b9c1d8a99fe",
       "source_hash": "349de29ba2d9dd670000000000000708"
     },
     "identity_sparse_page": {
-      "image_id": "b62b1d15e1d10628d981c0af0b5abd80c1ed21bffd13cf1de9520737710c0ff1",
+      "image_id": "0c19d8e356a334e0e33f9976f6c618730ebd314dc7347ed238a5fb5701bde631",
       "source_hash": "349de29ba2d9dd670000000000000708"
     },
     "identity_zero_count": {
@@ -80,5 +80,5 @@
     "build_mode": "local",
     "rustc": "rustc 1.97.0-dev (e638c6cfe 2026-07-15)"
   },
-  "guest_inputs": "12da112166201a9ef424a0b83f93e6967ecd89a452b91d81d06351fe20660adb"
+  "guest_inputs": "7e87952a1f910a1777ca8fa27dd8be1049a5c6d3acff81e084052327442c28ff"
 }
