@@ -1,6 +1,6 @@
 {
-  "version": 5,
-  "pipeline": "single",
+  "version": 6,
+  "procedure_kind": "single",
   "programs": {
     "family": "gemma-dense",
     "stage_programs": [
