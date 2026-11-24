@@ -61,8 +61,8 @@ pub(crate) fn heights_of(call: &Value) -> Vec<u64> {
 }
 
 /// Register the run's procedure unless it is registered. Its id.
-pub fn register(node: &Node, run_spec: &Path) -> Result<String> {
-    let procedure = crate::claim_check::spec_procedure(run_spec, None)?;
+pub fn register(node: &Node, specification: &Path) -> Result<String> {
+    let procedure = crate::claim_check::spec_procedure(specification, None)?;
     let call = crate::blockchain::evm::procedure_call(&procedure)?;
     let id = call["procedure"]
         .as_str()
@@ -104,7 +104,7 @@ fn send(node: &Node, call: &Value, mut outcome: Value) -> Result<Value> {
 pub fn claim(
     node: &Node,
     layer: &dyn PostingLayer,
-    run_spec: Option<&Path>,
+    specification: Option<&Path>,
     submission: &Path,
     before: Before,
 ) -> Result<Value> {
@@ -114,8 +114,9 @@ pub fn claim(
     let call = crate::blockchain::evm::claim_call(submission)?;
     let mut outcome = json!({"claim": call["claim"]});
     if before.register {
-        let run_spec = run_spec.context("registering a claim's procedure needs --run")?;
-        outcome["procedure"] = json!(register(node, run_spec)?);
+        let specification =
+            specification.context("registering a claim's procedure needs --specification")?;
+        outcome["procedure"] = json!(register(node, specification)?);
     }
     if before.relay {
         relay(node, layer, &heights_of(&call))?;

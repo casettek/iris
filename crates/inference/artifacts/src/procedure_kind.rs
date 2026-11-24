@@ -2,8 +2,8 @@
 //!
 //! A procedure kind is a named arrangement of the segments a claim is made of: an
 //! optional source, one or more inferences, and the stage program that turns
-//! their outputs into a result. A run spec names its procedure kind, and so every
-//! command that takes a run spec follows it: direct inference, claim build,
+//! their outputs into a result. A specification names its procedure kind, and so every
+//! command that takes a specification follows it: direct inference, claim build,
 //! claim check and challenge build. A claim records the name in its frozen
 //! run and in its submission, so a challenger and a contract know which
 //! arrangement they are looking at.
@@ -33,7 +33,7 @@ pub const RESULT_STAGE: &str = "result";
 #[serde(rename_all = "kebab-case")]
 pub enum ProcedureKind {
     /// One inference on one model, and the code of the form its output is.
-    /// What a run spec that names no procedure kind runs.
+    /// What a specification that names no procedure kind runs.
     #[default]
     Single,
     /// The same inference on two models, one after the other, and whether
@@ -45,7 +45,7 @@ impl ProcedureKind {
     /// Every procedure kind, in the order they are listed to a user.
     pub const ALL: &'static [ProcedureKind] = &[ProcedureKind::Single, ProcedureKind::Consensus];
 
-    /// The name a run spec, a prepared run and a submission use.
+    /// The name a specification, a prepared run and a submission use.
     pub fn name(self) -> &'static str {
         match self {
             Self::Single => "single",

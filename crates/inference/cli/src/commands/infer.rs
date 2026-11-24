@@ -4,9 +4,14 @@ use crate::*;
 
 #[derive(Debug, Args)]
 pub(crate) struct InferArgs {
-    /// Run spec to execute.
-    #[arg(long, default_value = inference_artifacts::INFERENCE_RUN_SPEC_TOML)]
-    run: PathBuf,
+    /// The specification of the procedure to run.
+    #[arg(long, default_value = inference_artifacts::SPECIFICATION_TOML)]
+    specification: PathBuf,
+
+    /// The case to run it on: the prompt, or the documents of the
+    /// specification's source.
+    #[arg(long, default_value = inference_artifacts::CASE_TOML)]
+    case: PathBuf,
 }
 
 /// What a consensus states of its two inferences. Printed before either
@@ -24,7 +29,7 @@ pub(crate) fn print_consensus(
 /// whose tokenizer the ids decode by.
 pub(crate) fn print_infer_result(
     result: &staged_infer::InferenceResult,
-    run_spec_path: Option<&Path>,
+    specification_path: Option<&Path>,
     inference: usize,
 ) {
     println!("generated token count: {}", result.generated_token_count);
@@ -33,8 +38,8 @@ pub(crate) fn print_infer_result(
         "generated token ids sha256: {}",
         result.generated_token_ids_sha256
     );
-    if let Some(run_spec_path) = run_spec_path {
-        match render_token_trace_for_run(result, run_spec_path, inference) {
+    if let Some(specification_path) = specification_path {
+        match render_token_trace_for_run(result, specification_path, inference) {
             Ok(trace) => print!("{trace}"),
             Err(error) => eprintln!("generated token trace unavailable: {error:#}"),
         }
@@ -64,17 +69,20 @@ pub(crate) fn print_infer_result(
 
 pub(crate) fn render_token_trace_for_run(
     result: &staged_infer::InferenceResult,
-    run_spec_path: &Path,
+    specification_path: &Path,
     inference: usize,
 ) -> Result<String> {
     let base_dir = std::env::current_dir().context("failed to read current directory")?;
-    let run_spec_path = absolute(&base_dir, run_spec_path);
-    let run_spec = inference_artifacts::read_run_spec(&run_spec_path)?;
-    let run_spec_dir = run_spec_path
+    let specification_path = absolute(&base_dir, specification_path);
+    let specification = inference_artifacts::read_specification(&specification_path)?;
+    let specification_dir = specification_path
         .parent()
-        .ok_or_else(|| anyhow::anyhow!("run spec has no parent directory"))?;
+        .ok_or_else(|| anyhow::anyhow!("specification has no parent directory"))?;
     // The ids are of this one of the run's models, and decode by its tokenizer.
-    let model_manifest_path = absolute(run_spec_dir, run_spec.model_manifest_of(inference)?);
+    let model_manifest_path = absolute(
+        specification_dir,
+        specification.model_manifest_of(inference)?,
+    );
     let model_manifest: inference_artifacts::ModelManifest =
         inference_artifacts::read_json(&model_manifest_path)?;
     let model_manifest_dir = model_manifest_path
@@ -396,10 +404,10 @@ pub(crate) fn format_duration(duration: std::time::Duration) -> String {
 pub(crate) fn run(args: InferArgs) -> Result<ExitCode> {
     {
         warn_if_debug_build("infer");
-        let run_spec_path = args.run.clone();
-        let run = run_infer(args.run)?;
+        let specification_path = args.specification.clone();
+        let run = run_infer(args.specification, args.case.clone())?;
         println!("procedure kind: {}", run.procedure_kind);
-        let source = source::run_source_of(&run_spec_path)?;
+        let source = source::run_source_of(&specification_path, &args.case)?;
         match (run.reports.as_slice(), run.consensus.as_ref()) {
             ([report], None) => {
                 if let Some(count) = report.input_token_count {
@@ -409,7 +417,7 @@ pub(crate) fn run(args: InferArgs) -> Result<ExitCode> {
                 if let Some(source) = &source {
                     source::print_source_lines(source);
                 }
-                print_infer_result(&report.result, Some(&run_spec_path), 0);
+                print_infer_result(&report.result, Some(&specification_path), 0);
                 print_infer_timing_summary(&report.timings);
             }
             ([first, second], Some(consensus)) => {
@@ -422,7 +430,7 @@ pub(crate) fn run(args: InferArgs) -> Result<ExitCode> {
                     if let Some(count) = report.input_token_count {
                         println!("input token count: {count}");
                     }
-                    print_infer_result(&report.result, Some(&run_spec_path), inference);
+                    print_infer_result(&report.result, Some(&specification_path), inference);
                     print_infer_timing_summary(&report.timings);
                 }
             }

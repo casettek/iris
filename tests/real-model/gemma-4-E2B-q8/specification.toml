@@ -1,0 +1,5 @@
+raw_prompt = false
+max_new_tokens = 8
+
+[[model]]
+manifest = "../../../runtime/model-artifacts/gemma-4-E2B-q8/manifest.json"

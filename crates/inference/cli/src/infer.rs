@@ -13,18 +13,19 @@ pub struct InferRun {
     pub consensus: Option<ConsensusOutcome>,
 }
 
-pub fn run_infer(run_spec_path: PathBuf) -> Result<InferRun> {
+pub fn run_infer(specification_path: PathBuf, case_path: PathBuf) -> Result<InferRun> {
     let mut config =
         DirectInferenceConfig::from_current_dir().context("failed to build infer configuration")?;
-    config.run_spec_path = run_spec_path;
-    let run_spec_path = crate::absolute(&config.base_dir, &config.run_spec_path);
-    let run_spec = inference_artifacts::read_run_spec(&run_spec_path).with_context(|| {
+    config.specification_path = specification_path;
+    config.case_path = case_path;
+    let specification_path = crate::absolute(&config.base_dir, &config.specification_path);
+    let specification = inference_artifacts::read_specification(&specification_path).with_context(|| {
         format!(
-            "failed to load run spec {}; create inference.toml with model_manifest, prompt/prompt_file, raw_prompt, and tokens",
-            run_spec_path.display()
+            "failed to load specification {}; create specification.toml with a `[[model]]` table, raw_prompt and max_new_tokens",
+            specification_path.display()
         )
     })?;
-    let procedure_kind = run_spec.procedure_kind;
+    let procedure_kind = specification.procedure_kind;
     // One inference after the other: each loads its own model.
     let mut reports = Vec::new();
     for inference in 0..procedure_kind.inferences() {
@@ -40,9 +41,7 @@ pub fn run_infer(run_spec_path: PathBuf) -> Result<InferRun> {
     let consensus = match (procedure_kind, reports.as_slice()) {
         (ProcedureKind::Single, _) => None,
         (ProcedureKind::Consensus, [first, second]) => {
-            let forms = crate::source::run_source_of(&config.run_spec_path)?
-                .map(|source| source.recipe.forms())
-                .unwrap_or_default();
+            let forms = specification.forms();
             Some(ConsensusOutcome::of(
                 &forms,
                 &first.result,

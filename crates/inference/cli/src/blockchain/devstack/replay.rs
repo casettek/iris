@@ -293,21 +293,26 @@ fn id_of(call: &Value, field: &str) -> Result<String> {
 
 /// Hold the contract to iris on a posted claim and changed copies of it,
 /// then submit the claim.
-pub fn claim(node: &Node, layer: &dyn PostingLayer, spec: &Path, path: &Path) -> Result<()> {
+pub fn claim(
+    node: &Node,
+    layer: &dyn PostingLayer,
+    specification: &Path,
+    path: &Path,
+) -> Result<()> {
     let base_dir = std::env::current_dir().context("failed to resolve current directory")?;
     let mut replay = Replay::default();
 
     crate::blockchain::evm::attest_submission(path, layer)?;
     let honest: Value = inference_artifacts::read_json(path)?;
     let built = crate::blockchain::evm::claim_call(path)?;
-    register(node, spec)?;
+    register(node, specification)?;
     relay(node, layer, &heights_of(&built))?;
 
     let verdicts = |submission: &Path, at: Option<u64>, ask_iris: bool| -> Result<_> {
         let iris = if ask_iris {
             Some(refused_at(&check_claim(ClaimCheckOptions {
                 base_dir: base_dir.clone(),
-                run_spec_path: spec.to_path_buf(),
+                specification_path: specification.to_path_buf(),
                 submission_path: submission.to_path_buf(),
                 raster_run: None,
                 pins_path: None,
@@ -544,7 +549,7 @@ pub fn claim(node: &Node, layer: &dyn PostingLayer, spec: &Path, path: &Path) ->
 pub fn challenge(
     node: &Node,
     layer: &dyn PostingLayer,
-    spec: &Path,
+    specification: &Path,
     claim_path: &Path,
     path: &Path,
 ) -> Result<()> {
@@ -554,7 +559,7 @@ pub fn challenge(
     // with a false checkpoint: that is what a challenge is for.
     crate::blockchain::evm::attest_submission(claim_path, layer)?;
     let claim = crate::blockchain::evm::claim_call(claim_path)?;
-    register(node, spec)?;
+    register(node, specification)?;
     relay(node, layer, &heights_of(&claim))?;
     hold_claim(node, &claim)?;
 
@@ -567,7 +572,7 @@ pub fn challenge(
         let iris = if ask_iris {
             Some(refused_at(&check_challenge_submission(
                 ChallengeCheckOptions {
-                    run_spec_path: spec.to_path_buf(),
+                    specification_path: specification.to_path_buf(),
                     pins_path: None,
                     challenge_path: submission.to_path_buf(),
                     submission_path: claim_path.to_path_buf(),
@@ -742,18 +747,23 @@ pub fn challenge(
 
 /// Ask the contract every on-the-spot question `iris claim audit` asks of a
 /// fetched claim, and send the first fault found.
-pub fn faults(node: &Node, layer: &dyn PostingLayer, spec: &Path, path: &Path) -> Result<()> {
+pub fn faults(
+    node: &Node,
+    layer: &dyn PostingLayer,
+    specification: &Path,
+    path: &Path,
+) -> Result<()> {
     let mut replay = Replay::default();
 
     let claim = crate::blockchain::evm::claim_call(path)?;
     let claim_id = id_of(&claim, "claim")?;
-    register(node, spec)?;
+    register(node, specification)?;
     relay(node, layer, &heights_of(&claim))?;
     hold_claim(node, &claim)?;
 
     let audit = crate::audit::audit_claim(crate::audit::AuditClaimOptions {
         submission_path: path.to_path_buf(),
-        run_spec_path: spec.to_path_buf(),
+        specification_path: specification.to_path_buf(),
         pins_path: None,
     })?;
     inference_artifacts::write_json(

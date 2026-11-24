@@ -8,8 +8,8 @@ pub(crate) enum ClaimCommand {
     /// Build a staged-infer checkpoint claim.
     Build(ClaimBuildArgs),
     /// Read a submitted claim's data back from the data-availability layer
-    /// into a new directory, with a run spec over what it posted: what a
-    /// challenger starts from.
+    /// into a new directory, with the case it posted: what a challenger
+    /// starts from.
     Fetch(ClaimFetchArgs),
     /// Ask of a fetched claim what no replay shows: whether every checkpoint
     /// names an approved program, and whether every input a stage takes from
@@ -44,9 +44,9 @@ pub(crate) struct ClaimAuditArgs {
     #[arg(long)]
     submission: PathBuf,
 
-    /// A run spec of the procedure the claim names.
-    #[arg(long, default_value = inference_artifacts::INFERENCE_RUN_SPEC_TOML)]
-    run: PathBuf,
+    /// A specification of the procedure the claim names.
+    #[arg(long, default_value = inference_artifacts::SPECIFICATION_TOML)]
+    specification: PathBuf,
 
     /// The pins the contract holds. As for `iris claim check`.
     #[arg(long)]
@@ -68,12 +68,12 @@ pub(crate) struct ClaimFetchArgs {
     #[arg(long)]
     submission: PathBuf,
 
-    /// Your own run spec of the procedure the claim names: its
+    /// Your own specification of the procedure the claim names: its
     /// procedure kind, models and parameters, and for a claim with a source the
-    /// recipe and the signer's key. Its prompt and its documents are
-    /// replaced by the ones the claim posted.
-    #[arg(long, default_value = inference_artifacts::INFERENCE_RUN_SPEC_TOML)]
-    run: PathBuf,
+    /// recipe and the signer's key. The claim's procedure is held to it
+    /// before anything is read.
+    #[arg(long, default_value = inference_artifacts::SPECIFICATION_TOML)]
+    specification: PathBuf,
 
     /// The pins the contract holds. As for `iris claim check`.
     #[arg(long)]
@@ -84,16 +84,16 @@ pub(crate) struct ClaimFetchArgs {
     #[arg(long = "da-dir")]
     da_dir: Option<PathBuf>,
 
-    /// A new directory to write the claim's files and `inference.toml` to.
+    /// A new directory to write the claim's files and its `case.toml` to.
     #[arg(long)]
     out: PathBuf,
 }
 
 #[derive(Debug, Args)]
 pub(crate) struct ClaimPinsArgs {
-    /// Run spec naming the procedure kind and its models.
-    #[arg(long, default_value = inference_artifacts::INFERENCE_RUN_SPEC_TOML)]
-    run: PathBuf,
+    /// Specification naming the procedure kind and its models.
+    #[arg(long, default_value = inference_artifacts::SPECIFICATION_TOML)]
+    specification: PathBuf,
 
     /// Where to write the pins. They are made from the models' imports and
     /// the stage projects' locks as they are now, so run this from the iris
@@ -104,9 +104,9 @@ pub(crate) struct ClaimPinsArgs {
 
 #[derive(Debug, Args)]
 pub(crate) struct ClaimCheckArgs {
-    /// Run spec naming the model and the parameters the contract requires.
-    #[arg(long, default_value = inference_artifacts::INFERENCE_RUN_SPEC_TOML)]
-    run: PathBuf,
+    /// Specification naming the models and the parameters the contract requires.
+    #[arg(long, default_value = inference_artifacts::SPECIFICATION_TOML)]
+    specification: PathBuf,
 
     /// The `claim_submission.json` that `claim build` wrote.
     #[arg(long)]
@@ -126,7 +126,7 @@ pub(crate) struct ClaimCheckArgs {
 
     /// The registry of procedures, as `iris registry add` writes it. The
     /// claim is judged by the procedure it names there. Without it, by
-    /// the one the run spec and the pins describe.
+    /// the one the specification and the pins describe.
     #[arg(long)]
     registry: Option<PathBuf>,
 
@@ -142,12 +142,17 @@ pub(crate) struct ClaimCheckArgs {
 
 #[derive(Debug, Args)]
 pub(crate) struct ClaimBuildArgs {
-    /// Run spec to execute.
-    #[arg(long, default_value = inference_artifacts::INFERENCE_RUN_SPEC_TOML)]
-    pub(crate) run: PathBuf,
+    /// The specification of the procedure the claim is of.
+    #[arg(long, default_value = inference_artifacts::SPECIFICATION_TOML)]
+    pub(crate) specification: PathBuf,
 
-    /// The comma-separated output ids `iris infer` printed for this same run
-    /// spec. The claim is built from them without running direct inference
+    /// The case the claim is about: the prompt, or the documents of the
+    /// specification's source.
+    #[arg(long, default_value = inference_artifacts::CASE_TOML)]
+    pub(crate) case: PathBuf,
+
+    /// The comma-separated output ids `iris infer` printed for this same
+    /// specification and case. The claim is built from them without running direct inference
     /// again; the chain still re-derives every token and rejects any other ids.
     #[arg(long = "direct-output-ids", value_delimiter = ',')]
     direct_output_ids: Option<Vec<u32>>,
@@ -171,8 +176,12 @@ impl ClaimBuildArgs {
         } else {
             staged_infer::chain_runner::StagedExecutionBackend::InProcess
         };
-        let mut options =
-            ClaimBuildOptions::from_current_dir(current_exe, staged_backend, self.run)?;
+        let mut options = ClaimBuildOptions::from_current_dir(
+            current_exe,
+            staged_backend,
+            self.specification,
+            self.case,
+        )?;
         options.direct_output_ids = self.direct_output_ids;
         options.claimer = self.claimer.or_else(|| std::env::var("IRIS_CLAIMER").ok());
         Ok(options)
@@ -180,7 +189,7 @@ impl ClaimBuildArgs {
 }
 
 /// Build a claim and print what it states and where it is.
-pub(crate) fn build(options: ClaimBuildOptions, run_spec_path: PathBuf) -> Result<ExitCode> {
+pub(crate) fn build(options: ClaimBuildOptions, specification_path: PathBuf) -> Result<ExitCode> {
     warn_if_debug_build("claim build");
     let result = build_claim(options)?;
     println!("procedure kind: {}", result.procedure_kind);
@@ -189,10 +198,12 @@ pub(crate) fn build(options: ClaimBuildOptions, run_spec_path: PathBuf) -> Resul
             print_consensus(first, consensus);
             for (inference, result) in [first, &consensus.second].into_iter().enumerate() {
                 println!("inference: {inference}");
-                print_infer_result(result, Some(&run_spec_path), inference);
+                print_infer_result(result, Some(&specification_path), inference);
             }
         }
-        (Some(final_result), None) => print_infer_result(final_result, Some(&run_spec_path), 0),
+        (Some(final_result), None) => {
+            print_infer_result(final_result, Some(&specification_path), 0)
+        }
         (None, _) => {}
     }
     println!("checkpoint list: {}", result.checkpoint_list_path.display());
@@ -210,8 +221,8 @@ pub(crate) fn build(options: ClaimBuildOptions, run_spec_path: PathBuf) -> Resul
 pub(crate) fn run(command: ClaimCommand) -> Result<ExitCode> {
     match command {
         ClaimCommand::Build(args) => {
-            let run_spec_path = args.run.clone();
-            build(args.into_options()?, run_spec_path)
+            let specification_path = args.specification.clone();
+            build(args.into_options()?, specification_path)
         }
         ClaimCommand::Post(args) => {
             let base_dir =
@@ -240,7 +251,7 @@ pub(crate) fn run(command: ClaimCommand) -> Result<ExitCode> {
         ClaimCommand::Check(args) => {
             let report = check_claim(ClaimCheckOptions {
                 base_dir: std::env::current_dir().context("failed to resolve current directory")?,
-                run_spec_path: args.run,
+                specification_path: args.specification,
                 submission_path: args.submission,
                 raster_run: args.raster_run,
                 pins_path: args.pins,
@@ -263,7 +274,7 @@ pub(crate) fn run(command: ClaimCommand) -> Result<ExitCode> {
         ClaimCommand::Pins(args) => {
             let base_dir =
                 std::env::current_dir().context("failed to resolve current directory")?;
-            let pins = claim_check::run_pins(&base_dir, &args.run)?;
+            let pins = claim_check::run_pins(&base_dir, &args.specification)?;
             inference_artifacts::write_json(&args.out, &pins)?;
             println!("procedure kind: {}", pins.procedure_kind);
             for model in &pins.models {
@@ -278,7 +289,7 @@ pub(crate) fn run(command: ClaimCommand) -> Result<ExitCode> {
                 std::env::current_dir().context("failed to resolve current directory")?;
             let fetched = posted::fetch_claim(posted::FetchClaimOptions {
                 submission_path: absolute(&base_dir, &args.submission),
-                run_spec_path: absolute(&base_dir, &args.run),
+                specification_path: absolute(&base_dir, &args.specification),
                 pins_path: args.pins.map(|path| absolute(&base_dir, &path)),
                 da_dir: args.da_dir.map(|path| absolute(&base_dir, &path)),
                 out_dir: absolute(&base_dir, &args.out),
@@ -287,7 +298,7 @@ pub(crate) fn run(command: ClaimCommand) -> Result<ExitCode> {
             println!("checkpoints: {}", fetched.checkpoints);
             println!("input manifests: {}", fetched.input_manifests);
             println!("claim submission: {}", fetched.submission_path.display());
-            println!("run spec: {}", fetched.run_spec_path.display());
+            println!("case: {}", fetched.case_path.display());
             Ok(ExitCode::SUCCESS)
         }
         ClaimCommand::Audit(args) => {
@@ -295,7 +306,7 @@ pub(crate) fn run(command: ClaimCommand) -> Result<ExitCode> {
                 std::env::current_dir().context("failed to resolve current directory")?;
             let audit = audit::audit_claim(audit::AuditClaimOptions {
                 submission_path: absolute(&base_dir, &args.submission),
-                run_spec_path: absolute(&base_dir, &args.run),
+                specification_path: absolute(&base_dir, &args.specification),
                 pins_path: args.pins.map(|path| absolute(&base_dir, &path)),
             })?;
             println!("checkpoints: {}", audit.checkpoints);

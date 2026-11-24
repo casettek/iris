@@ -6,20 +6,20 @@ default:
 import model:
     cargo run --release -p iris-cli -- model import --model "{{model}}"
 
-infer run="inference.toml":
-    cargo run --release -p iris-cli -- infer --run "{{run}}"
+infer specification="specification.toml" case="case.toml":
+    cargo run --release -p iris-cli -- infer --specification "{{specification}}" --case "{{case}}"
 
-claim run="inference.toml":
-    cargo run --release -p iris-cli -- claim build --run "{{run}}"
+claim specification="specification.toml" case="case.toml":
+    cargo run --release -p iris-cli -- claim build --specification "{{specification}}" --case "{{case}}"
 
-replay-profile stage top_n="3" run="inference.toml":
-    cargo run --release -p iris-cli --features replay-profile -- replay-profile --run "{{run}}" --stage "{{stage}}" --top-n "{{top_n}}"
+replay-profile stage top_n="3" specification="specification.toml" case="case.toml":
+    cargo run --release -p iris-cli --features replay-profile -- replay-profile --specification "{{specification}}" --case "{{case}}" --stage "{{stage}}" --top-n "{{top_n}}"
 
 corrupt checkpoints:
     cargo run --release -p iris-cli -- test corrupt-checkpoints --checkpoints "{{checkpoints}}"
 
-challenge claim_context checkpoints run="inference.toml":
-    cargo run --release -p iris-cli -- challenge build --claim-context "{{claim_context}}" --checkpoints "{{checkpoints}}" --run "{{run}}"
+challenge claim_context checkpoints specification="specification.toml":
+    cargo run --release -p iris-cli -- challenge build --claim-context "{{claim_context}}" --checkpoints "{{checkpoints}}" --specification "{{specification}}"
 
 test-workspace:
     cargo test --workspace
@@ -60,7 +60,7 @@ test-full:
 test-release *args:
     bash scripts/test-release.sh {{args}}
 
-# Blockchain (a few minutes, needs the local blockchains): lying claims against the contracts: [--deploy] [--real-model <run spec>]
+# Blockchain (a few minutes, needs the local blockchains): lying claims against the contracts: [--deploy] [--real-model <specification>]
 test-blockchain *args:
     bash scripts/test-blockchain.sh {{args}}
 
@@ -100,6 +100,6 @@ devstack-deploy:
 contracts-test:
     bash blockchain/devstack/foundry.sh forge test
 
-# Hold the contracts to iris on one posted claim: <run spec> <claim_submission.json>
-devstack-replay run submission:
-    cargo run --release -p iris-cli -- test devstack replay claim --run "{{run}}" --submission "{{submission}}"
+# Hold the contracts to iris on one posted claim: <specification> <claim_submission.json>
+devstack-replay specification submission:
+    cargo run --release -p iris-cli -- test devstack replay claim --specification "{{specification}}" --submission "{{submission}}"

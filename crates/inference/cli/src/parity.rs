@@ -507,22 +507,14 @@ fn run_case(
     skip_challenges: bool,
 ) -> Result<()> {
     let started = Instant::now();
-    let spec = dir.join("inference.toml");
-    // JSON basic strings are valid TOML strings for these pinned corpus values.
-    fs::write(
-        &spec,
-        format!(
-            "model_manifest = {}\nprompt = {}\nraw_prompt = {}\ntokens = {}\n",
-            serde_json::to_string(model_path)?,
-            serde_json::to_string(&case.prompt)?,
-            case.raw_prompt,
-            case.tokens
-        ),
-    )?;
+    let specification = dir.join(inference_artifacts::SPECIFICATION_TOML);
+    write_specification(&specification, model_path, case)?;
+    write_case(&specification, case)?;
     // Preparation discovers the claimed ids with direct decode.
     let prepared = prepare_claim_run(&ClaimBuildOptions {
         base_dir: dir.to_path_buf(),
-        run_spec_path: spec.clone(),
+        case_path: Some(case_beside(&specification)),
+        specification_path: specification.clone(),
         current_exe: exe.to_path_buf(),
         staged_backend: StagedExecutionBackend::InProcess,
         claimed_token_ids: None,
@@ -542,8 +534,10 @@ fn run_case(
 
     for (name, direct) in [("native-staged", false), ("native-direct", true)] {
         let mut run = command(exe, root);
-        run.args(["parity-worker", "--run"])
-            .arg(&spec)
+        run.args(["parity-worker", "--specification"])
+            .arg(&specification)
+            .arg("--case")
+            .arg(case_beside(&specification))
             .arg("--output")
             .arg(dir.join(name));
         if direct {
@@ -707,7 +701,7 @@ fn run_case(
     // the program id, the input manifest and the output.
     let contract = crate::claim_check::check_claim(crate::claim_check::ClaimCheckOptions {
         base_dir: dir.to_path_buf(),
-        run_spec_path: spec.clone(),
+        specification_path: specification.clone(),
         submission_path: native_dir.join(inference_artifacts::checks::CLAIM_SUBMISSION_JSON),
         raster_run: Some(raster_dir.clone()),
         pins_path: None,
@@ -731,7 +725,7 @@ fn run_case(
     comparison["contract_checks"] = json!(contract.lines.len());
     comparison["availability_cases"] = run_availability_cases(
         dir,
-        &spec,
+        &specification,
         &native_dir.join(inference_artifacts::checks::CLAIM_SUBMISSION_JSON),
     )
     .context("availability cases")?;
@@ -1961,7 +1955,11 @@ fn validate_model_bundle(
 /// before the challenge period ends, a procedure nobody registered, only
 /// the checkpoints posted and not the prompt the statement names, and another
 /// prompt posted in its place.
-fn run_availability_cases(dir: &Path, spec: &Path, submission_path: &Path) -> Result<Value> {
+fn run_availability_cases(
+    dir: &Path,
+    specification: &Path,
+    submission_path: &Path,
+) -> Result<Value> {
     use crate::claim_check::{check_claim, ClaimCheckOptions};
     use inference_artifacts::checks::ClaimSubmission;
 
@@ -1969,7 +1967,7 @@ fn run_availability_cases(dir: &Path, spec: &Path, submission_path: &Path) -> Re
         .parent()
         .context("the submission has no directory")?;
     let honest: ClaimSubmission = read_json(submission_path)?;
-    let procedure = crate::claim_check::spec_procedure(spec, None)?;
+    let procedure = crate::claim_check::spec_procedure(specification, None)?;
     let registry_path = dir.join("registry.json");
     let mut registry = inference_artifacts::registry::Registry::default();
     ensure!(
@@ -1989,7 +1987,7 @@ fn run_availability_cases(dir: &Path, spec: &Path, submission_path: &Path) -> Re
         write_json(&path, submission)?;
         let report = check_claim(ClaimCheckOptions {
             base_dir: dir.to_path_buf(),
-            run_spec_path: spec.to_path_buf(),
+            specification_path: specification.to_path_buf(),
             submission_path: path,
             raster_run: None,
             pins_path: None,
@@ -2077,12 +2075,13 @@ fn run_availability_cases(dir: &Path, spec: &Path, submission_path: &Path) -> Re
     Ok(json!(cases))
 }
 
-pub fn worker(spec: &Path, output: &Path, direct: bool) -> Result<()> {
+pub fn worker(specification: &Path, case: &Path, output: &Path, direct: bool) -> Result<()> {
     fs::create_dir_all(output)?;
     if direct {
         let config = DirectInferenceConfig {
             base_dir: std::env::current_dir()?,
-            run_spec_path: spec.to_path_buf(),
+            specification_path: specification.to_path_buf(),
+            case_path: case.to_path_buf(),
             inference: 0,
         };
         let diagnostic = DirectInferenceExecutor.run_with_diagnostics(config.clone())?;
@@ -2111,7 +2110,8 @@ pub fn worker(spec: &Path, output: &Path, direct: bool) -> Result<()> {
     } else {
         let result = build_posted_claim(ClaimBuildOptions {
             base_dir: output.to_path_buf(),
-            run_spec_path: spec.to_path_buf(),
+            case_path: Some(case.to_path_buf()),
+            specification_path: specification.to_path_buf(),
             current_exe: std::env::current_exe()?,
             staged_backend: StagedExecutionBackend::InProcess,
             claimed_token_ids: None,
@@ -2123,6 +2123,35 @@ pub fn worker(spec: &Path, output: &Path, direct: bool) -> Result<()> {
             &json!({"chain_dir": result.chain_dir, "result": result.final_result.context("native-staged did not finalize")?}),
         )?;
     }
+    Ok(())
+}
+
+/// The case file of a gate run: `case.toml` beside its specification.
+fn case_beside(specification: &Path) -> PathBuf {
+    specification.with_file_name(inference_artifacts::CASE_TOML)
+}
+
+/// Writes a specification of one model with a pinned case's parameters.
+fn write_specification(path: &Path, model_path: &Path, case: &Case) -> Result<()> {
+    fs::write(
+        path,
+        format!(
+            "raw_prompt = {}\nmax_new_tokens = {}\n\n[[model]]\nmanifest = {}\n",
+            case.raw_prompt,
+            case.tokens,
+            serde_json::to_string(model_path)?,
+        ),
+    )?;
+    Ok(())
+}
+
+/// Writes a pinned case's prompt as the case beside a specification.
+fn write_case(specification: &Path, case: &Case) -> Result<()> {
+    // JSON basic strings are valid TOML strings for these pinned corpus values.
+    fs::write(
+        case_beside(specification),
+        format!("prompt = {}\n", serde_json::to_string(&case.prompt)?),
+    )?;
     Ok(())
 }
 

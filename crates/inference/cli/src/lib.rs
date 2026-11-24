@@ -124,7 +124,9 @@ enum Commands {
     #[command(hide = true)]
     ParityWorker {
         #[arg(long)]
-        run: PathBuf,
+        specification: PathBuf,
+        #[arg(long)]
+        case: PathBuf,
         #[arg(long)]
         output: PathBuf,
         #[arg(long)]
@@ -224,7 +226,8 @@ fn execute(cli: Cli) -> Result<ExitCode> {
             warn_if_debug_build("replay-profile");
             run_replay_profile(ReplayProfileOptions {
                 base_dir: std::env::current_dir()?,
-                run_spec_path: args.run,
+                specification_path: args.specification,
+                case_path: args.case,
                 current_exe: std::env::current_exe()?,
                 stage: args.stage,
                 top_n: args.top_n.get(),
@@ -240,11 +243,12 @@ fn execute(cli: Cli) -> Result<ExitCode> {
             Ok(ExitCode::SUCCESS)
         }
         Some(Commands::ParityWorker {
-            run,
+            specification,
+            case,
             output,
             direct,
         }) => {
-            parity::worker(&run, &output, direct)?;
+            parity::worker(&specification, &case, &output, direct)?;
             Ok(ExitCode::SUCCESS)
         }
         Some(Commands::Model { command }) => commands::model::run(command),
@@ -258,15 +262,25 @@ fn execute(cli: Cli) -> Result<ExitCode> {
             Ok(ExitCode::SUCCESS)
         }
         Some(Commands::Source {
-            command: source::SourceCommand::Inputs { run, out },
+            command:
+                source::SourceCommand::Inputs {
+                    specification,
+                    case,
+                    out,
+                },
         }) => {
-            source::stage_inputs(&run, &out)?;
+            source::stage_inputs(&specification, &case, &out)?;
             Ok(ExitCode::SUCCESS)
         }
         Some(Commands::Source {
-            command: source::SourceCommand::Render { run, text_out },
+            command:
+                source::SourceCommand::Render {
+                    specification,
+                    case,
+                    text_out,
+                },
         }) => {
-            let record = source::render(&run, text_out.as_deref())?;
+            let record = source::render(&specification, &case, text_out.as_deref())?;
             Ok(if record.fault == 0 {
                 ExitCode::SUCCESS
             } else {
@@ -303,7 +317,16 @@ mod tests {
     #[test]
     fn parses_phase_one_workflows() {
         parse_for_test(["iris", "model", "import", "--model", "model-bundles/model"]).unwrap();
-        parse_for_test(["iris", "claim", "build", "--run", "inference.toml"]).unwrap();
+        parse_for_test([
+            "iris",
+            "claim",
+            "build",
+            "--specification",
+            "specification.toml",
+            "--case",
+            "case.toml",
+        ])
+        .unwrap();
         parse_for_test([
             "iris",
             "test",
@@ -368,7 +391,17 @@ mod tests {
             "claim_bundle.json",
         ])
         .unwrap();
-        parse_for_test(["iris", "infer", "--run", "inference.toml"]).unwrap();
+        parse_for_test([
+            "iris",
+            "infer",
+            "--specification",
+            "specification.toml",
+            "--case",
+            "case.toml",
+        ])
+        .unwrap();
+        // The flag the two replaced is no flag any more.
+        assert!(parse_for_test(["iris", "infer", "--run", "inference.toml"]).is_err());
         parse_for_test([
             "iris",
             "model",
@@ -381,8 +414,8 @@ mod tests {
     }
 
     #[test]
-    fn challenge_run_spec_defaults_and_overrides_reach_options() {
-        for run in [None, Some("specs/model-b.toml")] {
+    fn challenge_specification_defaults_and_overrides_reach_options() {
+        for specification in [None, Some("specs/model-b.toml")] {
             let mut argv = vec![
                 "iris",
                 "challenge",
@@ -390,8 +423,8 @@ mod tests {
                 "--submission",
                 "claim_submission.json",
             ];
-            if let Some(path) = run {
-                argv.extend(["--run", path]);
+            if let Some(path) = specification {
+                argv.extend(["--specification", path]);
             }
             let cli = Cli::try_parse_from(argv).unwrap();
             let Some(Commands::Challenge {
@@ -402,8 +435,8 @@ mod tests {
             };
             let options = args.into_options().unwrap();
             assert_eq!(
-                options.run_spec_path,
-                PathBuf::from(run.unwrap_or("inference.toml"))
+                options.specification_path,
+                PathBuf::from(specification.unwrap_or("specification.toml"))
             );
         }
     }
@@ -412,7 +445,7 @@ mod tests {
     fn infer_requires_an_imported_workspace() {
         let error = execute_from(["iris", "infer"]).unwrap_err();
 
-        assert!(format!("{error:#}").contains("failed to load run spec"));
+        assert!(format!("{error:#}").contains("failed to load specification"));
     }
 
     /// The one table of formats and versions says what the code says. The

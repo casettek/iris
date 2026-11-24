@@ -4,7 +4,7 @@ use crate::*;
 
 #[derive(Debug, Subcommand)]
 pub(crate) enum RegistryCommand {
-    /// Register the procedure a run spec describes: its procedure kind's
+    /// Register the procedure a specification describes: its procedure kind's
     /// programs, its models, its parameters and what it requires of the
     /// source and the result. Prints its id.
     Add(RegistryAddArgs),
@@ -12,9 +12,9 @@ pub(crate) enum RegistryCommand {
 
 #[derive(Debug, Args)]
 pub(crate) struct RegistryAddArgs {
-    /// Run spec naming the procedure kind, its models and the parameters.
-    #[arg(long, default_value = inference_artifacts::INFERENCE_RUN_SPEC_TOML)]
-    run: PathBuf,
+    /// Specification naming the procedure kind, its models and the parameters.
+    #[arg(long, default_value = inference_artifacts::SPECIFICATION_TOML)]
+    specification: PathBuf,
 
     /// The pins of the procedure kind's programs and models, as `iris claim pins`
     /// wrote them. Without it, as `iris claim check` finds them.
@@ -32,7 +32,7 @@ pub(crate) fn run(command: RegistryCommand) -> Result<ExitCode> {
             let base_dir =
                 std::env::current_dir().context("failed to resolve current directory")?;
             let procedure = claim_check::spec_procedure(
-                &absolute(&base_dir, &args.run),
+                &absolute(&base_dir, &args.specification),
                 args.pins.map(|path| absolute(&base_dir, &path)).as_deref(),
             )?;
             let registry_path = absolute(&base_dir, &args.registry);

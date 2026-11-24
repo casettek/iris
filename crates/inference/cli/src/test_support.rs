@@ -149,10 +149,34 @@ count = 0
     path
 }
 
-pub(crate) fn run_spec(base: &Path, name: &str) -> PathBuf {
+/// Writes a specification of one model, with the case of a one-letter prompt
+/// beside it, and returns the specification's path.
+pub(crate) fn specification(base: &Path, name: &str) -> PathBuf {
     let dir = base.join("specs");
     fs::create_dir_all(&dir).unwrap();
-    let path = dir.join("inference.toml");
-    fs::write(&path, format!("model_manifest = \"../models/{name}/manifest.json\"\nprompt = \"h\"\nraw_prompt = true\ntokens = 3\n")).unwrap();
+    let path = dir.join(inference_artifacts::SPECIFICATION_TOML);
+    fs::write(
+        &path,
+        format!(
+            "raw_prompt = true
+max_new_tokens = 3
+
+[[model]]
+manifest = \"../models/{name}/manifest.json\"
+"
+        ),
+    )
+    .unwrap();
+    fs::write(
+        case_beside(&path),
+        "prompt = \"h\"
+",
+    )
+    .unwrap();
     path
+}
+
+/// The case file beside a specification [`specification`] wrote.
+pub(crate) fn case_beside(specification: &Path) -> PathBuf {
+    specification.with_file_name(inference_artifacts::CASE_TOML)
 }

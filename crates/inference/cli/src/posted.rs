@@ -4,8 +4,8 @@
 //!
 //! A challenger has the procedure and the models. [`fetch_claim`] gives
 //! it the rest: the claim's checkpoint hashes, checkpoints and input
-//! manifests, and the inputs the claim's run was given, with a run spec over
-//! them. A defender has its own run of the disputed stage.
+//! manifests, and the inputs the claim's run was given, with the case they
+//! hold. A defender has its own run of the disputed stage.
 //! [`fetch_challenge`] gives it the trace the challenge names.
 
 use std::collections::BTreeMap;
@@ -18,8 +18,8 @@ use inference_artifacts::availability::{
 };
 use inference_artifacts::checks::{ChallengeSubmission, ClaimSubmission, CLAIM_SUBMISSION_JSON};
 use inference_artifacts::{
-    read_json, read_run_spec, write_json, CheckpointList, SourceDocumentSpec, CHECKPOINTS_TXT,
-    CHECKPOINT_LIST_JSON, INFERENCE_RUN_SPEC_TOML,
+    read_json, write_json, Case, CaseDocument, CheckpointList, CASE_TOML, CHECKPOINTS_TXT,
+    CHECKPOINT_LIST_JSON,
 };
 use sha2::{Digest, Sha256};
 
@@ -27,14 +27,6 @@ use crate::posting::{contents_of, open_layer, trace_header_digest};
 
 /// A stage's input list, in the stage's directory.
 pub(crate) const INPUT_MANIFEST_JSON: &str = "input_manifest.json";
-
-pub(crate) fn absolute(base: &Path, path: &Path) -> PathBuf {
-    if path.is_absolute() {
-        path.to_path_buf()
-    } else {
-        base.join(path)
-    }
-}
 
 pub(crate) fn parent(path: &Path) -> Result<&Path> {
     path.parent()
@@ -62,10 +54,9 @@ pub struct FetchClaimOptions {
     /// The claim's `claim_submission.json`, as it was submitted: with where
     /// its data is.
     pub submission_path: PathBuf,
-    /// The reader's own run spec: the procedure kind, the models and the
-    /// parameters of the procedure the claim names. Its prompt, and the
-    /// documents of its source, are replaced by the ones the claim posted.
-    pub run_spec_path: PathBuf,
+    /// The reader's own specification of the procedure the claim names. The
+    /// claim's procedure is held to it before anything is read.
+    pub specification_path: PathBuf,
     pub pins_path: Option<PathBuf>,
     pub da_dir: Option<PathBuf>,
     pub out_dir: PathBuf,
@@ -74,7 +65,8 @@ pub struct FetchClaimOptions {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FetchedClaim {
     pub submission_path: PathBuf,
-    pub run_spec_path: PathBuf,
+    /// The claim's case, as the reader's specification runs it.
+    pub case_path: PathBuf,
     pub blobs: usize,
     pub bytes: u64,
     pub checkpoints: usize,
@@ -100,10 +92,11 @@ pub(crate) fn stage_dir_name(stage: &str) -> Result<&str> {
 ///
 /// The directory holds the submission, the claim's `checkpoints.txt` and
 /// `checkpoint_list.json`, every stage's `input_manifest.json`, the inputs
-/// the claim's run was given (`posted_run.bin`), and `inference.toml`: the
-/// reader's run spec over the prompt text, or the source's documents, that
-/// those inputs hold. Nothing is written unless the blobs are the claimer's
-/// and hold the checkpoint list the claim names and the inputs of one run.
+/// the claim's run was given (`posted_run.bin`), and `case.toml`: the prompt
+/// text, or the source's documents, that those inputs hold. The reader runs
+/// it under its own specification. Nothing is written unless the blobs are
+/// the claimer's and hold the checkpoint list the claim names and the inputs
+/// of one run.
 pub fn fetch_claim(options: FetchClaimOptions) -> Result<FetchedClaim> {
     let submission: ClaimSubmission = read_json(&options.submission_path)?;
     ensure!(
@@ -111,13 +104,15 @@ pub fn fetch_claim(options: FetchClaimOptions) -> Result<FetchedClaim> {
         "{} names no posted data: the claim was not posted",
         options.submission_path.display()
     );
-    let procedure =
-        crate::claim_check::spec_procedure(&options.run_spec_path, options.pins_path.as_deref())?;
+    let procedure = crate::claim_check::spec_procedure(
+        &options.specification_path,
+        options.pins_path.as_deref(),
+    )?;
     ensure!(
         procedure.id() == submission.procedure,
         "the claim is of procedure {}, and {} describes {}",
         submission.procedure,
-        options.run_spec_path.display(),
+        options.specification_path.display(),
         procedure.id()
     );
 
@@ -170,17 +165,6 @@ pub fn fetch_claim(options: FetchClaimOptions) -> Result<FetchedClaim> {
         })
         .context("the claim's checkpoint list is not among what it posted")?;
 
-    let spec_dir = parent(&options.run_spec_path)?;
-    let mut spec = read_run_spec(&options.run_spec_path)?;
-    spec.model_manifest = spec
-        .model_manifest
-        .map(|manifest| absolute(spec_dir, &manifest));
-    for model in &mut spec.models {
-        model.manifest = absolute(spec_dir, &model.manifest);
-    }
-    spec.prompt = None;
-    spec.prompt_file = None;
-
     // The inputs the claim's run was given. A claim posts those of one run.
     let mut runs = entries.iter().filter_map(|entry| match entry {
         BlobEntry::Run(run) => Some(run),
@@ -202,53 +186,46 @@ pub fn fetch_claim(options: FetchClaimOptions) -> Result<FetchedClaim> {
     let out = fs::canonicalize(&options.out_dir)
         .with_context(|| format!("failed to resolve {}", options.out_dir.display()))?;
     crate::run_inputs::save(run, &out)?;
-    if let Some(posted) = &run.source {
-        // The recipe and the signer's key are the procedure's, so they
-        // stay the reader's own in the spec. The stages run on the posted
-        // ones all the same.
-        let source = spec.source.as_mut().with_context(|| {
-            format!(
-                "the claim has a source, and {} names none: the recipe and the signer's key \
-                 are the procedure's",
-                options.run_spec_path.display()
-            )
-        })?;
-        source.recipe = absolute(spec_dir, &source.recipe);
-        source.signer = absolute(spec_dir, &source.signer);
-        source.documents.clear();
-        for (index, (document, attested)) in crate::run_inputs::documents_of(posted)
-            .into_iter()
-            .enumerate()
-        {
-            let body = out.join(format!("posted-document-{index}.bin"));
-            fs::write(&body, &document)
-                .with_context(|| format!("failed to write {}", body.display()))?;
-            let attestation = out.join(format!("posted-attestation-{index}.json"));
-            write_json(&attestation, attested)?;
-            source.documents.push(SourceDocumentSpec {
-                document: body,
-                attestation,
-            });
+    // The case: what the claim posted, as the files a specification of its
+    // procedure reads. Whether the claim has a source is the procedure's,
+    // which was held to the reader's specification above.
+    let case = match &run.source {
+        Some(posted) => {
+            let mut documents = Vec::new();
+            for (index, (document, attested)) in crate::run_inputs::documents_of(posted)
+                .into_iter()
+                .enumerate()
+            {
+                let file = PathBuf::from(format!("posted-document-{index}.bin"));
+                let body = out.join(&file);
+                fs::write(&body, &document)
+                    .with_context(|| format!("failed to write {}", body.display()))?;
+                let attestation = PathBuf::from(format!("posted-attestation-{index}.json"));
+                write_json(&out.join(&attestation), attested)?;
+                documents.push(CaseDocument { file, attestation });
+            }
+            Case {
+                documents,
+                ..Case::default()
+            }
         }
-    } else {
-        spec.source = None;
-        // In the spec itself: the text the posted slices concatenate to.
-        spec.prompt = Some(crate::run_inputs::text_of(first));
-    }
+        // In the case itself: the text the posted slices concatenate to.
+        None => Case::of_prompt(crate::run_inputs::text_of(first)),
+    };
 
     write_package(&out, package)?;
     let submission_path = out.join(CLAIM_SUBMISSION_JSON);
     write_json(&submission_path, &submission)?;
-    let run_spec_path = out.join(INFERENCE_RUN_SPEC_TOML);
+    let case_path = out.join(CASE_TOML);
     fs::write(
-        &run_spec_path,
-        toml::to_string(&spec).context("the run spec does not encode")?,
+        &case_path,
+        toml::to_string(&case).context("the case does not encode")?,
     )
-    .with_context(|| format!("failed to write {}", run_spec_path.display()))?;
+    .with_context(|| format!("failed to write {}", case_path.display()))?;
     let list: CheckpointList = serde_json::from_slice(&package.list)?;
     Ok(FetchedClaim {
         submission_path,
-        run_spec_path,
+        case_path,
         blobs: submission.availability.len(),
         bytes: bytes_read,
         checkpoints: list.checkpoints.len(),

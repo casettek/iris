@@ -12,10 +12,12 @@ use std::fs;
 use std::path::Path;
 
 use anyhow::{ensure, Context, Result};
-use inference_artifacts::{ModelManifest, PreparedSourceInputs};
-use run_prep::source::{
-    DocumentFile, FieldFile, FormFile, LoadedDocument, LoadedSource, PathStep, RecipeFile,
+use inference_artifacts::{
+    Case, CaseDocument, ModelManifest, PathStep, PreparedSourceInputs, ProcedureKind,
+    Specification, SpecificationDocument, SpecificationField, SpecificationForm,
+    SpecificationModel, SpecificationSource, CASE_TOML, SPECIFICATION_TOML,
 };
+use run_prep::source::{LoadedDocument, LoadedSource};
 use serde_json::{json, Value};
 use source_core::{
     hex, sha256, sign_attestation, signer_key, Attestation, CIPHER_NONE, FAULT_DOCUMENT,
@@ -25,7 +27,7 @@ use source_core::{
 use staged_infer::chain_runner::StagedExecutionBackend;
 
 use super::compare::{compare, read_boundaries};
-use super::{command, logged, prompt_only_manifest};
+use super::{case_beside, command, logged, prompt_only_manifest};
 use crate::claim::{prepare_claim_run, ClaimBuildOptions};
 
 const SERVER: &str = "example.org";
@@ -78,20 +80,22 @@ pub(super) fn honest_source() -> Result<LoadedSource> {
         "id": "us1",
     }))?;
     let comments = serde_json::to_vec(&json!({"impact1": "Low risk.", "impact2": ""}))?;
-    let field = |lead: &str, document: u32, path: &[&str]| FieldFile {
+    let field = |lead: &str, document: u32, path: &[&str]| SpecificationField {
         lead: lead.to_string(),
         document,
         path: key(path),
     };
     Ok(LoadedSource {
-        recipe: RecipeFile {
+        specification: SpecificationSource {
             base: "Is mag 5 or more?\n".to_string(),
+            tail: "\n".to_string(),
+            signer: signer_key(&SECRET).context("the gate's key is no key")?,
             documents: vec![
-                DocumentFile {
+                SpecificationDocument {
                     server: SERVER.to_string(),
                     target: EVENT_TARGET.to_string(),
                 },
-                DocumentFile {
+                SpecificationDocument {
                     server: SERVER.to_string(),
                     target: COMMENTS_TARGET.to_string(),
                 },
@@ -114,13 +118,11 @@ pub(super) fn honest_source() -> Result<LoadedSource> {
                 ),
                 field("\nnote: ", 1, &["impact1"]),
             ],
-            tail: "\n".to_string(),
-            forms: vec![FormFile {
-                text: "yes".to_string(),
-                code: 1,
-            }],
         },
-        signer: signer_key(&SECRET).context("the gate's key is no key")?,
+        forms: vec![SpecificationForm {
+            text: "yes".to_string(),
+            code: 1,
+        }],
         documents: vec![
             LoadedDocument {
                 attestation: attest(&SECRET, EVENT_TARGET, &event)?,
@@ -134,40 +136,47 @@ pub(super) fn honest_source() -> Result<LoadedSource> {
     })
 }
 
-/// Writes a source as the files a run spec names, and returns the spec's
-/// `[source]` table.
-pub(super) fn write_source(dir: &Path, source: &LoadedSource) -> Result<String> {
+/// Writes a run of this source in `dir`: a specification of these models with
+/// the source and its forms, and beside it the case, with each document and
+/// its attestation as a file. Returns the specification's path.
+pub(super) fn write_run(
+    dir: &Path,
+    source: &LoadedSource,
+    procedure_kind: ProcedureKind,
+    models: &[&Path],
+) -> Result<std::path::PathBuf> {
     fs::create_dir_all(dir)?;
-    inference_artifacts::write_json(&dir.join("recipe.json"), &source.recipe)?;
-    inference_artifacts::write_json(&dir.join("signer.json"), &source.signer)?;
-    let mut documents = String::new();
+    let mut documents = Vec::new();
     for (index, document) in source.documents.iter().enumerate() {
-        fs::write(dir.join(format!("document_{index}.bin")), &document.body)?;
-        inference_artifacts::write_json(
-            &dir.join(format!("document_{index}.json")),
-            &document.attestation,
-        )?;
-        documents.push_str(&format!(
-            "  {{ document = \"document_{index}.bin\", attestation = \"document_{index}.json\" }},\n"
-        ));
+        let file = std::path::PathBuf::from(format!("document_{index}.bin"));
+        let attestation = std::path::PathBuf::from(format!("document_{index}.json"));
+        fs::write(dir.join(&file), &document.body)?;
+        inference_artifacts::write_json(&dir.join(&attestation), &document.attestation)?;
+        documents.push(CaseDocument { file, attestation });
     }
-    Ok(format!(
-        "[source]\nrecipe = \"recipe.json\"\nsigner = \"signer.json\"\ndocuments = [\n{documents}]\n"
-    ))
-}
-
-/// Writes a source as the files a run spec names, and the spec.
-fn write_run(dir: &Path, source: &LoadedSource, model_path: &Path) -> Result<std::path::PathBuf> {
-    let table = write_source(dir, source)?;
-    let spec = dir.join("inference.toml");
+    let specification = Specification {
+        procedure_kind,
+        raw_prompt: false,
+        max_new_tokens: 4,
+        models: models
+            .iter()
+            .map(|model| SpecificationModel {
+                manifest: model.to_path_buf(),
+            })
+            .collect(),
+        source: Some(source.specification.clone()),
+        forms: source.forms.clone(),
+    };
+    let path = dir.join(SPECIFICATION_TOML);
+    fs::write(&path, toml::to_string(&specification)?)?;
     fs::write(
-        &spec,
-        format!(
-            "model_manifest = {}\ntokens = 4\n\n{table}",
-            serde_json::to_string(model_path)?
-        ),
+        dir.join(CASE_TOML),
+        toml::to_string(&Case {
+            documents,
+            ..Case::default()
+        })?,
     )?;
-    Ok(spec)
+    Ok(path)
 }
 
 /// What the model answers the source's prompt with, from direct inference
@@ -180,10 +189,12 @@ fn direct_output(
     model_path: &Path,
     source: &LoadedSource,
 ) -> Result<String> {
-    let spec = write_run(dir, source, model_path)?;
+    let specification = write_run(dir, source, ProcedureKind::Single, &[model_path])?;
     let mut run = command(exe, root);
-    run.args(["parity-worker", "--run"])
-        .arg(&spec)
+    run.args(["parity-worker", "--specification"])
+        .arg(&specification)
+        .arg("--case")
+        .arg(case_beside(&specification))
         .arg("--output")
         .arg(dir.join("native-direct"))
         .arg("--direct");
@@ -204,10 +215,11 @@ fn run_honest(
     model_path: &Path,
     source: &LoadedSource,
 ) -> Result<(Value, crate::claim::PreparedClaimRun)> {
-    let spec = write_run(dir, source, model_path)?;
+    let specification = write_run(dir, source, ProcedureKind::Single, &[model_path])?;
     let prepared = prepare_claim_run(&ClaimBuildOptions {
         base_dir: dir.to_path_buf(),
-        run_spec_path: spec.clone(),
+        case_path: Some(case_beside(&specification)),
+        specification_path: specification.clone(),
         current_exe: exe.to_path_buf(),
         staged_backend: StagedExecutionBackend::InProcess,
         claimed_token_ids: None,
@@ -224,8 +236,10 @@ fn run_honest(
     logged(run, &dir.join("raster.log")).context("Raster-staged execution")?;
     for (name, direct) in [("native-staged", false), ("native-direct", true)] {
         let mut run = command(exe, root);
-        run.args(["parity-worker", "--run"])
-            .arg(&spec)
+        run.args(["parity-worker", "--specification"])
+            .arg(&specification)
+            .arg("--case")
+            .arg(case_beside(&specification))
             .arg("--output")
             .arg(dir.join(name));
         if direct {
@@ -291,7 +305,7 @@ fn run_honest(
     // boundary the Raster run committed.
     let contract = crate::claim_check::check_claim(crate::claim_check::ClaimCheckOptions {
         base_dir: dir.to_path_buf(),
-        run_spec_path: spec.clone(),
+        specification_path: specification.clone(),
         submission_path: native_dir.join(inference_artifacts::checks::CLAIM_SUBMISSION_JSON),
         raster_run: Some(raster_dir),
         pins_path: None,
@@ -310,27 +324,25 @@ fn run_honest(
     }
 
     // The challenger's side: read back from the layer into an empty
-    // directory, the claim's source is the documents it posted, and the run
-    // spec written over them gives the source record the claim names.
+    // directory, the claim's source is the documents it posted, and the case
+    // written over them gives the source record the claim names.
     let fetched = crate::posted::fetch_claim(crate::posted::FetchClaimOptions {
         submission_path: native_dir.join(inference_artifacts::checks::CLAIM_SUBMISSION_JSON),
-        run_spec_path: spec,
+        specification_path: specification.clone(),
         pins_path: None,
         da_dir: None,
         out_dir: dir.join("fetched"),
     })
     .context("reading the claim back from the layer")?;
-    let fetched_spec = inference_artifacts::read_run_spec(&fetched.run_spec_path)?;
     let fetched_source = run_prep::source::load_source(
+        &inference_artifacts::read_specification(&specification)?,
         fetched
-            .run_spec_path
+            .case_path
             .parent()
-            .context("the fetched run spec has no directory")?,
-        fetched_spec
-            .source
-            .as_ref()
-            .context("the run spec read back for a claim with a source names none")?,
-    )?;
+            .context("the fetched case has no directory")?,
+        &inference_artifacts::read_case(&fetched.case_path)?,
+    )?
+    .context("the specification of a claim with a source names none")?;
     ensure!(
         fetched_source.documents.len() == source.documents.len()
             && fetched_source
@@ -450,7 +462,7 @@ pub(super) fn run_source_scenario(
     // result stage passes one form by and stops at the next.
     let output = direct_output(root, &dir.join("answer"), exe, model_path, &honest)
         .context("the answer to the source's prompt")?;
-    honest.recipe.forms.push(FormFile {
+    honest.forms.push(SpecificationForm {
         text: output.trim().to_string(),
         code: OUTPUT_CODE,
     });
@@ -527,7 +539,7 @@ pub(super) fn run_source_scenario(
         (
             "missing-field",
             edited(&|source| {
-                source.recipe.fields[1].path = key(&["properties", "depth"]);
+                source.specification.fields[1].path = key(&["properties", "depth"]);
                 Ok(())
             })?,
             own_text.clone(),
@@ -536,7 +548,7 @@ pub(super) fn run_source_scenario(
         (
             "object-for-a-value",
             edited(&|source| {
-                source.recipe.fields[1].path = key(&["properties", "products"]);
+                source.specification.fields[1].path = key(&["properties", "products"]);
                 Ok(())
             })?,
             own_text.clone(),

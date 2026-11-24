@@ -10,7 +10,8 @@
 # usage: test-real-model.sh [--update] [reference dir ...]
 #   --update  write the run's checkpoints as the new reference. Only after a
 #             change that is meant to alter stage outputs.
-# A reference directory holds `spec.toml` (the run) and `checkpoints.txt`.
+# A reference directory holds `specification.toml`, `case.toml` and
+# `checkpoints.txt`.
 # Without arguments every directory under tests/real-model is run; one whose
 # model is not imported here is reported as skipped.
 # See docs/workflows/testing.md.
@@ -39,7 +40,8 @@ raster_samples="prompt-bind:prompt_bind_p0 prompt-check:prompt_check_p0 input-em
 
 claim() {
     local reference=$1 out=$2
-    "$repo_root/target/release/iris" claim build --run "$reference/spec.toml" > "$out/claim.log" 2>&1 \
+    "$repo_root/target/release/iris" claim build --specification "$reference/specification.toml" \
+        --case "$reference/case.toml" > "$out/claim.log" 2>&1 \
         || { tail -20 "$out/claim.log"; return 1; }
     grep -E "^faults:|^stop reason:" "$out/claim.log"
     grep -q "^faults: prompt 0, check 0, output 0, model 0; claim mismatches: 0" "$out/claim.log" \
@@ -97,7 +99,7 @@ step real-model-build "the iris binary builds" \
 
 for reference in "${references[@]}"; do
     name=$(basename "$reference")
-    manifest=$(sed -n 's/^model_manifest *= *"\(.*\)"/\1/p' "$reference/spec.toml")
+    manifest=$(sed -n 's/^manifest *= *"\(.*\)"/\1/p' "$reference/specification.toml")
     case $manifest in /*) ;; *) manifest="$reference/$manifest" ;; esac
     echo "== real model: $name"
     if [ ! -f "$manifest" ]; then

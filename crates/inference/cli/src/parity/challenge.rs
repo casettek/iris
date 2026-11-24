@@ -22,7 +22,10 @@ use serde_json::{json, Value};
 use staged_infer::chain_runner::StagedExecutionBackend;
 use staged_infer::{CheckpointedInferenceConfig, CheckpointedInferenceExecutor, ParityPolicy};
 
-use super::{block_name, command, logged, manifest_blocks, Case};
+use super::{
+    block_name, case_beside, command, logged, manifest_blocks, write_case, write_specification,
+    Case,
+};
 use crate::challenge::locate_divergence;
 use crate::claim::{
     build_posted_claim, corrupt_checkpoint_hashes, render_ranged_manifest, ClaimBuildOptions,
@@ -79,7 +82,9 @@ struct RunInputs {
 
 pub(super) fn run_challenge_scenario(scenario: &Scenario) -> Result<Value> {
     fs::create_dir_all(&scenario.dir)?;
-    let spec = run_spec(scenario, scenario.model_path, "inference.toml")?;
+    let specification = scenario.dir.join(inference_artifacts::SPECIFICATION_TOML);
+    write_specification(&specification, scenario.model_path, scenario.case)?;
+    write_case(&specification, scenario.case)?;
     let inputs = honest_inputs(scenario)?;
     let (other_path, other) = import_other_model(scenario)?;
     let honest_manifest = render(
@@ -95,7 +100,12 @@ pub(super) fn run_challenge_scenario(scenario: &Scenario) -> Result<Value> {
         &scenario.dir.join("other-run"),
     )?;
 
-    let honest = claim(scenario, "honest", &spec, Some(scenario.claimed.to_vec()))?;
+    let honest = claim(
+        scenario,
+        "honest",
+        &specification,
+        Some(scenario.claimed.to_vec()),
+    )?;
     let context = honest.claim_bundle_path.as_path();
     let honest_trace = read_checkpoint_list(&honest.checkpoint_list_path)?;
     let mut replays = Vec::new();
@@ -104,7 +114,7 @@ pub(super) fn run_challenge_scenario(scenario: &Scenario) -> Result<Value> {
     let log = challenge(
         scenario,
         "honest",
-        &spec,
+        &specification,
         context,
         &honest.checkpoint_hashes_path,
     )?;
@@ -124,7 +134,7 @@ pub(super) fn run_challenge_scenario(scenario: &Scenario) -> Result<Value> {
             output_path: Some(hashes.clone()),
             selection: CorruptCheckpointSelection::Stage(stage.to_string()),
         })?;
-        let outcome = expect_divergence(scenario, &name, &spec, context, &hashes, stage)?;
+        let outcome = expect_divergence(scenario, &name, &specification, context, &hashes, stage)?;
         // The same replay, against a claimer that ran this stage on the honest
         // inputs and stated another output for it. A falsified hash has no
         // checkpoint behind it, so this is the claim a contract would see: a
@@ -144,7 +154,7 @@ pub(super) fn run_challenge_scenario(scenario: &Scenario) -> Result<Value> {
         let outcome = contract_challenge(
             scenario,
             &name,
-            &spec,
+            &specification,
             &honest,
             &lying,
             stage,
@@ -214,7 +224,7 @@ pub(super) fn run_challenge_scenario(scenario: &Scenario) -> Result<Value> {
         // fault by auditing it, with nothing run, at the checkpoint that
         // lies.
         let layer = crate::posting::open_layer(None)?;
-        let procedure = crate::claim_check::spec_procedure(&spec, None)?;
+        let procedure = crate::claim_check::spec_procedure(&specification, None)?;
         for (fault, out, expected) in [
             (
                 crate::lies::CorruptFault::Program,
@@ -276,7 +286,7 @@ pub(super) fn run_challenge_scenario(scenario: &Scenario) -> Result<Value> {
                 })?;
             let fetched = crate::posted::fetch_claim(crate::posted::FetchClaimOptions {
                 submission_path: lie.submission_path.clone(),
-                run_spec_path: spec.to_path_buf(),
+                specification_path: specification.to_path_buf(),
                 pins_path: None,
                 da_dir: None,
                 out_dir: scenario.dir.join(format!("{out}-fetched")),
@@ -284,7 +294,7 @@ pub(super) fn run_challenge_scenario(scenario: &Scenario) -> Result<Value> {
             .with_context(|| format!("`{out}`: reading the lying claim back from the layer"))?;
             let audit = crate::audit::audit_claim(crate::audit::AuditClaimOptions {
                 submission_path: fetched.submission_path,
-                run_spec_path: fetched.run_spec_path,
+                specification_path: specification.to_path_buf(),
                 pins_path: None,
             })?;
             let found = audit
@@ -329,11 +339,16 @@ pub(super) fn run_challenge_scenario(scenario: &Scenario) -> Result<Value> {
     // Correct execution over ids that are not the greedy output: every
     // checkpoint agrees, and the claim's own record refutes it.
     let not_greedy = not_greedy_ids(scenario)?;
-    let refuted = claim(scenario, "not-greedy", &spec, Some(not_greedy.clone()))?;
+    let refuted = claim(
+        scenario,
+        "not-greedy",
+        &specification,
+        Some(not_greedy.clone()),
+    )?;
     let log = challenge(
         scenario,
         "not-greedy",
-        &spec,
+        &specification,
         &refuted.claim_bundle_path,
         &refuted.checkpoint_hashes_path,
     )?;
@@ -342,17 +357,19 @@ pub(super) fn run_challenge_scenario(scenario: &Scenario) -> Result<Value> {
         "a non-greedy claim was not rejected on its final record"
     );
 
-    replays.extend(posted_lies(scenario, &spec, &honest, &refuted)?);
+    replays.extend(posted_lies(scenario, &specification, &honest, &refuted)?);
 
     // An honest claimer that ran a different model. Nothing of that model is
     // available to the challenger, and the run differs at the first stage that
     // names it.
-    let other_spec = run_spec(scenario, &other_path, "other-model.toml")?;
-    let elsewhere = claim(scenario, "other-model", &other_spec, None)?;
+    // A second specification of the same case.
+    let other_specification = scenario.dir.join("other-model.toml");
+    write_specification(&other_specification, &other_path, scenario.case)?;
+    let elsewhere = claim(scenario, "other-model", &other_specification, None)?;
     replays.push(expect_claim_found(
         scenario,
         "other-model",
-        &spec,
+        &specification,
         &elsewhere,
         &honest_trace,
         "prompt_bind_p0",
@@ -437,7 +454,7 @@ pub(super) fn run_challenge_scenario(scenario: &Scenario) -> Result<Value> {
         replays.push(expect_found(
             scenario,
             name,
-            &spec,
+            &specification,
             context,
             &honest_trace,
             &manifest,
@@ -531,7 +548,7 @@ pub(super) fn run_challenge_scenario(scenario: &Scenario) -> Result<Value> {
         replays.push(expect_found(
             scenario,
             name,
-            &spec,
+            &specification,
             context,
             &honest_trace,
             manifest,
@@ -622,32 +639,18 @@ fn has_line(log: &str, wanted: &str) -> bool {
     log.lines().any(|line| line.trim() == wanted)
 }
 
-fn run_spec(scenario: &Scenario, model_path: &Path, file: &str) -> Result<PathBuf> {
-    let path = scenario.dir.join(file);
-    fs::write(
-        &path,
-        format!(
-            "model_manifest = {}\nprompt = {}\nraw_prompt = {}\ntokens = {}\n",
-            serde_json::to_string(model_path)?,
-            serde_json::to_string(&scenario.case.prompt)?,
-            scenario.case.raw_prompt,
-            scenario.case.tokens
-        ),
-    )?;
-    Ok(path)
-}
-
 fn claim(
     scenario: &Scenario,
     name: &str,
-    spec: &Path,
+    specification: &Path,
     ids: Option<Vec<u32>>,
 ) -> Result<ClaimBuildResult> {
     let base_dir = scenario.dir.join(name).join("claim");
     fs::create_dir_all(&base_dir)?;
     build_posted_claim(ClaimBuildOptions {
         base_dir,
-        run_spec_path: spec.to_path_buf(),
+        case_path: Some(case_beside(&specification)),
+        specification_path: specification.to_path_buf(),
         current_exe: scenario.exe.to_path_buf(),
         staged_backend: StagedExecutionBackend::InProcess,
         claimed_token_ids: ids,
@@ -661,11 +664,11 @@ fn claim(
 fn challenge(
     scenario: &Scenario,
     name: &str,
-    spec: &Path,
+    specification: &Path,
     context: &Path,
     hashes: &Path,
 ) -> Result<String> {
-    let (built, log) = attempt_challenge(scenario, name, spec, context, hashes)?;
+    let (built, log) = attempt_challenge(scenario, name, specification, context, hashes)?;
     built.with_context(|| format!("challenge `{name}`"))?;
     Ok(log)
 }
@@ -675,7 +678,7 @@ fn challenge(
 fn attempt_challenge(
     scenario: &Scenario,
     name: &str,
-    spec: &Path,
+    specification: &Path,
     context: &Path,
     hashes: &Path,
 ) -> Result<(Result<f64>, String)> {
@@ -684,8 +687,8 @@ fn attempt_challenge(
     let log = dir.join("challenge.log");
     let mut run = command(scenario.exe, scenario.root);
     run.current_dir(&dir)
-        .args(["challenge", "build", "--run"])
-        .arg(spec)
+        .args(["challenge", "build", "--specification"])
+        .arg(specification)
         .arg("--claim-context")
         .arg(context)
         .arg("--checkpoints")
@@ -701,7 +704,7 @@ fn attempt_challenge(
 fn expect_claim_found(
     scenario: &Scenario,
     name: &str,
-    spec: &Path,
+    specification: &Path,
     claim: &ClaimBuildResult,
     honest: &CheckpointList,
     stage: &str,
@@ -721,12 +724,12 @@ fn expect_claim_found(
     );
     let (context, hashes) = (&claim.claim_bundle_path, &claim.checkpoint_hashes_path);
     if long_enough_to_challenge(stage) {
-        let outcome = expect_divergence(scenario, name, spec, context, hashes, stage)?;
+        let outcome = expect_divergence(scenario, name, specification, context, hashes, stage)?;
         return dispute_tie(scenario, name, &claimed, honest, stage, outcome);
     }
     // The replay of a stage this short is refused, so whether the command
     // built a challenge is not this case's result.
-    let (_built, _log) = attempt_challenge(scenario, name, spec, context, hashes)?;
+    let (_built, _log) = attempt_challenge(scenario, name, specification, context, hashes)?;
     Ok(json!({"case": name, "stage": stage, "replayed": false}))
 }
 
@@ -736,13 +739,13 @@ fn expect_claim_found(
 fn expect_divergence(
     scenario: &Scenario,
     name: &str,
-    spec: &Path,
+    specification: &Path,
     context: &Path,
     hashes: &Path,
     stage: &str,
 ) -> Result<Value> {
     let started = Instant::now();
-    let log = challenge(scenario, name, spec, context, hashes)?;
+    let log = challenge(scenario, name, specification, context, hashes)?;
     ensure!(
         has_line(&log, &format!("divergence found: {stage}")),
         "challenge `{name}` did not find `{stage}`: {}",
@@ -786,7 +789,7 @@ fn expect_divergence(
 fn expect_found(
     scenario: &Scenario,
     name: &str,
-    spec: &Path,
+    specification: &Path,
     context: &Path,
     honest: &CheckpointList,
     manifest: &str,
@@ -801,7 +804,7 @@ fn expect_found(
         found.stage
     );
     if long_enough_to_challenge(stage) {
-        let outcome = expect_divergence(scenario, name, spec, context, &hashes, stage)?;
+        let outcome = expect_divergence(scenario, name, specification, context, &hashes, stage)?;
         return dispute_tie(scenario, name, &claimed, honest, stage, outcome);
     }
     Ok(json!({"case": name, "stage": stage, "replayed": false}))
@@ -896,7 +899,7 @@ fn dispute_tie(
 fn contract_challenge(
     scenario: &Scenario,
     name: &str,
-    spec: &Path,
+    specification: &Path,
     honest: &ClaimBuildResult,
     lying: &CheckpointList,
     stage: &str,
@@ -919,7 +922,7 @@ fn contract_challenge(
     claim.checkpoint_count = lying.checkpoints.len() as u32;
     claim.checkpoints_root = inference_artifacts::checkpoints_root(&checkpoint_hashes(lying)?)?;
     let claim_path = dir.join(CLAIM_SUBMISSION_JSON);
-    let procedure = crate::claim_check::spec_procedure(spec, None)?;
+    let procedure = crate::claim_check::spec_procedure(specification, None)?;
     let layer = crate::posting::open_layer(None)?;
     let layer = layer.as_ref();
     let now = crate::posting::now()?;
@@ -1000,7 +1003,7 @@ fn contract_challenge(
     // checkpoints exactly, with every stage's input manifest.
     let fetched = crate::posted::fetch_claim(crate::posted::FetchClaimOptions {
         submission_path: claim_path.clone(),
-        run_spec_path: spec.to_path_buf(),
+        specification_path: specification.to_path_buf(),
         pins_path: None,
         da_dir: None,
         out_dir: dir.join("fetched"),
@@ -1058,7 +1061,7 @@ fn contract_challenge(
     // disputed by a replay or not at all.
     let audit = crate::audit::audit_claim(crate::audit::AuditClaimOptions {
         submission_path: fetched.submission_path.clone(),
-        run_spec_path: fetched.run_spec_path.clone(),
+        specification_path: specification.to_path_buf(),
         pins_path: None,
     })?;
     ensure!(
@@ -1070,15 +1073,15 @@ fn contract_challenge(
     outcome["read_back_from_the_layer"] = json!(true);
     if challenge_as_posted {
         // And a challenge built from that directory alone, with nothing of
-        // the claimer's run: the run is prepared from the spec over what the
-        // claim posted, and it finds and replays the same stage.
+        // the claimer's run: the run is prepared from the case the claim
+        // posted, and it finds and replays the same stage.
         let posted_dir = scenario.dir.join(name).join("posted-challenge");
         fs::create_dir_all(&posted_dir)?;
         let log = posted_dir.join("challenge.log");
         let mut run = command(scenario.exe, scenario.root);
         run.current_dir(&posted_dir)
-            .args(["challenge", "build", "--run"])
-            .arg(&fetched.run_spec_path)
+            .args(["challenge", "build", "--specification"])
+            .arg(specification)
             .arg("--submission")
             .arg(&fetched.submission_path);
         logged(run, &log).with_context(|| format!("`{name}`: challenge of the posted claim"))?;
@@ -1120,7 +1123,7 @@ fn contract_challenge(
 /// family with no auxiliary stages.
 fn posted_lies(
     scenario: &Scenario,
-    spec: &Path,
+    specification: &Path,
     honest: &ClaimBuildResult,
     not_greedy: &ClaimBuildResult,
 ) -> Result<Vec<Value>> {
@@ -1129,7 +1132,7 @@ fn posted_lies(
 
     let layer = crate::posting::open_layer(None)?;
     let layer = layer.as_ref();
-    let procedure = crate::claim_check::spec_procedure(spec, None)?;
+    let procedure = crate::claim_check::spec_procedure(specification, None)?;
     let now = crate::posting::now()?;
     let liar = "0x00000000000000000000000000000000000011a3";
     let challenger = "0x000000000000000000000000000000000000c4a2";
@@ -1241,7 +1244,7 @@ fn posted_lies(
 
         let fetched = crate::posted::fetch_claim(crate::posted::FetchClaimOptions {
             submission_path: lie.submission_path.clone(),
-            run_spec_path: spec.to_path_buf(),
+            specification_path: specification.to_path_buf(),
             pins_path: None,
             da_dir: None,
             out_dir: dir.join("fetched"),
@@ -1249,7 +1252,7 @@ fn posted_lies(
         .with_context(|| format!("`{name}`: reading the lying claim back from the layer"))?;
         let audit = crate::audit::audit_claim(crate::audit::AuditClaimOptions {
             submission_path: fetched.submission_path.clone(),
-            run_spec_path: fetched.run_spec_path.clone(),
+            specification_path: specification.to_path_buf(),
             pins_path: None,
         })?;
         ensure!(
@@ -1265,8 +1268,8 @@ fn posted_lies(
         let log = challenge_dir.join("challenge.log");
         let mut run = command(scenario.exe, scenario.root);
         run.current_dir(&challenge_dir)
-            .args(["challenge", "build", "--run"])
-            .arg(&fetched.run_spec_path)
+            .args(["challenge", "build", "--specification"])
+            .arg(specification)
             .arg("--submission")
             .arg(&fetched.submission_path);
         let built = logged(run, &log);

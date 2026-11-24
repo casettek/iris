@@ -17,7 +17,7 @@ stops and says which it wants, with one exception noted below.
 | Deterministic number specification | The weight file's header | 1 | `DET_NUM_SPEC_VERSION` | Bundles are converted again. |
 | Model descriptor | `model-descriptor.bin` in an import, and a stage input | 2 | `DESCRIPTOR_VERSION` | Models are imported again, and every stage that reads it is re-locked. |
 | Model manifest | `manifest.json` in an import | 19 | `MODEL_MANIFEST_VERSION` | Models are imported again. iris-backend pins the same number (`IRIS_MODEL_MANIFEST_VERSION`). |
-| Prepared run | `prepared_run.json` beside a claim | 21 | `PREPARED_RUN_VERSION` | A claim built before cannot be challenged from its own directory. |
+| Prepared run | `prepared_run.json` beside a claim | 22 | `PREPARED_RUN_VERSION` | A claim built before cannot be challenged from its own directory. |
 | Execution context | Inside every stage's output | 3 | `EXECUTION_VERSION` | Every stage is re-locked, and every checkpoint changes. |
 | Contract pins | `contract_pins.json` in an import | 6 | `CONTRACT_PINS_VERSION` | Pins are written again (`iris claim pins`), which changes the procedure's id. |
 | Procedure | What a contract registers, by its id | 3 | `PROCEDURE_VERSION` | The contracts' decoding, and every registered procedure. |

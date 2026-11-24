@@ -5,14 +5,16 @@ use crate::*;
 #[cfg(feature = "replay-profile")]
 #[derive(Debug, Args)]
 pub(crate) struct ReplayProfileArgs {
-    #[arg(long, default_value = inference_artifacts::INFERENCE_RUN_SPEC_TOML)]
-    run: PathBuf,
+    #[arg(long, default_value = inference_artifacts::SPECIFICATION_TOML)]
+    pub(crate) specification: PathBuf,
+    #[arg(long, default_value = inference_artifacts::CASE_TOML)]
+    pub(crate) case: PathBuf,
     /// Exact expanded stage name, e.g. range_p0_l13 or prompt_check_p0.
     #[arg(long)]
-    stage: String,
+    pub(crate) stage: String,
     /// Number of distinct tiles selected by their slowest native invocation.
     #[arg(long, default_value = "3")]
-    top_n: std::num::NonZeroUsize,
+    pub(crate) top_n: std::num::NonZeroUsize,
 }
 
 pub(crate) fn require_input_args(cli: &Cli) -> Result<()> {

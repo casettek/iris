@@ -13,9 +13,9 @@ pub(crate) struct ChallengePostArgs {
     #[arg(long)]
     submission: PathBuf,
 
-    /// Run spec naming the procedure kind and models of the contract.
-    #[arg(long, default_value = inference_artifacts::INFERENCE_RUN_SPEC_TOML)]
-    run: PathBuf,
+    /// Specification naming the procedure kind and models of the contract.
+    #[arg(long, default_value = inference_artifacts::SPECIFICATION_TOML)]
+    specification: PathBuf,
 
     /// The pins the contract holds. As for `iris claim check`.
     #[arg(long)]
@@ -74,9 +74,9 @@ pub(crate) struct ChallengeCheckArgs {
     #[arg(long)]
     submission: PathBuf,
 
-    /// Run spec naming the procedure kind and models of the contract.
-    #[arg(long, default_value = inference_artifacts::INFERENCE_RUN_SPEC_TOML)]
-    run: PathBuf,
+    /// Specification naming the procedure kind and models of the contract.
+    #[arg(long, default_value = inference_artifacts::SPECIFICATION_TOML)]
+    specification: PathBuf,
 
     /// The pins the contract holds. As for `iris claim check`.
     #[arg(long)]
@@ -111,9 +111,10 @@ pub(crate) enum ChallengeCommand {
 
 #[derive(Debug, Args)]
 pub(crate) struct ChallengeBuildArgs {
-    /// Run spec selecting the model to verify against the claim.
-    #[arg(long, default_value = inference_artifacts::INFERENCE_RUN_SPEC_TOML)]
-    run: PathBuf,
+    /// Your own specification of the procedure the claim names. Its models
+    /// are the ones the claim is verified against.
+    #[arg(long, default_value = inference_artifacts::SPECIFICATION_TOML)]
+    specification: PathBuf,
 
     /// For a test that has the claimer's own directory: the claim's
     /// checkpoint list. A challenger of a submitted claim gives
@@ -127,15 +128,15 @@ pub(crate) struct ChallengeBuildArgs {
     claim_context: Option<PathBuf>,
 
     /// A submitted claim as `iris claim fetch` wrote it: its
-    /// `claim_submission.json`, with its checkpoint list beside it. Give
-    /// `--run` the spec that command wrote there. Nothing of the claimer's
-    /// own run is read.
+    /// `claim_submission.json`, with its checkpoint list and the `case.toml`
+    /// that command wrote beside it. Nothing of the claimer's own run is
+    /// read.
     #[arg(long, conflicts_with_all = ["checkpoint_hashes", "claim_context"])]
     submission: Option<PathBuf>,
 
     /// With `--submission`: the comma-separated output ids your own `iris
-    /// infer` printed for the fetched run spec, taken in place of running
-    /// direct inference again.
+    /// infer` printed for your specification and the fetched case, taken in
+    /// place of running direct inference again.
     #[arg(
         long = "direct-output-ids",
         value_delimiter = ',',
@@ -237,8 +238,12 @@ impl ChallengeBuildArgs {
         } else {
             staged_infer::chain_runner::StagedExecutionBackend::InProcess
         };
-        let mut options =
-            ChallengeBuildOptions::from_current_dir(current_exe, staged_backend, input, self.run)?;
+        let mut options = ChallengeBuildOptions::from_current_dir(
+            current_exe,
+            staged_backend,
+            input,
+            self.specification,
+        )?;
         options.direct_output_ids = self.direct_output_ids;
         Ok(options)
     }
@@ -256,7 +261,7 @@ pub(crate) fn run(command: ChallengeCommand) -> Result<ExitCode> {
             let base_dir =
                 std::env::current_dir().context("failed to resolve current directory")?;
             let posted = claim_check::post_challenge(claim_check::ChallengePostOptions {
-                run_spec_path: absolute(&base_dir, &args.run),
+                specification_path: absolute(&base_dir, &args.specification),
                 pins_path: args.pins.map(|path| absolute(&base_dir, &path)),
                 challenge_bundle_path: absolute(&base_dir, &args.challenge),
                 submission_path: absolute(&base_dir, &args.submission),
@@ -302,7 +307,7 @@ pub(crate) fn run(command: ChallengeCommand) -> Result<ExitCode> {
                 std::env::current_dir().context("failed to resolve current directory")?;
             let report =
                 claim_check::check_challenge_submission(claim_check::ChallengeCheckOptions {
-                    run_spec_path: absolute(&base_dir, &args.run),
+                    specification_path: absolute(&base_dir, &args.specification),
                     pins_path: args.pins.map(|path| absolute(&base_dir, &path)),
                     challenge_path: absolute(&base_dir, &args.challenge),
                     submission_path: absolute(&base_dir, &args.submission),

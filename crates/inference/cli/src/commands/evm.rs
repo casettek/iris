@@ -5,10 +5,10 @@ use crate::*;
 
 #[derive(Debug, Subcommand)]
 pub(crate) enum EvmCommand {
-    /// The call that registers a run spec's procedure.
+    /// The call that registers a specification's procedure.
     Procedure {
-        #[arg(long, default_value = inference_artifacts::INFERENCE_RUN_SPEC_TOML)]
-        run: PathBuf,
+        #[arg(long, default_value = inference_artifacts::SPECIFICATION_TOML)]
+        specification: PathBuf,
         #[arg(long)]
         pins: Option<PathBuf>,
     },
@@ -50,12 +50,13 @@ pub(crate) fn run(command: EvmCommand) -> Result<ExitCode> {
     {
         let base_dir = std::env::current_dir().context("failed to resolve current directory")?;
         let call = match command {
-            EvmCommand::Procedure { run, pins } => {
-                evm::procedure_call(&claim_check::spec_procedure(
-                    &absolute(&base_dir, &run),
-                    pins.map(|path| absolute(&base_dir, &path)).as_deref(),
-                )?)?
-            }
+            EvmCommand::Procedure {
+                specification,
+                pins,
+            } => evm::procedure_call(&claim_check::spec_procedure(
+                &absolute(&base_dir, &specification),
+                pins.map(|path| absolute(&base_dir, &path)).as_deref(),
+            )?)?,
             EvmCommand::Claim { submission } => evm::claim_call(&absolute(&base_dir, &submission))?,
             EvmCommand::Challenge {
                 challenge,

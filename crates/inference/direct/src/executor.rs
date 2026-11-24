@@ -2,7 +2,8 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use inference_artifacts::{
-    read_run_spec, InferStageTiming, InferenceResult, InferenceRunReport, InferenceTimings,
+    read_case, read_specification, InferStageTiming, InferenceResult, InferenceRunReport,
+    InferenceTimings,
 };
 
 use crate::diagnostics::{DirectDiagnosticRunReport, DirectTrace};
@@ -45,26 +46,40 @@ impl DirectInferenceExecutor {
     ) -> Result<InferenceRunReport> {
         let infer_started = Instant::now();
         let mut timings = Vec::new();
-        let run_spec_path = if config.run_spec_path.is_absolute() {
-            config.run_spec_path.clone()
+        let specification_path = if config.specification_path.is_absolute() {
+            config.specification_path.clone()
         } else {
-            config.base_dir.join(&config.run_spec_path)
+            config.base_dir.join(&config.specification_path)
         };
-        let run_spec = read_run_spec(&run_spec_path).with_context(|| {
+        let specification = read_specification(&specification_path).with_context(|| {
             format!(
-                "failed to load run spec {}; create inference.toml with model_manifest, prompt/prompt_file, raw_prompt, and tokens",
-                run_spec_path.display()
+                "failed to load specification {}; create specification.toml with a `[[model]]` table, raw_prompt and max_new_tokens",
+                specification_path.display()
             )
         })?;
-        let run_spec_dir = run_spec_path
+        let specification_dir = specification_path
             .parent()
-            .ok_or_else(|| anyhow::anyhow!("run spec has no parent directory"))?;
+            .ok_or_else(|| anyhow::anyhow!("specification has no parent directory"))?;
+        let case_path = if config.case_path.is_absolute() {
+            config.case_path.clone()
+        } else {
+            config.base_dir.join(&config.case_path)
+        };
+        let case = read_case(&case_path).with_context(|| {
+            format!(
+                "failed to load case {}; create case.toml with a prompt, or the documents of the specification's source",
+                case_path.display()
+            )
+        })?;
+        let case_dir = case_path
+            .parent()
+            .ok_or_else(|| anyhow::anyhow!("case has no parent directory"))?;
         // One inference of the run: the same text, on this one of its models.
-        let model_manifest = run_spec.model_manifest_of(config.inference)?;
+        let model_manifest = specification.model_manifest_of(config.inference)?;
         let model_manifest_path = if model_manifest.is_absolute() {
             model_manifest.to_path_buf()
         } else {
-            run_spec_dir.join(model_manifest)
+            specification_dir.join(model_manifest)
         };
 
         let load_started = Instant::now();
@@ -73,10 +88,10 @@ impl DirectInferenceExecutor {
         timings.push(phase_timing("load_direct_model", load_started.elapsed()));
 
         let prompt_started = Instant::now();
-        let prepared_prompt = model.prepare_prompt(run_spec_dir, &run_spec)?;
+        let prepared_prompt = model.prepare_prompt(&specification, case_dir, &case)?;
         trace.configure(
             model.num_layers(),
-            run_spec.tokens,
+            specification.max_new_tokens,
             model.family().has_auxiliary_stages(),
         );
         let prompt = model.prompt_inputs(&prepared_prompt)?;
@@ -91,8 +106,8 @@ impl DirectInferenceExecutor {
             context.bind_statement(
                 &sequence_check::sha256_hex(prepared_prompt.resolved_prompt.as_bytes()),
                 &source_sha256,
-                run_spec.raw_prompt,
-                run_spec.tokens,
+                specification.raw_prompt,
+                specification.max_new_tokens,
                 model.manifest().range_size,
             );
             // The schedule the chain runs this output under, so the two final
@@ -154,7 +169,7 @@ impl DirectInferenceExecutor {
         let decode_started = Instant::now();
         let mut edge = inference_kernels::kernels::origin::empty_decode_edge();
         trace.record("decode_init", &edge)?;
-        for token_idx in 0..run_spec.tokens {
+        for token_idx in 0..specification.max_new_tokens {
             edge = crate::generation::select_next_token(&logits, &edge)?;
             edge.model = execution_context(
                 Some(edge.generated_token_ids.as_slice()),
@@ -166,7 +181,7 @@ impl DirectInferenceExecutor {
                 trace.stop_at_eos(model.num_layers(), token_idx + 1);
                 break;
             }
-            if token_idx + 1 == run_spec.tokens {
+            if token_idx + 1 == specification.max_new_tokens {
                 break;
             }
             let decode_seed = run_decode_embed_view(&model, &edge)?;
@@ -216,8 +231,8 @@ impl DirectInferenceExecutor {
                 ),
                 source_sha256: source_sha256.clone(),
                 model_id: model.manifest().model_id.clone(),
-                raw_prompt: run_spec.raw_prompt,
-                max_new_tokens: run_spec.tokens,
+                raw_prompt: specification.raw_prompt,
+                max_new_tokens: specification.max_new_tokens,
                 range_size: model.manifest().range_size,
                 next_piece: prepared_prompt.initial_pieces.len() as u64,
                 prompt_tokens: prompt.token_ids.len() as u32,
@@ -464,10 +479,14 @@ mod tests {
     fn direct_infer_uses_direct_manifest_by_default() {
         let config = DirectInferenceConfig::from_current_dir().expect("config should build");
         assert_eq!(
-            config.run_spec_path,
+            config.specification_path,
             config
                 .base_dir
-                .join(inference_artifacts::INFERENCE_RUN_SPEC_TOML)
+                .join(inference_artifacts::SPECIFICATION_TOML)
+        );
+        assert_eq!(
+            config.case_path,
+            config.base_dir.join(inference_artifacts::CASE_TOML)
         );
     }
 }

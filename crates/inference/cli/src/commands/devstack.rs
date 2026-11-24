@@ -44,9 +44,9 @@ pub(crate) enum DevstackCommand {
     /// and exits nonzero when it refused.
     Submit {
         what: SubmitWhat,
-        /// The run spec of the claim's procedure, to register it.
+        /// The specification of the claim's procedure, to register it.
         #[arg(long)]
-        run: Option<PathBuf>,
+        specification: Option<PathBuf>,
         /// The claim's `claim_submission.json`.
         #[arg(long)]
         submission: Option<PathBuf>,
@@ -76,9 +76,9 @@ pub(crate) enum DevstackCommand {
     /// the two differ on any case.
     Replay {
         what: ReplayWhat,
-        /// The run spec of the procedure.
+        /// The specification of the procedure.
         #[arg(long)]
-        run: PathBuf,
+        specification: PathBuf,
         /// The claim's `claim_submission.json`.
         #[arg(long)]
         submission: PathBuf,
@@ -122,7 +122,7 @@ pub(crate) fn run(command: DevstackCommand) -> Result<ExitCode> {
             }
             DevstackCommand::Submit {
                 what,
-                run,
+                specification,
                 submission,
                 challenge,
                 receipt,
@@ -148,7 +148,7 @@ pub(crate) fn run(command: DevstackCommand) -> Result<ExitCode> {
                     SubmitWhat::Claim => devstack::submit::claim(
                         &node,
                         layer.as_ref(),
-                        run.as_ref().map(&at).as_deref(),
+                        specification.as_ref().map(&at).as_deref(),
                         &need(&submission, "--submission")?,
                         before,
                     )?,
@@ -180,27 +180,30 @@ pub(crate) fn run(command: DevstackCommand) -> Result<ExitCode> {
             }
             DevstackCommand::Replay {
                 what,
-                run,
+                specification,
                 submission,
                 challenge,
             } => {
                 let node = devstack::Node::open()?;
                 let layer = posting::open_layer(None)?;
-                let (run, submission) = (at(&run), at(&submission));
+                let (specification, submission) = (at(&specification), at(&submission));
                 match what {
                     ReplayWhat::Claim => {
-                        devstack::replay::claim(&node, layer.as_ref(), &run, &submission)?
+                        devstack::replay::claim(&node, layer.as_ref(), &specification, &submission)?
                     }
                     ReplayWhat::Challenge => devstack::replay::challenge(
                         &node,
                         layer.as_ref(),
-                        &run,
+                        &specification,
                         &submission,
                         &at(&challenge.context("a challenge needs --challenge")?),
                     )?,
-                    ReplayWhat::Faults => {
-                        devstack::replay::faults(&node, layer.as_ref(), &run, &submission)?
-                    }
+                    ReplayWhat::Faults => devstack::replay::faults(
+                        &node,
+                        layer.as_ref(),
+                        &specification,
+                        &submission,
+                    )?,
                 }
                 Ok(ExitCode::SUCCESS)
             }

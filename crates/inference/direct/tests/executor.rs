@@ -9,8 +9,8 @@ use direct_infer::model::{
 use direct_infer::view_kernels::{run_prefill_range_view, score_prefill_logits_view};
 use direct_infer::{DirectInferenceConfig, DirectInferenceExecutor};
 use inference_artifacts::{
-    write_json, DirectInferBundle, DirectInferShape, InferenceRunSpec, ModelManifest,
-    INFERENCE_RUN_SPEC_TOML, MODEL_ARTIFACTS_DIR, MODEL_MANIFEST_JSON,
+    write_json, DirectInferBundle, DirectInferShape, ModelManifest, CASE_TOML, MODEL_ARTIFACTS_DIR,
+    MODEL_MANIFEST_JSON, SPECIFICATION_TOML,
 };
 use inference_kernels::tensor::{dot_bits, matvec_from_source, Matrix, MatrixSource};
 use prefill_range::input::{
@@ -40,13 +40,14 @@ fn direct_executor_reports_missing_direct_manifest_message() {
     let error = DirectInferenceExecutor
         .run(DirectInferenceConfig {
             base_dir: dir.clone(),
-            run_spec_path: dir.join(INFERENCE_RUN_SPEC_TOML),
+            specification_path: dir.join(SPECIFICATION_TOML),
+            case_path: dir.join(CASE_TOML),
             inference: 0,
         })
         .expect_err("missing manifest should fail");
 
     assert!(!format!("{error:#}").contains("scaffolded"));
-    assert!(format!("{error:#}").contains("failed to load run spec"));
+    assert!(format!("{error:#}").contains("failed to load specification"));
 
     let _ = fs::remove_dir_all(dir);
 }
@@ -358,13 +359,14 @@ fn current_say_ciao_direct_first_token_matches_claim_reference() {
     let result = DirectInferenceExecutor
         .run(DirectInferenceConfig {
             base_dir: repo.clone(),
-            run_spec_path: repo.join(INFERENCE_RUN_SPEC_TOML),
+            specification_path: repo.join(SPECIFICATION_TOML),
+            case_path: repo.join(CASE_TOML),
             inference: 0,
         })
         .unwrap();
 
     assert_eq!(result.generated_token_ids.first().copied(), Some(150917));
-    // The run spec may ask for more than one token.
+    // The specification may ask for more than one token.
     assert!(result.generated_text.starts_with("Ciao"));
 }
 
@@ -454,12 +456,13 @@ fn direct_executor_runs_from_direct_manifest_without_raster_toml() {
         },
     )
     .unwrap();
-    write_run_spec(&dir, &manifest_path, "h", 1);
+    write_specification(&dir, &manifest_path, "h", 1);
 
     let result = DirectInferenceExecutor
         .run(DirectInferenceConfig {
             base_dir: dir.clone(),
-            run_spec_path: dir.join(INFERENCE_RUN_SPEC_TOML),
+            specification_path: dir.join(SPECIFICATION_TOML),
+            case_path: dir.join(CASE_TOML),
             inference: 0,
         })
         .unwrap();
@@ -486,11 +489,12 @@ fn direct_executor_stops_at_eos_and_reports_only_selected_tokens() {
         let mut manifest: ModelManifest = inference_artifacts::read_json(&manifest_path).unwrap();
         manifest.eos_token_ids = vec![eos_id];
         write_json(&manifest_path, &manifest).unwrap();
-        let run_spec_path = write_run_spec(&dir, &manifest_path, "h", 8);
+        let specification_path = write_specification(&dir, &manifest_path, "h", 8);
         let report = DirectInferenceExecutor
             .run_with_diagnostics(DirectInferenceConfig {
                 base_dir: dir.clone(),
-                run_spec_path,
+                specification_path,
+                case_path: dir.join(CASE_TOML),
                 inference: 0,
             })
             .unwrap();
@@ -535,11 +539,12 @@ fn direct_executor_keeps_a_maximum_budget_when_no_eos_is_selected() {
     fs::create_dir_all(&dir).unwrap();
     write_direct_fixture(&dir);
     let manifest_path = dir.join(MODEL_ARTIFACTS_DIR).join(MODEL_MANIFEST_JSON);
-    let run_spec_path = write_run_spec(&dir, &manifest_path, "hhhh", 3);
+    let specification_path = write_specification(&dir, &manifest_path, "hhhh", 3);
     let report = DirectInferenceExecutor
         .run_with_report(DirectInferenceConfig {
             base_dir: dir.clone(),
-            run_spec_path,
+            specification_path,
+            case_path: dir.join(CASE_TOML),
             inference: 0,
         })
         .unwrap();
@@ -562,7 +567,7 @@ fn direct_executor_keeps_a_maximum_budget_when_no_eos_is_selected() {
 fn direct_executor_rejects_changed_bundle_before_inference() {
     let dir = temp_dir("changed-bundle");
     fs::create_dir_all(&dir).unwrap();
-    let run_spec_path = write_direct_fixture(&dir);
+    let specification_path = write_direct_fixture(&dir);
     for (name, label) in [
         ("model.detwgt", "model weights"),
         ("config.json", "model config"),
@@ -574,7 +579,8 @@ fn direct_executor_rejects_changed_bundle_before_inference() {
         let error = DirectInferenceExecutor
             .run(DirectInferenceConfig {
                 base_dir: dir.clone(),
-                run_spec_path: run_spec_path.clone(),
+                specification_path: specification_path.clone(),
+                case_path: dir.join(CASE_TOML),
                 inference: 0,
             })
             .unwrap_err();
@@ -651,7 +657,7 @@ fn write_direct_fixture(dir: &Path) -> PathBuf {
         &tiny_direct_manifest(&detwgt, &config, &tokenizer),
     )
     .unwrap();
-    write_run_spec(dir, &manifest_path, "h", 1)
+    write_specification(dir, &manifest_path, "h", 1)
 }
 
 fn write_tiny_model_detwgt(path: &Path) {
@@ -725,25 +731,32 @@ fn tiny_direct_manifest(detwgt: &Path, config: &Path, tokenizer: &Path) -> Model
     }
 }
 
-fn write_run_spec(dir: &Path, manifest_path: &Path, prompt: &str, tokens: u32) -> PathBuf {
-    let path = dir.join(INFERENCE_RUN_SPEC_TOML);
-    let spec = InferenceRunSpec {
-        procedure_kind: Default::default(),
-        model_manifest: Some(manifest_path.strip_prefix(dir).unwrap().to_path_buf()),
-        models: Vec::new(),
-        prompt: Some(prompt.to_string()),
-        prompt_file: None,
-        source: None,
-        raw_prompt: true,
-        tokens,
-    };
+/// Writes a specification and, beside it, the case of this prompt.
+fn write_specification(
+    dir: &Path,
+    manifest_path: &Path,
+    prompt: &str,
+    max_new_tokens: u32,
+) -> PathBuf {
+    let path = dir.join(SPECIFICATION_TOML);
     fs::write(
         &path,
         format!(
-            "model_manifest = {:?}\nprompt = {:?}\nraw_prompt = true\ntokens = {}\n",
-            spec.model_manifest.as_ref().unwrap().to_string_lossy(),
-            prompt,
-            spec.tokens
+            "raw_prompt = true
+max_new_tokens = {max_new_tokens}
+
+[[model]]
+manifest = {:?}
+",
+            manifest_path.strip_prefix(dir).unwrap().to_string_lossy(),
+        ),
+    )
+    .unwrap();
+    fs::write(
+        dir.join(CASE_TOML),
+        format!(
+            "prompt = {prompt:?}
+"
         ),
     )
     .unwrap();

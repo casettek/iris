@@ -48,9 +48,11 @@ def main():
         print(f"Running {case['name']}", flush=True)
         directory = output / case["name"]
         directory.mkdir()
-        spec = directory / "run.toml"
-        spec.write_text(f"model_manifest = {json.dumps(str(model))}\nprompt = {json.dumps(case['prompt'], ensure_ascii=False)}\n"
-                        f"raw_prompt = {str(case['raw_prompt']).lower()}\ntokens = {case['tokens']}\n", encoding="utf-8")
+        spec = directory / "specification.toml"
+        spec.write_text(f"raw_prompt = {str(case['raw_prompt']).lower()}\nmax_new_tokens = {case['tokens']}\n\n"
+                        f"[[model]]\nmanifest = {json.dumps(str(model))}\n", encoding="utf-8")
+        case_file = directory / "case.toml"
+        case_file.write_text(f"prompt = {json.dumps(case['prompt'], ensure_ascii=False)}\n", encoding="utf-8")
         record = {"name": case["name"], "runs": {}}
         chains = {}
         for label, binaries, budget, workers, parallel in [
@@ -63,7 +65,7 @@ def main():
         ]:
             child_env = env | {"STAGED_INFER_WEIGHT_CACHE_BYTES": str(budget),
                                "STAGED_INFER_AUX_PARALLELISM": str(workers), "RASTER_PARALLELISM": parallel}
-            seconds = invoke([binaries / f"iris{suffix}", "parity-worker", "--run", spec,
+            seconds = invoke([binaries / f"iris{suffix}", "parity-worker", "--specification", spec, "--case", case_file,
                               "--output", directory / label], root, child_env, directory / f"{label}.log")
             chain = Path(read(directory / label / "result.json")["chain_dir"])
             chains[label] = chain

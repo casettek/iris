@@ -24,7 +24,7 @@ pub const CONTRACT_PINS_VERSION: u32 = 6;
 /// the procedure kind makes, in order.
 ///
 /// A model import writes the pins of the `single` procedure kind over that model.
-/// `iris claim pins` writes those of any procedure kind over the models a run spec
+/// `iris claim pins` writes those of any procedure kind over the models a specification
 /// names.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]

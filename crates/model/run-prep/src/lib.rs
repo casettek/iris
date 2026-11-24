@@ -3,7 +3,7 @@ use std::fs;
 use std::path::Path;
 
 use anyhow::{ensure, Context, Result};
-use inference_artifacts::{InferenceRunSpec, ModelManifest, PreparedPiece, PreparedPrompt};
+use inference_artifacts::{Case, ModelManifest, PreparedPiece, PreparedPrompt, Specification};
 use input_embedding::input::ClaimedOutput;
 pub use prompt_check::input::PromptTokenizer;
 use prompt_check::input::{
@@ -38,17 +38,19 @@ const TURN_OPEN: &str = "<|turn>";
 const TURN_CLOSE: &str = "<turn|>";
 const NEWLINE_TOKEN: &str = "\n";
 
+/// `case_dir` is the directory the case's paths are relative to.
 pub fn prepare_prompt(
     tokenizer: &serde_json::Value,
-    spec_dir: &Path,
-    spec: &InferenceRunSpec,
+    specification: &Specification,
+    case_dir: &Path,
+    case: &Case,
     model: &ModelManifest,
 ) -> Result<PreparedPrompt> {
     // The template is the tokenizer profile's, which is what the prompt stages
     // render the text with, whatever the model's family.
     let profile = tokenizer_profile(tokenizer)?;
-    let (prompt, source, forms) = resolve_prompt(spec_dir, spec)?;
-    let rendered_prompt = if !spec.raw_prompt && profile.templated() {
+    let (prompt, source, forms) = resolve_prompt(specification, case_dir, case)?;
+    let rendered_prompt = if !specification.raw_prompt && profile.templated() {
         format!(
             "{}{}{}",
             profile.template_prefix,
@@ -117,9 +119,13 @@ pub fn write_source_inputs(
         commitment: file.commitment,
     };
     Ok(inference_artifacts::PreparedSourceInputs {
-        signer: file(write_run_file(&source.signer, dir, "source_signer")?),
+        signer: file(write_run_file(
+            &source.specification.signer,
+            dir,
+            "source_signer",
+        )?),
         recipe: file(write_run_file(
-            &source.recipe.recipe(),
+            &source.specification.recipe(),
             dir,
             "source_recipe",
         )?),
@@ -914,27 +920,27 @@ pub fn special_tokens(tokenizer: &serde_json::Value) -> Vec<String> {
 }
 
 /// The run's prompt text, and for a prompt built from signed documents the
-/// source record and the recipe's forms.
+/// source record and the specification's forms.
 fn resolve_prompt(
-    spec_dir: &Path,
-    spec: &InferenceRunSpec,
+    specification: &Specification,
+    case_dir: &Path,
+    case: &Case,
 ) -> Result<(String, Option<source::SourceRecord>, Vec<source::Form>)> {
-    if let Some(source) = spec.source.as_ref() {
-        let forms = source::load_source(spec_dir, source)?.recipe.forms();
-        let run = source::sourced_run(spec_dir, source)?;
-        return Ok((run.text, Some(run.record), forms));
+    if let Some(source) = source::load_source(specification, case_dir, case)? {
+        let run = source::sourced_run(&source)?;
+        return Ok((run.text, Some(run.record), source.forms()));
     }
-    if let Some(prompt) = spec.prompt.as_ref() {
+    if let Some(prompt) = case.prompt.as_ref() {
         return Ok((prompt.clone(), None, Vec::new()));
     }
-    let prompt_file = spec
+    let prompt_file = case
         .prompt_file
         .as_ref()
-        .ok_or_else(|| anyhow::anyhow!("run spec must set `prompt` or `prompt_file`"))?;
+        .ok_or_else(|| anyhow::anyhow!("a case must set `prompt` or `prompt_file`"))?;
     let path = if prompt_file.is_absolute() {
         prompt_file.clone()
     } else {
-        spec_dir.join(prompt_file)
+        case_dir.join(prompt_file)
     };
     let prompt = fs::read_to_string(&path)
         .with_context(|| format!("failed to read prompt file {}", path.display()))?;
@@ -1027,9 +1033,15 @@ mod tests {
     #[test]
     fn raw_prompt_bypasses_turn_rendering() {
         let tokenizer = gemma_tokenizer();
-        let spec = run_spec("h", true);
-        let prepared =
-            prepare_prompt(&tokenizer, Path::new("."), &spec, &model_manifest()).unwrap();
+        let (specification, case) = specification("h", true);
+        let prepared = prepare_prompt(
+            &tokenizer,
+            &specification,
+            Path::new("."),
+            &case,
+            &model_manifest(),
+        )
+        .unwrap();
 
         assert_eq!(prepared.rendered_prompt, "h");
         assert_eq!(
@@ -1045,9 +1057,15 @@ mod tests {
     #[test]
     fn special_tokens_stay_whole_in_initial_pieces() {
         let tokenizer = gemma_tokenizer();
-        let spec = run_spec("hello", false);
-        let prepared =
-            prepare_prompt(&tokenizer, Path::new("."), &spec, &model_manifest()).unwrap();
+        let (specification, case) = specification("hello", false);
+        let prepared = prepare_prompt(
+            &tokenizer,
+            &specification,
+            Path::new("."),
+            &case,
+            &model_manifest(),
+        )
+        .unwrap();
 
         assert!(prepared.initial_pieces.iter().any(|p| p.text == "<bos>"));
         assert!(prepared.initial_pieces.iter().any(|p| p.text == "<|turn>"));
@@ -1243,9 +1261,15 @@ mod tests {
         let tokenizer = chat_tokenizer();
         let prompt_tokenizer = prompt_tokenizer(&tokenizer).unwrap();
         for (prompt, raw_prompt) in PROMPTS {
-            let spec = run_spec(prompt, raw_prompt);
-            let prepared =
-                prepare_prompt(&tokenizer, Path::new("."), &spec, &model_manifest()).unwrap();
+            let (specification, case) = specification(prompt, raw_prompt);
+            let prepared = prepare_prompt(
+                &tokenizer,
+                &specification,
+                Path::new("."),
+                &case,
+                &model_manifest(),
+            )
+            .unwrap();
             let whole_pieces = prepared
                 .initial_pieces
                 .iter()
@@ -1515,17 +1539,18 @@ mod tests {
         assert_eq!(output.token_ids.iter().copied().collect::<Vec<_>>(), [0, 1]);
     }
 
-    fn run_spec(prompt: &str, raw_prompt: bool) -> InferenceRunSpec {
-        InferenceRunSpec {
+    fn specification(prompt: &str, raw_prompt: bool) -> (Specification, Case) {
+        let specification = Specification {
             procedure_kind: Default::default(),
-            model_manifest: Some(PathBuf::from("model-artifacts/manifest.json")),
-            models: Vec::new(),
-            prompt: Some(prompt.to_string()),
-            prompt_file: None,
-            source: None,
             raw_prompt,
-            tokens: 1,
-        }
+            max_new_tokens: 1,
+            models: vec![inference_artifacts::SpecificationModel {
+                manifest: PathBuf::from("model-artifacts/manifest.json"),
+            }],
+            source: None,
+            forms: Vec::new(),
+        };
+        (specification, Case::of_prompt(prompt.to_string()))
     }
 
     fn model_manifest() -> ModelManifest {

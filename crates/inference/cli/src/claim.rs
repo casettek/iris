@@ -12,10 +12,10 @@ use staged_infer::{
 
 use inference_artifacts::checks::{ClaimSubmission, CLAIM_SUBMISSION_JSON};
 use inference_artifacts::{
-    file_sha256 as sha256_file, read_checkpoint_hashes, read_checkpoint_list, read_json,
-    read_run_spec, write_checkpoint_hashes, write_claim_artifacts_with_prepared_run, write_json,
-    InferenceResult, InferenceRunSpec, ModelManifest, PreparedRun, CHECKPOINT_LIST_JSON,
-    PREPARED_RUN_JSON,
+    file_sha256 as sha256_file, read_case, read_checkpoint_hashes, read_checkpoint_list, read_json,
+    read_specification, write_checkpoint_hashes, write_claim_artifacts_with_prepared_run,
+    write_json, Case, InferenceResult, ModelManifest, PreparedRun, Specification,
+    CHECKPOINT_LIST_JSON, PREPARED_RUN_JSON,
 };
 use serde::Serialize;
 use sha2::{Digest, Sha256};
@@ -23,14 +23,17 @@ use sha2::{Digest, Sha256};
 #[derive(Debug, Clone)]
 pub struct ClaimBuildOptions {
     pub base_dir: PathBuf,
-    pub run_spec_path: PathBuf,
+    pub specification_path: PathBuf,
+    /// The case the claim is about. None for a challenger rebuilding a
+    /// claimer's prepared run, whose case is the prompt that run holds.
+    pub case_path: Option<PathBuf>,
     pub current_exe: PathBuf,
     pub staged_backend: StagedExecutionBackend,
     /// Debug-only: post these output ids instead of discovering them with direct
     /// inference. Used to build claims whose tokens are not the greedy
     /// continuation.
     pub claimed_token_ids: Option<Vec<u32>>,
-    /// The output a direct run of this same spec already produced. Taken in
+    /// The output a direct run of this same specification and case already produced. Taken in
     /// place of running direct inference again, and held to every rule a
     /// discovered output is: the chain re-derives each token, and a claim it
     /// rejects is not written.
@@ -337,11 +340,13 @@ impl ClaimBuildOptions {
     pub fn from_current_dir(
         current_exe: PathBuf,
         staged_backend: StagedExecutionBackend,
-        run_spec_path: PathBuf,
+        specification_path: PathBuf,
+        case_path: PathBuf,
     ) -> Result<Self> {
         let base_dir = std::env::current_dir().context("failed to read current directory")?;
         Ok(Self {
-            run_spec_path,
+            specification_path,
+            case_path: Some(case_path),
             base_dir,
             current_exe,
             staged_backend,
@@ -353,9 +358,29 @@ impl ClaimBuildOptions {
 }
 
 pub(crate) fn prepare_claim_run(options: &ClaimBuildOptions) -> Result<PreparedClaimRun> {
-    let run_spec_path = absolute(&options.base_dir, &options.run_spec_path);
-    let run_spec = read_run_spec(&run_spec_path)?;
-    prepare_run(options, run_spec_path, &run_spec, None, None, true)
+    let specification_path = absolute(&options.base_dir, &options.specification_path);
+    let specification = read_specification(&specification_path)?;
+    let (case_path, case) = read_options_case(options)?;
+    prepare_run(
+        options,
+        specification_path,
+        &specification,
+        (Some(case_path), &case),
+        None,
+        None,
+        true,
+    )
+}
+
+/// The case file the options name, read.
+fn read_options_case(options: &ClaimBuildOptions) -> Result<(PathBuf, Case)> {
+    let case_path = options
+        .case_path
+        .as_ref()
+        .context("a run is prepared on a case, and none is named")?;
+    let case_path = absolute(&options.base_dir, case_path);
+    let case = read_case(&case_path)?;
+    Ok((case_path, case))
 }
 
 /// Prepares a run on the inputs a claim posted, as a challenger of a posted
@@ -371,12 +396,22 @@ pub(crate) fn prepare_posted_run(
     options: &ClaimBuildOptions,
     posted: &inference_artifacts::availability::PostedRun,
 ) -> Result<PreparedClaimRun> {
-    let run_spec_path = absolute(&options.base_dir, &options.run_spec_path);
-    let run_spec = read_run_spec(&run_spec_path)?;
-    prepare_run(options, run_spec_path, &run_spec, None, Some(posted), false)
+    let specification_path = absolute(&options.base_dir, &options.specification_path);
+    let specification = read_specification(&specification_path)?;
+    let (case_path, case) = read_options_case(options)?;
+    prepare_run(
+        options,
+        specification_path,
+        &specification,
+        (Some(case_path), &case),
+        None,
+        Some(posted),
+        false,
+    )
 }
 
-/// Prepares a run from a spec a claim already fixed, as a challenger does.
+/// Prepares a run from a specification and a case a claim already fixed, as a
+/// challenger does. The case is the claim's own prompt and no file.
 ///
 /// The ids are not held to the run's token budget here. A claim that breaks the
 /// budget still has a chain to recompute, and is rejected on its final record.
@@ -387,16 +422,18 @@ pub(crate) fn prepare_posted_run(
 /// stage on what the claim committed to.
 pub(crate) fn prepare_challenge_run(
     options: &ClaimBuildOptions,
-    run_spec: &InferenceRunSpec,
+    specification: &Specification,
+    case: &Case,
     source: Option<FrozenSource<'_>>,
     forms: &[run_prep::source::Form],
     ids: &[Vec<u32>],
 ) -> Result<PreparedClaimRun> {
-    let run_spec_path = absolute(&options.base_dir, &options.run_spec_path);
+    let specification_path = absolute(&options.base_dir, &options.specification_path);
     prepare_run(
         options,
-        run_spec_path,
-        run_spec,
+        specification_path,
+        specification,
+        (None, case),
         Some(Frozen { source, forms, ids }),
         None,
         false,
@@ -435,21 +472,31 @@ struct WrittenInference {
     files: crate::run_inputs::InferenceRunFiles,
 }
 
+/// `case` is the case, with the file it was read from when it is one.
 /// `given` is the inputs a claim posted, for a challenger of that claim:
 /// they are the run's inputs, in place of the ones this would prepare.
 fn prepare_run(
     options: &ClaimBuildOptions,
-    run_spec_path: PathBuf,
-    run_spec: &InferenceRunSpec,
+    specification_path: PathBuf,
+    specification: &Specification,
+    (case_path, case): (Option<PathBuf>, &Case),
     frozen: Option<Frozen<'_>>,
     given: Option<&inference_artifacts::availability::PostedRun>,
     check_claimed_length: bool,
 ) -> Result<PreparedClaimRun> {
     use inference_artifacts::availability::{PostedInference, PostedRun, PostedSourceInputs};
-    let run_spec_dir = run_spec_path
+    let specification_dir = specification_path
         .parent()
-        .ok_or_else(|| anyhow::anyhow!("run spec has no parent directory"))?;
-    let procedure_kind = run_spec.procedure_kind;
+        .ok_or_else(|| anyhow::anyhow!("specification has no parent directory"))?;
+    // A case's paths are relative to its file. A case that is no file names
+    // none.
+    let case_dir = match &case_path {
+        Some(path) => path
+            .parent()
+            .ok_or_else(|| anyhow::anyhow!("case has no parent directory"))?,
+        None => specification_dir,
+    };
+    let procedure_kind = specification.procedure_kind;
     // Ids given on the command line are one inference's.
     let given_ids = options
         .claimed_token_ids
@@ -473,8 +520,8 @@ fn prepare_run(
     // Each inference's model, and the run's prompt as its tokenizer prepares
     // it. The text, the source record and the forms are the same in all.
     let mut models = Vec::new();
-    for manifest in run_spec.model_manifests() {
-        let manifest_path = absolute(run_spec_dir, manifest);
+    for manifest in specification.model_manifests() {
+        let manifest_path = absolute(specification_dir, manifest);
         let manifest = ModelManifest::load_verified(&manifest_path)?;
         let (template_path, segment) = manifest.verified_raster_template(&manifest_path)?;
         let model_manifest_dir = manifest_path
@@ -482,7 +529,8 @@ fn prepare_run(
             .ok_or_else(|| anyhow::anyhow!("model manifest has no parent directory"))?;
         let tokenizer_path = absolute(model_manifest_dir, &manifest.bundle.tokenizer_path);
         let tokenizer: serde_json::Value = read_json(&tokenizer_path)?;
-        let mut prompt = run_prep::prepare_prompt(&tokenizer, run_spec_dir, run_spec, &manifest)?;
+        let mut prompt =
+            run_prep::prepare_prompt(&tokenizer, specification, case_dir, case, &manifest)?;
         if let Some(frozen) = &frozen {
             if let Some((record, _)) = frozen.source {
                 prompt.source = Some(record.clone());
@@ -506,9 +554,9 @@ fn prepare_run(
         .join("iris")
         .join("runs")
         .join(run_id(
-            &run_spec_path,
+            &specification_path,
             &first.prompt.rendered_prompt,
-            run_spec.tokens,
+            specification.max_new_tokens,
         ));
     let prompt_dir = run_dir.join("prompt");
     if let Some(given) = given {
@@ -524,17 +572,15 @@ fn prepare_run(
     // values are kept beside the files: they are what a claim posts. A
     // challenger given only the files of a claim built here posts nothing.
     let frozen_source = frozen.as_ref().and_then(|frozen| frozen.source);
-    let source_values = match (given, run_spec.source.as_ref()) {
-        (Some(given), _) => given.source.clone(),
-        (None, Some(source)) => {
-            let loaded = run_prep::source::load_source(run_spec_dir, source)?;
-            Some(PostedSourceInputs {
-                signer: loaded.signer.clone(),
-                recipe: loaded.recipe.recipe(),
+    let source_values = match given {
+        Some(given) => given.source.clone(),
+        None => run_prep::source::load_source(specification, case_dir, case)?.map(|loaded| {
+            PostedSourceInputs {
+                signer: loaded.specification.signer.clone(),
+                recipe: loaded.specification.recipe(),
                 documents: loaded.documents(),
-            })
-        }
-        (None, None) => None,
+            }
+        }),
     };
     let source_inputs = match (&source_values, frozen_source) {
         (Some(source), _) => Some(crate::run_inputs::write_source(source, &prompt_dir)?),
@@ -594,7 +640,10 @@ fn prepare_run(
                 DirectInferenceExecutor
                     .run(DirectInferenceConfig {
                         base_dir: options.base_dir.clone(),
-                        run_spec_path: run_spec_path.clone(),
+                        specification_path: specification_path.clone(),
+                        case_path: case_path
+                            .clone()
+                            .context("direct inference runs a case, and none is named")?,
                         inference,
                     })
                     .context("direct inference to discover the claimed output failed")?
@@ -602,12 +651,16 @@ fn prepare_run(
             }
         };
         if check_claimed_length {
-            run_prep::validate_claimed_length(&ids, run_spec.tokens, &model.prompt.eos_token_ids)?;
+            run_prep::validate_claimed_length(
+                &ids,
+                specification.max_new_tokens,
+                &model.prompt.eos_token_ids,
+            )?;
         }
         let range_size = model.manifest.range_size;
         let bound = run_prep::bound_ranges(
             &model.prompt.resolved_prompt,
-            run_spec.raw_prompt,
+            specification.raw_prompt,
             range_size as usize,
             &run_prep::prompt_tokenizer(&model.tokenizer)?,
         )?;
@@ -623,8 +676,8 @@ fn prepare_run(
         let posted = PostedInference {
             config: inference_artifacts::availability::RunConfig {
                 model_id: model.manifest.model_id.clone(),
-                raw_prompt: run_spec.raw_prompt,
-                max_new_tokens: run_spec.tokens,
+                raw_prompt: specification.raw_prompt,
+                max_new_tokens: specification.max_new_tokens,
                 range_size,
             },
             schedule: inference_artifacts::availability::RunSchedule {
@@ -681,7 +734,8 @@ fn prepare_run(
     let prepared_run = PreparedRun {
         version: inference_artifacts::PREPARED_RUN_VERSION,
         procedure_kind,
-        run_spec_path,
+        specification_path,
+        case_path,
         inferences: models
             .into_iter()
             .map(|model| {
@@ -693,8 +747,8 @@ fn prepare_run(
                 })
             })
             .collect::<Result<Vec<_>>>()?,
-        raw_prompt: run_spec.raw_prompt,
-        tokens: run_spec.tokens,
+        raw_prompt: specification.raw_prompt,
+        max_new_tokens: specification.max_new_tokens,
         run_manifest_path: Some(manifest_path.clone()),
         run_manifest_sha256: Some(run_manifest_sha256),
         source_inputs,
@@ -1202,16 +1256,16 @@ fn default_corrupted_hashes_path(source: &Path) -> PathBuf {
     source.with_file_name("checkpoints.corrupt.txt")
 }
 
-fn run_id(run_spec_path: &Path, rendered_prompt: &str, tokens: u32) -> String {
+fn run_id(specification_path: &Path, rendered_prompt: &str, max_new_tokens: u32) -> String {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_nanos();
     let digest = Sha256::digest(format!(
         "{}\0{}\0{}\0{}",
-        run_spec_path.display(),
+        specification_path.display(),
         rendered_prompt,
-        tokens,
+        max_new_tokens,
         nanos
     ));
     hex::encode(digest)[..16].to_string()
@@ -1225,7 +1279,7 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
-    fn options_from_current_dir_use_run_spec() {
+    fn options_from_current_dir_use_the_specification_and_case() {
         let saved = std::env::current_dir().unwrap();
         let base = temp_dir("claim-options");
         fs::create_dir_all(&base).unwrap();
@@ -1235,7 +1289,8 @@ mod tests {
         let options = ClaimBuildOptions::from_current_dir(
             PathBuf::from("iris"),
             StagedExecutionBackend::InProcess,
-            PathBuf::from("inference.toml"),
+            PathBuf::from("specification.toml"),
+            PathBuf::from("case.toml"),
         )
         .unwrap();
 
@@ -1243,21 +1298,27 @@ mod tests {
         fs::remove_dir_all(&base).unwrap();
 
         assert_eq!(options.base_dir, expected_base);
-        assert_eq!(options.run_spec_path, PathBuf::from("inference.toml"));
+        assert_eq!(
+            options.specification_path,
+            PathBuf::from("specification.toml")
+        );
+        assert_eq!(options.case_path, Some(PathBuf::from("case.toml")));
         assert_eq!(options.current_exe, PathBuf::from("iris"));
         assert_eq!(options.staged_backend, StagedExecutionBackend::InProcess);
     }
 
     #[test]
     fn preparation_uses_selected_model_and_rejects_stale_identity() {
-        use crate::test_support::{model_fixture, run_spec};
+        use crate::test_support::{case_beside, model_fixture, specification};
         let base = temp_dir("model-selection");
         model_fixture(&base, "model-a");
         let model_path = model_fixture(&base, "model-b");
         fs::write(base.join("Raster.toml"), "stale model-a template").unwrap();
+        let specification_path = specification(&base, "model-b");
         let options = ClaimBuildOptions {
             base_dir: base.clone(),
-            run_spec_path: run_spec(&base, "model-b"),
+            case_path: Some(case_beside(&specification_path)),
+            specification_path,
             current_exe: PathBuf::from("unused"),
             staged_backend: StagedExecutionBackend::InProcess,
             claimed_token_ids: Some(vec![0, 0, 0]),
@@ -1342,7 +1403,8 @@ mod tests {
             &PreparedRun {
                 version: inference_artifacts::PREPARED_RUN_VERSION,
                 procedure_kind: inference_artifacts::ProcedureKind::Single,
-                run_spec_path: base.join("inference.toml"),
+                specification_path: base.join("specification.toml"),
+                case_path: Some(base.join("case.toml")),
                 inferences: vec![inference_artifacts::PreparedInference {
                     model_manifest_path: base.join("model-artifacts/manifest.json"),
                     model_manifest_sha256: String::from("model-sha"),
@@ -1360,7 +1422,7 @@ mod tests {
                     },
                 }],
                 raw_prompt: false,
-                tokens: 1,
+                max_new_tokens: 1,
                 run_manifest_path: Some(manifest_path.clone()),
                 run_manifest_sha256: Some(String::from("run-sha")),
                 source_inputs: None,
@@ -1470,28 +1532,32 @@ mod tests {
         crate::test_support::model_fixture(&base, "beta");
         let dir = base.join("specs");
         fs::create_dir_all(&dir).unwrap();
-        let spec = dir.join("inference.toml");
+        let specification = dir.join("specification.toml");
         fs::write(
-            &spec,
-            "procedure_kind = \"consensus\"\nprompt = \"h\"\nraw_prompt = true\ntokens = 3\n\
+            &specification,
+            "procedure_kind = \"consensus\"\nraw_prompt = true\nmax_new_tokens = 3\n\
              [[model]]\nmanifest = \"../models/alpha/manifest.json\"\n\
              [[model]]\nmanifest = \"../models/beta/manifest.json\"\n",
         )
         .unwrap();
+        // A challenger's case is the claim's prompt, and no file.
+        let case = inference_artifacts::Case::of_prompt(String::from("h"));
         let options = |ids: Option<Vec<u32>>| ClaimBuildOptions {
             base_dir: base.clone(),
-            run_spec_path: spec.clone(),
+            case_path: None,
+            specification_path: specification.clone(),
             current_exe: PathBuf::from("unused"),
             staged_backend: StagedExecutionBackend::InProcess,
             claimed_token_ids: ids,
             direct_output_ids: None,
             claimer: None,
         };
-        let run_spec = read_run_spec(&spec).unwrap();
+        let specification = read_specification(&specification).unwrap();
         // The fixture's ranges hold four tokens: the first inference claims
         // one range and the second two.
         let ids = [vec![0, 0, 0], vec![0, 0, 0, 0, 0]];
-        let prepared = prepare_challenge_run(&options(None), &run_spec, None, &[], &ids).unwrap();
+        let prepared =
+            prepare_challenge_run(&options(None), &specification, &case, None, &[], &ids).unwrap();
 
         let run = &prepared.prepared_run;
         assert_eq!(
@@ -1589,11 +1655,21 @@ mod tests {
 
         // Ids given on the command line are one inference's, and a claim
         // holds the ids of each.
-        let error = prepare_challenge_run(&options(Some(vec![0])), &run_spec, None, &[], &ids)
-            .err()
-            .unwrap();
+        let error = prepare_challenge_run(
+            &options(Some(vec![0])),
+            &specification,
+            &case,
+            None,
+            &[],
+            &ids,
+        )
+        .err()
+        .unwrap();
         assert!(format!("{error:#}").contains("one inference"), "{error:#}");
-        assert!(prepare_challenge_run(&options(None), &run_spec, None, &[], &ids[..1]).is_err());
+        assert!(
+            prepare_challenge_run(&options(None), &specification, &case, None, &[], &ids[..1])
+                .is_err()
+        );
         fs::remove_dir_all(base).unwrap();
     }
 

@@ -13,6 +13,7 @@ pub mod procedure_kind;
 pub mod registry;
 pub mod replay_profile;
 pub mod run;
+pub mod specification;
 
 pub use challenge::{
     read_challenge_bundle, write_challenge_artifacts, ChallengeBundle, ChallengeSourcePath,
@@ -44,9 +45,13 @@ pub use io::{read_json, write_json};
 pub use manifest::resolve_raster_manifest_paths;
 pub use procedure_kind::ProcedureKind;
 pub use run::{
-    read_run_spec, InferenceRunSpec, ModelSpec, PreparedInference, PreparedPiece, PreparedPrompt,
-    PreparedRun, PreparedSourceInputs, RunFileRef, SourceDocumentSpec, SourceSpec,
-    INFERENCE_RUN_SPEC_TOML, PREPARED_RUN_JSON, PREPARED_RUN_VERSION,
+    PreparedInference, PreparedPiece, PreparedPrompt, PreparedRun, PreparedSourceInputs,
+    RunFileRef, PREPARED_RUN_JSON, PREPARED_RUN_VERSION,
+};
+pub use specification::{
+    read_case, read_specification, Case, CaseDocument, PathStep, Specification,
+    SpecificationDocument, SpecificationField, SpecificationForm, SpecificationModel,
+    SpecificationSource, CASE_TOML, SPECIFICATION_TOML,
 };
 
 #[cfg(test)]
@@ -398,92 +403,100 @@ mod tests {
     }
 
     #[test]
-    fn run_spec_requires_exactly_one_prompt_source() {
-        let both = InferenceRunSpec {
+    fn a_case_gives_its_prompt_one_way() {
+        let specification = Specification {
             procedure_kind: Default::default(),
-            model_manifest: Some(PathBuf::from("model-artifacts/manifest.json")),
-            models: Vec::new(),
+            raw_prompt: false,
+            max_new_tokens: 1,
+            models: vec![SpecificationModel {
+                manifest: PathBuf::from("model-artifacts/manifest.json"),
+            }],
+            source: None,
+            forms: Vec::new(),
+        };
+        let both = Case {
             prompt: Some(String::from("hello")),
             prompt_file: Some(PathBuf::from("prompt.txt")),
-            source: None,
-            raw_prompt: false,
-            tokens: 1,
+            documents: Vec::new(),
         };
         assert!(both
-            .validate()
+            .validate_for(&specification)
             .unwrap_err()
             .to_string()
             .contains("not both"));
 
-        let neither = InferenceRunSpec {
-            procedure_kind: Default::default(),
-            model_manifest: Some(PathBuf::from("model-artifacts/manifest.json")),
-            models: Vec::new(),
-            prompt: None,
-            prompt_file: None,
-            source: None,
-            raw_prompt: false,
-            tokens: 1,
-        };
+        let neither = Case::default();
         assert!(neither
-            .validate()
+            .validate_for(&specification)
             .unwrap_err()
             .to_string()
             .contains("prompt"));
+        assert!(Case::of_prompt(String::from("hello"))
+            .validate_for(&specification)
+            .is_ok());
     }
 
+    const MODEL: &str = "[[model]]\nmanifest = \"m.json\"\n";
+
     #[test]
-    fn a_run_spec_cannot_ask_for_the_removed_chain() {
-        let base = temp_dir("run-spec-chain");
+    fn a_run_spec_is_refused_by_what_replaced_its_keys() {
+        let base = temp_dir("specification-run-spec");
         fs::create_dir_all(&base).unwrap();
-        let path = base.join("inference.toml");
-        let spec = "model_manifest = \"m.json\"\nprompt = \"hi\"\n";
-        fs::write(&path, spec).unwrap();
-        assert_eq!(read_run_spec(&path).unwrap().prompt.as_deref(), Some("hi"));
-        fs::write(&path, format!("{spec}chain = \"teacher-forced\"\n")).unwrap();
-        assert!(read_run_spec(&path).is_ok());
-        fs::write(&path, format!("{spec}chain = \"autoregressive\"\n")).unwrap();
-        let error = read_run_spec(&path).unwrap_err().to_string();
-        assert!(
-            error.contains("teacher-forced is the only staged chain"),
-            "{error}"
-        );
+        let path = base.join("specification.toml");
+        fs::write(&path, MODEL).unwrap();
+        assert_eq!(read_specification(&path).unwrap().max_new_tokens, 1);
+        for (old, replacement) in [
+            ("model_manifest = \"m.json\"\n", "`[[model]]` table"),
+            ("tokens = 3\n", "`max_new_tokens`"),
+            ("prompt = \"hi\"\n", "in the case file"),
+            ("prompt_file = \"p.txt\"\n", "in the case file"),
+            ("pipeline = \"consensus\"\n", "`procedure_kind`"),
+            ("chain = \"teacher-forced\"\n", "only staged chain"),
+        ] {
+            fs::write(&path, format!("{old}{MODEL}")).unwrap();
+            let error = format!("{:#}", read_specification(&path).unwrap_err());
+            assert!(
+                error.contains("is a run spec from before") && error.contains(replacement),
+                "{error}"
+            );
+        }
+        for (old, replacement) in [
+            ("recipe = \"recipe.json\"\n", "`[[source.field]]`"),
+            ("signer = \"signer.json\"\n", "`[source.signer]`"),
+            ("documents = []\n", "in the case file"),
+        ] {
+            fs::write(&path, format!("{MODEL}[source]\n{old}")).unwrap();
+            let error = format!("{:#}", read_specification(&path).unwrap_err());
+            assert!(
+                error.contains("is a run spec from before") && error.contains(replacement),
+                "{error}"
+            );
+        }
+        // A key nothing ever read is refused too, by the reader itself.
+        fs::write(&path, format!("extra = \"x\"\n{MODEL}")).unwrap();
+        let error = format!("{:#}", read_specification(&path).unwrap_err());
+        assert!(error.contains("unknown field `extra`"), "{error}");
         fs::remove_dir_all(base).unwrap();
     }
 
     #[test]
-    fn a_run_spec_names_its_procedure_kind_or_runs_the_single_one() {
-        let base = temp_dir("run-spec-procedure-kind");
+    fn a_specification_names_its_procedure_kind_or_is_of_the_single_one() {
+        let base = temp_dir("specification-procedure-kind");
         fs::create_dir_all(&base).unwrap();
-        let path = base.join("inference.toml");
-        let spec = "model_manifest = \"m.json\"\nprompt = \"hi\"\n";
-        fs::write(&path, spec).unwrap();
+        let path = base.join("specification.toml");
+        fs::write(&path, MODEL).unwrap();
         assert_eq!(
-            read_run_spec(&path).unwrap().procedure_kind,
+            read_specification(&path).unwrap().procedure_kind,
             ProcedureKind::Single
         );
-        fs::write(&path, format!("procedure_kind = \"single\"\n{spec}")).unwrap();
+        fs::write(&path, format!("procedure_kind = \"single\"\n{MODEL}")).unwrap();
         assert_eq!(
-            read_run_spec(&path).unwrap().procedure_kind,
+            read_specification(&path).unwrap().procedure_kind,
             ProcedureKind::Single
         );
-        // Nor must the key a spec used before the rename.
-        fs::write(
-            &path,
-            format!(
-                "pipeline = \"consensus\"
-{spec}"
-            ),
-        )
-        .unwrap();
-        let renamed = format!("{:#}", read_run_spec(&path).unwrap_err());
-        assert!(
-            renamed.contains("which is now `procedure_kind`"),
-            "{renamed}"
-        );
-        // A name that is no procedure kind must not silently run the single one.
-        fs::write(&path, format!("procedure_kind = \"committee\"\n{spec}")).unwrap();
-        let error = format!("{:#}", read_run_spec(&path).unwrap_err());
+        // A name that is no procedure kind must not silently be the single one.
+        fs::write(&path, format!("procedure_kind = \"committee\"\n{MODEL}")).unwrap();
+        let error = format!("{:#}", read_specification(&path).unwrap_err());
         assert!(
             error.contains("committee") && error.contains("single") && error.contains("consensus"),
             "{error}"
@@ -492,101 +505,173 @@ mod tests {
     }
 
     #[test]
-    fn a_consensus_run_names_two_models() {
-        let base = temp_dir("run-spec-consensus");
+    fn a_specification_names_as_many_models_as_its_procedure_kind_runs() {
+        let base = temp_dir("specification-consensus");
         fs::create_dir_all(&base).unwrap();
-        let path = base.join("inference.toml");
+        let path = base.join("specification.toml");
         let models = "[[model]]\nmanifest = \"a/manifest.json\"\n[[model]]\nmanifest = \"b/manifest.json\"\n";
         fs::write(
             &path,
-            format!("procedure_kind = \"consensus\"\nprompt = \"hi\"\ntokens = 4\n{models}"),
+            format!("procedure_kind = \"consensus\"\nmax_new_tokens = 4\n{models}"),
         )
         .unwrap();
-        let spec = read_run_spec(&path).unwrap();
-        assert_eq!(spec.procedure_kind, ProcedureKind::Consensus);
+        let specification = read_specification(&path).unwrap();
+        assert_eq!(specification.procedure_kind, ProcedureKind::Consensus);
+        assert_eq!(specification.max_new_tokens, 4);
         assert_eq!(
-            spec.model_manifests(),
+            specification.model_manifests(),
             [Path::new("a/manifest.json"), Path::new("b/manifest.json")]
         );
         assert_eq!(
-            spec.model_manifest_of(1).unwrap(),
+            specification.model_manifest_of(1).unwrap(),
             Path::new("b/manifest.json")
         );
-        assert!(spec.model_manifest_of(2).is_err());
+        assert!(specification.model_manifest_of(2).is_err());
 
-        // One model, three models, or a model named the single way: each is
-        // refused, and the refusal says how the models are named.
+        // No model, one model or three models: each is refused, and the
+        // refusal says how the models are named.
         let one = "[[model]]\nmanifest = \"a/manifest.json\"\n";
-        for body in [
-            format!("prompt = \"hi\"\n{one}"),
-            format!("prompt = \"hi\"\n{models}{one}"),
-            String::from("model_manifest = \"a/manifest.json\"\nprompt = \"hi\"\n"),
-            format!("model_manifest = \"a/manifest.json\"\nprompt = \"hi\"\n{models}"),
-        ] {
+        for body in [String::new(), one.to_string(), format!("{models}{one}")] {
             fs::write(&path, format!("procedure_kind = \"consensus\"\n{body}")).unwrap();
-            let error = format!("{:#}", read_run_spec(&path).unwrap_err());
+            let error = format!("{:#}", read_specification(&path).unwrap_err());
             assert!(error.contains("[[model]]"), "{error}");
         }
-        // And a single run takes no `[[model]]`.
-        fs::write(&path, format!("prompt = \"hi\"\n{one}")).unwrap();
-        let error = format!("{:#}", read_run_spec(&path).unwrap_err());
-        assert!(error.contains("model_manifest"), "{error}");
+        // And a single procedure takes one.
+        for body in [String::new(), models.to_string()] {
+            fs::write(&path, body).unwrap();
+            let error = format!("{:#}", read_specification(&path).unwrap_err());
+            assert!(error.contains("[[model]]"), "{error}");
+        }
+        fs::remove_dir_all(base).unwrap();
+    }
+
+    const SOURCE: &str = "[source]\nbase = \"Is mag 5 or more?\\n\"\ntail = \"\\n\"\n\n[source.signer]\nscheme = 1\nkey = \"02ab\"\n\n[[source.document]]\nserver = \"example.org\"\ntarget = \"/event.json\"\n\n[[source.field]]\nlead = \"link: \"\npath = [\"products\", 1, \"0\", \"url\"]\n";
+
+    #[test]
+    fn a_specification_takes_a_source_and_its_forms() {
+        let base = temp_dir("specification-source");
+        fs::create_dir_all(&base).unwrap();
+        let path = base.join("specification.toml");
+        let form = "\n[[form]]\ntext = \"yes\"\ncode = 1\n";
+        fs::write(&path, format!("max_new_tokens = 4\n{MODEL}{SOURCE}{form}")).unwrap();
+        let specification = read_specification(&path).unwrap();
+        let source = specification.source.clone().unwrap();
+        assert_eq!(source.signer.key, "02ab");
+        assert_eq!(source.documents.len(), 1);
+        // A bare number is an index and a quoted one a key, and the source
+        // step reads both as steps of one path.
+        assert_eq!(
+            source.fields[0].path,
+            [
+                PathStep::Key(String::from("products")),
+                PathStep::Index(1),
+                PathStep::Key(String::from("0")),
+                PathStep::Key(String::from("url")),
+            ]
+        );
+        let recipe = source.recipe();
+        assert_eq!(recipe.fields[0].path, "products\n1\n0\nurl");
+        assert_eq!(recipe.fields[0].document, 0);
+        assert_eq!(recipe.tail, "\n");
+        assert_eq!(specification.forms()[0].code, 1);
+
+        // What is written is read back as the same values: `claim fetch`
+        // writes a case this way, and the gate its specifications.
+        let written = toml::to_string(&specification).unwrap();
+        assert_eq!(
+            toml::from_str::<Specification>(&written).unwrap(),
+            specification
+        );
+
+        // Forms are read with a source's prompt.
+        fs::write(&path, format!("{MODEL}{form}")).unwrap();
+        let error = format!("{:#}", read_specification(&path).unwrap_err());
+        assert!(error.contains("only with a `[source]`"), "{error}");
+
+        // A key the source does not have is refused.
         fs::write(
             &path,
-            format!("model_manifest = \"a/manifest.json\"\nprompt = \"hi\"\n{one}"),
+            format!("{MODEL}{SOURCE}").replace("tail = ", "notary = \"x\"\ntail = "),
         )
         .unwrap();
-        assert!(read_run_spec(&path).is_err());
+        assert!(read_specification(&path).is_err());
         fs::remove_dir_all(base).unwrap();
     }
 
     #[test]
-    fn a_run_spec_takes_a_source_in_place_of_a_prompt() {
-        let base = temp_dir("run-spec-source");
+    fn a_case_is_held_to_its_specification() {
+        let base = temp_dir("case");
         fs::create_dir_all(&base).unwrap();
-        let path = base.join("inference.toml");
-        let source = "[source]\nrecipe = \"recipe.json\"\nsigner = \"signer.json\"\n[[source.documents]]\ndocument = \"event.bin\"\nattestation = \"event.json\"\n[[source.documents]]\ndocument = \"comments.bin\"\nattestation = \"comments.json\"\n";
+        let path = base.join("specification.toml");
+        fs::write(&path, MODEL).unwrap();
+        let plain = read_specification(&path).unwrap();
+        fs::write(&path, format!("{MODEL}{SOURCE}")).unwrap();
+        let sourced = read_specification(&path).unwrap();
+
+        let path = base.join("case.toml");
+        fs::write(&path, "prompt = \"hi\"\n").unwrap();
+        let prompt = read_case(&path).unwrap();
+        assert_eq!(prompt.prompt.as_deref(), Some("hi"));
+        assert!(prompt.validate_for(&plain).is_ok());
+        let error = format!("{:#}", prompt.validate_for(&sourced).unwrap_err());
+        assert!(error.contains("builds the prompt"), "{error}");
+
         fs::write(
             &path,
-            format!("model_manifest = \"m.json\"\ntokens = 4\n{source}"),
+            "[[document]]\nfile = \"event.bin\"\nattestation = \"event.json\"\n",
         )
         .unwrap();
-        let spec = read_run_spec(&path).unwrap();
+        let documents = read_case(&path).unwrap();
         assert_eq!(
-            spec.source,
-            Some(SourceSpec {
-                recipe: PathBuf::from("recipe.json"),
-                signer: PathBuf::from("signer.json"),
-                documents: vec![
-                    SourceDocumentSpec {
-                        document: PathBuf::from("event.bin"),
-                        attestation: PathBuf::from("event.json"),
-                    },
-                    SourceDocumentSpec {
-                        document: PathBuf::from("comments.bin"),
-                        attestation: PathBuf::from("comments.json"),
-                    },
-                ],
-            })
+            documents.documents,
+            [CaseDocument {
+                file: PathBuf::from("event.bin"),
+                attestation: PathBuf::from("event.json"),
+            }]
         );
-        assert_eq!(spec.prompt, None);
+        assert!(documents.validate_for(&sourced).is_ok());
+        let error = format!("{:#}", documents.validate_for(&plain).unwrap_err());
+        assert!(error.contains("no `[source]`"), "{error}");
+        assert_eq!(
+            toml::from_str::<Case>(&toml::to_string(&documents).unwrap()).unwrap(),
+            documents
+        );
 
+        // A prompt beside documents, and a key of the specification's.
         fs::write(
             &path,
-            format!("model_manifest = \"m.json\"\nprompt = \"hi\"\n{source}"),
+            "prompt = \"hi\"\n[[document]]\nfile = \"a\"\nattestation = \"b\"\n",
         )
         .unwrap();
-        let error = format!("{:#}", read_run_spec(&path).unwrap_err());
-        assert!(error.contains("builds its own prompt"), "{error}");
-
-        fs::write(
-            &path,
-            format!("model_manifest = \"m.json\"\n{source}extra = \"x\"\n")
-                .replace("signer = ", "notary = \"x\"\nsigner = "),
-        )
-        .unwrap();
-        assert!(read_run_spec(&path).is_err());
+        assert!(read_case(&path).is_err());
+        fs::write(&path, "prompt = \"hi\"\nmax_new_tokens = 3\n").unwrap();
+        let error = format!("{:#}", read_case(&path).unwrap_err());
+        assert!(error.contains("unknown field `max_new_tokens`"), "{error}");
         fs::remove_dir_all(base).unwrap();
+    }
+
+    #[test]
+    fn a_case_is_read_back_as_written_whatever_its_text() {
+        // `claim fetch` writes the text a claim posted into a case, and a
+        // challenger reads it back: no byte of it may change on the way.
+        for text in [
+            "line\r\nline",
+            "\r",
+            "a\u{0}b\u{7f}\u{1b}",
+            "quotes \" \x27 \"\"\" \x27\x27\x27",
+            "\u{fffd}\u{10ffff} \u{e9}",
+            " lead and trail \n",
+            "\n\nstart",
+            "tab\tback\\slash",
+        ] {
+            let case = Case::of_prompt(text.to_string());
+            let written = toml::to_string(&case).unwrap();
+            assert_eq!(
+                toml::from_str::<Case>(&written).unwrap(),
+                case,
+                "{text:?} written as {written:?}"
+            );
+        }
     }
 
     #[test]
@@ -594,7 +679,8 @@ mod tests {
         let prepared = PreparedRun {
             version: PREPARED_RUN_VERSION,
             procedure_kind: ProcedureKind::Single,
-            run_spec_path: PathBuf::from("inference.toml"),
+            specification_path: PathBuf::from("specification.toml"),
+            case_path: Some(PathBuf::from("case.toml")),
             inferences: vec![PreparedInference {
                 model_manifest_path: PathBuf::from("model-artifacts/manifest.json"),
                 model_manifest_sha256: String::from("model-sha"),
@@ -612,7 +698,7 @@ mod tests {
                 },
             }],
             raw_prompt: false,
-            tokens: 2,
+            max_new_tokens: 2,
             run_manifest_path: Some(PathBuf::from("target/runs/run/Raster.toml")),
             run_manifest_sha256: Some(String::from("run-sha")),
             source_inputs: None,

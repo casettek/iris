@@ -172,7 +172,7 @@ pub(crate) fn run(command: TestCommand) -> Result<ExitCode> {
             Ok(ExitCode::SUCCESS)
         }
         TestCommand::Claim { ids, build } => {
-            let run_spec_path = build.run.clone();
+            let specification_path = build.specification.clone();
             let mut options = build.into_options()?;
             anyhow::ensure!(
                 options.direct_output_ids.is_none(),
@@ -180,7 +180,7 @@ pub(crate) fn run(command: TestCommand) -> Result<ExitCode> {
                  own output"
             );
             options.claimed_token_ids = Some(ids);
-            super::claim::build(options, run_spec_path)
+            super::claim::build(options, specification_path)
         }
         TestCommand::CorruptClaim(args) => {
             let base_dir =

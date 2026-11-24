@@ -17,13 +17,14 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{ensure, Context, Result};
 use inference_artifacts::checks::CLAIM_SUBMISSION_JSON;
+use inference_artifacts::SpecificationForm;
 use inference_artifacts::{ModelFamily, ModelManifest, PreparedRun, ProcedureKind};
-use run_prep::source::{FormFile, LoadedSource};
+use run_prep::source::LoadedSource;
 use serde_json::{json, Value};
 use staged_infer::chain_runner::StagedExecutionBackend;
 
 use super::compare::{compare, read_boundaries};
-use super::{command, logged, source};
+use super::{case_beside, command, logged, source};
 use crate::challenge::locate_divergence;
 use crate::claim::{
     build_posted_claim, corrupt_checkpoint_hashes, ClaimBuildOptions,
@@ -62,19 +63,9 @@ fn import_other_family(
     Ok(artifact_root.join(other).join("manifest.json"))
 }
 
-/// Writes the run: the source's files, and a spec naming both models.
+/// Writes the run: a specification naming both models, and the source's case.
 fn write_run(dir: &Path, source: &LoadedSource, models: &[&Path; 2]) -> Result<PathBuf> {
-    let table = source::write_source(dir, source)?;
-    let spec = dir.join("inference.toml");
-    fs::write(
-        &spec,
-        format!(
-            "procedure_kind = \"consensus\"\ntokens = 4\n\n[[model]]\nmanifest = {}\n[[model]]\nmanifest = {}\n\n{table}",
-            serde_json::to_string(models[0])?,
-            serde_json::to_string(models[1])?,
-        ),
-    )?;
-    Ok(spec)
+    source::write_run(dir, source, ProcedureKind::Consensus, models)
 }
 
 pub(super) fn run_consensus_scenario(
@@ -94,8 +85,9 @@ pub(super) fn run_consensus_scenario(
     // part of the prompt, so naming the answers afterwards leaves them as
     // they are.
     let mut source = source::honest_source()?;
-    let spec = write_run(&dir.join("answers"), &source, &models)?;
-    let answers = crate::infer::run_infer(spec).context("the two models' answers")?;
+    let specification = write_run(&dir.join("answers"), &source, &models)?;
+    let answers = crate::infer::run_infer(specification.clone(), case_beside(&specification))
+        .context("the two models' answers")?;
     let texts: Vec<String> = answers
         .reports
         .iter()
@@ -106,7 +98,7 @@ pub(super) fn run_consensus_scenario(
         "the two models gave one answer, so the scenario cannot show two texts agreeing: {texts:?}"
     );
     for text in &texts {
-        source.recipe.forms.push(FormFile {
+        source.forms.push(SpecificationForm {
             text: text.clone(),
             code: AGREED_CODE,
         });
@@ -114,8 +106,9 @@ pub(super) fn run_consensus_scenario(
 
     // The claim, three ways.
     let claim_dir = dir.join("claim");
-    let spec = write_run(&claim_dir, &source, &models)?;
-    let direct = crate::infer::run_infer(spec.clone()).context("direct inference")?;
+    let specification = write_run(&claim_dir, &source, &models)?;
+    let direct = crate::infer::run_infer(specification.clone(), case_beside(&specification))
+        .context("direct inference")?;
     let direct_consensus = direct
         .consensus
         .as_ref()
@@ -126,7 +119,8 @@ pub(super) fn run_consensus_scenario(
     );
     let built = build_posted_claim(ClaimBuildOptions {
         base_dir: claim_dir.clone(),
-        run_spec_path: spec.clone(),
+        case_path: Some(case_beside(&specification)),
+        specification_path: specification.clone(),
         current_exe: exe.to_path_buf(),
         staged_backend: StagedExecutionBackend::InProcess,
         claimed_token_ids: None,
@@ -210,7 +204,8 @@ pub(super) fn run_consensus_scenario(
     // The contract's pins are a file: the consensus procedure kind's programs and
     // both models, as `iris claim pins` writes them.
     let pins_path = claim_dir.join(inference_artifacts::checks::CONTRACT_PINS_JSON);
-    let pins = crate::claim_check::run_pins(&claim_dir, &spec).context("the contract's pins")?;
+    let pins =
+        crate::claim_check::run_pins(&claim_dir, &specification).context("the contract's pins")?;
     ensure!(
         pins.procedure_kind == ProcedureKind::Consensus
             && pins.models.len() == 2
@@ -223,7 +218,7 @@ pub(super) fn run_consensus_scenario(
     let check = |submission: &Path, raster_run: Option<PathBuf>| {
         crate::claim_check::check_claim(crate::claim_check::ClaimCheckOptions {
             base_dir: claim_dir.clone(),
-            run_spec_path: spec.clone(),
+            specification_path: specification.clone(),
             submission_path: submission.to_path_buf(),
             raster_run,
             pins_path: Some(pins_path.clone()),
@@ -276,8 +271,8 @@ pub(super) fn run_consensus_scenario(
         let log = challenge_dir.join("challenge.log");
         let mut run = command(exe, root);
         run.current_dir(&challenge_dir)
-            .args(["challenge", "build", "--run"])
-            .arg(&spec)
+            .args(["challenge", "build", "--specification"])
+            .arg(&specification)
             .arg("--claim-context")
             .arg(&built.claim_bundle_path)
             .arg("--checkpoints")

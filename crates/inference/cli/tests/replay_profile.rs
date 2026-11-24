@@ -219,14 +219,22 @@ fn replay_profile_tokenizer_smoke() {
         .arg(dir.join("model-artifacts"))
         .args(["--model-id", "parity-gemma", "--no-stage-fixtures"]);
     logged(import, &dir.join("import.log"));
-    let run = dir.join("inference.toml");
+    let specification = dir.join("specification.toml");
+    let case = dir.join("case.toml");
     // The first prompt range's token check.
-    fs::write(&run, "model_manifest = \"model-artifacts/parity-gemma/manifest.json\"\nprompt = \"abcdefghijklmn?!\"\nraw_prompt = true\ntokens = 1\n").unwrap();
+    fs::write(
+        &specification,
+        "raw_prompt = true\nmax_new_tokens = 1\n\n[[model]]\nmanifest = \"model-artifacts/parity-gemma/manifest.json\"\n",
+    )
+    .unwrap();
+    fs::write(&case, "prompt = \"abcdefghijklmn?!\"\n").unwrap();
     let mut profile = Command::new(exe);
     profile
         .current_dir(&root)
-        .args(["replay-profile", "--run"])
-        .arg(&run)
+        .args(["replay-profile", "--specification"])
+        .arg(&specification)
+        .arg("--case")
+        .arg(&case)
         .args(["--stage", "prompt_check_p0", "--top-n", "1"]);
     let log_path = dir.join("replay-profile.log");
     logged(profile, &log_path);

@@ -19,8 +19,8 @@ pub struct AuditClaimOptions {
     /// checkpoint list, checkpoints and input lists: the one `fetch_claim`
     /// wrote.
     pub submission_path: PathBuf,
-    /// A run spec of the procedure the claim names.
-    pub run_spec_path: PathBuf,
+    /// A specification of the procedure the claim names.
+    pub specification_path: PathBuf,
     pub pins_path: Option<PathBuf>,
 }
 
@@ -68,14 +68,16 @@ pub fn audit_claim(options: AuditClaimOptions) -> Result<ClaimAudit> {
     use iris_evm::{abi_encode, checkpoint_fault_token, claim_id, InputQuestion};
 
     let submission: ClaimSubmission = read_json(&options.submission_path)?;
-    let procedure =
-        crate::claim_check::spec_procedure(&options.run_spec_path, options.pins_path.as_deref())?;
+    let procedure = crate::claim_check::spec_procedure(
+        &options.specification_path,
+        options.pins_path.as_deref(),
+    )?;
     ensure!(
         procedure.id() == submission.procedure,
-        "the claim is of procedure {}, and {} describes {}: give the run spec of the \
+        "the claim is of procedure {}, and {} describes {}: give the specification of the \
          procedure the claim names",
         submission.procedure,
-        options.run_spec_path.display(),
+        options.specification_path.display(),
         procedure.id()
     );
     let pins = &procedure.programs;

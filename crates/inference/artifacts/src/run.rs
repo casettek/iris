@@ -1,69 +1,12 @@
-use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
 use crate::procedure_kind::ProcedureKind;
 
-pub const INFERENCE_RUN_SPEC_TOML: &str = "inference.toml";
 pub const PREPARED_RUN_JSON: &str = "prepared_run.json";
-pub const PREPARED_RUN_VERSION: u32 = 21;
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct InferenceRunSpec {
-    /// Which procedure kind the run is of. `single` when the spec does not say.
-    #[serde(default, skip_serializing_if = "ProcedureKind::is_default")]
-    pub procedure_kind: ProcedureKind,
-    /// The model of a procedure kind that makes one inference.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub model_manifest: Option<PathBuf>,
-    /// The models of a procedure kind that makes several, in the order it runs
-    /// them: one `[[model]]` table each.
-    #[serde(default, rename = "model", skip_serializing_if = "Vec::is_empty")]
-    pub models: Vec<ModelSpec>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub prompt: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub prompt_file: Option<PathBuf>,
-    /// A prompt built from a document a signer vouches for, in place of
-    /// `prompt` and `prompt_file`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub source: Option<SourceSpec>,
-    #[serde(default)]
-    pub raw_prompt: bool,
-    #[serde(default = "default_tokens")]
-    pub tokens: u32,
-}
-
-/// One model of a run that names several. The path is relative to the run
-/// spec.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
-pub struct ModelSpec {
-    pub manifest: PathBuf,
-}
-
-/// The files of a run with a source. Paths are relative to the run spec.
-/// See `docs/proposals/authenticated-prompt.md`.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
-pub struct SourceSpec {
-    /// How the prompt is made from the documents, and the forms of its output.
-    pub recipe: PathBuf,
-    /// The public key every attestation must be signed by.
-    pub signer: PathBuf,
-    /// The documents, in the order the recipe names them.
-    pub documents: Vec<SourceDocumentSpec>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
-pub struct SourceDocumentSpec {
-    /// The document, as the bytes its attestation is over.
-    pub document: PathBuf,
-    pub attestation: PathBuf,
-}
+pub const PREPARED_RUN_VERSION: u32 = 22;
 
 /// One inference of a prepared run: its model, and the prompt as that model's
 /// tokenizer prepares it.
@@ -79,14 +22,19 @@ pub struct PreparedInference {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PreparedRun {
     pub version: u32,
-    /// The procedure kind the claim is of. A challenger's run spec must name it.
+    /// The procedure kind the claim is of. A challenger's specification must name it.
     pub procedure_kind: ProcedureKind,
-    pub run_spec_path: PathBuf,
+    pub specification_path: PathBuf,
+    /// The case file the run was prepared from. Absent in the run a
+    /// challenger rebuilds from a claimer's prepared run, whose case is the
+    /// prompt that run holds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub case_path: Option<PathBuf>,
     /// The procedure kind's inferences, in the order it runs them. Each holds the
     /// run's text, source record and forms, which are the same in all.
     pub inferences: Vec<PreparedInference>,
     pub raw_prompt: bool,
-    pub tokens: u32,
+    pub max_new_tokens: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub run_manifest_path: Option<PathBuf>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -138,46 +86,6 @@ pub struct PreparedPiece {
     pub segment: u32,
 }
 
-pub fn read_run_spec(path: &Path) -> Result<InferenceRunSpec> {
-    let text = fs::read_to_string(path)
-        .with_context(|| format!("failed to read run spec {}", path.display()))?;
-    let spec: InferenceRunSpec = toml::from_str(&text)
-        .with_context(|| format!("failed to parse run spec {}", path.display()))?;
-    reject_removed_chain(&text, path)?;
-    reject_renamed_keys(&text, path)?;
-    spec.validate()?;
-    Ok(spec)
-}
-
-/// Specs may still say `chain = "teacher-forced"`, the only staged chain left.
-/// Asking for any other must not silently run this one.
-fn reject_removed_chain(text: &str, path: &Path) -> Result<()> {
-    let table: toml::Table = toml::from_str(text)
-        .with_context(|| format!("failed to parse run spec {}", path.display()))?;
-    match table.get("chain").map(toml::Value::as_str) {
-        None | Some(Some("teacher-forced")) => Ok(()),
-        Some(chain) => anyhow::bail!(
-            "run spec {} asks for chain {}, but teacher-forced is the only staged chain; remove `chain`, or use `iris infer` for direct generation",
-            path.display(),
-            chain.unwrap_or("<not a string>")
-        ),
-    }
-}
-
-/// A spec written before the rename names its procedure kind as `pipeline`.
-/// That key is not read any more, and a spec that still has it must not
-/// silently run the `single` kind.
-fn reject_renamed_keys(text: &str, path: &Path) -> Result<()> {
-    let table: toml::Table = toml::from_str(text)
-        .with_context(|| format!("failed to parse run spec {}", path.display()))?;
-    anyhow::ensure!(
-        !table.contains_key("pipeline"),
-        "run spec {} names its procedure kind as `pipeline`, which is now `procedure_kind`",
-        path.display()
-    );
-    Ok(())
-}
-
 impl PreparedRun {
     /// The first inference: the only one of a procedure kind that makes one, and
     /// where the run's text, source record and forms are read from.
@@ -186,68 +94,4 @@ impl PreparedRun {
             .first()
             .context("the prepared run holds no inference")
     }
-}
-
-impl InferenceRunSpec {
-    /// The model manifest of each inference, in the order the procedure kind runs
-    /// them, as the spec writes the paths.
-    pub fn model_manifests(&self) -> Vec<&Path> {
-        self.model_manifest
-            .iter()
-            .map(PathBuf::as_path)
-            .chain(self.models.iter().map(|model| model.manifest.as_path()))
-            .collect()
-    }
-
-    /// The model manifest of one inference.
-    pub fn model_manifest_of(&self, inference: usize) -> Result<&Path> {
-        self.model_manifests()
-            .get(inference)
-            .copied()
-            .with_context(|| {
-                format!(
-                    "the `{}` procedure kind has no inference {inference}",
-                    self.procedure_kind
-                )
-            })
-    }
-
-    pub fn validate(&self) -> Result<()> {
-        let inferences = self.procedure_kind.inferences();
-        if inferences == 1 {
-            anyhow::ensure!(
-                self.model_manifest.is_some() && self.models.is_empty(),
-                "a run of the `{}` procedure kind names its model as `model_manifest`",
-                self.procedure_kind
-            );
-        } else {
-            anyhow::ensure!(
-                self.model_manifest.is_none() && self.models.len() == inferences,
-                "a run of the `{}` procedure kind names its {inferences} models as `[[model]]` \
-                 tables, each with a `manifest`, and no `model_manifest`; found {}",
-                self.procedure_kind,
-                self.models.len()
-            );
-        }
-        if self.source.is_some() {
-            anyhow::ensure!(
-                self.prompt.is_none() && self.prompt_file.is_none(),
-                "run spec with a `[source]` builds its own prompt; remove `prompt` and `prompt_file`"
-            );
-            return Ok(());
-        }
-        match (self.prompt.as_ref(), self.prompt_file.as_ref()) {
-            (Some(_), Some(_)) => {
-                anyhow::bail!("run spec must set either `prompt` or `prompt_file`, not both")
-            }
-            (None, None) => {
-                anyhow::bail!("run spec must set `prompt`, `prompt_file` or a `[source]`")
-            }
-            _ => Ok(()),
-        }
-    }
-}
-
-fn default_tokens() -> u32 {
-    1
 }

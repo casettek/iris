@@ -1,4 +1,4 @@
-"""Compare two built iris binaries on one unchanged run spec and checkpoint list.
+"""Compare two built iris binaries on one unchanged specification, case and checkpoint list.
 
 Use an actual pre-change binary for --baseline, not --staged-subprocess: changing
 the main-process backend would confound the comparison. No tracked files change.
@@ -12,12 +12,12 @@ import subprocess
 import time
 
 
-def run(label, binary, spec, cwd, output):
+def run(label, binary, specification, case, cwd, output):
     log = output / f"{label}.log"
     started = time.perf_counter()
     with log.open("w", encoding="utf-8") as stream:
         result = subprocess.run(
-            [str(binary), "claim", "build", "--run", str(spec)],
+            [str(binary), "claim", "build", "--specification", str(specification), "--case", str(case)],
             cwd=cwd, stdout=stream, stderr=subprocess.STDOUT, check=False,
         )
     elapsed = time.perf_counter() - started
@@ -46,23 +46,25 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--baseline", type=Path, required=True)
     parser.add_argument("--candidate", type=Path, required=True)
-    parser.add_argument("--run", type=Path, required=True)
+    parser.add_argument("--specification", type=Path, required=True)
+    parser.add_argument("--case", type=Path, required=True)
     parser.add_argument("--cwd", type=Path, default=Path.cwd())
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
-    cwd, spec, output = args.cwd.resolve(), args.run.resolve(), args.output.resolve()
+    cwd, specification, output = args.cwd.resolve(), args.specification.resolve(), args.output.resolve()
+    case = args.case.resolve()
     output.mkdir(parents=True, exist_ok=False)
-    spec_hash = hashlib.sha256(spec.read_bytes()).hexdigest()
+    spec_hash = hashlib.sha256(specification.read_bytes() + case.read_bytes()).hexdigest()
     results = {}
     for label, binary in [("baseline", args.baseline), ("candidate", args.candidate)]:
-        if hashlib.sha256(spec.read_bytes()).hexdigest() != spec_hash:
-            raise RuntimeError("run spec changed during benchmark")
-        results[label] = run(label, binary.resolve(), spec, cwd, output)
+        if hashlib.sha256(specification.read_bytes() + case.read_bytes()).hexdigest() != spec_hash:
+            raise RuntimeError("specification or case changed during benchmark")
+        results[label] = run(label, binary.resolve(), specification, case, cwd, output)
         (output / f"{label}.json").write_text(json.dumps(results[label], indent=2))
     matched = (results["baseline"]["trace"] == results["candidate"]["trace"]
                and results["baseline"]["checkpoint_hashes"] == results["candidate"]["checkpoint_hashes"])
     report = {
-        "run_spec": str(spec), "run_spec_sha256": spec_hash,
+        "specification": str(specification), "case": str(case), "specification_and_case_sha256": spec_hash,
         "cache_budget_override": os.environ.get("STAGED_INFER_WEIGHT_CACHE_BYTES"),
         "checkpoint_parity": matched,
         "baseline_seconds": results["baseline"]["wall_seconds"],

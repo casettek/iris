@@ -1641,7 +1641,7 @@ mod tests {
     }
 
     #[test]
-    fn run_specific_prompt_placeholder_stays_outside_model_artifacts() {
+    fn specificationific_prompt_placeholder_stays_outside_model_artifacts() {
         let config = ImportConfig {
             model_dir: PathBuf::from("model-bundles/model"),
             manifest: None,

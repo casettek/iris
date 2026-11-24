@@ -11,8 +11,9 @@ use staged_infer::{CheckpointHashChallengeConfig, CheckpointedInferenceExecutor}
 use inference_artifacts::{
     checkpoint_hashes, read_challenge_bundle, read_checkpoint_hashes, read_checkpoint_list,
     read_claim_bundle, verify_file_sha256, write_challenge_artifacts,
-    write_checkpoint_list_artifact, ChallengeBundle, ChallengeSourcePath, Checkpoint,
-    CheckpointList, Divergence, DivergenceReason, InferenceRunSpec, PreparedRun, ReplayPackage,
+    write_checkpoint_list_artifact, Case, ChallengeBundle, ChallengeSourcePath, Checkpoint,
+    CheckpointList, Divergence, DivergenceReason, PreparedRun, ReplayPackage, Specification,
+    CASE_TOML,
 };
 use raster_runtime::{read_raster_artifact_from_bytes, ReadLimits};
 
@@ -33,19 +34,19 @@ pub enum ChallengeInput {
     /// checkpoints and the inputs its run was given beside it. Nothing of
     /// the claimer's own run is read. Every stage is run on the inputs the
     /// claim's checkpoint names for it, each of which the claim posted, the
-    /// procedure pins or an earlier stage made, under `run_spec_path`,
-    /// which `claim fetch` wrote.
+    /// procedure pins or an earlier stage made, under the challenger's own
+    /// specification and the `case.toml` that `claim fetch` wrote there.
     Posted { submission_path: PathBuf },
 }
 
 #[derive(Debug, Clone)]
 pub struct ChallengeBuildOptions {
     pub base_dir: PathBuf,
-    pub run_spec_path: PathBuf,
+    pub specification_path: PathBuf,
     pub current_exe: PathBuf,
     pub staged_backend: StagedExecutionBackend,
     pub input: ChallengeInput,
-    /// The output ids the challenger's own direct run of the spec produced,
+    /// The output ids the challenger's own direct run of the fetched case produced,
     /// taken in place of running it again. Not used for a posted claim: its
     /// stages are run on the ids the claim posted, and the checks say whether
     /// they are the greedy output.
@@ -372,7 +373,7 @@ fn challenge_run(
     options: &ChallengeBuildOptions,
     claimed: &ClaimedInput,
 ) -> Result<(PathBuf, Option<PreparedRun>)> {
-    let run_spec_path = resolve_bundle_path(&options.base_dir, &options.run_spec_path);
+    let specification_path = resolve_bundle_path(&options.base_dir, &options.specification_path);
     if let Some(prepared) = &claimed.prepared_run {
         let rebuilt = rebuild_teacher_forced_run(options, prepared)?;
         return Ok((rebuilt.manifest_path, Some(rebuilt.prepared_run)));
@@ -380,7 +381,8 @@ fn challenge_run(
 
     let build = crate::claim::ClaimBuildOptions {
         base_dir: options.base_dir.clone(),
-        run_spec_path,
+        specification_path,
+        case_path: None,
         current_exe: options.current_exe.clone(),
         staged_backend: options.staged_backend,
         claimed_token_ids: None,
@@ -407,8 +409,11 @@ fn challenge_run(
             claim_dir.display()
         )
     })?;
+    // The case is the one `claim fetch` wrote beside the posted inputs: the
+    // claim's own prompt, or the documents it posted.
     let prepared = crate::claim::prepare_posted_run(
         &crate::claim::ClaimBuildOptions {
+            case_path: Some(claim_dir.join(CASE_TOML)),
             direct_output_ids: None,
             ..build
         },
@@ -420,7 +425,7 @@ fn challenge_run(
 }
 
 /// Prepares the claim's prompt, token budget and claimed ids from the model the
-/// challenger's `--run` selects, using the challenger's own template.
+/// challenger's `--specification` names, using the challenger's own template.
 ///
 /// Recomputing the claimer's manifest would rerun the claimer's model and agree
 /// with it. Preparing this run instead means a claim that used other weights, a
@@ -431,13 +436,13 @@ fn rebuild_teacher_forced_run(
     options: &ChallengeBuildOptions,
     frozen: &PreparedRun,
 ) -> Result<crate::claim::PreparedClaimRun> {
-    let run_spec_path = resolve_bundle_path(&options.base_dir, &options.run_spec_path);
-    let selected = inference_artifacts::read_run_spec(&run_spec_path)?;
-    // A challenger rebuilds the claim's own arrangement of stages, so its run
-    // spec has to name the procedure kind the claim is of.
+    let specification_path = resolve_bundle_path(&options.base_dir, &options.specification_path);
+    let selected = inference_artifacts::read_specification(&specification_path)?;
+    // A challenger rebuilds the claim's own arrangement of stages, so its
+    // specification has to name the procedure kind the claim is of.
     anyhow::ensure!(
         selected.procedure_kind == frozen.procedure_kind,
-        "the claim is of the `{}` procedure kind, but --run names `{}`",
+        "the claim is of the `{}` procedure kind, but --specification names `{}`",
         frozen.procedure_kind,
         selected.procedure_kind
     );
@@ -448,16 +453,17 @@ fn rebuild_teacher_forced_run(
     // The run's text, source record and forms are the same in every
     // inference, so the first holds them.
     let claimed = frozen.first()?;
-    let run_spec = InferenceRunSpec {
+    // The claim's text is taken as given: its source record and forms are
+    // handed over below, and no source is read again.
+    let specification = Specification {
         procedure_kind: frozen.procedure_kind,
-        model_manifest: selected.model_manifest,
-        models: selected.models,
-        prompt: Some(claimed.prompt.resolved_prompt.clone()),
-        prompt_file: None,
-        source: None,
         raw_prompt: frozen.raw_prompt,
-        tokens: frozen.tokens,
+        max_new_tokens: frozen.max_new_tokens,
+        models: selected.models,
+        source: None,
+        forms: Vec::new(),
     };
+    let case = Case::of_prompt(claimed.prompt.resolved_prompt.clone());
     let ids = (0..frozen.inferences.len())
         .map(|inference| {
             frozen_claimed_ids(frozen_manifest, &frozen.procedure_kind.label(inference))
@@ -466,14 +472,16 @@ fn rebuild_teacher_forced_run(
     let rebuilt = crate::claim::prepare_challenge_run(
         &crate::claim::ClaimBuildOptions {
             base_dir: options.base_dir.clone(),
-            run_spec_path,
+            specification_path,
+            case_path: None,
             current_exe: options.current_exe.clone(),
             staged_backend: options.staged_backend,
             claimed_token_ids: None,
             direct_output_ids: None,
             claimer: None,
         },
-        &run_spec,
+        &specification,
+        &case,
         claimed
             .prompt
             .source
@@ -489,7 +497,7 @@ fn rebuild_teacher_forced_run(
     {
         if rebuilt.model_id != claimed.model_id {
             eprintln!(
-                "warning: the claim names model {}, but --run selects model {}; a divergence here means the claim did not run the selected model",
+                "warning: the claim names model {}, but --specification names model {}; a divergence here means the claim did not run that model",
                 claimed.model_id, rebuilt.model_id
             );
         }
@@ -649,7 +657,7 @@ fn load_claimed_input(input: &ChallengeInput) -> Result<ClaimedInput> {
                 .transpose()?
                 .ok_or_else(|| {
                     anyhow::anyhow!(
-                        "claim context bundle has no prepared_run_path; rebuild the claim with --run"
+                        "claim context bundle has no prepared_run_path; rebuild the claim"
                     )
                 })?;
             verify_prepared_run(&prepared_run)?;
@@ -910,11 +918,11 @@ impl ChallengeBuildOptions {
         current_exe: PathBuf,
         staged_backend: StagedExecutionBackend,
         input: ChallengeInput,
-        run_spec_path: PathBuf,
+        specification_path: PathBuf,
     ) -> Result<Self> {
         let base_dir = std::env::current_dir().context("failed to read current directory")?;
         Ok(Self {
-            run_spec_path,
+            specification_path,
             base_dir,
             current_exe,
             staged_backend,
@@ -1091,7 +1099,8 @@ mod tests {
         let prepared = PreparedRun {
             version: inference_artifacts::PREPARED_RUN_VERSION,
             procedure_kind: inference_artifacts::ProcedureKind::Single,
-            run_spec_path: base.join("inference.toml"),
+            specification_path: base.join("specification.toml"),
+            case_path: Some(base.join("case.toml")),
             inferences: vec![inference_artifacts::PreparedInference {
                 model_manifest_path: model_manifest.clone(),
                 model_manifest_sha256: format!("{:x}", sha2::Sha256::digest(b"model")),
@@ -1109,7 +1118,7 @@ mod tests {
                 },
             }],
             raw_prompt: false,
-            tokens: 1,
+            max_new_tokens: 1,
             run_manifest_path: Some(run_manifest),
             run_manifest_sha256: Some(String::from("wrong")),
             source_inputs: None,
@@ -1197,9 +1206,11 @@ mod tests {
     }
 
     fn teacher_forced_claim(base: &Path, model: &str, ids: Vec<u32>) -> PreparedRun {
+        let specification_path = crate::test_support::specification(base, model);
         let prepared = crate::claim::prepare_claim_run(&crate::claim::ClaimBuildOptions {
             base_dir: base.to_path_buf(),
-            run_spec_path: crate::test_support::run_spec(base, model),
+            case_path: Some(crate::test_support::case_beside(&specification_path)),
+            specification_path,
             current_exe: PathBuf::from("unused"),
             staged_backend: StagedExecutionBackend::InProcess,
             claimed_token_ids: Some(ids),
@@ -1241,7 +1252,7 @@ mod tests {
 
     #[test]
     fn a_challenger_rebuilds_a_claim_from_its_own_model_and_finds_the_input_that_differs() {
-        use crate::test_support::{model_fixture, run_spec};
+        use crate::test_support::{model_fixture, specification};
         let base = temp_dir("rebuild-other-model");
         model_fixture(&base, "claimers-model");
         let selected = model_fixture(&base, "challengers-model");
@@ -1249,7 +1260,7 @@ mod tests {
         let frozen_manifest = frozen.run_manifest_path.clone().unwrap();
         verify_prepared_run(&frozen).unwrap();
 
-        let run_spec_path = run_spec(&base, "challengers-model");
+        let specification_path = specification(&base, "challengers-model");
         let claimed = ClaimedInput {
             hashes_path: base.join("checkpoints.txt"),
             hashes: Vec::new(),
@@ -1257,7 +1268,7 @@ mod tests {
         };
         let options = ChallengeBuildOptions {
             base_dir: base.clone(),
-            run_spec_path,
+            specification_path,
             current_exe: PathBuf::from("unused"),
             staged_backend: StagedExecutionBackend::InProcess,
             input: ChallengeInput::CheckpointHashes {
@@ -1305,7 +1316,7 @@ mod tests {
             rebuilt.inferences[0].prompt.resolved_prompt,
             frozen.inferences[0].prompt.resolved_prompt
         );
-        assert_eq!(rebuilt.tokens, frozen.tokens);
+        assert_eq!(rebuilt.max_new_tokens, frozen.max_new_tokens);
         assert_eq!(
             bound_commitments(&manifest, "claimed_ids").unwrap(),
             bound_commitments(&frozen_manifest, "claimed_ids").unwrap()
@@ -1321,7 +1332,7 @@ mod tests {
         let frozen_manifest = frozen.run_manifest_path.clone().unwrap();
         let options = ChallengeBuildOptions {
             base_dir: base.clone(),
-            run_spec_path: crate::test_support::run_spec(&base, "model"),
+            specification_path: crate::test_support::specification(&base, "model"),
             current_exe: PathBuf::from("unused"),
             staged_backend: StagedExecutionBackend::InProcess,
             input: ChallengeInput::CheckpointHashes {
@@ -1335,11 +1346,12 @@ mod tests {
             hashes: Vec::new(),
             prepared_run: Some(frozen),
         };
-        // The run spec's own prompt plays no part.
-        let spec = fs::read_to_string(&options.run_spec_path)
-            .unwrap()
-            .replace("prompt = \"h\"", "prompt = \"hh\"");
-        fs::write(&options.run_spec_path, spec).unwrap();
+        // A case beside the challenger's specification plays no part.
+        fs::write(
+            crate::test_support::case_beside(&options.specification_path),
+            "prompt = \"hh\"\n",
+        )
+        .unwrap();
         let (manifest, _) = challenge_run(&options, &claimed).unwrap();
         assert_eq!(
             text_commitments(&manifest),

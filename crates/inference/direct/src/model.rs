@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
 use inference_artifacts::{
-    DirectInferShape, InferenceRunSpec, MistralShape, ModelFamily, ModelManifest, PreparedPrompt,
+    Case, DirectInferShape, MistralShape, ModelFamily, ModelManifest, PreparedPrompt, Specification,
 };
 use prompt_check::input::BpePieces;
 use raster::{Bytes, List};
@@ -234,10 +234,17 @@ impl DirectInferenceModel {
 
     pub fn prepare_prompt(
         &self,
-        spec_dir: &Path,
-        spec: &InferenceRunSpec,
+        specification: &Specification,
+        case_dir: &Path,
+        case: &Case,
     ) -> Result<PreparedPrompt> {
-        run_prep::prepare_prompt(&self.tokenizer, spec_dir, spec, &self.manifest)
+        run_prep::prepare_prompt(
+            &self.tokenizer,
+            specification,
+            case_dir,
+            case,
+            &self.manifest,
+        )
     }
 
     /// The prompt's part of the run's stage schedule: its range count, as run

@@ -12,7 +12,8 @@ use std::{
 #[derive(Debug, Clone)]
 pub struct ReplayProfileOptions {
     pub base_dir: PathBuf,
-    pub run_spec_path: PathBuf,
+    pub specification_path: PathBuf,
+    pub case_path: PathBuf,
     pub current_exe: PathBuf,
     pub stage: String,
     pub top_n: usize,
@@ -21,7 +22,8 @@ pub fn run_replay_profile(options: ReplayProfileOptions) -> Result<PathBuf> {
     ensure!(options.top_n > 0, "--top-n must be positive");
     let prepared = crate::claim::prepare_claim_run(&crate::claim::ClaimBuildOptions {
         base_dir: options.base_dir.clone(),
-        run_spec_path: options.run_spec_path,
+        specification_path: options.specification_path,
+        case_path: Some(options.case_path),
         current_exe: options.current_exe.clone(),
         staged_backend: StagedExecutionBackend::InProcess,
         claimed_token_ids: None,

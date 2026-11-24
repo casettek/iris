@@ -1,117 +1,17 @@
-//! A run's source, as the files a run spec names.
+//! A run's source, as the specification and the case give it.
 //!
-//! Reading the files is all that happens here. What they mean is in
+//! Reading the case's files is all that happens here. What they mean is in
 //! `source-core`, which the stages will run too.
 
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{ensure, Context, Result};
-use inference_artifacts::SourceSpec;
-use serde::{Deserialize, Serialize};
+use inference_artifacts::{Case, Specification, SpecificationForm, SpecificationSource};
 pub use source_core::{
     fault_description, forms_id, run_forms, Attestation, DocumentName, Field, Form, Recipe,
     SignerKey, SourceDocument, SourceRecord, SourceRun, FAULT_NONE,
 };
-
-/// `recipe.json`: the recipe with its base prompt as one string, and the
-/// forms the result step compares the output with.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
-pub struct RecipeFile {
-    pub base: String,
-    /// The documents the run must give, in order.
-    pub documents: Vec<DocumentFile>,
-    pub fields: Vec<FieldFile>,
-    #[serde(default)]
-    pub tail: String,
-    #[serde(default)]
-    pub forms: Vec<FormFile>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
-pub struct DocumentFile {
-    pub server: String,
-    pub target: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
-pub struct FieldFile {
-    pub lead: String,
-    /// Which of `documents` the value is in. The first, when not given.
-    #[serde(default)]
-    pub document: u32,
-    /// The steps from the document's root: a key, or an array index.
-    pub path: Vec<PathStep>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(untagged)]
-pub enum PathStep {
-    Key(String),
-    Index(u32),
-}
-
-impl FieldFile {
-    /// The path as the source step reads it.
-    pub fn path(&self) -> String {
-        self.path
-            .iter()
-            .map(|step| match step {
-                PathStep::Key(key) => key.clone(),
-                PathStep::Index(index) => index.to_string(),
-            })
-            .collect::<Vec<_>>()
-            .join(&source_core::PATH_SEPARATOR.to_string())
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
-pub struct FormFile {
-    pub text: String,
-    pub code: u32,
-}
-
-impl RecipeFile {
-    pub fn recipe(&self) -> Recipe {
-        Recipe {
-            base: source_core::text_chunks(&self.base).into(),
-            documents: self
-                .documents
-                .iter()
-                .map(|document| DocumentName {
-                    server: document.server.clone(),
-                    target: document.target.clone(),
-                })
-                .collect::<Vec<_>>()
-                .into(),
-            fields: self
-                .fields
-                .iter()
-                .map(|field| Field {
-                    lead: field.lead.clone(),
-                    document: field.document,
-                    path: field.path(),
-                })
-                .collect::<Vec<_>>()
-                .into(),
-            tail: self.tail.clone(),
-        }
-    }
-
-    pub fn forms(&self) -> Vec<Form> {
-        self.forms
-            .iter()
-            .map(|form| Form {
-                text: form.text.clone(),
-                code: form.code,
-            })
-            .collect()
-    }
-}
 
 /// One document a run gives: its bytes and the attestation over them.
 #[derive(Debug, Clone)]
@@ -120,19 +20,22 @@ pub struct LoadedDocument {
     pub body: Vec<u8>,
 }
 
-/// Everything a run's `[source]` table names, read from disk.
+/// A specification's source and forms, with a case's documents read from
+/// disk.
 #[derive(Debug, Clone)]
 pub struct LoadedSource {
-    pub recipe: RecipeFile,
-    pub signer: SignerKey,
+    /// The specification's `[source]` table: the recipe and the signer's key.
+    pub specification: SpecificationSource,
+    /// The specification's forms.
+    pub forms: Vec<SpecificationForm>,
     pub documents: Vec<LoadedDocument>,
 }
 
-fn beside(spec_dir: &Path, path: &Path) -> PathBuf {
+fn beside(case_dir: &Path, path: &Path) -> PathBuf {
     if path.is_absolute() {
         path.to_path_buf()
     } else {
-        spec_dir.join(path)
+        case_dir.join(path)
     }
 }
 
@@ -143,24 +46,34 @@ pub fn read_json<T: serde::de::DeserializeOwned>(path: &Path, what: &str) -> Res
         .with_context(|| format!("failed to parse {what} {}", path.display()))
 }
 
-pub fn load_source(spec_dir: &Path, spec: &SourceSpec) -> Result<LoadedSource> {
-    let documents = spec
+/// The source of a specification that has one, over a case's documents.
+/// `case_dir` is the directory the case's paths are relative to.
+pub fn load_source(
+    specification: &Specification,
+    case_dir: &Path,
+    case: &Case,
+) -> Result<Option<LoadedSource>> {
+    case.validate_for(specification)?;
+    let Some(source) = &specification.source else {
+        return Ok(None);
+    };
+    let documents = case
         .documents
         .iter()
         .map(|document| {
-            let body = beside(spec_dir, &document.document);
+            let body = beside(case_dir, &document.file);
             Ok(LoadedDocument {
-                attestation: read_json(&beside(spec_dir, &document.attestation), "attestation")?,
+                attestation: read_json(&beside(case_dir, &document.attestation), "attestation")?,
                 body: fs::read(&body)
                     .with_context(|| format!("failed to read document {}", body.display()))?,
             })
         })
         .collect::<Result<Vec<_>>>()?;
-    Ok(LoadedSource {
-        recipe: read_json(&beside(spec_dir, &spec.recipe), "recipe")?,
-        signer: read_json(&beside(spec_dir, &spec.signer), "signer key")?,
+    Ok(Some(LoadedSource {
+        specification: source.clone(),
+        forms: specification.forms.clone(),
         documents,
-    })
+    }))
 }
 
 impl LoadedSource {
@@ -180,16 +93,31 @@ impl LoadedSource {
     /// The source step over these files: its record, with any fault in it,
     /// and the prompt text.
     pub fn run(&self) -> SourceRun {
-        source_core::run_source_steps(&self.signer, &self.recipe.recipe(), &self.documents())
+        source_core::run_source_steps(
+            &self.specification.signer,
+            &self.specification.recipe(),
+            &self.documents(),
+        )
+    }
+
+    /// The forms as the result stage takes them.
+    pub fn forms(&self) -> Vec<Form> {
+        self.forms
+            .iter()
+            .map(|form| Form {
+                text: form.text.clone(),
+                code: form.code,
+            })
+            .collect()
     }
 
     /// The result step over an output text.
     pub fn result_code(&self, output: &str) -> u32 {
-        source_core::run_forms(&self.recipe.forms(), output).code
+        source_core::run_forms(&self.forms(), output).code
     }
 }
 
-/// What a run's `[source]` table fixes before any document is fetched: who
+/// What a specification's source fixes before any document is fetched: who
 /// must have signed the documents, the recipe the prompt is built by, and the
 /// forms the output is read by.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -202,21 +130,21 @@ pub struct SourceTerms {
     pub forms: Vec<Form>,
 }
 
-pub fn source_terms(spec_dir: &Path, spec: &SourceSpec) -> Result<SourceTerms> {
-    let recipe: RecipeFile = read_json(&beside(spec_dir, &spec.recipe), "recipe")?;
-    let signer: SignerKey = read_json(&beside(spec_dir, &spec.signer), "signer key")?;
+/// The terms of a specification with a source. None for one without.
+pub fn source_terms(specification: &Specification) -> Option<SourceTerms> {
+    let source = specification.source.as_ref()?;
     // The recipe's hash is over the recipe alone, so the source step over no
     // documents states it.
     let record = source_core::run_source_steps(
-        &signer,
-        &recipe.recipe(),
+        &source.signer,
+        &source.recipe(),
         &source_core::source_documents(&[]),
     )
     .record;
-    Ok(SourceTerms {
-        signer: signer.key,
+    Some(SourceTerms {
+        signer: source.signer.key.clone(),
         recipe_sha256: record.recipe_sha256,
-        forms: recipe.forms(),
+        forms: specification.forms(),
     })
 }
 
@@ -227,13 +155,13 @@ pub fn no_forms_id() -> String {
 
 /// The prompt of a run with a source. A source with a fault gives no prompt:
 /// direct inference is the gate, and no claim is built on such a run.
-pub fn sourced_prompt(spec_dir: &Path, spec: &SourceSpec) -> Result<String> {
-    Ok(sourced_run(spec_dir, spec)?.text)
+pub fn sourced_prompt(source: &LoadedSource) -> Result<String> {
+    Ok(sourced_run(source)?.text)
 }
 
 /// The same, with the record the first bind is given.
-pub fn sourced_run(spec_dir: &Path, spec: &SourceSpec) -> Result<SourceRun> {
-    let run = load_source(spec_dir, spec)?.run();
+pub fn sourced_run(source: &LoadedSource) -> Result<SourceRun> {
+    let run = source.run();
     ensure!(
         run.record.fault == FAULT_NONE,
         "the run's source has fault {} at {}: {}",

@@ -2,8 +2,8 @@
 //! host against the files a claimer and a challenger would post.
 //!
 //! The rules themselves are in `inference_artifacts::checks`. This module
-//! finds their inputs: the pins beside the model manifest a run spec names,
-//! the parameters that spec requires, and the claim directory `claim build`
+//! finds their inputs: the pins beside the model manifest a specification names,
+//! the parameters that specification requires, and the claim directory `claim build`
 //! wrote, which holds the submission, the checkpoint hashes, the checkpoints and
 //! the outputs of the last check and of the result stage after it.
 
@@ -24,16 +24,16 @@ use inference_artifacts::checks::{
 };
 use inference_artifacts::registry::{Procedure, Registry};
 use inference_artifacts::{
-    read_checkpoint_list, read_json, read_run_spec, Checkpoint, CheckpointList, InferenceRunSpec,
-    ModelManifest, PreparedRun, ProcedureKind, CHECKPOINTS_TXT, CHECKPOINT_LIST_JSON,
+    read_checkpoint_list, read_json, read_specification, Checkpoint, CheckpointList, ModelManifest,
+    PreparedRun, ProcedureKind, Specification, CHECKPOINTS_TXT, CHECKPOINT_LIST_JSON,
 };
 use raster::core::chain::ChainCommitment;
 
 #[derive(Debug, Clone)]
 pub struct ClaimCheckOptions {
     pub base_dir: PathBuf,
-    /// The run spec the contract's required parameters are read from.
-    pub run_spec_path: PathBuf,
+    /// The specification the contract's required parameters are read from.
+    pub specification_path: PathBuf,
     /// The `claim_submission.json` a claim build wrote. The claim's checkpoint
     /// files and stage outputs are read from the directory it is in.
     pub submission_path: PathBuf,
@@ -46,7 +46,7 @@ pub struct ClaimCheckOptions {
     pub pins_path: Option<PathBuf>,
     /// The registry the claim's procedure is looked up in, as `iris
     /// registry add` writes it. Without it the contract's procedure is
-    /// the one the run spec and the pins describe.
+    /// the one the specification and the pins describe.
     pub registry_path: Option<PathBuf>,
     /// The stand-in data-availability layer's directory. Without it, the
     /// default one (`crate::posting::da_dir`).
@@ -117,20 +117,20 @@ fn load_pins(
     Ok(pins)
 }
 
-/// The imports a run spec names: each model's manifest path, the manifest
+/// The imports a specification names: each model's manifest path, the manifest
 /// and the model's segment of a chain.
 fn run_imports(
-    run_spec_path: &Path,
-    run_spec: &InferenceRunSpec,
+    specification_path: &Path,
+    specification: &Specification,
 ) -> Result<Vec<(PathBuf, ModelManifest, String)>> {
-    let run_spec_dir = run_spec_path
+    let specification_dir = specification_path
         .parent()
-        .context("run spec has no parent directory")?;
-    run_spec
+        .context("specification has no parent directory")?;
+    specification
         .model_manifests()
         .into_iter()
         .map(|manifest| {
-            let path = absolute(run_spec_dir, manifest);
+            let path = absolute(specification_dir, manifest);
             let manifest = ModelManifest::load_verified(&path)?;
             let segment = manifest.verified_raster_template(&path)?.1;
             Ok((path, manifest, segment))
@@ -138,34 +138,30 @@ fn run_imports(
         .collect()
 }
 
-/// What a contract of a run spec's procedure kind over its models pins, made from
+/// What a contract of a specification's procedure kind over its models pins, made from
 /// the imports and the stage projects' locks as they are now.
-pub fn run_pins(base_dir: &Path, run_spec_path: &Path) -> Result<ContractPins> {
-    let run_spec_path = absolute(base_dir, run_spec_path);
-    let run_spec = read_run_spec(&run_spec_path)?;
-    let imports = run_imports(&run_spec_path, &run_spec)?;
+pub fn run_pins(base_dir: &Path, specification_path: &Path) -> Result<ContractPins> {
+    let specification_path = absolute(base_dir, specification_path);
+    let specification = read_specification(&specification_path)?;
+    let imports = run_imports(&specification_path, &specification)?;
     let imports: Vec<(&ModelManifest, &str)> = imports
         .iter()
         .map(|(_, manifest, segment)| (manifest, segment.as_str()))
         .collect();
-    ContractPins::of(run_spec.procedure_kind, &imports)
+    ContractPins::of(specification.procedure_kind, &imports)
 }
 
-/// What a run spec requires of where a claim's prompt came from and of the
+/// What a specification requires of where a claim's prompt came from and of the
 /// forms its output is read by. A contract holds these as it holds the
 /// parameters: they are the terms the claim was asked for under.
-fn required_origin(run_spec_path: &Path, run_spec: &InferenceRunSpec) -> Result<RequiredOrigin> {
-    let Some(source) = &run_spec.source else {
-        return Ok(RequiredOrigin {
+fn required_origin(specification: &Specification) -> RequiredOrigin {
+    let Some(terms) = run_prep::source::source_terms(specification) else {
+        return RequiredOrigin {
             source: None,
             forms: Vec::new(),
-        });
+        };
     };
-    let run_spec_dir = run_spec_path
-        .parent()
-        .context("run spec has no parent directory")?;
-    let terms = run_prep::source::source_terms(run_spec_dir, source)?;
-    Ok(RequiredOrigin {
+    RequiredOrigin {
         source: Some(RequiredSource {
             signer: terms.signer,
             // The base prompt and the documents' domains are not pinned yet:
@@ -174,10 +170,10 @@ fn required_origin(run_spec_path: &Path, run_spec: &InferenceRunSpec) -> Result<
             recipe_sha256: None,
         }),
         forms: terms.forms,
-    })
+    }
 }
 
-/// The contract a run spec describes. `Ok(None)` when no pins file is given
+/// The contract a specification describes. `Ok(None)` when no pins file is given
 /// and a model's import has none: it was made where the stage projects are
 /// not locked.
 ///
@@ -185,12 +181,12 @@ fn required_origin(run_spec_path: &Path, run_spec: &InferenceRunSpec) -> Result<
 /// `single` procedure kind pins what the model's import wrote, and one of several
 /// inferences what [`run_pins`] makes from the imports now.
 fn contract_of(
-    run_spec_path: &Path,
-    run_spec: &InferenceRunSpec,
+    specification_path: &Path,
+    specification: &Specification,
     pins_path: Option<&Path>,
 ) -> Result<Option<Procedure>> {
-    let procedure_kind = run_spec.procedure_kind;
-    let imports = run_imports(run_spec_path, run_spec)?;
+    let procedure_kind = specification.procedure_kind;
+    let imports = run_imports(specification_path, specification)?;
     let manifests: Vec<&ModelManifest> = imports.iter().map(|(_, manifest, _)| manifest).collect();
     let pins = match (pins_path, imports.as_slice()) {
         (Some(path), _) => load_pins(path, procedure_kind, &manifests)?,
@@ -220,10 +216,10 @@ fn contract_of(
     Ok(Some(Procedure::of(
         pins,
         RequiredParameters {
-            raw_prompt: run_spec.raw_prompt,
-            max_new_tokens: run_spec.tokens,
+            raw_prompt: specification.raw_prompt,
+            max_new_tokens: specification.max_new_tokens,
         },
-        required_origin(run_spec_path, run_spec)?,
+        required_origin(specification),
     )))
 }
 
@@ -231,8 +227,8 @@ fn contract_of(
 /// registers for its procedure kind, models and parameters. `Ok(None)` when an
 /// import has no pins: it was made where the stage projects are not locked.
 pub(crate) fn run_procedure(prepared: &PreparedRun) -> Result<Option<Procedure>> {
-    let run_spec = read_run_spec(&prepared.run_spec_path)?;
-    contract_of(&prepared.run_spec_path, &run_spec, None)
+    let specification = read_specification(&prepared.specification_path)?;
+    contract_of(&prepared.specification_path, &specification, None)
 }
 
 /// Where a contract's checks read posted data from, and when the claim is
@@ -310,18 +306,18 @@ pub fn post_claim_submission(
 }
 
 pub fn check_claim(options: ClaimCheckOptions) -> Result<ClaimCheckReport> {
-    let run_spec_path = absolute(&options.base_dir, &options.run_spec_path);
-    let run_spec = read_run_spec(&run_spec_path)?;
+    let specification_path = absolute(&options.base_dir, &options.specification_path);
+    let specification = read_specification(&specification_path)?;
     let pins_path = options
         .pins_path
         .as_ref()
         .map(|path| absolute(&options.base_dir, path));
-    let contract =
-        contract_of(&run_spec_path, &run_spec, pins_path.as_deref())?.with_context(|| {
+    let contract = contract_of(&specification_path, &specification, pins_path.as_deref())?
+        .with_context(|| {
             format!(
             "a model {} names has no {CONTRACT_PINS_JSON}: import it again from the iris root, \
              where the stage projects and their Raster.lock files are",
-            run_spec_path.display()
+            specification_path.display()
         )
         })?;
     let submission_path = absolute(&options.base_dir, &options.submission_path);
@@ -580,22 +576,22 @@ fn check_claim_dir(
     Ok(ClaimCheckReport { lines })
 }
 
-/// The procedure a run spec describes, with the pins of this file or,
+/// The procedure a specification describes, with the pins of this file or,
 /// without one, as `iris claim check` finds them.
-pub fn spec_procedure(run_spec_path: &Path, pins_path: Option<&Path>) -> Result<Procedure> {
-    let run_spec = read_run_spec(run_spec_path)?;
-    contract_of(run_spec_path, &run_spec, pins_path)?.with_context(|| {
+pub fn spec_procedure(specification_path: &Path, pins_path: Option<&Path>) -> Result<Procedure> {
+    let specification = read_specification(specification_path)?;
+    contract_of(specification_path, &specification, pins_path)?.with_context(|| {
         format!(
             "a model {} names has no {CONTRACT_PINS_JSON}: import it again from the iris root, \
              where the stage projects and their Raster.lock files are",
-            run_spec_path.display()
+            specification_path.display()
         )
     })
 }
 
 #[derive(Debug, Clone)]
 pub struct ChallengePostOptions {
-    pub run_spec_path: PathBuf,
+    pub specification_path: PathBuf,
     pub pins_path: Option<PathBuf>,
     /// The `challenge_bundle.json` that `challenge build` wrote.
     pub challenge_bundle_path: PathBuf,
@@ -619,7 +615,7 @@ pub struct ChallengePosted {
 }
 
 pub struct ChallengeCheckOptions {
-    pub run_spec_path: PathBuf,
+    pub specification_path: PathBuf,
     pub pins_path: Option<PathBuf>,
     /// The `challenge_submission.json` that `challenge post` wrote.
     pub challenge_path: PathBuf,
@@ -632,7 +628,7 @@ pub struct ChallengeCheckOptions {
 /// Make the checks a contract would make of a challenge's submission as it
 /// is. Nothing is posted and nothing is written.
 pub fn check_challenge_submission(options: ChallengeCheckOptions) -> Result<ClaimCheckReport> {
-    let procedure = spec_procedure(&options.run_spec_path, options.pins_path.as_deref())?;
+    let procedure = spec_procedure(&options.specification_path, options.pins_path.as_deref())?;
     let submission: inference_artifacts::checks::ChallengeSubmission =
         read_json(&options.challenge_path)?;
     let layer = crate::posting::open_layer(options.da_dir.as_deref())?;
@@ -652,7 +648,7 @@ pub fn check_challenge_submission(options: ChallengeCheckOptions) -> Result<Clai
 /// Post a challenge's trace body, write its submission beside the bundle,
 /// and make the checks a contract would make when it arrives.
 pub fn post_challenge(options: ChallengePostOptions) -> Result<ChallengePosted> {
-    let procedure = spec_procedure(&options.run_spec_path, options.pins_path.as_deref())?;
+    let procedure = spec_procedure(&options.specification_path, options.pins_path.as_deref())?;
     let claim: ClaimSubmission = read_json(&options.submission_path)?;
     let list = claim_list(&options.submission_path)?;
     let bundle = inference_artifacts::read_challenge_bundle(&options.challenge_bundle_path)?;

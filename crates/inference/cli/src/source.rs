@@ -58,8 +58,10 @@ pub struct SignArgs {
 pub enum SourceCommand {
     /// Check a run's source and print its record. Exits with 1 on a fault.
     Render {
-        #[arg(long, default_value = inference_artifacts::INFERENCE_RUN_SPEC_TOML)]
-        run: PathBuf,
+        #[arg(long, default_value = inference_artifacts::SPECIFICATION_TOML)]
+        specification: PathBuf,
+        #[arg(long, default_value = inference_artifacts::CASE_TOML)]
+        case: PathBuf,
         /// Write the prompt text the source gives to this file.
         #[arg(long)]
         text_out: Option<PathBuf>,
@@ -67,8 +69,10 @@ pub enum SourceCommand {
     /// Write the `prompt-source` stage's inputs for a run, with the
     /// `input.json` and `input_manifest.json` that run the stage on its own.
     Inputs {
-        #[arg(long, default_value = inference_artifacts::INFERENCE_RUN_SPEC_TOML)]
-        run: PathBuf,
+        #[arg(long, default_value = inference_artifacts::SPECIFICATION_TOML)]
+        specification: PathBuf,
+        #[arg(long, default_value = inference_artifacts::CASE_TOML)]
+        case: PathBuf,
         /// Directory to write the files in.
         #[arg(long)]
         out: PathBuf,
@@ -156,23 +160,23 @@ pub fn sign(args: SignArgs) -> Result<()> {
     Ok(())
 }
 
-/// A run's source, when its spec has one.
-pub fn run_source_of(run_spec_path: &Path) -> Result<Option<LoadedSource>> {
+/// A run's source, when its specification has one, over the case's documents.
+pub fn run_source_of(specification_path: &Path, case_path: &Path) -> Result<Option<LoadedSource>> {
     let base_dir = std::env::current_dir().context("failed to read current directory")?;
-    let run_spec_path = crate::absolute(&base_dir, run_spec_path);
-    let run_spec = inference_artifacts::read_run_spec(&run_spec_path)?;
-    let Some(source) = run_spec.source.as_ref() else {
-        return Ok(None);
-    };
-    let spec_dir = run_spec_path
-        .parent()
-        .context("run spec has no parent directory")?;
-    Ok(Some(load_source(spec_dir, source)?))
+    let specification_path = crate::absolute(&base_dir, specification_path);
+    let specification = inference_artifacts::read_specification(&specification_path)?;
+    let case_path = crate::absolute(&base_dir, case_path);
+    let case = inference_artifacts::read_case(&case_path)?;
+    let case_dir = case_path.parent().context("case has no parent directory")?;
+    load_source(&specification, case_dir, &case)
 }
 
-pub fn render(run: &Path, text_out: Option<&Path>) -> Result<SourceRecord> {
-    let Some(source) = run_source_of(run)? else {
-        bail!("run spec {} has no `[source]`", run.display());
+pub fn render(specification: &Path, case: &Path, text_out: Option<&Path>) -> Result<SourceRecord> {
+    let Some(source) = run_source_of(specification, case)? else {
+        bail!(
+            "specification {} has no `[source]`",
+            specification.display()
+        );
     };
     let run = source.run();
     if let Some(path) = text_out {
@@ -191,9 +195,12 @@ pub fn render(run: &Path, text_out: Option<&Path>) -> Result<SourceRecord> {
     Ok(run.record)
 }
 
-pub fn stage_inputs(run: &Path, out: &Path) -> Result<()> {
-    let Some(source) = run_source_of(run)? else {
-        bail!("run spec {} has no `[source]`", run.display());
+pub fn stage_inputs(specification: &Path, case: &Path, out: &Path) -> Result<()> {
+    let Some(source) = run_source_of(specification, case)? else {
+        bail!(
+            "specification {} has no `[source]`",
+            specification.display()
+        );
     };
     fs::create_dir_all(out).with_context(|| format!("failed to create {}", out.display()))?;
     let out = fs::canonicalize(out)?;
@@ -250,29 +257,57 @@ pub fn print_source_lines(source: &LoadedSource) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use inference_artifacts::{SourceDocumentSpec, SourceSpec};
+    use inference_artifacts::{Case, CaseDocument, Specification};
     use run_prep::source::sourced_prompt;
 
     const EVENT: &str = r#"{"type":"Feature","properties":{"mag":5.1,"products":{"losspager":[{"id":"p1","contents":{"comments.json":{"url":"https://example.org/p1/comments.json"}}}]}},"id":"us7000abcd"}"#;
     const COMMENTS: &str = r#"{"impact1": "Green alert.", "impact2": ""}"#;
-    const RECIPE: &str = r#"{
-        "base": "Are losses expected to be minimal?\n\n",
-        "documents": [
-            { "server": "example.org", "target": "/event/us7000abcd.json" },
-            { "server": "example.org", "target": "/p1/comments.json" }
-        ],
-        "fields": [
-            { "lead": "event_id: ", "path": ["id"] },
-            { "lead": "\nmagnitude: ", "path": ["properties", "mag"] },
-            { "lead": "\ncomments: ", "path": ["properties", "products", "losspager", 0, "contents", "comments.json", "url"] },
-            { "lead": "\nimpact1: ", "document": 1, "path": ["impact1"] }
-        ],
-        "tail": "\n",
-        "forms": [
-            { "text": "{\"verdict\":\"confirmed\"}", "code": 1 },
-            { "text": "{\"verdict\":\"denied\"}", "code": 2 }
-        ]
-    }"#;
+    /// A specification with a source. `KEY` stands for the signer's key.
+    const SPECIFICATION: &str = r#"
+[[model]]
+manifest = "unused.json"
+
+[source]
+base = "Are losses expected to be minimal?\n\n"
+tail = "\n"
+
+[source.signer]
+scheme = 1
+key = "KEY"
+
+[[source.document]]
+server = "example.org"
+target = "/event/us7000abcd.json"
+
+[[source.document]]
+server = "example.org"
+target = "/p1/comments.json"
+
+[[source.field]]
+lead = "event_id: "
+path = ["id"]
+
+[[source.field]]
+lead = "\nmagnitude: "
+path = ["properties", "mag"]
+
+[[source.field]]
+lead = "\ncomments: "
+path = ["properties", "products", "losspager", 0, "contents", "comments.json", "url"]
+
+[[source.field]]
+lead = "\nimpact1: "
+document = 1
+path = ["impact1"]
+
+[[form]]
+text = "{\"verdict\":\"confirmed\"}"
+code = 1
+
+[[form]]
+text = "{\"verdict\":\"denied\"}"
+code = 2
+"#;
 
     fn scratch(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("iris-source-{name}-{}", std::process::id()));
@@ -281,9 +316,15 @@ mod tests {
         dir
     }
 
-    fn signed_run(dir: &Path) -> SourceSpec {
+    /// The public key `keygen` wrote in a directory.
+    fn public_key(dir: &Path) -> source_core::SignerKey {
+        serde_json::from_str(&fs::read_to_string(dir.join(SIGNER_PUBLIC_FILE)).unwrap()).unwrap()
+    }
+
+    /// A specification whose source names this directory's signer, and the
+    /// case of two documents that signer attests.
+    fn signed_run(dir: &Path) -> (Specification, Case) {
         keygen(dir).unwrap();
-        fs::write(dir.join("recipe.json"), RECIPE).unwrap();
         let mut documents = Vec::new();
         for (name, target, body) in [
             ("event", "/event/us7000abcd.json", EVENT),
@@ -299,28 +340,37 @@ mod tests {
                 time: Some(1_763_300_000),
             })
             .unwrap();
-            documents.push(SourceDocumentSpec {
-                document: PathBuf::from(format!("{name}.bin")),
+            documents.push(CaseDocument {
+                file: PathBuf::from(format!("{name}.bin")),
                 attestation: PathBuf::from(format!("{name}.json")),
             });
         }
-        SourceSpec {
-            recipe: PathBuf::from("recipe.json"),
-            signer: PathBuf::from(SIGNER_PUBLIC_FILE),
-            documents,
-        }
+        let specification: Specification =
+            toml::from_str(&SPECIFICATION.replace("KEY", &public_key(dir).key)).unwrap();
+        specification.validate().unwrap();
+        (
+            specification,
+            Case {
+                documents,
+                ..Case::default()
+            },
+        )
+    }
+
+    fn load(dir: &Path, specification: &Specification, case: &Case) -> LoadedSource {
+        load_source(specification, dir, case).unwrap().unwrap()
     }
 
     #[test]
     fn signed_documents_give_the_recipes_prompt() {
         let dir = scratch("good");
-        let spec = signed_run(&dir);
-        let text = sourced_prompt(&dir, &spec).unwrap();
+        let (specification, case) = signed_run(&dir);
+        let source = load(&dir, &specification, &case);
+        let text = sourced_prompt(&source).unwrap();
         assert_eq!(
             text,
             "Are losses expected to be minimal?\n\nevent_id: \"us7000abcd\"\nmagnitude: 5.1\ncomments: \"https://example.org/p1/comments.json\"\nimpact1: \"Green alert.\"\n"
         );
-        let source = load_source(&dir, &spec).unwrap();
         let record = source.run().record;
         assert_eq!(record.fault, FAULT_NONE);
         assert_eq!(record.documents, 2);
@@ -330,28 +380,36 @@ mod tests {
 
         // A second keygen keeps the key, so the attestations still verify.
         keygen(&dir).unwrap();
-        assert!(sourced_prompt(&dir, &spec).is_ok());
+        assert!(sourced_prompt(&load(&dir, &specification, &case)).is_ok());
         fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
     fn a_changed_document_or_another_signer_gives_no_prompt() {
         let dir = scratch("bad");
-        let spec = signed_run(&dir);
+        let (mut specification, case) = signed_run(&dir);
+        let prompt = |specification: &Specification, case: &Case| {
+            format!(
+                "{:#}",
+                sourced_prompt(&load(&dir, specification, case)).unwrap_err()
+            )
+        };
         fs::write(dir.join("comments.bin"), COMMENTS.replace("Green", "Red")).unwrap();
-        let error = format!("{:#}", sourced_prompt(&dir, &spec).unwrap_err());
+        let error = prompt(&specification, &case);
         assert!(error.contains("fault 3 at 0"), "{error}");
         fs::write(dir.join("comments.bin"), COMMENTS).unwrap();
 
-        let mut fewer = spec.clone();
+        // A case of fewer documents than the source names is the source
+        // step's fault to state, and no refusal before it.
+        let mut fewer = case.clone();
         fewer.documents.pop();
-        let error = format!("{:#}", sourced_prompt(&dir, &fewer).unwrap_err());
+        let error = prompt(&specification, &fewer);
         assert!(error.contains("fault 4"), "{error}");
 
         let other = scratch("bad-other-signer");
         keygen(&other).unwrap();
-        fs::copy(other.join(SIGNER_PUBLIC_FILE), dir.join(SIGNER_PUBLIC_FILE)).unwrap();
-        let error = format!("{:#}", sourced_prompt(&dir, &spec).unwrap_err());
+        specification.source.as_mut().unwrap().signer = public_key(&other);
+        let error = prompt(&specification, &case);
         assert!(error.contains("fault 2 at 0"), "{error}");
         fs::remove_dir_all(dir).unwrap();
         fs::remove_dir_all(other).unwrap();
