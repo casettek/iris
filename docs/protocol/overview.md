@@ -17,11 +17,11 @@ under `protocol/` and `blockchain/` each go into one part.
 
 ## What is there before any claim
 
-A contract is given a **configuration**, registered under its id
-([availability](availability.md#the-configuration-registry)). A claim names
+A contract is given a **procedure**, registered under its id
+([availability](availability.md#the-procedure-registry)). A claim names
 one, and is judged by it.
 
-- **The pipeline**: the kinds of stage a run is made of, each a program with
+- **The chain**: the kinds of stage a run is made of, each a program with
   an identity.
 - **For each program, where each of its inputs comes from**: an earlier
   stage's output and which programs may produce it, a pinned commitment such
@@ -29,7 +29,7 @@ one, and is judged by it.
 - **The models**, each by the id its weights, tokenizer and descriptor hash
   to, and **the parameters** a run must have used.
 - **What a claim must say of its source and its result**, when the
-  configuration requires either: the signer of the documents the prompt is
+  procedure requires either: the signer of the documents the prompt is
   built from, the recipe that builds it, and the forms the answer is read by.
 
 The claims contract is also deployed with the ids of Raster's two proof
@@ -37,7 +37,7 @@ programs and RISC Zero's verifier.
 
 ## What a claim is
 
-A run is a chain of stages ([the pipeline](raster-chain.md)): the prompt is
+A run is a chain of stages ([the chain](raster-chain.md)): the prompt is
 bound and tokenized, each layer runs over each range of tokens, the output is
 checked token by token against the model's own choice, and a last stage states
 the result. A claim commits to one **checkpoint** per stage: which program
@@ -47,20 +47,20 @@ from, and its output.
 | Where | What |
 | --- | --- |
 | Posted to Celestia | Every input the run gave its stages (the text, the token marks, the claimed output ids, the settings, a source's documents), the checkpoint list, every checkpoint, and every stage's input list. |
-| In the transaction | The configuration's id, the claimer, the input text's hash, the source record, each inference's output text with its record and result, the checkpoint count and root, and where each blob is with the host's signature over what it holds. |
-| Kept by the contract | The claim's configuration, claimer, checkpoint count and root, when it arrived, and one hash of the commitments of the run inputs it posted. |
+| In the transaction | The procedure's id, the claimer, the input text's hash, the source record, each inference's output text with its record and result, the checkpoint count and root, and where each blob is with the host's signature over what it holds. |
+| Kept by the contract | The claim's procedure, claimer, checkpoint count and root, when it arrived, and one hash of the commitments of the run inputs it posted. |
 
 On arrival the contract checks what it can from the transaction alone
-([the contract's rules](checks.md#on-submission)): the configuration is
-registered, the statement is the configuration's model and parameters over
+([the contract's rules](checks.md#on-submission)): the procedure is
+registered, the statement is the procedure's model and parameters over
 the claimed input, the record is valid, the source and result are what the
-configuration requires, and the data is posted and stays retrievable. It does
+procedure requires, and the data is posted and stays retrievable. It does
 not read the checkpoints.
 
 ## The one rule
 
 **Every input a checkpoint names is something a challenger also holds**: the
-output of an earlier checkpoint, a commitment the configuration pins, or a
+output of an earlier checkpoint, a commitment the procedure pins, or a
 value the claim posted.
 
 A dispute about a stage is settled against the inputs the claimer's own
@@ -80,7 +80,7 @@ the final record.
 
 | What is wrong | What catches it | How it ends |
 | --- | --- | --- |
-| The claim does not state what its configuration requires, or its data is not posted | The contract, when the claim arrives (`submitClaim`) | The claim is refused |
+| The claim does not state what its procedure requires, or its data is not posted | The contract, when the claim arrives (`submitClaim`) | The claim is refused |
 | A stage names a program outside the approved set | Anyone, pointing at the checkpoint (`voidClaim`) | The claim is void, in that transaction |
 | A stage names an input that is not an earlier stage's output, a pinned commitment or a posted value | Anyone, pointing at the checkpoint and the input (`voidClaim`) | The claim is void, in that transaction |
 | A stage's output is not what its program gives on its inputs | A challenger, replaying that stage and posting the trace (`submitChallenge`) | The challenge stands unless the claimer answers it |
@@ -96,7 +96,7 @@ checkpoint names and replaying the first whose output differs
 ([challenge build](../workflows/challenge-build.md)).
 
 The second and third rows need no replay and have no answer: the contract
-reads the claim's own checkpoint, its configuration and what it posted, and
+reads the claim's own checkpoint, its procedure and what it posted, and
 there is nothing to wait for. They are two questions of one call, with five
 recorded faults ([the blockchains](../blockchain/overview.md#what-voidclaim-checks)).
 

@@ -62,9 +62,9 @@ takes.
 
 | Command | What it does |
 | --- | --- |
-| `iris claim pins` | Write what a contract would pin for a run's pipeline over its models. |
-| `iris registry add` | Register a configuration in a registry file. |
-| `iris evm configuration` | Write the contract call that registers a configuration. |
+| `iris claim pins` | Write what a contract would pin for a run's procedure kind over its models. |
+| `iris registry add` | Register a procedure in a registry file. |
+| `iris evm procedure` | Write the contract call that registers a procedure. |
 | `iris evm proof-programs` | Print the ids of Raster's proof programs, which a contract pins. |
 
 ### Stand in for a proof
@@ -130,7 +130,7 @@ just fmt            # format; never `cargo fmt --all`
 ## Documentation
 
 [docs/README.md](docs/README.md) is the index: how each workflow runs, how
-the pipeline and the contracts work, and what is open.
+the chain and the contracts work, and what is open.
 
 ## Layout
 

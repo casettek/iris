@@ -609,9 +609,9 @@ fn finish_import(
 }
 
 /// Writes what a contract pins for this import beside its manifest, as two
-/// entries. The pipeline: the program id each stage project has locked, and
+/// entries. The procedure kind: the program id each stage project has locked, and
 /// for each program the inputs it takes from earlier stages, read from the
-/// chain template of the `single` pipeline over this import. The model: its
+/// chain template of the `single` procedure kind over this import. The model: its
 /// id with the commitments it hashes, and the range size.
 ///
 /// An import made where the stage projects are not locked gets no pins and
@@ -893,7 +893,7 @@ fn chain_template(
             )
         };
     // What a bind is given as its source record when nothing produced one.
-    // The template gives it to every bind. A pipeline with a source stage
+    // The template gives it to every bind. A procedure kind with a source stage
     // gives the first bind that stage's record in its place, and every later
     // bind keeps the constant, which none of them reads.
     let no_source = write_external(

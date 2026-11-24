@@ -48,7 +48,7 @@ pub enum ChallengeRefusal {
     UnapprovedStage {
         stage: u32,
     },
-    /// The input is not one the configuration lists for the stage's program.
+    /// The input is not one the procedure lists for the stage's program.
     NotAnInput {
         stage: u32,
         input: String,
@@ -119,7 +119,7 @@ impl std::fmt::Display for ChallengeRefusal {
             ),
             Self::NotAnInput { stage, input } => write!(
                 f,
-                "`{input}` is not an input the configuration lists for stage {stage}'s program"
+                "`{input}` is not an input the procedure lists for stage {stage}'s program"
             ),
             Self::ProducerNotPresented { stage, producer } => write!(
                 f,
@@ -141,7 +141,7 @@ pub enum StageAdmission {
     UnapprovedProgram { program_commitment: String },
 }
 
-/// Whether a stage's input is from where the configuration says it comes.
+/// Whether a stage's input is from where the procedure says it comes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LinkCheck {
     /// The input is an earlier checkpoint's output, a pinned value, or a
@@ -176,7 +176,7 @@ pub enum LinkFault {
         produced: String,
     },
     /// The input is one the program is given from fixed data, and the stage
-    /// loaded a commitment the configuration does not pin for it.
+    /// loaded a commitment the procedure does not pin for it.
     NotAPinnedValue { loaded: String },
     /// The input is one the run gives the program, and the stage loaded a
     /// commitment that is none of the run inputs the claim posted.
@@ -237,7 +237,7 @@ impl std::fmt::Display for LinkFault {
             ),
             Self::NotAPinnedValue { loaded } => write!(
                 f,
-                "it loaded {loaded}, which is no commitment the configuration pins for it"
+                "it loaded {loaded}, which is no commitment the procedure pins for it"
             ),
             Self::NotAPostedValue { loaded } => write!(
                 f,
@@ -373,7 +373,7 @@ impl CheckpointList {
     /// approved set. The challenger states no program.
     pub fn admit_stage_challenge(
         &self,
-        pins: &PipelinePins,
+        pins: &ProgramPins,
         challenged_stage: u32,
         checkpoint: &Checkpoint,
     ) -> std::result::Result<StageAdmission, ChallengeRefusal> {
@@ -386,7 +386,7 @@ impl CheckpointList {
         })
     }
 
-    /// Whether one input of a stage is from where the configuration says it
+    /// Whether one input of a stage is from where the procedure says it
     /// comes: an earlier stage's output for an input the program takes from
     /// one, a pinned commitment for an input bound to fixed data, a value
     /// the claim posted for an input the run gives.
@@ -402,7 +402,7 @@ impl CheckpointList {
     /// of the right kind, or an empty value.
     pub fn check_link(
         &self,
-        pins: &PipelinePins,
+        pins: &ProgramPins,
         stage: u32,
         checkpoint: &Checkpoint,
         input_manifest: &[u8],
@@ -504,7 +504,7 @@ impl CheckpointList {
 
 /// The first stage of a claim that names a program outside the approved set,
 /// which is the stage a challenger would point a contract at.
-pub fn first_unapproved_stage(pins: &PipelinePins, trace: &CheckpointTrace) -> Option<u32> {
+pub fn first_unapproved_stage(pins: &ProgramPins, trace: &CheckpointTrace) -> Option<u32> {
     trace
         .checkpoints
         .iter()

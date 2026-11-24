@@ -163,7 +163,7 @@ fn a_claim_that_does_not_end_in_its_checks_and_the_result_stage_is_refused() {
     assert_eq!(
         check_stated_records(&programs, &claim.submission, &posted(stated)),
         Err(SubmissionRejection::NotTheResultStage {
-            expected: Pipeline::Single.result_program(),
+            expected: ProcedureKind::Single.result_program(),
         })
     );
 
@@ -206,7 +206,10 @@ fn a_consensus_submission_is_two_inferences_of_one_input_and_their_agreement() {
     let claim = consensus_claim(" ZK\n");
     let submission = &claim.submission;
     let origin = no_source(forms());
-    assert_eq!(check_pipeline(Pipeline::Consensus, submission), Ok(()));
+    assert_eq!(
+        check_procedure_kind(ProcedureKind::Consensus, submission),
+        Ok(())
+    );
     for (inference, model) in models.iter().enumerate() {
         assert_eq!(
             check_submission(model, REQUIRED, submission, inference),
@@ -292,28 +295,28 @@ fn a_consensus_submission_is_two_inferences_of_one_input_and_their_agreement() {
         Err(SubmissionRejection::AnotherConsensus { .. })
     ));
 
-    // A claim holds what a claim of its pipeline does.
-    let shape = |submission: &ClaimSubmission, pipeline| {
+    // A claim holds what a claim of its procedure kind does.
+    let shape = |submission: &ClaimSubmission, procedure_kind| {
         matches!(
-            check_pipeline(pipeline, submission),
+            check_procedure_kind(procedure_kind, submission),
             Err(SubmissionRejection::AnotherShape { .. })
         )
     };
     let mut one = submission.clone();
     one.inferences.pop();
-    assert!(shape(&one, Pipeline::Consensus));
+    assert!(shape(&one, ProcedureKind::Consensus));
     let mut unstated = submission.clone();
     unstated.consensus = None;
-    assert!(shape(&unstated, Pipeline::Consensus));
+    assert!(shape(&unstated, ProcedureKind::Consensus));
     let mut single = Claim::honest().submission;
-    assert_eq!(check_pipeline(Pipeline::Single, &single), Ok(()));
+    assert_eq!(check_procedure_kind(ProcedureKind::Single, &single), Ok(()));
     single.consensus = submission.consensus;
-    assert!(shape(&single, Pipeline::Single));
+    assert!(shape(&single, ProcedureKind::Single));
     assert_eq!(
-        check_pipeline(Pipeline::Single, submission),
-        Err(SubmissionRejection::AnotherPipeline {
-            expected: Pipeline::Single,
-            submitted: Pipeline::Consensus
+        check_procedure_kind(ProcedureKind::Single, submission),
+        Err(SubmissionRejection::AnotherProcedureKind {
+            expected: ProcedureKind::Single,
+            submitted: ProcedureKind::Consensus
         })
     );
 }
@@ -386,7 +389,7 @@ fn a_consensus_claim_states_each_record_of_its_own_last_check() {
             Ok(LinkCheck::Linked)
         );
     }
-    // A consensus claim that ends in the single pipeline's result program
+    // A consensus claim that ends in the single procedure kind's result program
     // is not one: that program is not in a consensus contract's set.
     assert!(!programs.approves(&hex::encode(RESULT)));
     // And a single contract's programs do not make this claim's last
@@ -394,43 +397,46 @@ fn a_consensus_claim_states_each_record_of_its_own_last_check() {
     assert_eq!(
         check_stated_records(&pins().programs, submission, &posted(honest)),
         Err(SubmissionRejection::NotTheResultStage {
-            expected: Pipeline::Consensus.result_program()
+            expected: ProcedureKind::Consensus.result_program()
         })
     );
 }
 
 #[test]
-fn a_submission_names_its_pipeline() {
+fn a_submission_names_its_procedure_kind() {
     let submission = Claim::honest().submission;
-    assert_eq!(check_pipeline(Pipeline::Single, &submission), Ok(()));
+    assert_eq!(
+        check_procedure_kind(ProcedureKind::Single, &submission),
+        Ok(())
+    );
     let written = serde_json::to_value(&submission).unwrap();
-    assert_eq!(written["pipeline"], "single");
-    assert_eq!(written["version"], 7);
+    assert_eq!(written["procedure_kind"], "single");
+    assert_eq!(written["version"], 8);
 
-    // A submission that names no pipeline, or one that does not exist, is
+    // A submission that names no procedure kind, or one that does not exist, is
     // not a submission.
     let mut unnamed = written.clone();
-    unnamed.as_object_mut().unwrap().remove("pipeline");
+    unnamed.as_object_mut().unwrap().remove("procedure_kind");
     assert!(serde_json::from_value::<ClaimSubmission>(unnamed).is_err());
     let mut unknown = written;
-    unknown["pipeline"] = serde_json::json!("committee");
+    unknown["procedure_kind"] = serde_json::json!("committee");
     assert!(serde_json::from_value::<ClaimSubmission>(unknown).is_err());
 
-    // A contract accepts claims of one pipeline.
+    // A contract accepts claims of one procedure kind.
     assert_eq!(
-        check_pipeline(Pipeline::Consensus, &submission),
-        Err(SubmissionRejection::AnotherPipeline {
-            expected: Pipeline::Consensus,
-            submitted: Pipeline::Single,
+        check_procedure_kind(ProcedureKind::Consensus, &submission),
+        Err(SubmissionRejection::AnotherProcedureKind {
+            expected: ProcedureKind::Consensus,
+            submitted: ProcedureKind::Single,
         })
     );
-    // The label alone does not make a claim another pipeline's: it holds
-    // one inference, and its last stage runs the single pipeline's result
+    // The label alone does not make a claim another procedure kind's: it holds
+    // one inference, and its last stage runs the single procedure kind's result
     // program.
     let mut relabelled = submission.clone();
-    relabelled.pipeline = Pipeline::Consensus;
+    relabelled.procedure_kind = ProcedureKind::Consensus;
     assert!(matches!(
-        check_pipeline(Pipeline::Consensus, &relabelled),
+        check_procedure_kind(ProcedureKind::Consensus, &relabelled),
         Err(SubmissionRejection::AnotherShape { .. })
     ));
     let claim = Claim::honest();
@@ -439,7 +445,7 @@ fn a_submission_names_its_pipeline() {
     assert_eq!(
         check_stated_records(&pins().programs, &relabelled, &posted(stated)),
         Err(SubmissionRejection::NotTheResultStage {
-            expected: Pipeline::Consensus.result_program()
+            expected: ProcedureKind::Consensus.result_program()
         })
     );
 }

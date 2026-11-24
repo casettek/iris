@@ -7,11 +7,11 @@
 //! layer (Celestia), and a challenge only with its trace body posted.
 //!
 //! A claimer posts everything its stages were given that neither an earlier
-//! stage nor the configuration fixes: the run's inputs ([`PostedRun`]), each
+//! stage nor the procedure fixes: the run's inputs ([`PostedRun`]), each
 //! as the value a stage loads, and its own checkpoints with their input
 //! manifests. A stage's input is then one of three things, and a challenger
 //! holds all three: an earlier checkpoint's output, a commitment the
-//! configuration pins, or a value posted here. So whenever two parties
+//! procedure pins, or a value posted here. So whenever two parties
 //! disagree about a stage they ran it on the same inputs.
 //!
 //! Every posted blob names the address it was posted for and carries an
@@ -143,7 +143,7 @@ pub trait OutputReader {
     fn trace_header(&self, body: &[u8]) -> Option<String>;
     /// The claim record in a check stage's output.
     fn check_record(&self, payload: &[u8], index: &[u8]) -> Option<SubmittedRecord>;
-    /// What a result stage's output states, of either pipeline.
+    /// What a result stage's output states, of either procedure kind.
     fn results(&self, payload: &[u8], index: &[u8]) -> Option<ResultInOutput>;
 }
 
@@ -231,7 +231,7 @@ pub struct Blob {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum BlobEntry {
     /// A run's inputs: every value its stages were given that neither an
-    /// earlier stage nor the configuration fixes.
+    /// earlier stage nor the procedure fixes.
     Run(PostedRun),
     Checkpoints(CheckpointPackage),
     /// A Raster trace commitment body (`commit.bin`), postcard-encoded.
@@ -241,7 +241,7 @@ pub enum BlobEntry {
 }
 
 /// A run's inputs as a claimer posts them: each value a stage is given that
-/// is neither an earlier stage's output nor the configuration's. A stage
+/// is neither an earlier stage's output nor the procedure's. A stage
 /// loads each as a Raster file, which anyone writes from the value, and its
 /// input list names it by that file's commitment.
 ///
@@ -254,7 +254,7 @@ pub struct PostedRun {
     pub source: Option<PostedSourceInputs>,
     /// The result stage's forms.
     pub forms: source_core::ResultForms,
-    /// One per inference, in the order the pipeline runs them.
+    /// One per inference, in the order the procedure kind runs them.
     pub inferences: Vec<PostedInference>,
 }
 
@@ -317,7 +317,7 @@ impl RunInput<'_> {
 
 impl PostedRun {
     /// Every input of the run, in one order: the source's, the forms, then
-    /// each inference's configuration, schedule, text claim, text slices,
+    /// each inference's procedure, schedule, text claim, text slices,
     /// marks and claimed ids.
     pub fn values(&self) -> Vec<RunInput<'_>> {
         let mut values = Vec::new();

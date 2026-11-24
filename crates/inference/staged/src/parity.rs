@@ -407,7 +407,7 @@ pub fn render_timing_summary(
     writeln!(
         output,
         "{:<stage_width$}  {:>12}  {:>12}  {:>12}  {:>12}  {:>8}  {:>8}",
-        "stage", "pipeline exec", "direct stage", "kernel", "saved", "speedup", "parity"
+        "stage", "chain exec", "direct stage", "kernel", "saved", "speedup", "parity"
     )?;
 
     let mut selected_count = 0usize;

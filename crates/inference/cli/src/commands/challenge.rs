@@ -13,7 +13,7 @@ pub(crate) struct ChallengePostArgs {
     #[arg(long)]
     submission: PathBuf,
 
-    /// Run spec naming the pipeline and models of the contract.
+    /// Run spec naming the procedure kind and models of the contract.
     #[arg(long, default_value = inference_artifacts::INFERENCE_RUN_SPEC_TOML)]
     run: PathBuf,
 
@@ -74,7 +74,7 @@ pub(crate) struct ChallengeCheckArgs {
     #[arg(long)]
     submission: PathBuf,
 
-    /// Run spec naming the pipeline and models of the contract.
+    /// Run spec naming the procedure kind and models of the contract.
     #[arg(long, default_value = inference_artifacts::INFERENCE_RUN_SPEC_TOML)]
     run: PathBuf,
 

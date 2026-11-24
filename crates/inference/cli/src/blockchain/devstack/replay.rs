@@ -38,8 +38,8 @@ use crate::posting::PostingLayer;
 /// The check of iris's that each contract error belongs to: the start of the
 /// check's name in a [`ClaimCheckReport`].
 const CHECK_OF: &[(&str, &str)] = &[
-    ("UnregisteredConfiguration", "submission: configuration"),
-    ("AnotherShape", "submission: pipeline"),
+    ("UnregisteredProcedure", "submission: procedure"),
+    ("AnotherShape", "submission: procedure kind"),
     ("StatementMismatch", "submission: statement"),
     ("OutputMismatch", "submission: statement"),
     ("NotValid", "submission: statement"),
@@ -363,8 +363,8 @@ pub fn claim(node: &Node, layer: &dyn PostingLayer, spec: &Path, path: &Path) ->
         Ok(())
     };
     case(
-        "other-configuration",
-        &|s| s["configuration"] = hex_of("00"),
+        "other-procedure",
+        &|s| s["procedure"] = hex_of("00"),
         None,
         false,
         None,

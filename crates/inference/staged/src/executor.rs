@@ -26,7 +26,7 @@ pub struct CheckpointedInferenceConfig {
 pub struct CheckpointedInferenceResult {
     pub chain_dir: PathBuf,
     pub selected_stage_dir: Option<PathBuf>,
-    /// The first inference's result: the whole result of a pipeline of one.
+    /// The first inference's result: the whole result of a procedure kind of one.
     pub final_result: Option<InferenceResult>,
     /// What a consensus chain states besides: its second inference's result,
     /// and whether the two agree.

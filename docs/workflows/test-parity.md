@@ -82,11 +82,11 @@ the chain then checks it.
   checkpoint of the native claim is also the boundary the
   Raster run committed: the same program id, input manifest commitment, producers
   and output commitments at every stage. The submission names its run's
-  configuration and lists the blobs `claim build` posted to the gate's own
+  procedure and lists the blobs `claim build` posted to the gate's own
   stand-in data-availability layer (`stub-celestia` under the run directory).
 - The [availability cases](../protocol/availability.md) on the same claim: it
-  is accepted when judged by a registry holding its configuration, and refused
-  at the configuration check when the registry does not hold it or the
+  is accepted when judged by a registry holding its procedure, and refused
+  at the procedure check when the registry does not hold it or the
   submission names another one, and at the availability check when nothing
   is posted, the blobs expire before the challenge period ends, or the
   submission names another address than its blobs; and at the records check
@@ -110,7 +110,7 @@ the chain then checks it.
   (`challenge build --submission`), and must find and replay the same stage.
   A lying claim is also made of each kind no replay shows, a checkpoint that
   names an unapproved program, one whose input is not its producer's output,
-  one that names another tokenizer than the configuration pins, and one that
+  one that names another tokenizer than the procedure pins, and one that
   names token marks the claim did not post: a
   contract takes each claim, and an audit of it read back
   (`iris claim audit`) must find that fault at that checkpoint. An audit of a
@@ -215,7 +215,7 @@ and no replay is asked for.
 ## Consensus leg
 
 After the source leg the gate builds one claim of the `consensus`
-[pipeline](../protocol/pipelines.md) (`crates/inference/cli/src/parity/consensus.rs`).
+[procedure kind](../protocol/procedure-kinds.md) (`crates/inference/cli/src/parity/consensus.rs`).
 Its first model is the gate's own. Its second is the other family's bundle,
 imported into the run, so one chain holds both families' stage programs under
 their labels. The prompt is the source leg's, built from its two signed

@@ -1,5 +1,5 @@
 //! The byte encodings of what a contract hashes itself: a checkpoint, the
-//! checkpoint list and a configuration.
+//! checkpoint list and a procedure.
 //!
 //! A contract cannot hash JSON it has to build, nor open one line of a list of
 //! hex lines without the whole list. So these follow the scheme the stages'

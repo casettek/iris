@@ -82,9 +82,9 @@ pub struct DirectTimings {
 
 impl StageKind {
     pub fn from_stage_spec(project: &str, name: &str) -> Result<Self> {
-        // A stage of a pipeline with several inferences is named with its
+        // A stage of a procedure kind with several inferences is named with its
         // inference's label in front.
-        let name = inference_artifacts::pipeline::unlabelled(name);
+        let name = inference_artifacts::procedure_kind::unlabelled(name);
         match project_basename(project) {
             "prompt-source" if name == "source" => Ok(Self::PromptSource),
             "prompt-bind" if name.starts_with("prompt_bind_p") => Ok(Self::PromptBind),
@@ -114,7 +114,7 @@ impl StageKind {
             .and_then(|name| name.to_str())
             .ok_or_else(|| anyhow::anyhow!("selected stage has no valid UTF-8 directory name"))?;
         let kind = Self::from_stage_name(name)?;
-        // Nor does a result stage's name say which pipeline's it is. Its
+        // Nor does a result stage's name say which procedure kind's it is. Its
         // inputs do: only a consensus takes two checks.
         if kind == Self::ClaimResult {
             let inputs = std::fs::read(stage_dir.join("input.json"))
@@ -140,7 +140,7 @@ impl StageKind {
     }
 
     pub fn from_stage_name(name: &str) -> Result<Self> {
-        let name = inference_artifacts::pipeline::unlabelled(name);
+        let name = inference_artifacts::procedure_kind::unlabelled(name);
         match name {
             "source" => Ok(Self::PromptSource),
             "result" => Ok(Self::ClaimResult),
@@ -763,7 +763,7 @@ mod tests {
             StageKind::from_stage_spec("raster-stages/sequence-check", "check_c1").unwrap(),
             StageKind::SequenceCheck
         );
-        // The same stages, as the second inference of a pipeline names them.
+        // The same stages, as the second inference of a procedure kind names them.
         assert_eq!(
             StageKind::from_stage_spec("raster-stages/sequence-check", "m1_check_c1").unwrap(),
             StageKind::SequenceCheck

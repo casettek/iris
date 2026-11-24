@@ -1194,7 +1194,7 @@ fn finish_stage(
     if let Some(value) = stage_run.output {
         if matches!(value, CachedStageValue::DecodeEdge(_)) {
             // A check of a chain of several inferences is named for its own.
-            let inference = inference_artifacts::pipeline::labelled_name(&stage.name)
+            let inference = inference_artifacts::procedure_kind::labelled_name(&stage.name)
                 .map_or(0, |(inference, _)| inference);
             state.last_checks.insert(inference, value.clone());
         }

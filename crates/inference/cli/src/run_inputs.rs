@@ -2,7 +2,7 @@
 //! challenger runs the claim's stages on.
 //!
 //! A stage is given three kinds of input: an earlier stage's output, fixed
-//! data the configuration pins, and the run's own. The last are these. A
+//! data the procedure pins, and the run's own. The last are these. A
 //! claimer writes them as it prepares its run and posts them with the claim.
 //! A challenger reads them back and writes the same files from them, so its
 //! run of every stage is on the inputs the claimer's was.

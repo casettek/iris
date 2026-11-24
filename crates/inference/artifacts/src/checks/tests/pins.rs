@@ -3,7 +3,7 @@
 use super::*;
 
 #[test]
-fn pins_are_of_one_pipeline_over_its_models_in_order() {
+fn pins_are_of_one_procedure_kind_over_its_models_in_order() {
     let manifest = |pins: &ModelPins| -> ModelManifest {
         serde_json::from_value(serde_json::json!({
             "version": crate::MODEL_MANIFEST_VERSION,
@@ -31,11 +31,11 @@ fn pins_are_of_one_pipeline_over_its_models_in_order() {
     };
     let single = pins();
     let first = manifest(&single.models[0]);
-    assert_eq!(single.mismatch(Pipeline::Single, &[&first]), None);
-    // The file says which pipeline it is of and which models, in order.
+    assert_eq!(single.mismatch(ProcedureKind::Single, &[&first]), None);
+    // The file says which procedure kind it is of and which models, in order.
     let written = serde_json::to_value(&single).unwrap();
-    assert_eq!(written["version"], 5);
-    assert_eq!(written["pipeline"], "single");
+    assert_eq!(written["version"], 6);
+    assert_eq!(written["procedure_kind"], "single");
     assert_eq!(written["models"].as_array().unwrap().len(), 1);
     assert!(written["programs"]["stage_programs"].is_array());
     assert_eq!(
@@ -53,32 +53,36 @@ fn pins_are_of_one_pipeline_over_its_models_in_order() {
     let (programs, models) = consensus_pins();
     let consensus = ContractPins {
         version: CONTRACT_PINS_VERSION,
-        pipeline: Pipeline::Consensus,
+        procedure_kind: ProcedureKind::Consensus,
         programs,
         models: models.to_vec(),
     };
     let second = manifest(&models[1]);
     assert_eq!(
-        consensus.mismatch(Pipeline::Consensus, &[&first, &second]),
+        consensus.mismatch(ProcedureKind::Consensus, &[&first, &second]),
         None
     );
-    // Another pipeline, the models the other way round, one model, or a
+    // Another procedure kind, the models the other way round, one model, or a
     // file of another version: not this contract's pins.
-    for (pipeline, models) in [
-        (Pipeline::Single, vec![&first, &second]),
-        (Pipeline::Consensus, vec![&second, &first]),
-        (Pipeline::Consensus, vec![&first]),
-        (Pipeline::Consensus, vec![&first, &first]),
+    for (procedure_kind, models) in [
+        (ProcedureKind::Single, vec![&first, &second]),
+        (ProcedureKind::Consensus, vec![&second, &first]),
+        (ProcedureKind::Consensus, vec![&first]),
+        (ProcedureKind::Consensus, vec![&first, &first]),
     ] {
-        assert!(consensus.mismatch(pipeline, &models).is_some());
+        assert!(consensus.mismatch(procedure_kind, &models).is_some());
     }
-    assert!(single.mismatch(Pipeline::Consensus, &[&first]).is_some());
+    assert!(single
+        .mismatch(ProcedureKind::Consensus, &[&first])
+        .is_some());
     let mut other_range = manifest(&single.models[0]);
     other_range.range_size = 256;
-    assert!(single.mismatch(Pipeline::Single, &[&other_range]).is_some());
+    assert!(single
+        .mismatch(ProcedureKind::Single, &[&other_range])
+        .is_some());
     let mut old = single.clone();
     old.version = 3;
-    assert!(old.mismatch(Pipeline::Single, &[&first]).is_some());
+    assert!(old.mismatch(ProcedureKind::Single, &[&first]).is_some());
 }
 
 #[test]
@@ -120,7 +124,7 @@ name = "range_p0_l{l}"
 project = "raster-stages/prefill-range"
 inputs.layer = { input = "transformer_layer_{l}" }
 "#;
-    let run_inputs = pipeline_run_inputs(template).unwrap();
+    let run_inputs = chain_run_inputs(template).unwrap();
     let of = |project: &str| {
         run_inputs
             .get(Path::new(project))
@@ -183,7 +187,7 @@ inputs.activations = { from = "range_c{k}_l{l-1}", first = "prompt_bind_p@LAST_P
 inputs.prior_kv = { from = "range_c{k-1}_l{l}", first = "range_p@LAST_PROMPT_RANGE@_l{l}" }
 inputs.layer = { input = "transformer_layer_{l}" }
 "#;
-    let wiring = pipeline_wiring(template).unwrap();
+    let wiring = chain_wiring(template).unwrap();
     let input = |name: &str, producers: &[&str], empty_values: &[&str]| ChainedInput {
         name: name.to_string(),
         producers: producers.iter().map(|p| p.to_string()).collect(),
@@ -208,7 +212,7 @@ inputs.layer = { input = "transformer_layer_{l}" }
         ]
     );
 
-    assert!(pipeline_wiring("[chain]\n[[chain.stage]]\nname = \"a\"\nproject = \"p\"\ninputs.x = { from = \"nowhere\" }\n").is_err());
+    assert!(chain_wiring("[chain]\n[[chain.stage]]\nname = \"a\"\nproject = \"p\"\ninputs.x = { from = \"nowhere\" }\n").is_err());
 }
 
 #[test]
@@ -252,7 +256,7 @@ inputs.second = { from = "m1_check_c@m1_LAST_CLAIMED_RANGE@" }
         part("m0_", "prefill-range"),
         part("m1_", "layer-mistral")
     );
-    let wiring = pipeline_wiring(&template).unwrap();
+    let wiring = chain_wiring(&template).unwrap();
     let producers = |project: &str, input: &str| -> Vec<String> {
         wiring
             .iter()

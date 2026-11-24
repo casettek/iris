@@ -230,7 +230,7 @@ pub(crate) fn value_json(value: &RasterValue) -> Result<Value> {
 
 pub(super) fn validate_errors(stage: &str, value: &Value) -> Result<()> {
     // A stage of a chain of several inferences is named for its own.
-    let stage = inference_artifacts::pipeline::unlabelled(stage);
+    let stage = inference_artifacts::procedure_kind::unlabelled(stage);
     // `decode_init` and `output_finalize` are direct inference's names for
     // its empty edge and its final one; no chain stage has them.
     if stage != "prompt_prepare"

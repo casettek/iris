@@ -5,8 +5,8 @@ use crate::*;
 
 #[derive(Debug, Subcommand)]
 pub(crate) enum EvmCommand {
-    /// The call that registers a run spec's configuration.
-    Configuration {
+    /// The call that registers a run spec's procedure.
+    Procedure {
         #[arg(long, default_value = inference_artifacts::INFERENCE_RUN_SPEC_TOML)]
         run: PathBuf,
         #[arg(long)]
@@ -50,8 +50,8 @@ pub(crate) fn run(command: EvmCommand) -> Result<ExitCode> {
     {
         let base_dir = std::env::current_dir().context("failed to resolve current directory")?;
         let call = match command {
-            EvmCommand::Configuration { run, pins } => {
-                evm::configuration_call(&claim_check::spec_configuration(
+            EvmCommand::Procedure { run, pins } => {
+                evm::procedure_call(&claim_check::spec_procedure(
                     &absolute(&base_dir, &run),
                     pins.map(|path| absolute(&base_dir, &path)).as_deref(),
                 )?)?

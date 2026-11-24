@@ -20,7 +20,7 @@ pub struct AuditClaimOptions {
     /// checkpoint list, checkpoints and input lists: the one `fetch_claim`
     /// wrote.
     pub submission_path: PathBuf,
-    /// A run spec of the configuration the claim names.
+    /// A run spec of the procedure the claim names.
     pub run_spec_path: PathBuf,
     pub pins_path: Option<PathBuf>,
 }
@@ -42,7 +42,7 @@ pub struct AuditFault {
 pub struct ClaimAudit {
     pub checkpoints: usize,
     pub programs_approved: usize,
-    /// Inputs that are what the configuration says they must be: an earlier
+    /// Inputs that are what the procedure says they must be: an earlier
     /// stage's output, a pinned commitment, or a value the claim posted.
     pub inputs_linked: usize,
     pub faults: Vec<AuditFault>,
@@ -61,7 +61,7 @@ pub struct ClaimAudit {
 ///
 /// A replay runs the program a checkpoint names on the inputs it names, so a
 /// challenger asks these two things first, of every checkpoint, from the
-/// claim's own files and the configuration alone. Nothing is run. A fault
+/// claim's own files and the procedure alone. Nothing is run. A fault
 /// found here is pointed at with `voidClaim`, and the
 /// claim is void: there is no challenge to post and nothing to answer.
 pub fn audit_claim(options: AuditClaimOptions) -> Result<ClaimAudit> {
@@ -69,19 +69,17 @@ pub fn audit_claim(options: AuditClaimOptions) -> Result<ClaimAudit> {
     use iris_evm::{abi_encode, checkpoint_fault_token, claim_id, InputQuestion};
 
     let submission: ClaimSubmission = read_json(&options.submission_path)?;
-    let configuration = crate::claim_check::spec_configuration(
-        &options.run_spec_path,
-        options.pins_path.as_deref(),
-    )?;
+    let procedure =
+        crate::claim_check::spec_procedure(&options.run_spec_path, options.pins_path.as_deref())?;
     ensure!(
-        configuration.id() == submission.configuration,
-        "the claim is of configuration {}, and {} describes {}: give the run spec of the \
-         configuration the claim names",
-        submission.configuration,
+        procedure.id() == submission.procedure,
+        "the claim is of procedure {}, and {} describes {}: give the run spec of the \
+         procedure the claim names",
+        submission.procedure,
         options.run_spec_path.display(),
-        configuration.id()
+        procedure.id()
     );
-    let pins = &configuration.programs;
+    let pins = &procedure.programs;
     let dir = parent(&options.submission_path)?;
     let hashes_path = dir.join(CHECKPOINTS_TXT);
     let list = CheckpointList::open(

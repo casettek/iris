@@ -126,7 +126,7 @@ fn every_chained_input_of_an_honest_claim_is_linked() {
     assert_eq!(claim.link(2, "activations"), Ok(LinkCheck::Linked));
     // The first check has no check before it: the pinned empty edge.
     assert_eq!(claim.link(2, "prior"), Ok(LinkCheck::Linked));
-    // Model data is held to the commitments the configuration pins.
+    // Model data is held to the commitments the procedure pins.
     assert_eq!(claim.link(1, "layer"), Ok(LinkCheck::Linked));
 }
 
@@ -272,7 +272,7 @@ fn an_input_list_that_reads_two_ways_voids_the_claim() {
 #[test]
 fn an_input_bound_to_fixed_data_must_name_a_pinned_commitment() {
     // The layer's weights are the model's: a commitment the
-    // configuration pins.
+    // procedure pins.
     assert_eq!(Claim::honest().link(1, "layer"), Ok(LinkCheck::Linked));
 
     // The cheat: run the stage on other weights and state a clean output.

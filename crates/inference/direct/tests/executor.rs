@@ -728,7 +728,7 @@ fn tiny_direct_manifest(detwgt: &Path, config: &Path, tokenizer: &Path) -> Model
 fn write_run_spec(dir: &Path, manifest_path: &Path, prompt: &str, tokens: u32) -> PathBuf {
     let path = dir.join(INFERENCE_RUN_SPEC_TOML);
     let spec = InferenceRunSpec {
-        pipeline: Default::default(),
+        procedure_kind: Default::default(),
         model_manifest: Some(manifest_path.strip_prefix(dir).unwrap().to_path_buf()),
         models: Vec::new(),
         prompt: Some(prompt.to_string()),

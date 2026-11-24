@@ -1,10 +1,10 @@
-# Data availability and the configuration registry
+# Data availability and the procedure registry
 
 A claim names its inputs and its checkpoints by commitment. A challenger
 cannot dispute what it cannot get, so a contract accepts a claim only with its
 data posted to the data-availability layer (Celestia), and a challenge only
 with its trace body posted. A claim also names, by id, the registered
-configuration it is a claim of.
+procedure it is a claim of.
 
 The rules are in `inference_artifacts::availability` and
 `inference_artifacts::registry`; [the contract page](checks.md) lists the
@@ -22,7 +22,7 @@ challenger holds all three:
 | A stage's input is | Where a challenger gets it |
 | --- | --- |
 | An earlier stage's output | Its own run of that stage, which the claim's checkpoint for it either matches or does not |
-| Fixed data the configuration pins: the model's weights and tokenizer, the constants the first stages start from | Published elsewhere, by the commitment the configuration pins |
+| Fixed data the procedure pins: the model's weights and tokenizer, the constants the first stages start from | Published elsewhere, by the commitment the procedure pins |
 | The run's own | Posted with the claim |
 
 So whenever two parties disagree about a stage, they ran it on the same
@@ -31,7 +31,7 @@ fault of the checkpoint that names it, which a contract rules on with nothing
 run ([the blockchains](../blockchain/overview.md#the-ways-to-challenge-a-claim)).
 
 **The run's own inputs** are everything a stage is given that neither an
-earlier stage nor the configuration fixes. A claim posts each as the value the
+earlier stage nor the procedure fixes. A claim posts each as the value the
 stage is given, and anyone writes the file the stage loads from it:
 
 | Run input | Given to | What it is |
@@ -51,13 +51,13 @@ with the greedy output, and the statement a contract recomputes binds the
 model, the flags and the text's hash. So a claimer who posts marks that are
 not the tokenizer's is shown false by a replay of that stage on those marks:
 the honest run ends in a record that says so, and the claim stated a clean
-one. The signer's key, the recipe and the forms are the configuration's as
+one. The signer's key, the recipe and the forms are the procedure's as
 well, which a contract holds the claim's records to when it arrives.
 
 **A value in the wrong place.** A checkpoint may name any value a challenger
 holds, and the comparison does not ask whether it is the one the chain gives
 that stage. So a claimer can give a stage another layer's weights, the marks
-of another range, the configuration posted for another inference, or the
+of another range, the procedure posted for another inference, or the
 output of another earlier stage of the right kind. Nothing voids such a
 claim. The stage's own checks say what it was given: its output carries the
 fault, and every later stage carries it into the final record. A claim that
@@ -105,7 +105,7 @@ own, which the original submitter is ahead of.
 
 | Entry | What the proof states of it |
 | --- | --- |
-| The run's inputs (`PostedRun`): the source stage's, the forms, and each inference's configuration, schedule, text claim, text slices, marks and claimed ids | The commitment a stage's input list names each one by: the root of the Raster file written from it |
+| The run's inputs (`PostedRun`): the source stage's, the forms, and each inference's procedure, schedule, text claim, text slices, marks and claimed ids | The commitment a stage's input list names each one by: the root of the Raster file written from it |
 | The checkpoint list, with every checkpoint and every input manifest a checkpoint commits to | The root of the list, which is the submission's `checkpoints_root`, and that every listed checkpoint and its manifest are there |
 
 A contract keeps one hash of the run inputs' commitments, in the order the
@@ -165,7 +165,7 @@ and prints the checks a contract makes on arrival.
 
 On a claim, at submission:
 
-1. **Configuration.** The claim names a registered configuration; the contract
+1. **Procedure.** The claim names a registered procedure; the contract
    judges it by that one.
 2. **Posted, proven, retrievable.** Each blob is included in a data root
    Blobstream has attested to, its proof holds, it was posted for the address
@@ -184,18 +184,18 @@ The parameters (`AvailabilityParameters`): retention, 30 days by default (to be
 confirmed against the network a contract settles on); challenge period, 7 days;
 fault-proof window, 2 days.
 
-## The configuration registry
+## The procedure registry
 
-A configuration (`Configuration`) is everything a contract judges a claim by:
-the pipeline and its approved programs, one model per inference, the raw prompt
+A procedure (`Procedure`) is everything a contract judges a claim by:
+the procedure kind and its approved programs, one model per inference, the raw prompt
 flag and token budget, the signer a source must be signed by, and the forms the
 output is read by. Its id is a hash over all of it. `iris registry add --run
-<spec> --registry <file>` registers the run's configuration and prints the id;
+<spec> --registry <file>` registers the run's procedure and prints the id;
 `claim build` writes the id into the submission; `iris claim check --registry
-<file>` judges a claim by the configuration it names there.
+<file>` judges a claim by the procedure it names there.
 
 Not pinned yet, by decision: the base prompt and the domains a source's
-documents may come from. A configuration accepts any recipe. The claim still
+documents may come from. A procedure accepts any recipe. The claim still
 commits to the recipe it used, through the source record its statement names,
 so pinning them later is a new field and a new check, not a change to what a
 claim states.

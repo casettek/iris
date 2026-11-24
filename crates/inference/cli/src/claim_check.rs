@@ -16,15 +16,16 @@ use inference_artifacts::availability::{
     RequiredPosting,
 };
 use inference_artifacts::checks::{
-    check_origin, check_pipeline, check_stated_records, check_submission, first_unapproved_stage,
-    raster_boundary_mismatch, ChallengeRefusal, CheckpointList, ClaimSubmission, ContractPins,
-    LinkCheck, RequiredOrigin, RequiredParameters, RequiredSource, ResultInOutput, StageAdmission,
-    StatedInference, SubmittedConsensus, SubmittedRecord, SubmittedResult, CONTRACT_PINS_JSON,
+    check_origin, check_procedure_kind, check_stated_records, check_submission,
+    first_unapproved_stage, raster_boundary_mismatch, ChallengeRefusal, CheckpointList,
+    ClaimSubmission, ContractPins, LinkCheck, RequiredOrigin, RequiredParameters, RequiredSource,
+    ResultInOutput, StageAdmission, StatedInference, SubmittedConsensus, SubmittedRecord,
+    SubmittedResult, CONTRACT_PINS_JSON,
 };
-use inference_artifacts::registry::{Configuration, Registry};
+use inference_artifacts::registry::{Procedure, Registry};
 use inference_artifacts::{
     read_checkpoint_trace, read_json, read_run_spec, Checkpoint, CheckpointTrace, InferenceRunSpec,
-    ModelManifest, Pipeline, PreparedRun, CHECKPOINTS_TXT, CHECKPOINT_TRACE_JSON,
+    ModelManifest, PreparedRun, ProcedureKind, CHECKPOINTS_TXT, CHECKPOINT_TRACE_JSON,
 };
 use raster::core::chain::ChainCommitment;
 
@@ -41,10 +42,10 @@ pub struct ClaimCheckOptions {
     pub raster_run: Option<PathBuf>,
     /// The pins the contract holds, as `iris claim pins` wrote them. Without
     /// it a `single` contract's are the model import's, and those of a
-    /// pipeline over several models are made from the imports now.
+    /// procedure kind over several models are made from the imports now.
     pub pins_path: Option<PathBuf>,
-    /// The registry the claim's configuration is looked up in, as `iris
-    /// registry add` writes it. Without it the contract's configuration is
+    /// The registry the claim's procedure is looked up in, as `iris
+    /// registry add` writes it. Without it the contract's procedure is
     /// the one the run spec and the pins describe.
     pub registry_path: Option<PathBuf>,
     /// The stand-in data-availability layer's directory. Without it, the
@@ -91,8 +92,12 @@ fn absolute(base: &Path, path: &Path) -> PathBuf {
     }
 }
 
-/// A pins file, held to the pipeline and the models it is used for.
-fn load_pins(path: &Path, pipeline: Pipeline, models: &[&ModelManifest]) -> Result<ContractPins> {
+/// A pins file, held to the procedure kind and the models it is used for.
+fn load_pins(
+    path: &Path,
+    procedure_kind: ProcedureKind,
+    models: &[&ModelManifest],
+) -> Result<ContractPins> {
     ensure!(
         path.exists(),
         "{} does not exist: write it with `iris claim pins`, or import the model again from \
@@ -106,7 +111,7 @@ fn load_pins(path: &Path, pipeline: Pipeline, models: &[&ModelManifest]) -> Resu
             path.display()
         )
     })?;
-    if let Some(mismatch) = pins.mismatch(pipeline, models) {
+    if let Some(mismatch) = pins.mismatch(procedure_kind, models) {
         anyhow::bail!("{} are not this run's pins: {mismatch}", path.display());
     }
     Ok(pins)
@@ -133,7 +138,7 @@ fn run_imports(
         .collect()
 }
 
-/// What a contract of a run spec's pipeline over its models pins, made from
+/// What a contract of a run spec's procedure kind over its models pins, made from
 /// the imports and the stage projects' locks as they are now.
 pub fn run_pins(base_dir: &Path, run_spec_path: &Path) -> Result<ContractPins> {
     let run_spec_path = absolute(base_dir, run_spec_path);
@@ -143,7 +148,7 @@ pub fn run_pins(base_dir: &Path, run_spec_path: &Path) -> Result<ContractPins> {
         .iter()
         .map(|(_, manifest, part)| (manifest, part.as_str()))
         .collect();
-    ContractPins::of(run_spec.pipeline, &imports)
+    ContractPins::of(run_spec.procedure_kind, &imports)
 }
 
 /// What a run spec requires of where a claim's prompt came from and of the
@@ -164,7 +169,7 @@ fn required_origin(run_spec_path: &Path, run_spec: &InferenceRunSpec) -> Result<
         source: Some(RequiredSource {
             signer: terms.signer,
             // The base prompt and the documents' domains are not pinned yet:
-            // a configuration accepts any recipe, and the claim's statement
+            // a procedure accepts any recipe, and the claim's statement
             // names the one it used.
             recipe_sha256: None,
         }),
@@ -177,18 +182,18 @@ fn required_origin(run_spec_path: &Path, run_spec: &InferenceRunSpec) -> Result<
 /// not locked.
 ///
 /// The pins are those of the file given. Without one, a contract of the
-/// `single` pipeline pins what the model's import wrote, and one of several
+/// `single` procedure kind pins what the model's import wrote, and one of several
 /// inferences what [`run_pins`] makes from the imports now.
 fn contract_of(
     run_spec_path: &Path,
     run_spec: &InferenceRunSpec,
     pins_path: Option<&Path>,
-) -> Result<Option<Configuration>> {
-    let pipeline = run_spec.pipeline;
+) -> Result<Option<Procedure>> {
+    let procedure_kind = run_spec.procedure_kind;
     let imports = run_imports(run_spec_path, run_spec)?;
     let manifests: Vec<&ModelManifest> = imports.iter().map(|(_, manifest, _)| manifest).collect();
     let pins = match (pins_path, imports.as_slice()) {
-        (Some(path), _) => load_pins(path, pipeline, &manifests)?,
+        (Some(path), _) => load_pins(path, procedure_kind, &manifests)?,
         (None, imports) => {
             if imports
                 .iter()
@@ -199,7 +204,7 @@ fn contract_of(
             match imports {
                 [(path, _, _)] => load_pins(
                     &path.with_file_name(CONTRACT_PINS_JSON),
-                    pipeline,
+                    procedure_kind,
                     &manifests,
                 )?,
                 imports => {
@@ -207,12 +212,12 @@ fn contract_of(
                         .iter()
                         .map(|(_, manifest, part)| (manifest, part.as_str()))
                         .collect();
-                    ContractPins::of(pipeline, &imports)?
+                    ContractPins::of(procedure_kind, &imports)?
                 }
             }
         }
     };
-    Ok(Some(Configuration::of(
+    Ok(Some(Procedure::of(
         pins,
         RequiredParameters {
             raw_prompt: run_spec.raw_prompt,
@@ -222,10 +227,10 @@ fn contract_of(
     )))
 }
 
-/// The configuration a claim of this prepared run is of: what a contract
-/// registers for its pipeline, models and parameters. `Ok(None)` when an
+/// The procedure a claim of this prepared run is of: what a contract
+/// registers for its procedure kind, models and parameters. `Ok(None)` when an
 /// import has no pins: it was made where the stage projects are not locked.
-pub(crate) fn run_configuration(prepared: &PreparedRun) -> Result<Option<Configuration>> {
+pub(crate) fn run_procedure(prepared: &PreparedRun) -> Result<Option<Procedure>> {
     let run_spec = read_run_spec(&prepared.run_spec_path)?;
     contract_of(&prepared.run_spec_path, &run_spec, None)
 }
@@ -246,16 +251,16 @@ enum Posting<'a> {
 }
 
 /// The checks as a claimer applies them to its own claim before posting it:
-/// the first one a contract would reject it at, against `configuration`.
+/// the first one a contract would reject it at, against `procedure`.
 /// `prepared` is what the blobs it is about to post hold. `Ok(None)` when the
 /// claim would be accepted once they are posted.
 pub(crate) fn claim_rejection(
-    configuration: &Configuration,
+    procedure: &Procedure,
     submission_path: &Path,
     prepared: BlobContents,
 ) -> Result<Option<String>> {
     Ok(check_claim_dir(
-        configuration,
+        procedure,
         None,
         submission_path,
         &Posting::Prepared(prepared),
@@ -320,19 +325,19 @@ pub fn check_claim(options: ClaimCheckOptions) -> Result<ClaimCheckReport> {
         )
         })?;
     let submission_path = absolute(&options.base_dir, &options.submission_path);
-    // With a registry, the configuration is the one the claim names there.
+    // With a registry, the procedure is the one the claim names there.
     let mut unregistered = None;
     let contract = match &options.registry_path {
         None => contract,
         Some(path) => {
             let registry = Registry::read(&absolute(&options.base_dir, path))?;
             let submission: ClaimSubmission = read_json(&submission_path)?;
-            match registry.get(&submission.configuration) {
+            match registry.get(&submission.procedure) {
                 Some(registered) => registered.clone(),
                 None => {
                     unregistered = Some(format!(
-                        "the claim names configuration {}, which is not registered",
-                        submission.configuration
+                        "the claim names procedure {}, which is not registered",
+                        submission.procedure
                     ));
                     contract
                 }
@@ -382,7 +387,7 @@ fn claim_trace(submission_path: &Path) -> Result<CheckpointTrace> {
 /// claimer's checkpoint list when a challenge arrives, on the files in the
 /// claim's directory.
 fn check_claim_dir(
-    contract: &Configuration,
+    contract: &Procedure,
     unregistered: Option<String>,
     submission_path: &Path,
     posting: &Posting,
@@ -395,20 +400,20 @@ fn check_claim_dir(
     let origin = contract.origin();
     let mut lines = vec![
         CheckLine {
-            check: "submission: configuration",
+            check: "submission: procedure",
             rejection: unregistered.or_else(|| {
                 let id = contract.id();
-                (submission.configuration != id).then(|| {
+                (submission.procedure != id).then(|| {
                     format!(
-                        "the claim names configuration {}, and the contract's is {id}",
-                        submission.configuration
+                        "the claim names procedure {}, and the contract's is {id}",
+                        submission.procedure
                     )
                 })
             }),
         },
         CheckLine {
-            check: "submission: pipeline",
-            rejection: check_pipeline(contract.pipeline, &submission)
+            check: "submission: procedure kind",
+            rejection: check_procedure_kind(contract.procedure_kind, &submission)
                 .err()
                 .map(|rejection| rejection.to_string()),
         },
@@ -575,9 +580,9 @@ fn check_claim_dir(
     Ok(ClaimCheckReport { lines })
 }
 
-/// The configuration a run spec describes, with the pins of this file or,
+/// The procedure a run spec describes, with the pins of this file or,
 /// without one, as `iris claim check` finds them.
-pub fn spec_configuration(run_spec_path: &Path, pins_path: Option<&Path>) -> Result<Configuration> {
+pub fn spec_procedure(run_spec_path: &Path, pins_path: Option<&Path>) -> Result<Procedure> {
     let run_spec = read_run_spec(run_spec_path)?;
     contract_of(run_spec_path, &run_spec, pins_path)?.with_context(|| {
         format!(
@@ -627,7 +632,7 @@ pub struct ChallengeCheckOptions {
 /// Make the checks a contract would make of a challenge's submission as it
 /// is. Nothing is posted and nothing is written.
 pub fn check_challenge_submission(options: ChallengeCheckOptions) -> Result<ClaimCheckReport> {
-    let configuration = spec_configuration(&options.run_spec_path, options.pins_path.as_deref())?;
+    let procedure = spec_procedure(&options.run_spec_path, options.pins_path.as_deref())?;
     let submission: inference_artifacts::checks::ChallengeSubmission =
         read_json(&options.challenge_path)?;
     let layer = crate::posting::open_layer(options.da_dir.as_deref())?;
@@ -636,7 +641,7 @@ pub fn check_challenge_submission(options: ChallengeCheckOptions) -> Result<Clai
         None => crate::posting::now()?,
     };
     check_challenge(
-        &configuration,
+        &procedure,
         &options.submission_path,
         &submission,
         layer.as_ref(),
@@ -647,7 +652,7 @@ pub fn check_challenge_submission(options: ChallengeCheckOptions) -> Result<Clai
 /// Post a challenge's trace body, write its submission beside the bundle,
 /// and make the checks a contract would make when it arrives.
 pub fn post_challenge(options: ChallengePostOptions) -> Result<ChallengePosted> {
-    let configuration = spec_configuration(&options.run_spec_path, options.pins_path.as_deref())?;
+    let procedure = spec_procedure(&options.run_spec_path, options.pins_path.as_deref())?;
     let claim: ClaimSubmission = read_json(&options.submission_path)?;
     let trace = claim_trace(&options.submission_path)?;
     let bundle = inference_artifacts::read_challenge_bundle(&options.challenge_bundle_path)?;
@@ -690,7 +695,7 @@ pub fn post_challenge(options: ChallengePostOptions) -> Result<ChallengePosted> 
         None => crate::posting::now()?,
     };
     let report = check_challenge(
-        &configuration,
+        &procedure,
         &options.submission_path,
         &submission,
         layer,
@@ -744,7 +749,7 @@ pub(crate) fn challenge_submission(
 /// approved program, Raster admits it, and its trace body is posted for the
 /// whole time a defender has to answer.
 pub fn check_challenge(
-    configuration: &Configuration,
+    procedure: &Procedure,
     claim_submission_path: &Path,
     submission: &inference_artifacts::checks::ChallengeSubmission,
     layer: &dyn AvailabilityLayer,
@@ -773,7 +778,7 @@ pub fn check_challenge(
     let checkpoint = trace.checkpoints.get(submission.stage as usize);
     let admission = match (&list, checkpoint) {
         (Some(list), Some(checkpoint)) => {
-            Some(list.admit_stage_challenge(&configuration.programs, submission.stage, checkpoint))
+            Some(list.admit_stage_challenge(&procedure.programs, submission.stage, checkpoint))
         }
         _ => None,
     };
@@ -880,17 +885,17 @@ fn stated_inference(stated: &serde_json::Value) -> Result<StatedInference> {
     })
 }
 
-/// What the result stage of this pipeline states in its output.
+/// What the result stage of this procedure kind states in its output.
 pub(crate) fn result_in_output(
-    pipeline: Pipeline,
+    procedure_kind: ProcedureKind,
     stated: &serde_json::Value,
 ) -> Result<ResultInOutput> {
-    Ok(match pipeline {
-        Pipeline::Single => ResultInOutput {
+    Ok(match procedure_kind {
+        ProcedureKind::Single => ResultInOutput {
             inferences: vec![stated_inference(stated)?],
             consensus: None,
         },
-        Pipeline::Consensus => {
+        ProcedureKind::Consensus => {
             let part = |name: &str| {
                 stated
                     .get(name)

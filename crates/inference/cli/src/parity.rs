@@ -823,7 +823,7 @@ fn run_chain_fault_leg(
         .map(|index| index + 1)
         .context("the pinned case's prompt is a single token")?;
     let (template_path, part) = model.verified_raster_template(model_path)?;
-    let template = inference_artifacts::Pipeline::Single.chain_template(&[&part])?;
+    let template = inference_artifacts::ProcedureKind::Single.chain_template(&[&part])?;
     let template_dir = template_path
         .parent()
         .context("manifest template has no parent directory")?;
@@ -1956,8 +1956,8 @@ fn validate_model_bundle(
 }
 
 /// What a contract refuses of an honest claim's submission when its data is
-/// not all there: nothing posted, another configuration named, blobs gone
-/// before the challenge period ends, a configuration nobody registered, only
+/// not all there: nothing posted, another procedure named, blobs gone
+/// before the challenge period ends, a procedure nobody registered, only
 /// the checkpoints posted and not the prompt the statement names, and another
 /// prompt posted in its place.
 fn run_availability_cases(dir: &Path, spec: &Path, submission_path: &Path) -> Result<Value> {
@@ -1968,12 +1968,12 @@ fn run_availability_cases(dir: &Path, spec: &Path, submission_path: &Path) -> Re
         .parent()
         .context("the submission has no directory")?;
     let honest: ClaimSubmission = read_json(submission_path)?;
-    let configuration = crate::claim_check::spec_configuration(spec, None)?;
+    let procedure = crate::claim_check::spec_procedure(spec, None)?;
     let registry_path = dir.join("registry.json");
     let mut registry = inference_artifacts::registry::Registry::default();
     ensure!(
-        registry.register(configuration.clone()) == honest.configuration,
-        "the claim does not name its run's configuration"
+        registry.register(procedure.clone()) == honest.procedure,
+        "the claim does not name its run's procedure"
     );
     registry.write(&registry_path)?;
     let empty_registry = dir.join("empty-registry.json");
@@ -2011,19 +2011,19 @@ fn run_availability_cases(dir: &Path, spec: &Path, submission_path: &Path) -> Re
     let mut cases = Vec::new();
     ensure!(
         check("registered", &honest, Some(&registry_path), None)?.is_none(),
-        "a contract refuses an honest claim of a registered configuration"
+        "a contract refuses an honest claim of a registered procedure"
     );
     cases.push(refused_at(
         "unregistered",
         check("unregistered", &honest, Some(&empty_registry), None)?,
-        "submission: configuration",
+        "submission: procedure",
     )?);
     let mut other = honest.clone();
-    other.configuration = "00".repeat(32);
+    other.procedure = "00".repeat(32);
     cases.push(refused_at(
-        "other-configuration",
-        check("other-configuration", &other, None, None)?,
-        "submission: configuration",
+        "other-procedure",
+        check("other-procedure", &other, None, None)?,
+        "submission: procedure",
     )?);
     let mut unposted = honest.clone();
     unposted.availability.clear();

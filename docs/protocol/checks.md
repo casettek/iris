@@ -21,26 +21,26 @@ result code. See [the design note](../proposals/authenticated-prompt.md).
 
 ## What the contract pins
 
-A contract judges a claim by the registered configuration the claim names
-(`Configuration`, see [data availability and the registry](availability.md)):
-the [pipeline](pipelines.md), that pipeline's stage programs, one model per
-inference the pipeline makes, and the contract's own parameters. The first
+A contract judges a claim by the registered procedure the claim names
+(`Procedure`, see [data availability and the registry](availability.md)):
+the [procedure kind](procedure-kinds.md), that procedure kind's stage programs, one model per
+inference the procedure kind makes, and the contract's own parameters. The first
 three are the pins, a file, `contract_pins.json` (version 5):
 
 | Field | Meaning |
 | --- | --- |
-| `pipeline` | The pipeline's name: `single` or `consensus` |
+| `procedure_kind` | The procedure kind's name: `single` or `consensus` |
 | `programs` | The program entry, below |
-| `models` | One model entry per inference, in the order the pipeline runs them |
+| `models` | One model entry per inference, in the order the procedure kind runs them |
 
-A model import writes the pins of the `single` pipeline over that model beside
+A model import writes the pins of the `single` procedure kind over that model beside
 the import's `manifest.json`. `iris claim pins --run <spec> --out <file>` writes
-those of the run spec's pipeline over the models it names, from their imports and
+those of the run spec's procedure kind over the models it names, from their imports and
 the stage projects' locks as they are when it runs.
 
 **The program entry** is true of the stage programs whatever model they run,
 but for the pinned values of the inputs that hold a model's data. Two models
-of one family under one pipeline differ in those alone.
+of one family under one procedure kind differ in those alone.
 
 | Value | Where it comes from |
 | --- | --- |
@@ -64,7 +64,7 @@ and what it requires of the claim's origin (`RequiredOrigin`):
 
 | Value | Meaning |
 | --- | --- |
-| The source, or none | The signer's key, and optionally the recipe's hash. With none, the claim must name no source. A configuration made from a run spec does not pin the recipe: the base prompt and the documents' domains are not pinned yet |
+| The source, or none | The signer's key, and optionally the recipe's hash. With none, the claim must name no source. A procedure made from a run spec does not pin the recipe: the base prompt and the documents' domains are not pinned yet |
 | The forms | The texts the output is read by and the code of each, in order. May be empty |
 
 `iris claim check` reads all of them from the run spec: the signer and the
@@ -75,14 +75,14 @@ the result step on the submitted output itself (below).
 Re-locking a stage changes its program id, so import again afterwards. An import
 made where the stage projects are not locked writes no pins and says so.
 
-A contract of a pipeline over several models pins the stage programs of that
-pipeline's chain over those models: both models' own programs, `prompt-source`,
-and the pipeline's result program in place of `claim-result`. Each model entry
-is read from its import's manifest, and the program entry from the pipeline's
+A contract of a procedure kind over several models pins the stage programs of that
+procedure kind's chain over those models: both models' own programs, `prompt-source`,
+and the procedure kind's result program in place of `claim-result`. Each model entry
+is read from its import's manifest, and the program entry from the procedure kind's
 chain template over the imports.
 
 `iris claim check --pins <file>` checks a claim against a pins file, and refuses
-one that is of another pipeline, of other models or of the same models in another
+one that is of another procedure kind, of other models or of the same models in another
 order. Without `--pins`, a `single` claim is checked against its model's import's
 file, and a claim of several models against pins made from the imports at that
 moment, as `iris claim pins` would make them.
@@ -122,13 +122,13 @@ tree over those hashes, with their count: `checkpoints_root`. See
 
 | Field | Meaning |
 | --- | --- |
-| `pipeline` | The [pipeline](pipelines.md) the claim is of |
-| `configuration` | The id of the registered configuration the claim is of |
+| `procedure_kind` | The [procedure kind](procedure-kinds.md) the claim is of |
+| `procedure` | The id of the registered procedure the claim is of |
 | `claimer` | The address the claim is attributed to: `0x` and 40 hex digits, the claimer's choice (`claim build --claimer`). Every blob the claim posted names it |
 | `input_text_sha256` | The claimer's commitment to the input it ran. The contract takes it as given. Every inference's statement is recomputed over it |
 | `source_sha256` | The digest of the source record the text was built from, or 64 zeros. The statement names it |
 | `source` | The source record itself, for a claim that has one: the text's hash and length, the recipe's hash, the count and chained hash of the documents' attested facts, the signer's key, and the fault, which must be zero |
-| `inferences` | One entry per inference, in the order the pipeline runs them: one for `single`, two for `consensus`. Each holds the five values below |
+| `inferences` | One entry per inference, in the order the procedure kind runs them: one for `single`, two for `consensus`. Each holds the five values below |
 | `output_text` | The inference's plaintext: what the contract acts on |
 | `record.statement_sha256` | `Statement::digest()` over the input text hash, the source digest, model id, raw prompt flag, token budget and range size |
 | `record.output_text_sha256` | SHA-256 of the plaintext's exact UTF-8 bytes |
@@ -160,11 +160,11 @@ in the prompt context, from where it reaches the statement.
 
 ## On submission
 
-A contract first finds the configuration the claim names, and judges the claim
-by it. It then requires the submission to name that configuration's pipeline
-and to hold what a claim of it does (`check_pipeline`): one inference for
+A contract first finds the procedure the claim names, and judges the claim
+by it. It then requires the submission to name that procedure's procedure kind
+and to hold what a claim of it does (`check_procedure_kind`): one inference for
 `single`, and two with their agreement for `consensus`. Checks 1 and 2 are then
-made of each inference, against the model the configuration pins for it
+made of each inference, against the model the procedure pins for it
 (`check_submission`).
 
 1. **Statement matches.** Recompute the statement digest from the pinned model id,
@@ -198,8 +198,8 @@ made of each inference, against the model the configuration pins for it
    of the checkpoint that names it, shown with no replay
    ([the blockchains](../blockchain/overview.md#the-ways-to-challenge-a-claim)).
 7. **Records are its checkpoints'** (`check_stated_records`). A claim ends in
-   its pipeline's result stage: its last checkpoint's program must be that
-   pipeline's result program. That checkpoint names, for each inference, the
+   its procedure kind's result stage: its last checkpoint's program must be that
+   procedure kind's result program. That checkpoint names, for each inference, the
    earlier checkpoint whose output it read as that inference's check (`check`
    in a `single` claim, `first` and `second` in a `consensus` one), whose
    program must be the check. The record submitted for an inference must be
@@ -260,7 +260,7 @@ the right kind.
 ## The encodings a contract recomputes
 
 A contract has to hash a checkpoint it is shown, open one checkpoint of a
-list, and compute a configuration's id when one is registered. None of that is
+list, and compute a procedure's id when one is registered. None of that is
 workable over JSON or a list of hex lines, so these three follow the scheme the
 stages' own digests use (`Statement::digest`, `source_id`): a tag ending in a
 zero byte, then the fields in order; numbers 32-bit little-endian; text and
@@ -278,7 +278,7 @@ when the field is empty. Everything is SHA-256. The code is
   One checkpoint opens at its position with 20 hashes
   (`verify_checkpoint_opening`); the host's `CheckpointList` makes the same
   comparison with the whole list in hand.
-- **A configuration's id** (`Configuration::id`): tag `iris/configuration/v2`
+- **A procedure's id** (`Procedure::id`): tag `iris/procedure/v3`
   and every field in the order it is declared.
 
 A stage's input manifest stays Raster's canonical JSON, which a contract
@@ -355,15 +355,15 @@ outputs of each inference's last check and of the result stage from the
 directory the submission is in, and the posted blobs from the
 data-availability layer: the stand-in directory (`--da-dir`, default
 `IRIS_DA_DIR` or `~/.cache/iris/stub-celestia`), or a Celestia node when
-`IRIS_CELESTIA_RPC` is set and no directory is given. It makes the configuration and pipeline checks,
+`IRIS_CELESTIA_RPC` is set and no directory is given. It makes the procedure and procedure kind checks,
 the submission checks, the availability check and the challenge-time
 comparisons, the link comparison for every chained input of every stage. It
 prints eight lines for a `single` claim and nine for a `consensus` one, which
 has a statement line per inference. `--registry <file>` judges the claim by the
-configuration it names in that registry; without it, by the one the run spec
+procedure it names in that registry; without it, by the one the run spec
 and the pins describe. `--submitted-at <seconds>` sets when the claim is taken
 to be submitted.
-`claim build` names its configuration, prepares the blobs it has to post, and
+`claim build` names its procedure, prepares the blobs it has to post, and
 makes the same checks on its own claim before it reports success, when the
 imports have pins. It makes them against what the prepared blobs hold, and
 posts nothing: `iris claim post` posts them, and the claim passes the

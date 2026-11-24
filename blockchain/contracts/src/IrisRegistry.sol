@@ -4,50 +4,50 @@ pragma solidity ^0.8.28;
 import "./IrisTypes.sol";
 import "./IrisEncoding.sol";
 
-/// The configurations claims are made of, each registered before any claim
+/// The procedures claims are made of, each registered before any claim
 /// arrives and named by its id: `inference_artifacts::registry`.
 ///
-/// A configuration's id is computed here from the configuration itself, in
-/// the encoding `Configuration::id` uses, so the id a claim names stands for
+/// A procedure's id is computed here from the procedure itself, in
+/// the encoding `Procedure::id` uses, so the id a claim names stands for
 /// exactly one set of programs, models, parameters and requirements.
 contract IrisRegistry {
     address public immutable owner;
-    mapping(bytes32 => bytes) private configurations;
-    /// For a configuration, the stage project each approved program is of, as
-    /// the hash of its name. Zero for a program the configuration does not
+    mapping(bytes32 => bytes) private procedures;
+    /// For a procedure, the stage project each approved program is of, as
+    /// the hash of its name. Zero for a program the procedure does not
     /// approve.
     mapping(bytes32 => mapping(bytes32 => bytes32)) public stageOf;
-    /// For a configuration, what each approved program's entry says of its
+    /// For a procedure, what each approved program's entry says of its
     /// inputs, as the id encodes it: read one program at a time, since the
-    /// whole configuration is large.
+    /// whole procedure is large.
     mapping(bytes32 => mapping(bytes32 => bytes)) private inputsOf;
 
     event Registered(bytes32 indexed id);
 
     error NotTheOwner();
     error NotRegistered(bytes32 id);
-    error MalformedConfiguration();
+    error MalformedProcedure();
 
     constructor(address owner_) {
         owner = owner_;
     }
 
-    /// Register a configuration, ABI-encoded, and return its id. Registering
+    /// Register a procedure, ABI-encoded, and return its id. Registering
     /// one twice changes nothing.
     function register(bytes calldata encoded) external returns (bytes32 id) {
         if (msg.sender != owner) revert NotTheOwner();
-        Configuration memory configuration = abi.decode(encoded, (Configuration));
-        id = IrisEncoding.configurationId(configuration);
-        if (configurations[id].length != 0) {
+        Procedure memory procedure = abi.decode(encoded, (Procedure));
+        id = IrisEncoding.procedureId(procedure);
+        if (procedures[id].length != 0) {
             return id;
         }
-        configurations[id] = encoded;
-        for (uint256 i = 0; i < configuration.models.length; i++) {
-            if (!IrisEncoding.wellFormedCommitments(configuration.models[i].commitments)) {
-                revert MalformedConfiguration();
+        procedures[id] = encoded;
+        for (uint256 i = 0; i < procedure.models.length; i++) {
+            if (!IrisEncoding.wellFormedCommitments(procedure.models[i].commitments)) {
+                revert MalformedProcedure();
             }
         }
-        _approve(id, configuration.programs);
+        _approve(id, procedure.programs);
         emit Registered(id);
     }
 
@@ -71,7 +71,7 @@ contract IrisRegistry {
             }
             inputsOf[id][program] = entry;
         }
-        if (at != programs.length) revert MalformedConfiguration();
+        if (at != programs.length) revert MalformedProcedure();
     }
 
     /// A program's inputs as its entry lists them: the chained ones, each
@@ -107,7 +107,7 @@ contract IrisRegistry {
         return at;
     }
 
-    /// What a configuration says of one input of one of its approved
+    /// What a procedure says of one input of one of its approved
     /// programs: where the input may come from. Nothing is set for a name the
     /// program's entry does not list.
     function inputOf(bytes32 id, bytes32 program, string calldata input)
@@ -165,17 +165,17 @@ contract IrisRegistry {
     }
 
     function isRegistered(bytes32 id) external view returns (bool) {
-        return configurations[id].length != 0;
+        return procedures[id].length != 0;
     }
 
-    function configuration(bytes32 id) external view returns (Configuration memory) {
-        bytes memory encoded = configurations[id];
+    function procedure(bytes32 id) external view returns (Procedure memory) {
+        bytes memory encoded = procedures[id];
         if (encoded.length == 0) revert NotRegistered(id);
-        return abi.decode(encoded, (Configuration));
+        return abi.decode(encoded, (Procedure));
     }
 
-    /// The id of a configuration, registered or not.
+    /// The id of a procedure, registered or not.
     function idOf(bytes calldata encoded) external pure returns (bytes32) {
-        return IrisEncoding.configurationId(abi.decode(encoded, (Configuration)));
+        return IrisEncoding.procedureId(abi.decode(encoded, (Procedure)));
     }
 }

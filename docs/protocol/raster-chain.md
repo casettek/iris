@@ -1,6 +1,6 @@
 # Raster Chain Internals
 
-A chain manifest has a `[chain]` table and no `[program]` table. `model import` writes the model's segment of a chain, the run's [pipeline](pipelines.md) makes a chain template from it, and `claim build` fills that in for one run. The member directories under `raster-stages/` are ordinary Raster programs with their own `Cargo.toml`, `Raster.lock`, no-std tile library, and sequence entry point.
+A chain manifest has a `[chain]` table and no `[program]` table. `model import` writes the model's segment of a chain, the run's [procedure kind](procedure-kinds.md) makes a chain template from it, and `claim build` fills that in for one run. The member directories under `raster-stages/` are ordinary Raster programs with their own `Cargo.toml`, `Raster.lock`, no-std tile library, and sequence entry point.
 
 ```text
 model import
@@ -12,7 +12,7 @@ model import
   -> Raster.toml: the model's segment of a chain
 
 claim build
-  -> the pipeline's chain template: source stage, the model's segment, result stage
+  -> the procedure kind's chain template: source stage, the model's segment, result stage
   -> the run's Raster.toml
 ```
 
@@ -41,7 +41,7 @@ The chain verifies a *known* output with one pass over `prompt ‖ claimed_outpu
 | `prefill-range` | `range_p{j}_l{l}`, `range_c{k}_l{l}` | Run one transformer layer over one range |
 | `sequence-check` | `check_c{k}` | Re-derive the greedy selections and compare them with the claimed ids |
 | `claim-result` | `result` | Compare the output text with the run's forms and state the first one's code beside the claim record |
-| `consensus-result` | `result` | In a [consensus](pipelines.md) chain: read both inferences' outputs by the run's forms and state whether they agree |
+| `consensus-result` | `result` | In a [consensus](procedure-kinds.md) chain: read both inferences' outputs by the run's forms and state whether they agree |
 
 Autoregressive generation is not a chain. It lives in `direct-infer`, which discovers the output a claim then verifies.
 

@@ -54,7 +54,7 @@ const AUDIT: &str = "Audit the claim (`iris claim audit`): a program outside the
 /// An input is bound to the stage the checkpoint points at when that stage's
 /// stated output is the commitment the list loads, and otherwise to the file
 /// the chain holds under that commitment. A pointer that does not lead to
-/// what the stage loads is not followed: where the configuration takes the
+/// what the stage loads is not followed: where the procedure takes the
 /// input from an earlier stage the link comparison voids such a claim, and
 /// elsewhere the pointer says nothing of what the stage ran on.
 pub(crate) fn arrange(

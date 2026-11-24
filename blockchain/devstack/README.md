@@ -87,7 +87,7 @@ iris test devstack submit claim --run spec.toml --submission <dir>/claim_submiss
 ```
 
 `iris test devstack submit` attests the blobs, relays their block roots, registers the run's
-configuration if it is not registered, and submits the claim. It prints
+procedure if it is not registered, and submits the claim. It prints
 whether the contract took it, or the error it refused it with.
 
 A challenge goes the same way: `iris challenge post`, then `iris test devstack

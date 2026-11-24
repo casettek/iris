@@ -135,7 +135,7 @@ enum Commands {
         #[command(subcommand)]
         command: ChallengeCommand,
     },
-    /// The registry of configurations claims are made of.
+    /// The registry of procedures claims are made of.
     Registry {
         #[command(subcommand)]
         command: RegistryCommand,
@@ -424,7 +424,7 @@ mod tests {
         use inference_artifacts::checks::{
             CHALLENGE_SUBMISSION_VERSION, CLAIM_SUBMISSION_VERSION, CONTRACT_PINS_VERSION,
         };
-        use inference_artifacts::registry::{CONFIGURATION_VERSION, REGISTRY_VERSION};
+        use inference_artifacts::registry::{PROCEDURE_VERSION, REGISTRY_VERSION};
         use inference_artifacts::{MODEL_MANIFEST_VERSION, PREPARED_RUN_VERSION};
         use model_identity::pipeline_core::EXECUTION_VERSION;
         use model_identity::DESCRIPTOR_VERSION;
@@ -442,7 +442,7 @@ mod tests {
             ("PREPARED_RUN_VERSION", PREPARED_RUN_VERSION),
             ("EXECUTION_VERSION", EXECUTION_VERSION),
             ("CONTRACT_PINS_VERSION", CONTRACT_PINS_VERSION),
-            ("CONFIGURATION_VERSION", CONFIGURATION_VERSION),
+            ("PROCEDURE_VERSION", PROCEDURE_VERSION),
             ("REGISTRY_VERSION", REGISTRY_VERSION),
             ("CLAIM_SUBMISSION_VERSION", CLAIM_SUBMISSION_VERSION),
             ("CHALLENGE_SUBMISSION_VERSION", CHALLENGE_SUBMISSION_VERSION),

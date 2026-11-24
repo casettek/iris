@@ -8,7 +8,7 @@ the part to review first.
 
 ## Goal
 
-**Give the pipeline the prompt's tokenization as an input and have one stage per range
+**Give the chain the prompt's tokenization as an input and have one stage per range
 check it, in place of the stages that recompute it by replaying every merge.**
 
 The chain already treats the output this way: the claimed output ids are an input, and

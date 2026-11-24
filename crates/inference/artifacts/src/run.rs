@@ -4,21 +4,21 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
-use crate::pipeline::Pipeline;
+use crate::procedure_kind::ProcedureKind;
 
 pub const INFERENCE_RUN_SPEC_TOML: &str = "inference.toml";
 pub const PREPARED_RUN_JSON: &str = "prepared_run.json";
-pub const PREPARED_RUN_VERSION: u32 = 20;
+pub const PREPARED_RUN_VERSION: u32 = 21;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct InferenceRunSpec {
-    /// Which pipeline the run is of. `single` when the spec does not say.
-    #[serde(default, skip_serializing_if = "Pipeline::is_default")]
-    pub pipeline: Pipeline,
-    /// The model of a pipeline that makes one inference.
+    /// Which procedure kind the run is of. `single` when the spec does not say.
+    #[serde(default, skip_serializing_if = "ProcedureKind::is_default")]
+    pub procedure_kind: ProcedureKind,
+    /// The model of a procedure kind that makes one inference.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_manifest: Option<PathBuf>,
-    /// The models of a pipeline that makes several, in the order it runs
+    /// The models of a procedure kind that makes several, in the order it runs
     /// them: one `[[model]]` table each.
     #[serde(default, rename = "model", skip_serializing_if = "Vec::is_empty")]
     pub models: Vec<ModelSpec>,
@@ -79,10 +79,10 @@ pub struct PreparedInference {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PreparedRun {
     pub version: u32,
-    /// The pipeline the claim is of. A challenger's run spec must name it.
-    pub pipeline: Pipeline,
+    /// The procedure kind the claim is of. A challenger's run spec must name it.
+    pub procedure_kind: ProcedureKind,
     pub run_spec_path: PathBuf,
-    /// The pipeline's inferences, in the order it runs them. Each holds the
+    /// The procedure kind's inferences, in the order it runs them. Each holds the
     /// run's text, source record and forms, which are the same in all.
     pub inferences: Vec<PreparedInference>,
     pub raw_prompt: bool,
@@ -144,6 +144,7 @@ pub fn read_run_spec(path: &Path) -> Result<InferenceRunSpec> {
     let spec: InferenceRunSpec = toml::from_str(&text)
         .with_context(|| format!("failed to parse run spec {}", path.display()))?;
     reject_removed_chain(&text, path)?;
+    reject_renamed_keys(&text, path)?;
     spec.validate()?;
     Ok(spec)
 }
@@ -163,8 +164,22 @@ fn reject_removed_chain(text: &str, path: &Path) -> Result<()> {
     }
 }
 
+/// A spec written before the rename names its procedure kind as `pipeline`.
+/// That key is not read any more, and a spec that still has it must not
+/// silently run the `single` kind.
+fn reject_renamed_keys(text: &str, path: &Path) -> Result<()> {
+    let table: toml::Table = toml::from_str(text)
+        .with_context(|| format!("failed to parse run spec {}", path.display()))?;
+    anyhow::ensure!(
+        !table.contains_key("pipeline"),
+        "run spec {} names its procedure kind as `pipeline`, which is now `procedure_kind`",
+        path.display()
+    );
+    Ok(())
+}
+
 impl PreparedRun {
-    /// The first inference: the only one of a pipeline that makes one, and
+    /// The first inference: the only one of a procedure kind that makes one, and
     /// where the run's text, source record and forms are read from.
     pub fn first(&self) -> Result<&PreparedInference> {
         self.inferences
@@ -174,7 +189,7 @@ impl PreparedRun {
 }
 
 impl InferenceRunSpec {
-    /// The model manifest of each inference, in the order the pipeline runs
+    /// The model manifest of each inference, in the order the procedure kind runs
     /// them, as the spec writes the paths.
     pub fn model_manifests(&self) -> Vec<&Path> {
         self.model_manifest
@@ -191,26 +206,26 @@ impl InferenceRunSpec {
             .copied()
             .with_context(|| {
                 format!(
-                    "the `{}` pipeline has no inference {inference}",
-                    self.pipeline
+                    "the `{}` procedure kind has no inference {inference}",
+                    self.procedure_kind
                 )
             })
     }
 
     pub fn validate(&self) -> Result<()> {
-        let inferences = self.pipeline.inferences();
+        let inferences = self.procedure_kind.inferences();
         if inferences == 1 {
             anyhow::ensure!(
                 self.model_manifest.is_some() && self.models.is_empty(),
-                "a run of the `{}` pipeline names its model as `model_manifest`",
-                self.pipeline
+                "a run of the `{}` procedure kind names its model as `model_manifest`",
+                self.procedure_kind
             );
         } else {
             anyhow::ensure!(
                 self.model_manifest.is_none() && self.models.len() == inferences,
-                "a run of the `{}` pipeline names its {inferences} models as `[[model]]` \
+                "a run of the `{}` procedure kind names its {inferences} models as `[[model]]` \
                  tables, each with a `manifest`, and no `model_manifest`; found {}",
-                self.pipeline,
+                self.procedure_kind,
                 self.models.len()
             );
         }

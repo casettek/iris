@@ -1,4 +1,4 @@
-//! What iris sends to its contracts: a configuration, a claim and a
+//! What iris sends to its contracts: a procedure, a claim and a
 //! challenge in the ABI encoding `blockchain/contracts/src/IrisTypes.sol`
 //! declares, and the calldata of the calls that carry them.
 //!
@@ -19,7 +19,7 @@ use inference_artifacts::checks::{
     ChallengeSubmission, ClaimSubmission, SubmittedConsensus, SubmittedRecord, SubmittedResult,
 };
 use inference_artifacts::encoding::{parse_hash, Encoder};
-use inference_artifacts::registry::Configuration;
+use inference_artifacts::registry::Procedure;
 
 /// One ABI value.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -240,19 +240,19 @@ pub fn call_with_bytes(name: &str, argument: &[u8]) -> Vec<u8> {
 }
 
 // ---------------------------------------------------------------------------
-// A configuration
+// A procedure
 // ---------------------------------------------------------------------------
 
-/// The programs of a configuration as its id encodes them: what the
-/// Solidity `Configuration.programs` holds and the registry walks.
-pub fn programs_encoding(configuration: &Configuration) -> Vec<u8> {
+/// The programs of a procedure as its id encodes them: what the
+/// Solidity `Procedure.programs` holds and the registry walks.
+pub fn programs_encoding(procedure: &Procedure) -> Vec<u8> {
     let mut out = Vec::new();
     let count = |out: &mut Vec<u8>, items: usize| out.extend((items as u32).to_le_bytes());
     let text = |out: &mut Vec<u8>, text: &str| {
         out.extend((text.len() as u32).to_le_bytes());
         out.extend(text.as_bytes());
     };
-    let programs = &configuration.programs.stage_programs;
+    let programs = &procedure.programs.stage_programs;
     count(&mut out, programs.len());
     for program in programs {
         text(&mut out, &program.stage);
@@ -305,9 +305,9 @@ fn hash_field(hex_digits: &str) -> Vec<u8> {
     }
 }
 
-/// A configuration as `IrisRegistry.register` takes it.
-pub fn configuration_token(configuration: &Configuration) -> Result<Token> {
-    let models = configuration
+/// A procedure as `IrisRegistry.register` takes it.
+pub fn procedure_token(procedure: &Procedure) -> Result<Token> {
+    let models = procedure
         .models
         .iter()
         .map(|model| {
@@ -326,21 +326,21 @@ pub fn configuration_token(configuration: &Configuration) -> Result<Token> {
             ]))
         })
         .collect::<Result<Vec<_>>>()?;
-    let recipe = configuration
+    let recipe = procedure
         .source
         .as_ref()
         .and_then(|source| source.recipe_sha256.as_deref());
     Ok(Token::Tuple(vec![
-        Token::number(u64::from(configuration.version)),
-        Token::text(configuration.pipeline.name()),
-        Token::text(&configuration.programs.family),
-        Token::Bytes(programs_encoding(configuration)),
+        Token::number(u64::from(procedure.version)),
+        Token::text(procedure.procedure_kind.name()),
+        Token::text(&procedure.programs.family),
+        Token::Bytes(programs_encoding(procedure)),
         Token::Array(models),
-        Token::flag(configuration.raw_prompt),
-        Token::number(u64::from(configuration.max_new_tokens)),
-        Token::flag(configuration.source.is_some()),
+        Token::flag(procedure.raw_prompt),
+        Token::number(u64::from(procedure.max_new_tokens)),
+        Token::flag(procedure.source.is_some()),
         Token::text(
-            configuration
+            procedure
                 .source
                 .as_ref()
                 .map_or("", |source| source.signer.as_str()),
@@ -351,7 +351,7 @@ pub fn configuration_token(configuration: &Configuration) -> Result<Token> {
             None => Token::Word([0; 32]),
         },
         Token::Array(
-            configuration
+            procedure
                 .forms
                 .iter()
                 .map(|form| {
@@ -601,7 +601,7 @@ pub fn claim_token(submission: &ClaimSubmission) -> Result<Token> {
         .flat_map(|blob| &blob.contents.records)
         .find(|stated| stated.checkpoints_root == submission.checkpoints_root);
     Ok(Token::Tuple(vec![
-        Token::hash(&submission.configuration)?,
+        Token::hash(&submission.procedure)?,
         Token::address(&submission.claimer)?,
         Token::hash(&submission.input_text_sha256)?,
         Token::hash(&submission.source_sha256)?,
@@ -733,7 +733,7 @@ pub struct InputQuestion<'a> {
     pub posted: &'a [String],
 }
 
-/// A checkpoint that is not one the configuration allows, as
+/// A checkpoint that is not one the procedure allows, as
 /// `IrisClaims.voidClaim` takes it: the claim's own checkpoint at a stage,
 /// with the path that opens it, and what is asked of it. With no question of
 /// an input, the question is the stage's program.

@@ -398,7 +398,7 @@ pub(crate) fn run(args: InferArgs) -> Result<ExitCode> {
         warn_if_debug_build("infer");
         let run_spec_path = args.run.clone();
         let run = run_infer(args.run)?;
-        println!("pipeline: {}", run.pipeline);
+        println!("procedure kind: {}", run.procedure_kind);
         let source = source::run_source_of(&run_spec_path)?;
         match (run.reports.as_slice(), run.consensus.as_ref()) {
             ([report], None) => {
@@ -426,7 +426,10 @@ pub(crate) fn run(args: InferArgs) -> Result<ExitCode> {
                     print_infer_timing_summary(&report.timings);
                 }
             }
-            _ => anyhow::bail!("the `{}` pipeline gave no result to print", run.pipeline),
+            _ => anyhow::bail!(
+                "the `{}` procedure kind gave no result to print",
+                run.procedure_kind
+            ),
         }
         Ok(ExitCode::SUCCESS)
     }

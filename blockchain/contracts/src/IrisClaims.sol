@@ -47,7 +47,7 @@ contract IrisClaims {
     bytes32 public immutable authorizationImageId;
 
     struct Accepted {
-        bytes32 configuration;
+        bytes32 procedure;
         address claimer;
         uint32 checkpointCount;
         bytes32 checkpointsRoot;
@@ -77,7 +77,7 @@ contract IrisClaims {
     /// `LinkFault`. The first stands for no fault.
     enum ClaimFault {
         None,
-        // The stage's program is outside the configuration's approved set.
+        // The stage's program is outside the procedure's approved set.
         UnapprovedProgram,
         // The stage's input list is not in its canonical form, or lacks an
         // input its program takes.
@@ -87,7 +87,7 @@ contract IrisClaims {
         // of a kind that makes this input, or it made something else.
         NotAnEarlierOutput,
         // An input the program is given from fixed data is no commitment
-        // the configuration pins for it.
+        // the procedure pins for it.
         NotAPinnedValue,
         // An input the run gives is no value the claim posted.
         NotAPostedValue
@@ -105,7 +105,7 @@ contract IrisClaims {
     mapping(bytes32 => Voided) public voided;
 
     event ClaimAccepted(
-        bytes32 indexed claimId, bytes32 indexed configuration, address indexed claimer, bytes32 checkpointsRoot
+        bytes32 indexed claimId, bytes32 indexed procedure, address indexed claimer, bytes32 checkpointsRoot
     );
     event ChallengeAdmitted(
         bytes32 indexed challengeId, bytes32 indexed claimId, address indexed challenger, uint32 stage
@@ -113,9 +113,9 @@ contract IrisClaims {
     event ChallengeDismissed(bytes32 indexed challengeId, bytes32 indexed claimId);
     event ClaimVoided(bytes32 indexed claimId, uint32 stage, ClaimFault fault);
 
-    // The claim is of no registered configuration, or does not hold what a
-    // claim of its pipeline does.
-    error UnregisteredConfiguration(bytes32 id);
+    // The claim is of no registered procedure, or does not hold what a
+    // claim of its procedure kind does.
+    error UnregisteredProcedure(bytes32 id);
     error AnotherShape();
     error AlreadySubmitted(bytes32 id);
     // An inference's statement, output or verdict.
@@ -210,46 +210,46 @@ contract IrisClaims {
         // one id however the bytes it arrived in were laid out.
         claimId = sha256(abi.encode(claim));
         if (claims[claimId].submittedAt != 0) revert AlreadySubmitted(claimId);
-        if (!registry.isRegistered(claim.configuration)) revert UnregisteredConfiguration(claim.configuration);
-        Configuration memory configuration = registry.configuration(claim.configuration);
+        if (!registry.isRegistered(claim.procedure)) revert UnregisteredProcedure(claim.procedure);
+        Procedure memory procedure = registry.procedure(claim.procedure);
 
-        bool consensus = IrisEncoding.sameText(configuration.pipeline, "consensus");
+        bool consensus = IrisEncoding.sameText(procedure.procedureKind, "consensus");
         uint256 inferences = consensus ? 2 : 1;
         if (
-            claim.inferences.length != inferences || configuration.models.length != inferences
+            claim.inferences.length != inferences || procedure.models.length != inferences
                 || claim.hasConsensus != consensus
         ) revert AnotherShape();
 
-        _checkInferences(configuration, claim);
-        _checkOrigin(configuration, claim);
+        _checkInferences(procedure, claim);
+        _checkOrigin(procedure, claim);
         _checkPosted(claim.availability, claim.claimer, uint64(block.timestamp) + challengePeriod);
         bytes32 postedInputs = _checkHolds(claim);
         _checkStatedRecords(consensus, claim);
 
         claims[claimId] = Accepted({
-            configuration: claim.configuration,
+            procedure: claim.procedure,
             claimer: claim.claimer,
             checkpointCount: claim.checkpointCount,
             checkpointsRoot: claim.checkpointsRoot,
             submittedAt: uint64(block.timestamp),
             postedInputs: postedInputs
         });
-        emit ClaimAccepted(claimId, claim.configuration, claim.claimer, claim.checkpointsRoot);
+        emit ClaimAccepted(claimId, claim.procedure, claim.claimer, claim.checkpointsRoot);
     }
 
-    /// `check_submission`: each inference's statement is the configuration's
+    /// `check_submission`: each inference's statement is the procedure's
     /// model and parameters over the claimed input and source, its text is
     /// the one its record commits to, and its record is valid.
-    function _checkInferences(Configuration memory configuration, Claim memory claim) private pure {
+    function _checkInferences(Procedure memory procedure, Claim memory claim) private pure {
         for (uint256 i = 0; i < claim.inferences.length; i++) {
             Inference memory inference = claim.inferences[i];
             bytes32 statement = IrisEncoding.statement(
                 claim.inputTextSha256,
                 claim.sourceSha256,
-                configuration.models[i].modelId,
-                configuration.rawPrompt,
-                configuration.maxNewTokens,
-                configuration.models[i].rangeSize
+                procedure.models[i].modelId,
+                procedure.rawPrompt,
+                procedure.maxNewTokens,
+                procedure.models[i].rangeSize
             );
             if (inference.record.statement != statement) revert StatementMismatch(i);
             if (sha256(bytes(inference.outputText)) != inference.record.outputTextSha256) revert OutputMismatch(i);
@@ -258,27 +258,27 @@ contract IrisClaims {
     }
 
     /// `check_origin`: the source record is the one the statement names and
-    /// meets what the configuration requires, each result is what the
-    /// configuration's forms give the submitted text, and so is the agreement.
-    function _checkOrigin(Configuration memory configuration, Claim memory claim) private pure {
+    /// meets what the procedure requires, each result is what the
+    /// procedure's forms give the submitted text, and so is the agreement.
+    function _checkOrigin(Procedure memory procedure, Claim memory claim) private pure {
         if (claim.hasSource && IrisEncoding.sourceId(claim.source) != claim.sourceSha256) {
             revert AnotherSourceRecord();
         }
-        if (!configuration.hasSource) {
+        if (!procedure.hasSource) {
             if (claim.sourceSha256 != bytes32(0)) revert UnexpectedSource();
         } else {
             if (!claim.hasSource) revert MissingSource();
             if (!claim.source.present || claim.source.fault != 0) revert SourceFault(claim.source.fault);
-            if (!IrisEncoding.sameText(claim.source.signer, configuration.signer)) revert AnotherSigner();
+            if (!IrisEncoding.sameText(claim.source.signer, procedure.signer)) revert AnotherSigner();
             if (
-                configuration.hasRecipe
-                    && !IrisEncoding.sameText(claim.source.recipeSha256, IrisEncoding.hexText(configuration.recipe))
+                procedure.hasRecipe
+                    && !IrisEncoding.sameText(claim.source.recipeSha256, IrisEncoding.hexText(procedure.recipe))
             ) revert AnotherRecipe();
         }
 
         uint32[2] memory codes;
         for (uint256 i = 0; i < claim.inferences.length; i++) {
-            (uint32 code, bytes32 forms) = IrisEncoding.runForms(configuration.forms, claim.inferences[i].outputText);
+            (uint32 code, bytes32 forms) = IrisEncoding.runForms(procedure.forms, claim.inferences[i].outputText);
             if (claim.inferences[i].result.formsSha256 != forms) revert AnotherForms(i);
             if (claim.inferences[i].result.code != code) revert AnotherResult(i);
             codes[i] = code;
@@ -287,7 +287,7 @@ contract IrisClaims {
             // `consensus_of`: with no forms, the same text once trimmed; with
             // forms, the same form. Both records are valid and of one input,
             // which the checks above held.
-            bool agree = configuration.forms.length == 0
+            bool agree = procedure.forms.length == 0
                 ? keccak256(IrisEncoding.trim(bytes(claim.inferences[0].outputText)))
                     == keccak256(IrisEncoding.trim(bytes(claim.inferences[1].outputText)))
                 : codes[0] != 0 && codes[0] == codes[1];
@@ -361,7 +361,7 @@ contract IrisClaims {
         return a.statement == b.statement && a.outputTextSha256 == b.outputTextSha256 && a.valid == b.valid;
     }
 
-    /// `check_stated_records`: the claim ends in its pipeline's result stage,
+    /// `check_stated_records`: the claim ends in its procedure kind's result stage,
     /// each record is the one in the check that stage read, and the results
     /// are what that stage states. The records were read out of the stages'
     /// outputs by the claim's proof; nothing is decoded here.
@@ -377,7 +377,7 @@ contract IrisClaims {
         if (!listed || stated.checkpointsRoot != claim.checkpointsRoot) revert RecordsNotStated();
 
         bytes32 resultStage = keccak256(consensus ? bytes("consensus-result") : bytes("claim-result"));
-        if (registry.stageOf(claim.configuration, stated.resultProgram) != resultStage) revert NotTheResultStage();
+        if (registry.stageOf(claim.procedure, stated.resultProgram) != resultStage) revert NotTheResultStage();
 
         if (stated.results.length != claim.inferences.length || stated.hasConsensus != claim.hasConsensus) {
             revert AnotherStatedResult();
@@ -403,7 +403,7 @@ contract IrisClaims {
             string memory input = consensus ? (i == 0 ? "first" : "second") : "check";
             (bool named, StatedCheck memory check) = _checkRead(stated, input);
             if (!named) revert NoCheck(i);
-            if (registry.stageOf(claim.configuration, check.program) != checkStage) revert NotACheck(i);
+            if (registry.stageOf(claim.procedure, check.program) != checkStage) revert NotACheck(i);
             if (!_sameRecord(check.record, claim.inferences[i].record)) revert AnotherStatedRecord(i);
         }
     }
@@ -442,7 +442,7 @@ contract IrisClaims {
         // A stage that names a program outside the approved set is not a
         // matter for a replay: it voids the claim by itself, and
         // `voidClaim` is how a challenger says so.
-        if (registry.stageOf(claim.configuration, challenge.checkpoint.program) == bytes32(0)) {
+        if (registry.stageOf(claim.procedure, challenge.checkpoint.program) == bytes32(0)) {
             revert UnapprovedProgram(challenge.checkpoint.program);
         }
         if (challenge.claimedOutput == challenge.checkpoint.outputSha256) revert OutputNotDisputed();
@@ -513,15 +513,15 @@ contract IrisClaims {
         if (voided[claimId].voidedAt != 0) revert AlreadyVoided(claimId);
     }
 
-    /// Show that a checkpoint of a claim is not one the configuration
+    /// Show that a checkpoint of a claim is not one the procedure
     /// allows: `encoded` is a `CheckpointFault`, the claim's own checkpoint at
     /// a stage, opened, and what is asked of it.
     ///
     /// With no input named, the question is the stage's program: it must be
-    /// one the configuration approves. With an input named, the question is
+    /// one the procedure approves. With an input named, the question is
     /// where that input comes from. An input the program takes from an
     /// earlier stage must be that stage's output; an input bound to fixed
-    /// data, such as the model's, must be a commitment the configuration
+    /// data, such as the model's, must be a commitment the procedure
     /// pins; an input the run gives must be one the claim posted. The checks
     /// and their order are `CheckpointList::check_link`'s. Reverts with
     /// `NoFault` when the checkpoint is as it should be.
@@ -534,13 +534,13 @@ contract IrisClaims {
     ///
     /// Nothing here is the challenger's word. The stage's checkpoint says
     /// which checkpoint produced the input, the input list it commits to says
-    /// what the stage loaded, and the configuration says where the input may
+    /// what the stage loaded, and the procedure says where the input may
     /// come from.
     function voidClaim(bytes calldata encoded) external {
         CheckpointFault memory fault = abi.decode(encoded, (CheckpointFault));
         Accepted memory claim = _held(fault.claimId);
         _open(claim, fault.stage, fault.checkpoint, fault.path);
-        bool approved = registry.stageOf(claim.configuration, fault.checkpoint.program) != bytes32(0);
+        bool approved = registry.stageOf(claim.procedure, fault.checkpoint.program) != bytes32(0);
         ClaimFault found;
         if (bytes(fault.input).length == 0) {
             found = approved ? ClaimFault.None : ClaimFault.UnapprovedProgram;
@@ -557,7 +557,7 @@ contract IrisClaims {
 
     /// What is wrong with where a stage's input comes from, or `None`.
     function _inputFault(Accepted memory claim, CheckpointFault memory fault) private view returns (ClaimFault) {
-        InputRule memory rule = registry.inputOf(claim.configuration, fault.checkpoint.program, fault.input);
+        InputRule memory rule = registry.inputOf(claim.procedure, fault.checkpoint.program, fault.input);
         // A name the program's entry does not list is not an input of it.
         if (!rule.chained && !rule.pinned && !rule.run) revert NotAnInput();
 
@@ -583,7 +583,7 @@ contract IrisClaims {
         if (!named || producer >= fault.stage) return ClaimFault.NotAnEarlierOutput;
         if (!fault.hasProducer) revert ProducerNotPresented();
         _open(claim, producer, fault.producer, fault.producerPath);
-        bytes32 kind = registry.stageOf(claim.configuration, fault.producer.program);
+        bytes32 kind = registry.stageOf(claim.procedure, fault.producer.program);
         if (kind == bytes32(0) || !_has(rule.producers, kind)) return ClaimFault.NotAnEarlierOutput;
         return is32 && fault.producer.outputCommitment == loaded ? ClaimFault.None : ClaimFault.NotAnEarlierOutput;
     }

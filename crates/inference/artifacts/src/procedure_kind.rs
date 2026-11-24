@@ -1,39 +1,39 @@
-//! The pipelines iris runs.
+//! The procedure kinds iris runs.
 //!
-//! A pipeline is a named arrangement of the segments a claim is made of: an
+//! A procedure kind is a named arrangement of the segments a claim is made of: an
 //! optional source, one or more inferences, and the stage program that turns
-//! their outputs into a result. A run spec names its pipeline, and so every
+//! their outputs into a result. A run spec names its procedure kind, and so every
 //! command that takes a run spec follows it: direct inference, claim build,
 //! claim check and challenge build. A claim records the name in its frozen
 //! run and in its submission, so a challenger and a contract know which
 //! arrangement they are looking at.
 //!
 //! The name alone decides nothing a claimer could misstate. What a contract
-//! holds is the shape: a claim of a pipeline must end in that pipeline's
+//! holds is the shape: a claim of a procedure kind must end in that procedure kind's
 //! result program, which is in the approved set of no other.
 //!
 //! A model import writes one inference's segment of a chain: its chain inputs
 //! and its stages, from the first bind to the last check, with the first
-//! bind given the constant source. [`Pipeline::chain_template`] makes the
+//! bind given the constant source. [`ProcedureKind::chain_template`] makes the
 //! chain template of a run from one segment per model: the `source` stage in
-//! front, each segment's first bind taking its record, and the pipeline's
+//! front, each segment's first bind taking its record, and the procedure kind's
 //! result stage behind.
 //!
-//! See `docs/protocol/pipelines.md`.
+//! See `docs/protocol/procedure-kinds.md`.
 
 use anyhow::{ensure, Context, Result};
 use serde::{Deserialize, Serialize};
 
 /// The stage that states what the prompt text was built from.
 pub const SOURCE_STAGE: &str = "source";
-/// The stage that states a pipeline's result.
+/// The stage that states a procedure kind's result.
 pub const RESULT_STAGE: &str = "result";
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
-pub enum Pipeline {
+pub enum ProcedureKind {
     /// One inference on one model, and the code of the form its output is.
-    /// What a run spec that names no pipeline runs.
+    /// What a run spec that names no procedure kind runs.
     #[default]
     Single,
     /// The same inference on two models, one after the other, and whether
@@ -41,9 +41,9 @@ pub enum Pipeline {
     Consensus,
 }
 
-impl Pipeline {
-    /// Every pipeline, in the order they are listed to a user.
-    pub const ALL: &'static [Pipeline] = &[Pipeline::Single, Pipeline::Consensus];
+impl ProcedureKind {
+    /// Every procedure kind, in the order they are listed to a user.
+    pub const ALL: &'static [ProcedureKind] = &[ProcedureKind::Single, ProcedureKind::Consensus];
 
     /// The name a run spec, a prepared run and a submission use.
     pub fn name(self) -> &'static str {
@@ -53,7 +53,7 @@ impl Pipeline {
         }
     }
 
-    /// The stage program that ends a claim of this pipeline and states its
+    /// The stage program that ends a claim of this procedure kind and states its
     /// result: the stage project's directory name.
     pub fn result_program(self) -> &'static str {
         match self {
@@ -75,7 +75,7 @@ impl Pipeline {
         *self == Self::default()
     }
 
-    /// How many inferences a run of this pipeline makes: one per model.
+    /// How many inferences a run of this procedure kind makes: one per model.
     pub fn inferences(self) -> usize {
         match self {
             Self::Single => 1,
@@ -84,7 +84,7 @@ impl Pipeline {
     }
 
     /// What marks a stage or a chain input as this inference's. Nothing in a
-    /// pipeline of one inference, whose stages are named as an import names
+    /// procedure kind of one inference, whose stages are named as an import names
     /// them.
     pub fn label(self, inference: usize) -> String {
         if self.inferences() == 1 {
@@ -94,7 +94,7 @@ impl Pipeline {
         }
     }
 
-    /// The chain template of this pipeline over model imports: `parts` are
+    /// The chain template of this procedure kind over model imports: `parts` are
     /// the templates the imports wrote, one per inference, in order.
     ///
     /// The template always has the source stage. A run whose text is taken as
@@ -102,7 +102,7 @@ impl Pipeline {
     pub fn chain_template(self, parts: &[&str]) -> Result<String> {
         ensure!(
             parts.len() == self.inferences(),
-            "the `{self}` pipeline makes {} inference(s), and {} model(s) were given",
+            "the `{self}` procedure kind makes {} inference(s), and {} model(s) were given",
             self.inferences(),
             parts.len()
         );
@@ -133,7 +133,7 @@ impl Pipeline {
     }
 }
 
-/// The label of inference `n` in a pipeline of several: `m0_`, `m1_`.
+/// The label of inference `n` in a procedure kind of several: `m0_`, `m1_`.
 pub fn inference_label(inference: usize) -> String {
     format!("m{inference}_")
 }
@@ -175,7 +175,7 @@ fn project_line(stages_dir: &str, program: &str) -> String {
 }
 
 /// Where the stage projects are, read from the first stage a segment names:
-/// they are side by side, and a pipeline's own stages are beside a model's.
+/// they are side by side, and a procedure kind's own stages are beside a model's.
 fn stage_projects_dir(part: &str) -> Result<String> {
     let line = part
         .lines()
@@ -280,7 +280,7 @@ fn assemble(parts: &[&str], labels: &[String], source: &str, result: &str) -> Re
     ))
 }
 
-impl std::fmt::Display for Pipeline {
+impl std::fmt::Display for ProcedureKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(self.name())
     }
@@ -327,8 +327,8 @@ inputs.prompt = { from = "prompt_bind_p@LAST_PROMPT_RANGE@" }
 "#;
 
     #[test]
-    fn the_single_pipeline_puts_a_source_before_its_inference_and_a_result_after() {
-        let template = Pipeline::Single.chain_template(&[PART]).unwrap();
+    fn the_single_procedure_kind_puts_a_source_before_its_inference_and_a_result_after() {
+        let template = ProcedureKind::Single.chain_template(&[PART]).unwrap();
         let expected = PART
             .replacen(
                 "\n[[chain.stage]]\nname = \"prompt_bind_p0\"",
@@ -354,10 +354,10 @@ inputs.prompt = { from = "prompt_bind_p@LAST_PROMPT_RANGE@" }
         // would take: the template is TOML.
         toml::from_str::<toml::Value>(&template).unwrap();
 
-        assert!(Pipeline::Single.chain_template(&[]).is_err());
-        assert!(Pipeline::Single.chain_template(&[PART, PART]).is_err());
+        assert!(ProcedureKind::Single.chain_template(&[]).is_err());
+        assert!(ProcedureKind::Single.chain_template(&[PART, PART]).is_err());
         let no_bind = PART.replace("prompt_bind_p0", "bind_0");
-        assert!(Pipeline::Single.chain_template(&[&no_bind]).is_err());
+        assert!(ProcedureKind::Single.chain_template(&[&no_bind]).is_err());
     }
 
     #[test]
@@ -435,7 +435,7 @@ inputs.prompt = { from = "prompt_bind_p@LAST_PROMPT_RANGE@" }
 
     #[test]
     fn a_label_is_taken_off_a_stage_name() {
-        assert_eq!(Pipeline::Single.label(0), "");
+        assert_eq!(ProcedureKind::Single.label(0), "");
         for (stage, name) in [
             ("m0_check_c0", "check_c0"),
             ("m12_range_p3_l{l}", "range_p3_l{l}"),
@@ -456,20 +456,20 @@ inputs.prompt = { from = "prompt_bind_p@LAST_PROMPT_RANGE@" }
     }
 
     #[test]
-    fn a_pipeline_is_written_by_its_name() {
-        for pipeline in Pipeline::ALL {
-            let written = serde_json::to_string(pipeline).unwrap();
-            assert_eq!(written, format!("{:?}", pipeline.name()));
+    fn a_procedure_kind_is_written_by_its_name() {
+        for procedure_kind in ProcedureKind::ALL {
+            let written = serde_json::to_string(procedure_kind).unwrap();
+            assert_eq!(written, format!("{:?}", procedure_kind.name()));
             assert_eq!(
-                serde_json::from_str::<Pipeline>(&written).unwrap(),
-                *pipeline
+                serde_json::from_str::<ProcedureKind>(&written).unwrap(),
+                *procedure_kind
             );
-            assert_eq!(pipeline.to_string(), pipeline.name());
+            assert_eq!(procedure_kind.to_string(), procedure_kind.name());
         }
-        assert_eq!(Pipeline::default(), Pipeline::Single);
-        // A name that is no pipeline is refused where it is read, and the
+        assert_eq!(ProcedureKind::default(), ProcedureKind::Single);
+        // A name that is no procedure kind is refused where it is read, and the
         // refusal says which names are.
-        let error = serde_json::from_str::<Pipeline>("\"committee\"").unwrap_err();
+        let error = serde_json::from_str::<ProcedureKind>("\"committee\"").unwrap_err();
         assert!(
             error.to_string().contains("single") && error.to_string().contains("consensus"),
             "{error}"
@@ -477,13 +477,18 @@ inputs.prompt = { from = "prompt_bind_p@LAST_PROMPT_RANGE@" }
     }
 
     #[test]
-    fn the_consensus_pipeline_runs_two_inferences_into_one_result() {
-        assert_eq!(Pipeline::Consensus.inferences(), 2);
+    fn the_consensus_procedure_kind_runs_two_inferences_into_one_result() {
+        assert_eq!(ProcedureKind::Consensus.inferences(), 2);
         assert_eq!(
-            [Pipeline::Consensus.label(0), Pipeline::Consensus.label(1)],
+            [
+                ProcedureKind::Consensus.label(0),
+                ProcedureKind::Consensus.label(1)
+            ],
             ["m0_", "m1_"]
         );
-        let template = Pipeline::Consensus.chain_template(&[PART, PART]).unwrap();
+        let template = ProcedureKind::Consensus
+            .chain_template(&[PART, PART])
+            .unwrap();
         let chain: toml::Value = toml::from_str(&template).unwrap();
         let stages = chain["chain"]["stage"].as_array().unwrap();
         let names: Vec<&str> = stages
@@ -522,6 +527,6 @@ inputs.prompt = { from = "prompt_bind_p@LAST_PROMPT_RANGE@" }
         for bind in [&stages[1], &stages[3]] {
             assert_eq!(bind["inputs"]["source"]["from"].as_str(), Some("source"));
         }
-        assert!(Pipeline::Consensus.chain_template(&[PART]).is_err());
+        assert!(ProcedureKind::Consensus.chain_template(&[PART]).is_err());
     }
 }

@@ -8,16 +8,16 @@ Three kinds of page. Start with [how iris works](protocol/overview.md). The
 - [How iris works](protocol/overview.md): the whole of it from the top: what
   is pinned, what a claim is, the one rule, and what catches each way a claim
   can be wrong.
-- [The pipeline](protocol/raster-chain.md): the stages a run is made of,
+- [The chain](protocol/raster-chain.md): the stages a run is made of,
   what each checks, and the schedule that holds them in order.
-- [Pipelines](protocol/pipelines.md): a run of one model, and a consensus of
+- [Procedure kinds](protocol/procedure-kinds.md): a run of one model, and a consensus of
   two.
 - [What a contract holds and checks](protocol/checks.md): the rules, as
   the Rust states them.
 - [Blockchain](blockchain/overview.md): Celestia and the EVM contracts: what
   each call checks, what it costs, and which parts are a trusted host.
 - [Data availability](protocol/availability.md): what a claim and a
-  challenge post, and the configuration registry.
+  challenge post, and the procedure registry.
 - [Formats and versions](protocol/formats.md): every versioned format and
   hash tag, in one table.
 - [What is open](protocol/open.md): every known gap, in one list.

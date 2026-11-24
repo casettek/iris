@@ -17,7 +17,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{ensure, Context, Result};
 use inference_artifacts::checks::CLAIM_SUBMISSION_JSON;
-use inference_artifacts::{ModelFamily, ModelManifest, Pipeline, PreparedRun};
+use inference_artifacts::{ModelFamily, ModelManifest, PreparedRun, ProcedureKind};
 use run_prep::source::{FormFile, LoadedSource};
 use serde_json::{json, Value};
 use staged_infer::chain_runner::StagedExecutionBackend;
@@ -69,7 +69,7 @@ fn write_run(dir: &Path, source: &LoadedSource, models: &[&Path; 2]) -> Result<P
     fs::write(
         &spec,
         format!(
-            "pipeline = \"consensus\"\ntokens = 4\n\n[[model]]\nmanifest = {}\n[[model]]\nmanifest = {}\n\n{table}",
+            "procedure_kind = \"consensus\"\ntokens = 4\n\n[[model]]\nmanifest = {}\n[[model]]\nmanifest = {}\n\n{table}",
             serde_json::to_string(models[0])?,
             serde_json::to_string(models[1])?,
         ),
@@ -135,7 +135,7 @@ pub(super) fn run_consensus_leg(
     })
     .context("the consensus claim")?;
     ensure!(
-        built.pipeline == Pipeline::Consensus
+        built.procedure_kind == ProcedureKind::Consensus
             && built.final_result.as_ref() == Some(&direct.reports[0].result)
             && built.consensus == direct.consensus,
         "direct inference and the claim state different results: {:?} and {:?}",
@@ -207,12 +207,12 @@ pub(super) fn run_consensus_leg(
         .claim_submission_path
         .clone()
         .context("the consensus claim wrote no submission")?;
-    // The contract's pins are a file: the consensus pipeline's programs and
+    // The contract's pins are a file: the consensus procedure kind's programs and
     // both models, as `iris claim pins` writes them.
     let pins_path = claim_dir.join(inference_artifacts::checks::CONTRACT_PINS_JSON);
     let pins = crate::claim_check::run_pins(&claim_dir, &spec).context("the contract's pins")?;
     ensure!(
-        pins.pipeline == Pipeline::Consensus
+        pins.procedure_kind == ProcedureKind::Consensus
             && pins.models.len() == 2
             && pins.models[0].model_id == prepared.inferences[0].model_id
             && pins.models[1].model_id == prepared.inferences[1].model_id

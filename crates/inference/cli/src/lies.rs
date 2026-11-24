@@ -36,7 +36,7 @@ pub enum CorruptFault {
     Output,
     /// A program outside the approved set.
     Program,
-    /// An input that is not from where the configuration says it comes: not
+    /// An input that is not from where the procedure says it comes: not
     /// what its producer made, not a pinned commitment, or not a value the
     /// claim posted, by the kind of input. The named input, or the first the
     /// checkpoint names a producer for.
@@ -403,8 +403,8 @@ fn forge_valid_verdict(check_dir: &Path, result_dir: &Path) -> Result<ForgedVerd
 
     ensure!(
         StageKind::from_stage_dir(result_dir)? == StageKind::ClaimResult,
-        "{} is not the result stage of a pipeline of one inference: a forged verdict is built \
-         for that pipeline only",
+        "{} is not the result stage of a procedure kind of one inference: a forged verdict is built \
+         for that procedure kind only",
         result_dir.display()
     );
     let files = |dir: &Path| (dir.join("input.json"), dir.join(INPUT_MANIFEST_JSON));

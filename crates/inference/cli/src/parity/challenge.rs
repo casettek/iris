@@ -203,13 +203,13 @@ pub(super) fn run_challenge_leg(leg: &Leg) -> Result<Value> {
 
         // The lies no replay shows: a checkpoint that names a program outside
         // the approved set, one whose input is not its producer's output, one
-        // that names other fixed data than the configuration pins, and one
+        // that names other fixed data than the procedure pins, and one
         // that names a run input the claim did not post. A contract takes
         // each claim, since nothing at arrival reads that checkpoint. A challenger who reads the claim back finds the
         // fault by auditing it, with nothing run, at the checkpoint that
         // lies.
         let layer = crate::posting::open_layer(None)?;
-        let configuration = crate::claim_check::spec_configuration(&spec, None)?;
+        let procedure = crate::claim_check::spec_procedure(&spec, None)?;
         for (fault, out, expected) in [
             (
                 crate::lies::CorruptFault::Program,
@@ -263,14 +263,12 @@ pub(super) fn run_challenge_leg(leg: &Leg) -> Result<Value> {
                     "`{out}`: a contract does not take the lying claim's data: {rejection}"
                 )
             })?;
-            inference_artifacts::checks::check_stated_records(
-                &configuration.programs,
-                &claim,
-                &posted,
-            )
-            .map_err(|rejection| {
-                anyhow::anyhow!("`{out}`: a contract does not take the lying claim: {rejection}")
-            })?;
+            inference_artifacts::checks::check_stated_records(&procedure.programs, &claim, &posted)
+                .map_err(|rejection| {
+                    anyhow::anyhow!(
+                        "`{out}`: a contract does not take the lying claim: {rejection}"
+                    )
+                })?;
             let fetched = crate::posted::fetch_claim(crate::posted::FetchClaimOptions {
                 submission_path: lie.submission_path.clone(),
                 run_spec_path: spec.to_path_buf(),
@@ -565,7 +563,7 @@ pub(super) fn run_challenge_leg(leg: &Leg) -> Result<Value> {
     )?);
 
     // Execute the dishonest wiring itself in both engines. Agreement must end
-    // in a committed invalid verdict, even when the altered pipeline runs honestly.
+    // in a committed invalid verdict, even when the altered chain runs honestly.
     let mut rewired = vec![
         (
             "restarted-positions",
@@ -905,7 +903,7 @@ fn contract_challenge(
     claim.checkpoint_count = lying.checkpoints.len() as u32;
     claim.checkpoints_root = inference_artifacts::checkpoints_root(&checkpoint_hashes(lying)?)?;
     let claim_path = dir.join(CLAIM_SUBMISSION_JSON);
-    let configuration = crate::claim_check::spec_configuration(spec, None)?;
+    let procedure = crate::claim_check::spec_procedure(spec, None)?;
     let layer = crate::posting::open_layer(None)?;
     let layer = layer.as_ref();
     let now = crate::posting::now()?;
@@ -931,7 +929,7 @@ fn contract_challenge(
     .map_err(|rejection| {
         anyhow::anyhow!("`{name}`: a contract does not take the lying claim's data: {rejection}")
     })?;
-    inference_artifacts::checks::check_stated_records(&configuration.programs, &claim, &posted)
+    inference_artifacts::checks::check_stated_records(&procedure.programs, &claim, &posted)
         .map_err(|rejection| {
             anyhow::anyhow!("`{name}`: a contract does not take the lying claim: {rejection}")
         })?;
@@ -957,7 +955,7 @@ fn contract_challenge(
         &submission,
     )?;
     let check = |submission: &inference_artifacts::checks::ChallengeSubmission, at: u64| {
-        crate::claim_check::check_challenge(&configuration, &claim_path, submission, layer, at)
+        crate::claim_check::check_challenge(&procedure, &claim_path, submission, layer, at)
             .map(|report| report.rejection())
     };
     if let Some(rejection) = check(&submission, now)? {
@@ -1115,7 +1113,7 @@ fn posted_lies(
 
     let layer = crate::posting::open_layer(None)?;
     let layer = layer.as_ref();
-    let configuration = crate::claim_check::spec_configuration(spec, None)?;
+    let procedure = crate::claim_check::spec_procedure(spec, None)?;
     let now = crate::posting::now()?;
     let liar = "0x00000000000000000000000000000000000011a3";
     let challenger = "0x000000000000000000000000000000000000c4a2";
@@ -1212,7 +1210,7 @@ fn posted_lies(
                 "`{name}`: a contract does not take the lying claim's data: {rejection}"
             )
         })?;
-        inference_artifacts::checks::check_stated_records(&configuration.programs, &claim, &posted)
+        inference_artifacts::checks::check_stated_records(&procedure.programs, &claim, &posted)
             .map_err(|rejection| {
                 anyhow::anyhow!("`{name}`: a contract does not take the lying claim: {rejection}")
             })?;
@@ -1327,7 +1325,7 @@ fn posted_lies(
             layer,
         )?;
         let rejection = crate::claim_check::check_challenge(
-            &configuration,
+            &procedure,
             &lie.submission_path,
             &submission,
             layer,
@@ -1346,7 +1344,7 @@ fn posted_lies(
     Ok(outcomes)
 }
 
-/// What the honest claim binds: the same text, configuration, cuts and ids a
+/// What the honest claim binds: the same text, procedure, cuts and ids a
 /// claim's preparation wrote.
 fn honest_inputs(leg: &Leg) -> Result<RunInputs> {
     let prompt = &leg.prepared.prepared_run.first()?.prompt;
@@ -1388,7 +1386,7 @@ fn not_greedy_ids(leg: &Leg) -> Result<Vec<u32>> {
 /// This model's chain over these inputs.
 fn render(model_path: &Path, model: &ModelManifest, run: &RunInputs, dir: &Path) -> Result<String> {
     let (template_path, part) = model.verified_raster_template(model_path)?;
-    let template = inference_artifacts::Pipeline::Single.chain_template(&[&part])?;
+    let template = inference_artifacts::ProcedureKind::Single.chain_template(&[&part])?;
     let range_size = run.config.range_size as usize;
     let mark_files = run_prep::write_marks(&run.marks, dir)?;
     let claimed_files = run_prep::write_claimed_ranges(&run.ids, range_size, dir)?;
@@ -1898,8 +1896,8 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "replays retained pipeline attacks through native and Raster; set IRIS_PARITY_RUN"]
-    fn pipeline_wiring_self_replays_reject_matching_execution() {
+    #[ignore = "replays retained chain attacks through native and Raster; set IRIS_PARITY_RUN"]
+    fn chain_wiring_self_replays_reject_matching_execution() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../..")
             .canonicalize()

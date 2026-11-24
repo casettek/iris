@@ -7,7 +7,7 @@ pub struct DirectInferenceConfig {
     pub base_dir: PathBuf,
     pub run_spec_path: PathBuf,
     /// Which of the run's inferences to make: the index of its model among
-    /// those the run spec names. A pipeline of one inference has only 0.
+    /// those the run spec names. A procedure kind of one inference has only 0.
     pub inference: usize,
 }
 

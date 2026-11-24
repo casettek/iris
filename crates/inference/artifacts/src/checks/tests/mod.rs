@@ -16,7 +16,7 @@ use crate::availability::{BlobContents, PostedBlob};
 use crate::checkpoint::{checkpoints_root, Checkpoint, CheckpointTrace};
 use crate::direct::{model_id_of, ModelCommitment, ModelManifest};
 
-use crate::pipeline::Pipeline;
+use crate::procedure_kind::ProcedureKind;
 use raster_core::chain::DefenceReason;
 use raster_core::fingerprint::{BitPacker, Fingerprint};
 use raster_core::transition::{
@@ -72,8 +72,8 @@ fn pins() -> ContractPins {
     };
     ContractPins {
         version: CONTRACT_PINS_VERSION,
-        pipeline: Pipeline::Single,
-        programs: PipelinePins {
+        procedure_kind: ProcedureKind::Single,
+        programs: ProgramPins {
             family: String::from("gemma-dense"),
             stage_programs: vec![
                 program("prompt-bind", BIND, vec![]),
@@ -188,8 +188,8 @@ impl Claim {
         let list = checkpoints_txt(&trace);
         let submission = ClaimSubmission {
             version: CLAIM_SUBMISSION_VERSION,
-            pipeline: Pipeline::Single,
-            configuration: String::new(),
+            procedure_kind: ProcedureKind::Single,
+            procedure: String::new(),
             claimer: NO_ADDRESS.to_string(),
             inferences: vec![inference(&pins.models[0], &input, "ZK")],
             consensus: None,
@@ -289,10 +289,10 @@ impl Claim {
 
 /// What a proof states of a claim: what its last stage states, taken to
 /// be the submission's, and each record in the checks that stage names,
-/// taken in the order of the pipeline's inferences.
+/// taken in the order of the procedure kind's inferences.
 fn stated_records(claim: &Claim) -> crate::availability::StatedRecords {
     let last = claim.trace.checkpoints.last().unwrap();
-    let inputs = claim.submission.pipeline.result_inputs();
+    let inputs = claim.submission.procedure_kind.result_inputs();
     crate::availability::StatedRecords {
         checkpoints_root: claim.submission.checkpoints_root.clone(),
         result_program: last.program_commitment.clone(),
@@ -327,9 +327,9 @@ const OTHER_CHECK_OUTPUT: &[u8] = b"second last";
 const CONSENSUS: [u8; 32] = [0x2e; 32];
 
 /// The second model of a consensus contract, and the programs of the
-/// consensus pipeline: the single one's without its result program, and
+/// consensus procedure kind: the single one's without its result program, and
 /// the consensus result, which takes `first` and `second` from a check.
-fn consensus_pins() -> (PipelinePins, [ModelPins; 2]) {
+fn consensus_pins() -> (ProgramPins, [ModelPins; 2]) {
     let single = pins();
     let model_commitments = vec![ModelCommitment {
         role: String::from("tokenizer"),
@@ -405,7 +405,7 @@ fn consensus_claim(second_output: &str) -> Claim {
     ]);
     let mut claim = Claim::of(checkpoints, manifests);
     let input = claim.submission.input_text_sha256.clone();
-    claim.submission.pipeline = Pipeline::Consensus;
+    claim.submission.procedure_kind = ProcedureKind::Consensus;
     claim
         .submission
         .inferences

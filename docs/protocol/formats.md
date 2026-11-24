@@ -17,12 +17,12 @@ stops and says which it wants, with one exception noted below.
 | Deterministic number specification | The weight file's header | 1 | `DET_NUM_SPEC_VERSION` | Bundles are converted again. |
 | Model descriptor | `model-descriptor.bin` in an import, and a stage input | 2 | `DESCRIPTOR_VERSION` | Models are imported again, and every stage that reads it is re-locked. |
 | Model manifest | `manifest.json` in an import | 19 | `MODEL_MANIFEST_VERSION` | Models are imported again. iris-backend pins the same number (`IRIS_MODEL_MANIFEST_VERSION`). |
-| Prepared run | `prepared_run.json` beside a claim | 20 | `PREPARED_RUN_VERSION` | A claim built before cannot be challenged from its own directory. |
+| Prepared run | `prepared_run.json` beside a claim | 21 | `PREPARED_RUN_VERSION` | A claim built before cannot be challenged from its own directory. |
 | Execution context | Inside every stage's output | 3 | `EXECUTION_VERSION` | Every stage is re-locked, and every checkpoint changes. |
-| Contract pins | `contract_pins.json` in an import | 5 | `CONTRACT_PINS_VERSION` | Pins are written again (`iris claim pins`), which changes the configuration's id. |
-| Configuration | What a contract registers, by its id | 2 | `CONFIGURATION_VERSION` | The contracts' decoding, and every registered configuration. |
-| Registry file | The file `iris registry add` writes | 2 | `REGISTRY_VERSION` | Registry files are written again. |
-| Claim submission | `claim_submission.json`, and what `submitClaim` takes | 7 | `CLAIM_SUBMISSION_VERSION` | The contracts' decoding, and iris-backend where it reads the file. |
+| Contract pins | `contract_pins.json` in an import | 6 | `CONTRACT_PINS_VERSION` | Pins are written again (`iris claim pins`), which changes the procedure's id. |
+| Procedure | What a contract registers, by its id | 3 | `PROCEDURE_VERSION` | The contracts' decoding, and every registered procedure. |
+| Registry file | The file `iris registry add` writes | 3 | `REGISTRY_VERSION` | Registry files are written again. |
+| Claim submission | `claim_submission.json`, and what `submitClaim` takes | 8 | `CLAIM_SUBMISSION_VERSION` | The contracts' decoding, and iris-backend where it reads the file. |
 | Challenge submission | `challenge_submission.json`, and what `submitChallenge` takes | 2 | `CHALLENGE_SUBMISSION_VERSION` | The contracts' decoding, and iris-backend where it reads the file. |
 | Posted blob | Every blob on the data-availability layer | 3 | `BLOB_MAGIC` | Blobs posted before cannot be read: `iris/blob/v3`. |
 
@@ -38,7 +38,7 @@ same bytes, so a tag that both sides compute changes in both.
 | `iris/statement/v2` | What a claim states: the input text's hash, the model, the flags and the budget | The contracts, and the stages |
 | `iris/checkpoint/v1` | One checkpoint: its stage, program, inputs, producers and output | The contracts |
 | `iris/checkpoints/v1` | A claim's checkpoint list, as a tree | The contracts |
-| `iris/configuration/v2` | A configuration, for its id | The contracts |
+| `iris/procedure/v3` | A procedure, for its id | The contracts |
 | `iris/stated-records/v1` | The records a claim's checkpoints commit to | The contracts |
 | `iris/blob-attestation/v2` | What the trusted host signs of a posted blob | The contracts |
 | `iris/source/v1` | A source record, for its id | The contracts, and the stages |

@@ -351,7 +351,7 @@ library IrisEncoding {
         );
     }
 
-    // --- a configuration: `Configuration::id` ---
+    // --- a procedure: `Procedure::id` ---
 
     // --- reading the encoding back: a cursor over bytes ---
 
@@ -392,35 +392,35 @@ library IrisEncoding {
         return at == encoded.length;
     }
 
-    function configurationId(Configuration memory configuration) internal pure returns (bytes32) {
+    function procedureId(Procedure memory procedure) internal pure returns (bytes32) {
         bytes memory encoded = abi.encodePacked(
-            "iris/configuration/v2\x00",
-            le32(configuration.version),
-            text(configuration.pipeline),
-            text(configuration.family),
-            configuration.programs,
-            count(configuration.models.length)
+            "iris/procedure/v3\x00",
+            le32(procedure.version),
+            text(procedure.procedureKind),
+            text(procedure.family),
+            procedure.programs,
+            count(procedure.models.length)
         );
-        for (uint256 i = 0; i < configuration.models.length; i++) {
+        for (uint256 i = 0; i < procedure.models.length; i++) {
             encoded = abi.encodePacked(
                 encoded,
-                hash(configuration.models[i].modelId),
-                configuration.models[i].commitments,
-                le32(configuration.models[i].rangeSize)
+                hash(procedure.models[i].modelId),
+                procedure.models[i].commitments,
+                le32(procedure.models[i].rangeSize)
             );
         }
-        encoded = abi.encodePacked(encoded, flag(configuration.rawPrompt), le32(configuration.maxNewTokens));
-        if (configuration.hasSource) {
-            encoded = abi.encodePacked(encoded, bytes1(0x01), text(configuration.signer));
-            encoded = configuration.hasRecipe
-                ? abi.encodePacked(encoded, bytes1(0x01), hash(configuration.recipe))
+        encoded = abi.encodePacked(encoded, flag(procedure.rawPrompt), le32(procedure.maxNewTokens));
+        if (procedure.hasSource) {
+            encoded = abi.encodePacked(encoded, bytes1(0x01), text(procedure.signer));
+            encoded = procedure.hasRecipe
+                ? abi.encodePacked(encoded, bytes1(0x01), hash(procedure.recipe))
                 : abi.encodePacked(encoded, bytes1(0x00));
         } else {
             encoded = abi.encodePacked(encoded, bytes1(0x00));
         }
-        encoded = abi.encodePacked(encoded, count(configuration.forms.length));
-        for (uint256 i = 0; i < configuration.forms.length; i++) {
-            encoded = abi.encodePacked(encoded, text(configuration.forms[i].text), le32(configuration.forms[i].code));
+        encoded = abi.encodePacked(encoded, count(procedure.forms.length));
+        for (uint256 i = 0; i < procedure.forms.length; i++) {
+            encoded = abi.encodePacked(encoded, text(procedure.forms[i].text), le32(procedure.forms[i].code));
         }
         return sha256(encoded);
     }

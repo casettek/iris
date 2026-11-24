@@ -9,7 +9,7 @@ pub mod inference;
 pub mod io;
 pub mod manifest;
 pub mod model_identity;
-pub mod pipeline;
+pub mod procedure_kind;
 pub mod registry;
 pub mod replay_profile;
 pub mod run;
@@ -42,7 +42,7 @@ pub use inference::{
 };
 pub use io::{read_json, write_json};
 pub use manifest::resolve_raster_manifest_paths;
-pub use pipeline::Pipeline;
+pub use procedure_kind::ProcedureKind;
 pub use run::{
     read_run_spec, InferenceRunSpec, ModelSpec, PreparedInference, PreparedPiece, PreparedPrompt,
     PreparedRun, PreparedSourceInputs, RunFileRef, SourceDocumentSpec, SourceSpec,
@@ -404,7 +404,7 @@ mod tests {
     #[test]
     fn run_spec_requires_exactly_one_prompt_source() {
         let both = InferenceRunSpec {
-            pipeline: Default::default(),
+            procedure_kind: Default::default(),
             model_manifest: Some(PathBuf::from("model-artifacts/manifest.json")),
             models: Vec::new(),
             prompt: Some(String::from("hello")),
@@ -420,7 +420,7 @@ mod tests {
             .contains("not both"));
 
         let neither = InferenceRunSpec {
-            pipeline: Default::default(),
+            procedure_kind: Default::default(),
             model_manifest: Some(PathBuf::from("model-artifacts/manifest.json")),
             models: Vec::new(),
             prompt: None,
@@ -456,17 +456,37 @@ mod tests {
     }
 
     #[test]
-    fn a_run_spec_names_its_pipeline_or_runs_the_single_one() {
-        let base = temp_dir("run-spec-pipeline");
+    fn a_run_spec_names_its_procedure_kind_or_runs_the_single_one() {
+        let base = temp_dir("run-spec-procedure-kind");
         fs::create_dir_all(&base).unwrap();
         let path = base.join("inference.toml");
         let spec = "model_manifest = \"m.json\"\nprompt = \"hi\"\n";
         fs::write(&path, spec).unwrap();
-        assert_eq!(read_run_spec(&path).unwrap().pipeline, Pipeline::Single);
-        fs::write(&path, format!("pipeline = \"single\"\n{spec}")).unwrap();
-        assert_eq!(read_run_spec(&path).unwrap().pipeline, Pipeline::Single);
-        // A name that is no pipeline must not silently run the single one.
-        fs::write(&path, format!("pipeline = \"committee\"\n{spec}")).unwrap();
+        assert_eq!(
+            read_run_spec(&path).unwrap().procedure_kind,
+            ProcedureKind::Single
+        );
+        fs::write(&path, format!("procedure_kind = \"single\"\n{spec}")).unwrap();
+        assert_eq!(
+            read_run_spec(&path).unwrap().procedure_kind,
+            ProcedureKind::Single
+        );
+        // Nor must the key a spec used before the rename.
+        fs::write(
+            &path,
+            format!(
+                "pipeline = \"consensus\"
+{spec}"
+            ),
+        )
+        .unwrap();
+        let renamed = format!("{:#}", read_run_spec(&path).unwrap_err());
+        assert!(
+            renamed.contains("which is now `procedure_kind`"),
+            "{renamed}"
+        );
+        // A name that is no procedure kind must not silently run the single one.
+        fs::write(&path, format!("procedure_kind = \"committee\"\n{spec}")).unwrap();
         let error = format!("{:#}", read_run_spec(&path).unwrap_err());
         assert!(
             error.contains("committee") && error.contains("single") && error.contains("consensus"),
@@ -483,11 +503,11 @@ mod tests {
         let models = "[[model]]\nmanifest = \"a/manifest.json\"\n[[model]]\nmanifest = \"b/manifest.json\"\n";
         fs::write(
             &path,
-            format!("pipeline = \"consensus\"\nprompt = \"hi\"\ntokens = 4\n{models}"),
+            format!("procedure_kind = \"consensus\"\nprompt = \"hi\"\ntokens = 4\n{models}"),
         )
         .unwrap();
         let spec = read_run_spec(&path).unwrap();
-        assert_eq!(spec.pipeline, Pipeline::Consensus);
+        assert_eq!(spec.procedure_kind, ProcedureKind::Consensus);
         assert_eq!(
             spec.model_manifests(),
             [Path::new("a/manifest.json"), Path::new("b/manifest.json")]
@@ -507,7 +527,7 @@ mod tests {
             String::from("model_manifest = \"a/manifest.json\"\nprompt = \"hi\"\n"),
             format!("model_manifest = \"a/manifest.json\"\nprompt = \"hi\"\n{models}"),
         ] {
-            fs::write(&path, format!("pipeline = \"consensus\"\n{body}")).unwrap();
+            fs::write(&path, format!("procedure_kind = \"consensus\"\n{body}")).unwrap();
             let error = format!("{:#}", read_run_spec(&path).unwrap_err());
             assert!(error.contains("[[model]]"), "{error}");
         }
@@ -577,7 +597,7 @@ mod tests {
     fn prepared_run_metadata_round_trips_as_json() {
         let prepared = PreparedRun {
             version: PREPARED_RUN_VERSION,
-            pipeline: Pipeline::Single,
+            procedure_kind: ProcedureKind::Single,
             run_spec_path: PathBuf::from("inference.toml"),
             inferences: vec![PreparedInference {
                 model_manifest_path: PathBuf::from("model-artifacts/manifest.json"),

@@ -8,8 +8,8 @@ follows, so this page says which is which until they agree.
 
 | Word | Meaning | In the code today, where it differs |
 | --- | --- | --- |
-| Procedure | The registered way a judgment is made: the stage programs, the models and the parameters a claim must have run under. A contract judges a claim by the procedure the claim names | `Configuration`, and `iris registry` |
-| Procedure kind | The arrangement a procedure's segments follow. Two exist: `single`, one inference on one model, and `consensus`, the same inference on two models and whether they agree | `Pipeline`, and `pipeline = "..."` in a run spec |
+| Procedure | The registered way a judgment is made: the stage programs, the models and the parameters a claim must have run under. A contract judges a claim by the procedure the claim names | `Procedure`, and `iris registry` |
+| Procedure kind | The arrangement a procedure's segments follow. Two exist: `single`, one inference on one model, and `consensus`, the same inference on two models and whether they agree | `ProcedureKind`, and `procedure_kind = "..."` in a run spec |
 | Specification | The document that defines a procedure | Three files: the run spec, the recipe file and the signer file |
 | Case | One run of a procedure: what a claim is about | No word |
 | Claim | What a claimer posts about a case: the statement, the checkpoint list and what the procedure requires beside them | |
@@ -30,7 +30,7 @@ Each of these had two meanings. It now has the one given here.
 | --- | --- | --- |
 | Chain | A Raster chain: programs run in order, each output linked to the next input | Celestia or an EVM network. Those are blockchains. "On chain" stays, for where a contract runs |
 | Blockchain | Celestia, or the EVM network the contracts are on | |
-| Pipeline | Nothing in iris for now. Raster will take the word for what is a chain today, and iris will follow | A procedure kind. The code still says `Pipeline` for that |
+| Procedure kind | Nothing in iris for now. Raster will take the word for what is a chain today, and iris will follow | A procedure kind. The code still says `ProcedureKind` for that |
 | Contract | Code on a blockchain | A file format |
 | Format | The layout of a file or a record iris writes. [Formats and versions](protocol/formats.md) lists them | |
 | Window | A span of trace items, as Raster proves them | A span of time. That is a period |

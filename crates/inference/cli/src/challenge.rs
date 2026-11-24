@@ -33,7 +33,7 @@ pub enum ChallengeInput {
     /// checkpoints and the inputs its run was given beside it. Nothing of
     /// the claimer's own run is read. Every stage is run on the inputs the
     /// claim's checkpoint names for it, each of which the claim posted, the
-    /// configuration pins or an earlier stage made, under `run_spec_path`,
+    /// procedure pins or an earlier stage made, under `run_spec_path`,
     /// which `claim fetch` wrote.
     Posted { submission_path: PathBuf },
 }
@@ -135,7 +135,7 @@ pub fn build_challenge(options: ChallengeBuildOptions) -> Result<ChallengeBuildR
         if let Some(prepared_run) = &prepared_run {
             // A claim of several inferences is refuted by any one's record.
             let mut rejection = claimed_output_rejection(final_result.as_ref())?;
-            if prepared_run.pipeline.inferences() > 1 && rejection.is_none() {
+            if prepared_run.procedure_kind.inferences() > 1 && rejection.is_none() {
                 let consensus = consensus
                     .as_ref()
                     .context("recomputation produced no result to check the claim against")?;
@@ -424,7 +424,7 @@ fn challenge_run(
 ///
 /// Recomputing the claimer's manifest would rerun the claimer's model and agree
 /// with it. Preparing this run instead means a claim that used other weights, a
-/// different cut or a different configuration differs at a stage's committed
+/// different cut or a different procedure differs at a stage's committed
 /// inputs, which is a divergence to replay. Nothing from the claim beyond those
 /// three things reaches the run, and none of them can stop the challenge.
 fn rebuild_teacher_forced_run(
@@ -434,12 +434,12 @@ fn rebuild_teacher_forced_run(
     let run_spec_path = resolve_bundle_path(&options.base_dir, &options.run_spec_path);
     let selected = inference_artifacts::read_run_spec(&run_spec_path)?;
     // A challenger rebuilds the claim's own arrangement of stages, so its run
-    // spec has to name the pipeline the claim is of.
+    // spec has to name the procedure kind the claim is of.
     anyhow::ensure!(
-        selected.pipeline == frozen.pipeline,
-        "the claim is of the `{}` pipeline, but --run names `{}`",
-        frozen.pipeline,
-        selected.pipeline
+        selected.procedure_kind == frozen.procedure_kind,
+        "the claim is of the `{}` procedure kind, but --run names `{}`",
+        frozen.procedure_kind,
+        selected.procedure_kind
     );
     let frozen_manifest = frozen
         .run_manifest_path
@@ -449,7 +449,7 @@ fn rebuild_teacher_forced_run(
     // inference, so the first holds them.
     let claimed = frozen.first()?;
     let run_spec = InferenceRunSpec {
-        pipeline: frozen.pipeline,
+        procedure_kind: frozen.procedure_kind,
         model_manifest: selected.model_manifest,
         models: selected.models,
         prompt: Some(claimed.prompt.resolved_prompt.clone()),
@@ -459,7 +459,9 @@ fn rebuild_teacher_forced_run(
         tokens: frozen.tokens,
     };
     let ids = (0..frozen.inferences.len())
-        .map(|inference| frozen_claimed_ids(frozen_manifest, &frozen.pipeline.label(inference)))
+        .map(|inference| {
+            frozen_claimed_ids(frozen_manifest, &frozen.procedure_kind.label(inference))
+        })
         .collect::<Result<Vec<_>>>()?;
     let rebuilt = crate::claim::prepare_challenge_run(
         &crate::claim::ClaimBuildOptions {
@@ -1088,7 +1090,7 @@ mod tests {
 
         let prepared = PreparedRun {
             version: inference_artifacts::PREPARED_RUN_VERSION,
-            pipeline: inference_artifacts::Pipeline::Single,
+            procedure_kind: inference_artifacts::ProcedureKind::Single,
             run_spec_path: base.join("inference.toml"),
             inferences: vec![inference_artifacts::PreparedInference {
                 model_manifest_path: model_manifest.clone(),
@@ -1284,7 +1286,7 @@ mod tests {
         );
 
         // Same text, so every range's text and the text claim agree; the
-        // configuration names a different model, so the bind's committed
+        // procedure names a different model, so the bind's committed
         // inputs differ.
         assert_eq!(
             text_commitments(&manifest),

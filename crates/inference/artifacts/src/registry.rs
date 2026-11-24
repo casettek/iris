@@ -1,17 +1,17 @@
-//! The configurations claims are made of, each registered before any claim
+//! The procedures claims are made of, each registered before any claim
 //! arrives and named by its id.
 //!
-//! A configuration is everything a contract holds a claim to: the pipeline
+//! A procedure is everything a contract holds a claim to: the procedure kind
 //! and its approved stage programs, the model of each inference, the
 //! parameters, and what it requires of the claim's source and result. A claim
-//! names the id of one ([`crate::checks::ClaimSubmission::configuration`]),
+//! names the id of one ([`crate::checks::ClaimSubmission::procedure`]),
 //! and a contract judges it by that one. Registering one is a choice made in
 //! advance; no claim can bring its own.
 //!
-//! What a configuration does not pin yet: the base prompt and the domains a
+//! What a procedure does not pin yet: the base prompt and the domains a
 //! source's documents may come from. A claim's statement still names the
 //! recipe it used (through its source record), so it commits to both; a
-//! configuration that pins them can come later.
+//! procedure that pins them can come later.
 
 use std::fs;
 use std::path::Path;
@@ -20,24 +20,24 @@ use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 
 use crate::checks::{
-    ContractPins, ModelPins, PipelinePins, RequiredOrigin, RequiredParameters, RequiredSource,
+    ContractPins, ModelPins, ProgramPins, RequiredOrigin, RequiredParameters, RequiredSource,
 };
 use crate::encoding::Encoder;
-use crate::pipeline::Pipeline;
+use crate::procedure_kind::ProcedureKind;
 
-pub const CONFIGURATION_VERSION: u32 = 2;
-pub const REGISTRY_VERSION: u32 = 2;
+pub const PROCEDURE_VERSION: u32 = 3;
+pub const REGISTRY_VERSION: u32 = 3;
 /// What `iris registry add` writes when given no other file.
 pub const REGISTRY_JSON: &str = "registry.json";
 
-/// One configuration a contract may accept claims of.
+/// One procedure a contract may accept claims of.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
-pub struct Configuration {
+pub struct Procedure {
     pub version: u32,
-    pub pipeline: Pipeline,
-    pub programs: PipelinePins,
-    /// One model per inference, in the order the pipeline runs them.
+    pub procedure_kind: ProcedureKind,
+    pub programs: ProgramPins,
+    /// One model per inference, in the order the procedure kind runs them.
     pub models: Vec<ModelPins>,
     pub raw_prompt: bool,
     pub max_new_tokens: u32,
@@ -50,11 +50,11 @@ pub struct Configuration {
     pub forms: Vec<source_core::Form>,
 }
 
-impl Configuration {
+impl Procedure {
     pub fn of(pins: ContractPins, required: RequiredParameters, origin: RequiredOrigin) -> Self {
         Self {
-            version: CONFIGURATION_VERSION,
-            pipeline: pins.pipeline,
+            version: PROCEDURE_VERSION,
+            procedure_kind: pins.procedure_kind,
             programs: pins.programs,
             models: pins.models,
             raw_prompt: required.raw_prompt,
@@ -64,15 +64,15 @@ impl Configuration {
         }
     }
 
-    /// The configuration's id: a hash over all of it, in lowercase hex, in
+    /// The procedure's id: a hash over all of it, in lowercase hex, in
     /// the encoding a contract recomputes when one is registered
     /// (`crate::encoding`). Every field is hashed in the order it is
     /// declared, each list after its count.
     pub fn id(&self) -> String {
-        let mut encoder = Encoder::new(b"iris/configuration/v2\0");
+        let mut encoder = Encoder::new(b"iris/procedure/v3\0");
         encoder
             .number(self.version)
-            .text(self.pipeline.name())
+            .text(self.procedure_kind.name())
             .text(&self.programs.family)
             .count(self.programs.stage_programs.len());
         for program in &self.programs.stage_programs {
@@ -149,27 +149,27 @@ impl Configuration {
     }
 }
 
-/// The registry: every configuration registered, by id. The stand-in for the
+/// The registry: every procedure registered, by id. The stand-in for the
 /// on-chain one is a JSON file.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct Registry {
     pub version: u32,
-    pub configurations: Vec<Registered>,
+    pub procedures: Vec<Registered>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct Registered {
     pub id: String,
-    pub configuration: Configuration,
+    pub procedure: Procedure,
 }
 
 impl Default for Registry {
     fn default() -> Self {
         Self {
             version: REGISTRY_VERSION,
-            configurations: Vec::new(),
+            procedures: Vec::new(),
         }
     }
 }
@@ -198,26 +198,26 @@ impl Registry {
         crate::io::write_json(path, self)
     }
 
-    /// Register a configuration and return its id. Registering one twice
+    /// Register a procedure and return its id. Registering one twice
     /// changes nothing.
-    pub fn register(&mut self, configuration: Configuration) -> String {
-        let id = configuration.id();
+    pub fn register(&mut self, procedure: Procedure) -> String {
+        let id = procedure.id();
         if self.get(&id).is_none() {
-            self.configurations.push(Registered {
+            self.procedures.push(Registered {
                 id: id.clone(),
-                configuration,
+                procedure,
             });
         }
         id
     }
 
-    /// The configuration registered under this id. An entry whose
-    /// configuration does not hash to its id is no entry.
-    pub fn get(&self, id: &str) -> Option<&Configuration> {
-        self.configurations
+    /// The procedure registered under this id. An entry whose
+    /// procedure does not hash to its id is no entry.
+    pub fn get(&self, id: &str) -> Option<&Procedure> {
+        self.procedures
             .iter()
-            .find(|entry| entry.id == id && entry.configuration.id() == id)
-            .map(|entry| &entry.configuration)
+            .find(|entry| entry.id == id && entry.procedure.id() == id)
+            .map(|entry| &entry.procedure)
     }
 }
 
@@ -225,11 +225,11 @@ impl Registry {
 mod tests {
     use super::*;
 
-    fn configuration(max_new_tokens: u32) -> Configuration {
-        Configuration {
-            version: CONFIGURATION_VERSION,
-            pipeline: Pipeline::Single,
-            programs: PipelinePins {
+    fn procedure(max_new_tokens: u32) -> Procedure {
+        Procedure {
+            version: PROCEDURE_VERSION,
+            procedure_kind: ProcedureKind::Single,
+            programs: ProgramPins {
                 family: String::from("gemma-dense"),
                 stage_programs: Vec::new(),
             },
@@ -242,17 +242,17 @@ mod tests {
     }
 
     #[test]
-    fn a_configuration_is_found_by_its_id_and_only_by_it() {
+    fn a_procedure_is_found_by_its_id_and_only_by_it() {
         let mut registry = Registry::default();
-        let id = registry.register(configuration(8));
-        assert_eq!(registry.register(configuration(8)), id);
-        assert_eq!(registry.configurations.len(), 1);
-        assert_eq!(registry.get(&id), Some(&configuration(8)));
-        assert_ne!(configuration(9).id(), id);
-        assert_eq!(registry.get(&configuration(9).id()), None);
+        let id = registry.register(procedure(8));
+        assert_eq!(registry.register(procedure(8)), id);
+        assert_eq!(registry.procedures.len(), 1);
+        assert_eq!(registry.get(&id), Some(&procedure(8)));
+        assert_ne!(procedure(9).id(), id);
+        assert_eq!(registry.get(&procedure(9).id()), None);
 
         // An entry edited after it was registered no longer answers to the id.
-        registry.configurations[0].configuration.max_new_tokens = 9;
+        registry.procedures[0].procedure.max_new_tokens = 9;
         assert_eq!(registry.get(&id), None);
     }
 }

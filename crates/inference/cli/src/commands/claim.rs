@@ -20,7 +20,7 @@ pub(crate) enum ClaimCommand {
     Post(ClaimPostArgs),
     /// Make the checks a contract would make on a claim's submission.
     Check(ClaimCheckArgs),
-    /// Write what a contract of a run's pipeline over its models would pin.
+    /// Write what a contract of a run's procedure kind over its models would pin.
     Pins(ClaimPinsArgs),
 }
 
@@ -44,7 +44,7 @@ pub(crate) struct ClaimAuditArgs {
     #[arg(long)]
     submission: PathBuf,
 
-    /// A run spec of the configuration the claim names.
+    /// A run spec of the procedure the claim names.
     #[arg(long, default_value = inference_artifacts::INFERENCE_RUN_SPEC_TOML)]
     run: PathBuf,
 
@@ -68,8 +68,8 @@ pub(crate) struct ClaimFetchArgs {
     #[arg(long)]
     submission: PathBuf,
 
-    /// Your own run spec of the configuration the claim names: its
-    /// pipeline, models and parameters, and for a claim with a source the
+    /// Your own run spec of the procedure the claim names: its
+    /// procedure kind, models and parameters, and for a claim with a source the
     /// recipe and the signer's key. Its prompt and its documents are
     /// replaced by the ones the claim posted.
     #[arg(long, default_value = inference_artifacts::INFERENCE_RUN_SPEC_TOML)]
@@ -91,7 +91,7 @@ pub(crate) struct ClaimFetchArgs {
 
 #[derive(Debug, Args)]
 pub(crate) struct ClaimPinsArgs {
-    /// Run spec naming the pipeline and its models.
+    /// Run spec naming the procedure kind and its models.
     #[arg(long, default_value = inference_artifacts::INFERENCE_RUN_SPEC_TOML)]
     run: PathBuf,
 
@@ -120,12 +120,12 @@ pub(crate) struct ClaimCheckArgs {
 
     /// The pins the contract holds, as `iris claim pins` wrote them. Without
     /// it a `single` contract's are the model import's, and those of a
-    /// pipeline over several models are made from the imports now.
+    /// procedure kind over several models are made from the imports now.
     #[arg(long)]
     pins: Option<PathBuf>,
 
-    /// The registry of configurations, as `iris registry add` writes it. The
-    /// claim is judged by the configuration it names there. Without it, by
+    /// The registry of procedures, as `iris registry add` writes it. The
+    /// claim is judged by the procedure it names there. Without it, by
     /// the one the run spec and the pins describe.
     #[arg(long)]
     registry: Option<PathBuf>,
@@ -183,7 +183,7 @@ impl ClaimBuildArgs {
 pub(crate) fn build(options: ClaimBuildOptions, run_spec_path: PathBuf) -> Result<ExitCode> {
     warn_if_debug_build("claim build");
     let result = build_claim(options)?;
-    println!("pipeline: {}", result.pipeline);
+    println!("procedure kind: {}", result.procedure_kind);
     match (result.final_result.as_ref(), result.consensus.as_ref()) {
         (Some(first), Some(consensus)) => {
             print_consensus(first, consensus);
@@ -268,7 +268,7 @@ pub(crate) fn run(command: ClaimCommand) -> Result<ExitCode> {
                 std::env::current_dir().context("failed to resolve current directory")?;
             let pins = claim_check::run_pins(&base_dir, &args.run)?;
             inference_artifacts::write_json(&args.out, &pins)?;
-            println!("pipeline: {}", pins.pipeline);
+            println!("procedure kind: {}", pins.procedure_kind);
             for model in &pins.models {
                 println!("model id: {}", model.model_id);
             }

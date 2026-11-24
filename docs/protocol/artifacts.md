@@ -12,7 +12,7 @@ The stable format types and filenames live in `crates/inference/artifacts`.
 - Model, config, and tokenizer paths plus SHA-256 hashes.
 - Model shape and fixed-point scaling parameters.
 - EOS token ids.
-- Optional provenance pointing back to the model's prompt-free segment of a chain, written during import. A [pipeline](pipelines.md) makes a chain template from it.
+- Optional provenance pointing back to the model's prompt-free segment of a chain, written during import. A [procedure kind](procedure-kinds.md) makes a chain template from it.
 
 The same model-scoped directory owns the imported Raster externals under
 `runtime/model-artifacts/<model-id>/raster/`. Stage program directories remain
@@ -26,8 +26,8 @@ each range's cut and each claimed range are written under
 
 `inference.toml` records run-time inputs:
 
-- `pipeline`: optional, `single` when absent. See [Pipelines](pipelines.md)
-- `model_manifest`, or for a pipeline of several inferences one `[[model]]` table per model, each with a `manifest`
+- `procedure_kind`: optional, `single` when absent. See [Procedure kinds](procedure-kinds.md)
+- `model_manifest`, or for a procedure kind of several inferences one `[[model]]` table per model, each with a `manifest`
 - Exactly one of `prompt` or `prompt_file`
 - `raw_prompt`
 - `tokens`
@@ -70,7 +70,7 @@ Every checkpointed stage directory must include:
 
 The claim bundle records the first checkpoint input commitment, final checkpoint output commitment, checkpoint trace path, and prepared-run metadata path.
 
-The claim submission is what a claimer would post to a [contract](checks.md): the pipeline, the input text hash, the source record of a run that has one, for each inference its output text, its last check's claim record (statement digest, output text hash, valid flag) and its result code, for a consensus the agreement, the claimer's address, and the root of the checkpoint list, which commits to every stage boundary. A model import's `contract_pins.json` is the other side: what a contract of the `single` pipeline over that model pins, as the pipeline's name, a program entry (the stage programs and the inputs each takes from earlier stages) and a model entry. `iris claim pins` writes the same file for any pipeline over the models a run spec names.
+The claim submission is what a claimer would post to a [contract](checks.md): the procedure kind, the input text hash, the source record of a run that has one, for each inference its output text, its last check's claim record (statement digest, output text hash, valid flag) and its result code, for a consensus the agreement, the claimer's address, and the root of the checkpoint list, which commits to every stage boundary. A model import's `contract_pins.json` is the other side: what a contract of the `single` procedure kind over that model pins, as the procedure kind's name, a program entry (the stage programs and the inputs each takes from earlier stages) and a model entry. `iris claim pins` writes the same file for any procedure kind over the models a run spec names.
 
 ## Challenges
 

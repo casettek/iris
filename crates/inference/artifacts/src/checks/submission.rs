@@ -1,7 +1,7 @@
 //! What a claimer submits, and the checks a contract makes when it arrives:
-//! the claim is of the configuration's pipeline, states the statement the
+//! the claim is of the procedure's procedure kind, states the statement the
 //! contract recomputes, a valid record, the source and result the
-//! configuration requires, and the records its own checkpoints commit to.
+//! procedure requires, and the records its own checkpoints commit to.
 
 use std::path::Path;
 
@@ -14,14 +14,14 @@ use sha2::{Digest, Sha256};
 use crate::availability::{BlobContents, PostedBlob};
 use crate::checkpoint::checkpoints_root;
 use crate::inference::InferenceResult;
-use crate::pipeline::Pipeline;
+use crate::procedure_kind::ProcedureKind;
 
 use super::*;
 
 /// Written beside a claim's `claim_bundle.json`.
 pub const CLAIM_SUBMISSION_JSON: &str = "claim_submission.json";
 
-pub const CLAIM_SUBMISSION_VERSION: u32 = 7;
+pub const CLAIM_SUBMISSION_VERSION: u32 = 8;
 
 /// The three values of a claim record, as submitted: see `ClaimRecord` in the
 /// `sequence-check` stage.
@@ -141,17 +141,17 @@ pub fn source_record_id(record: &source_core::SourceRecord) -> String {
 }
 
 /// What a claimer submits: the input it ran, what each inference claims, the
-/// pipeline's own result, and the commitment to its checkpoints, which a
+/// procedure kind's own result, and the commitment to its checkpoints, which a
 /// contract stores without reading.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ClaimSubmission {
     pub version: u32,
-    /// The pipeline the claim is of. A contract accepts claims of one.
-    pub pipeline: Pipeline,
-    /// The id of the registered configuration the claim is of: its
-    /// pipeline's programs, its models, its parameters and what it requires
+    /// The procedure kind the claim is of. A contract accepts claims of one.
+    pub procedure_kind: ProcedureKind,
+    /// The id of the registered procedure the claim is of: its
+    /// procedure kind's programs, its models, its parameters and what it requires
     /// of the source and the result (`crate::registry`).
-    pub configuration: String,
+    pub procedure: String,
     /// The address the claim is attributed to: `0x` and 40 hex digits. The
     /// claimer's choice. Every blob the claim posted names it, so nobody can
     /// submit this claim's blobs under another address.
@@ -170,11 +170,11 @@ pub struct ClaimSubmission {
     /// source. A contract reads the signer and the recipe from it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source: Option<source_core::SourceRecord>,
-    /// What each inference claims, in the order the pipeline runs them: one
-    /// for the `single` pipeline, two for `consensus`.
+    /// What each inference claims, in the order the procedure kind runs them: one
+    /// for the `single` procedure kind, two for `consensus`.
     pub inferences: Vec<SubmittedInference>,
     /// What a consensus claim states of its two inferences. Absent for a
-    /// pipeline of one.
+    /// procedure kind of one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub consensus: Option<SubmittedConsensus>,
     /// How many checkpoints the claim has: one per stage.
@@ -246,15 +246,15 @@ pub enum SubmissionRejection {
     AnotherSigner { expected: String, submitted: String },
     /// The prompt was built with another recipe than the contract's.
     AnotherRecipe { expected: String, submitted: String },
-    /// The claim is of another pipeline than the contract accepts.
-    AnotherPipeline {
-        expected: Pipeline,
-        submitted: Pipeline,
+    /// The claim is of another procedure kind than the contract accepts.
+    AnotherProcedureKind {
+        expected: ProcedureKind,
+        submitted: ProcedureKind,
     },
-    /// The claim does not hold what a claim of its pipeline does: another
+    /// The claim does not hold what a claim of its procedure kind does: another
     /// number of inferences, or a consensus where there is none to state.
     AnotherShape {
-        pipeline: Pipeline,
+        procedure_kind: ProcedureKind,
         inferences: usize,
         consensus: bool,
     },
@@ -271,7 +271,7 @@ pub enum SubmissionRejection {
     AnotherResult { expected: u32, submitted: u32 },
     /// The claim's proof states no records for its checkpoint list.
     RecordsNotStated,
-    /// The claim's last checkpoint does not run its pipeline's result
+    /// The claim's last checkpoint does not run its procedure kind's result
     /// program.
     NotTheResultStage { expected: &'static str },
     /// What the claim's last stage states is not what was submitted.
@@ -340,22 +340,22 @@ impl std::fmt::Display for SubmissionRejection {
                 f,
                 "the prompt was built with recipe {submitted}, but the contract's is {expected}"
             ),
-            Self::AnotherPipeline {
+            Self::AnotherProcedureKind {
                 expected,
                 submitted,
             } => write!(
                 f,
-                "the claim is of the `{submitted}` pipeline, but the contract accepts `{expected}`"
+                "the claim is of the `{submitted}` procedure kind, but the contract accepts `{expected}`"
             ),
             Self::AnotherShape {
-                pipeline,
+                procedure_kind,
                 inferences,
                 consensus,
             } => write!(
                 f,
-                "a claim of the `{pipeline}` pipeline holds {} inference(s){}, and this one holds {inferences}{}",
-                pipeline.inferences(),
-                if pipeline.inferences() > 1 { " and what they agree on" } else { "" },
+                "a claim of the `{procedure_kind}` procedure kind holds {} inference(s){}, and this one holds {inferences}{}",
+                procedure_kind.inferences(),
+                if procedure_kind.inferences() > 1 { " and what they agree on" } else { "" },
                 if *consensus { " and an agreement" } else { "" },
             ),
             Self::AnotherConsensus {
@@ -389,7 +389,7 @@ impl std::fmt::Display for SubmissionRejection {
             Self::NotTheResultStage { expected } => write!(
                 f,
                 "the claim's last stage does not run {expected}, so the claim does not end in \
-                 its pipeline's result stage"
+                 its procedure kind's result stage"
             ),
             Self::AnotherStatedResult => write!(
                 f,
@@ -429,8 +429,8 @@ pub struct StatedInference {
 }
 
 /// The stage program that states a claim record. In a claim of the `single`
-/// pipeline the checkpoint before the last is its, and the last is the
-/// pipeline's result program ([`Pipeline::result_program`]).
+/// procedure kind the checkpoint before the last is its, and the last is the
+/// procedure kind's result program ([`ProcedureKind::result_program`]).
 pub const RECORD_STAGE: &str = "sequence-check";
 
 impl ClaimSubmission {
@@ -439,8 +439,8 @@ impl ClaimSubmission {
     /// states of them, the source record when the run has one, and the
     /// commitment to the checkpoint list in the run directory.
     pub fn from_run(
-        pipeline: Pipeline,
-        configuration: String,
+        procedure_kind: ProcedureKind,
+        procedure: String,
         results: &[&InferenceResult],
         consensus: Option<SubmittedConsensus>,
         source: Option<&source_core::SourceRecord>,
@@ -452,8 +452,8 @@ impl ClaimSubmission {
         )?;
         Ok(Self {
             version: CLAIM_SUBMISSION_VERSION,
-            pipeline,
-            configuration,
+            procedure_kind,
+            procedure,
             claimer: NO_ADDRESS.to_string(),
             input_text_sha256: first.input_text_sha256.clone(),
             source_sha256: first.source_sha256.clone(),
@@ -520,27 +520,27 @@ pub fn expected_statement(
 }
 
 /// The first check a contract makes on submission: the claim is of the
-/// pipeline the contract accepts. Everything else a contract checks is that
-/// pipeline's: which records a claim states and which stage states its
+/// procedure kind the contract accepts. Everything else a contract checks is that
+/// procedure kind's: which records a claim states and which stage states its
 /// result.
-pub fn check_pipeline(
-    required: Pipeline,
+pub fn check_procedure_kind(
+    required: ProcedureKind,
     submission: &ClaimSubmission,
 ) -> std::result::Result<(), SubmissionRejection> {
-    if submission.pipeline != required {
-        return Err(SubmissionRejection::AnotherPipeline {
+    if submission.procedure_kind != required {
+        return Err(SubmissionRejection::AnotherProcedureKind {
             expected: required,
-            submitted: submission.pipeline,
+            submitted: submission.procedure_kind,
         });
     }
-    // A claim of a pipeline holds one entry per inference it makes, and an
-    // agreement exactly when the pipeline states one.
-    let states_consensus = required == Pipeline::Consensus;
+    // A claim of a procedure kind holds one entry per inference it makes, and an
+    // agreement exactly when the procedure kind states one.
+    let states_consensus = required == ProcedureKind::Consensus;
     if submission.inferences.len() != required.inferences()
         || submission.consensus.is_some() != states_consensus
     {
         return Err(SubmissionRejection::AnotherShape {
-            pipeline: required,
+            procedure_kind: required,
             inferences: submission.inferences.len(),
             consensus: submission.consensus.is_some(),
         });
@@ -570,7 +570,7 @@ pub fn check_submission(
             .inferences
             .get(inference)
             .ok_or(SubmissionRejection::AnotherShape {
-                pipeline: submission.pipeline,
+                procedure_kind: submission.procedure_kind,
                 inferences: submission.inferences.len(),
                 consensus: submission.consensus.is_some(),
             })?;
@@ -695,7 +695,7 @@ pub fn check_origin(
 /// stage that scored the output. That the result stage read that check's
 /// output and no other value is the link comparison's to hold.
 pub fn check_stated_records(
-    pins: &PipelinePins,
+    pins: &ProgramPins,
     submission: &ClaimSubmission,
     posted: &BlobContents,
 ) -> std::result::Result<(), SubmissionRejection> {
@@ -704,14 +704,14 @@ pub fn check_stated_records(
         .iter()
         .find(|stated| stated.checkpoints_root == submission.checkpoints_root)
         .ok_or(SubmissionRejection::RecordsNotStated)?;
-    let expected = submission.pipeline.result_program();
+    let expected = submission.procedure_kind.result_program();
     if !pins.runs(&stated.result_program, expected) {
         return Err(SubmissionRejection::NotTheResultStage { expected });
     }
     if stated.results != submission.stated() {
         return Err(SubmissionRejection::AnotherStatedResult);
     }
-    let inputs = submission.pipeline.result_inputs();
+    let inputs = submission.procedure_kind.result_inputs();
     for (inference, claimed) in submission.inferences.iter().enumerate() {
         let check = inputs
             .get(inference)

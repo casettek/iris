@@ -1,6 +1,6 @@
 //! Send a claim, a challenge, a fault proof or a fault to the local
 //! contracts, with what has to be there first: the blobs attested, their
-//! blocks' roots relayed, and the claim's configuration registered.
+//! blocks' roots relayed, and the claim's procedure registered.
 
 use std::path::Path;
 
@@ -17,7 +17,7 @@ pub struct Before {
     pub attest: bool,
     /// Post each blob's block root to the oracle, as the trusted relayer.
     pub relay: bool,
-    /// Register the claim's configuration when it is not registered.
+    /// Register the claim's procedure when it is not registered.
     pub register: bool,
 }
 
@@ -60,13 +60,13 @@ pub(crate) fn heights_of(call: &Value) -> Vec<u64> {
         .collect()
 }
 
-/// Register the run's configuration unless it is registered. Its id.
+/// Register the run's procedure unless it is registered. Its id.
 pub fn register(node: &Node, run_spec: &Path) -> Result<String> {
-    let configuration = crate::claim_check::spec_configuration(run_spec, None)?;
-    let call = crate::blockchain::evm::configuration_call(&configuration)?;
-    let id = call["configuration"]
+    let procedure = crate::claim_check::spec_procedure(run_spec, None)?;
+    let call = crate::blockchain::evm::procedure_call(&procedure)?;
+    let id = call["procedure"]
         .as_str()
-        .context("the configuration call has no id")?
+        .context("the procedure call has no id")?
         .to_string();
     let registered = node
         .call(
@@ -77,7 +77,7 @@ pub fn register(node: &Node, run_spec: &Path) -> Result<String> {
         .map_err(|revert| anyhow::anyhow!("the registry does not answer: {revert}"))?;
     if returned_u64(&registered, 0)? == 0 {
         if let Err(revert) = node.send(&node.deployment.registry, &bytes_of(&call, "calldata")?)? {
-            bail!("the registry refused the configuration: {revert}");
+            bail!("the registry refused the procedure: {revert}");
         }
     }
     Ok(id)
@@ -114,8 +114,8 @@ pub fn claim(
     let call = crate::blockchain::evm::claim_call(submission)?;
     let mut outcome = json!({"claim": call["claim"]});
     if before.register {
-        let run_spec = run_spec.context("registering a claim's configuration needs --run")?;
-        outcome["configuration"] = json!(register(node, run_spec)?);
+        let run_spec = run_spec.context("registering a claim's procedure needs --run")?;
+        outcome["procedure"] = json!(register(node, run_spec)?);
     }
     if before.relay {
         relay(node, layer, &heights_of(&call))?;

@@ -44,7 +44,7 @@ pub(crate) struct PreparedClaimRun {
     pub(crate) prepared_run: PreparedRun,
     pub(crate) manifest_path: PathBuf,
     /// The ids written into the run's `claimed_ids` externals: the first
-    /// inference's, which are all of them in a pipeline of one. Kept for the
+    /// inference's, which are all of them in a procedure kind of one. Kept for the
     /// claimer's own tooling only: the claim posts no copy of them, because its
     /// output is the chain's final record.
     pub(crate) claimed_token_ids: Vec<u32>,
@@ -52,8 +52,8 @@ pub(crate) struct PreparedClaimRun {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClaimBuildResult {
-    /// The pipeline the claim is of.
-    pub pipeline: inference_artifacts::Pipeline,
+    /// The procedure kind the claim is of.
+    pub procedure_kind: inference_artifacts::ProcedureKind,
     pub chain_dir: PathBuf,
     pub checkpoint_trace_path: PathBuf,
     pub checkpoint_hashes_path: PathBuf,
@@ -61,7 +61,7 @@ pub struct ClaimBuildResult {
     /// What a claimer would submit to a contract. Absent when the chain
     /// published no final record to submit.
     pub claim_submission_path: Option<PathBuf>,
-    /// The first inference's result: the whole result of a pipeline of one.
+    /// The first inference's result: the whole result of a procedure kind of one.
     pub final_result: Option<InferenceResult>,
     /// What a consensus chain states besides.
     pub consensus: Option<inference_artifacts::ConsensusOutcome>,
@@ -119,14 +119,14 @@ pub fn build_claim(options: ClaimBuildOptions) -> Result<ClaimBuildResult> {
     })?;
     // A claimer applies the rule a challenger will: the claim is judged by
     // its own final record, and a claim of several inferences by each one's.
-    let pipeline = prepared.prepared_run.pipeline;
+    let procedure_kind = prepared.prepared_run.procedure_kind;
     let mut rejection =
         crate::challenge::claimed_output_rejection(checkpointed.final_result.as_ref())?;
-    if pipeline.inferences() > 1 && rejection.is_none() {
+    if procedure_kind.inferences() > 1 && rejection.is_none() {
         let consensus = checkpointed
             .consensus
             .as_ref()
-            .with_context(|| format!("the `{pipeline}` chain stated no result"))?;
+            .with_context(|| format!("the `{procedure_kind}` chain stated no result"))?;
         rejection = crate::challenge::claimed_output_rejection(Some(&consensus.second))?
             .map(|reason| format!("the second inference: {reason}"));
     }
@@ -155,17 +155,16 @@ pub fn build_claim(options: ClaimBuildOptions) -> Result<ClaimBuildResult> {
     // checkpoint names an approved program, and the record is the last
     // stage's.
     //
-    // The claim names its configuration and its claimer, and prepares what
+    // The claim names its procedure and its claimer, and prepares what
     // it has to post: the inputs its run was given and its checkpoints. Posting is `iris claim post`'s, so that a post that fails
     // is tried again without the claim being built again.
-    // Without pins there is no configuration to name, and nothing to check.
+    // Without pins there is no procedure to name, and nothing to check.
     if let Some(path) = result.claim_submission_path.as_ref() {
-        let Some(configuration) = crate::claim_check::run_configuration(&prepared.prepared_run)?
-        else {
+        let Some(procedure) = crate::claim_check::run_procedure(&prepared.prepared_run)? else {
             return Ok(result);
         };
         let mut submission: ClaimSubmission = inference_artifacts::read_json(path)?;
-        submission.configuration = configuration.id();
+        submission.procedure = procedure.id();
         if let Some(claimer) = options.claimer {
             anyhow::ensure!(
                 inference_artifacts::checks::is_address(&claimer),
@@ -182,7 +181,7 @@ pub fn build_claim(options: ClaimBuildOptions) -> Result<ClaimBuildResult> {
         .context("preparing the claim's data")?;
         posting.write(&result.chain_dir)?;
         if let Some(reason) =
-            crate::claim_check::claim_rejection(&configuration, path, posting.contents()?)?
+            crate::claim_check::claim_rejection(&procedure, path, posting.contents()?)?
         {
             if options.claimed_token_ids.is_none() {
                 anyhow::bail!("a contract would not accept this claim: {reason}");
@@ -200,7 +199,7 @@ pub fn build_claim(options: ClaimBuildOptions) -> Result<ClaimBuildResult> {
 pub fn build_posted_claim(options: ClaimBuildOptions) -> Result<ClaimBuildResult> {
     let result = build_claim(options)?;
     if let Some(path) = result.claim_submission_path.as_ref() {
-        // A claim with no configuration prepared nothing to post.
+        // A claim with no procedure prepared nothing to post.
         if path
             .with_file_name(crate::posting::POSTING_OUTPUTS_JSON)
             .exists()
@@ -305,11 +304,11 @@ fn write_claim_result(
             code: consensus.code,
         }
     });
-    let claim_submission_path = if results.len() == prepared_run.pipeline.inferences() {
-        // The configuration and what was posted are filled in by
+    let claim_submission_path = if results.len() == prepared_run.procedure_kind.inferences() {
+        // The procedure and what was posted are filled in by
         // `build_claim`, which knows the contract.
         let submission = ClaimSubmission::from_run(
-            prepared_run.pipeline,
+            prepared_run.procedure_kind,
             String::new(),
             &results,
             consensus,
@@ -323,7 +322,7 @@ fn write_claim_result(
         None
     };
     Ok(ClaimBuildResult {
-        pipeline: prepared_run.pipeline,
+        procedure_kind: prepared_run.procedure_kind,
         chain_dir: checkpointed.chain_dir,
         checkpoint_trace_path,
         checkpoint_hashes_path,
@@ -450,24 +449,24 @@ fn prepare_run(
     let run_spec_dir = run_spec_path
         .parent()
         .ok_or_else(|| anyhow::anyhow!("run spec has no parent directory"))?;
-    let pipeline = run_spec.pipeline;
+    let procedure_kind = run_spec.procedure_kind;
     // Ids given on the command line are one inference's.
     let given_ids = options
         .claimed_token_ids
         .as_ref()
         .or(options.direct_output_ids.as_ref());
     anyhow::ensure!(
-        given_ids.is_none() || pipeline.inferences() == 1,
-        "output ids can be given for a pipeline of one inference, and the `{pipeline}` pipeline \
+        given_ids.is_none() || procedure_kind.inferences() == 1,
+        "output ids can be given for a procedure kind of one inference, and the `{procedure_kind}` procedure kind \
          makes {}",
-        pipeline.inferences()
+        procedure_kind.inferences()
     );
     if let Some(frozen) = &frozen {
         anyhow::ensure!(
-            frozen.ids.len() == pipeline.inferences(),
-            "the claim holds the ids of {} inference(s), and the `{pipeline}` pipeline makes {}",
+            frozen.ids.len() == procedure_kind.inferences(),
+            "the claim holds the ids of {} inference(s), and the `{procedure_kind}` procedure kind makes {}",
             frozen.ids.len(),
-            pipeline.inferences()
+            procedure_kind.inferences()
         );
     }
 
@@ -514,10 +513,10 @@ fn prepare_run(
     let prompt_dir = run_dir.join("prompt");
     if let Some(given) = given {
         anyhow::ensure!(
-            given.inferences.len() == pipeline.inferences(),
-            "the claim posted the inputs of {} inference(s), and the `{pipeline}` pipeline makes {}",
+            given.inferences.len() == procedure_kind.inferences(),
+            "the claim posted the inputs of {} inference(s), and the `{procedure_kind}` procedure kind makes {}",
             given.inferences.len(),
-            pipeline.inferences()
+            procedure_kind.inferences()
         );
     }
     // The source stage's inputs: the claim's own for a challenger, or written
@@ -543,10 +542,10 @@ fn prepare_run(
         _ => None,
     };
     let postable = given.is_some() || source_values.is_some() == source_inputs.is_some();
-    // The imports wrote each model's segment of a chain. The pipeline makes the
+    // The imports wrote each model's segment of a chain. The procedure kind makes the
     // chain's template from them.
     let parts: Vec<&str> = models.iter().map(|model| model.part.as_str()).collect();
-    let template = pipeline.chain_template(&parts)?;
+    let template = procedure_kind.chain_template(&parts)?;
     let template_dir = first
         .template_path
         .parent()
@@ -567,8 +566,8 @@ fn prepare_run(
     let mut values = Vec::new();
     let mut claimed_ids = Vec::new();
     for (inference, model) in models.iter().enumerate() {
-        let label = pipeline.label(inference);
-        // A pipeline of one inference keeps its run files where they have
+        let label = procedure_kind.label(inference);
+        // A procedure kind of one inference keeps its run files where they have
         // always been. Each inference of several has a directory of its own.
         let dir = if label.is_empty() {
             prompt_dir.clone()
@@ -681,7 +680,7 @@ fn prepare_run(
     let run_manifest_sha256 = format!("{:x}", Sha256::digest(run_manifest.as_bytes()));
     let prepared_run = PreparedRun {
         version: inference_artifacts::PREPARED_RUN_VERSION,
-        pipeline,
+        procedure_kind,
         run_spec_path,
         inferences: models
             .into_iter()
@@ -842,7 +841,7 @@ pub(crate) fn render_ranged_manifest(
     )
 }
 
-/// Fills a chain template for one run. For each inference: the configuration,
+/// Fills a chain template for one run. For each inference: the procedure,
 /// the stage schedule and the text claim, the range counts, the last prompt
 /// and claimed ranges' indexes, and each range's committed text, marks or
 /// claimed ids. For the run: the source stage's inputs and the result stage's
@@ -879,7 +878,7 @@ pub(crate) fn render_chain(
     let mut start = 0_usize;
     // For each inference: prompt repeats, claimed repeats, prompt externals,
     // claimed externals, per-layer prompt fans, per-layer claimed fans, text
-    // externals, configuration bindings, schedule bindings, text claim
+    // externals, procedure bindings, schedule bindings, text claim
     // bindings.
     let mut replaced = vec![[0_usize; 10]; inferences.len()];
     // For the run: the source stage's inputs, the result stage's forms.
@@ -1079,7 +1078,7 @@ pub(crate) fn render_chain(
             && replaced[6..10] == [1, 2, 2, 2]
     });
     if !filled || source_inputs != if source.is_some() { 3 } else { 0 } || result_forms != 1 {
-        anyhow::bail!("incompatible chain template: expected of each inference [prompt repeats, claimed repeats, prompt commitments, claimed commitments] = [1, 2, 1, 1], matching per-layer range fans, one set of text commitments, and a configuration, a schedule and a text claim binding for range 0's bind and for the later ranges'; and of the run three inputs for the source stage when it has a source, and the result stage's forms; found {replaced:?}, {source_inputs} and {result_forms}");
+        anyhow::bail!("incompatible chain template: expected of each inference [prompt repeats, claimed repeats, prompt commitments, claimed commitments] = [1, 2, 1, 1], matching per-layer range fans, one set of text commitments, and a procedure, a schedule and a text claim binding for range 0's bind and for the later ranges'; and of the run three inputs for the source stage when it has a source, and the result stage's forms; found {replaced:?}, {source_inputs} and {result_forms}");
     }
     out.push(String::new());
     Ok(out.join("\n"))
@@ -1342,7 +1341,7 @@ mod tests {
             &manifest_path,
             &PreparedRun {
                 version: inference_artifacts::PREPARED_RUN_VERSION,
-                pipeline: inference_artifacts::Pipeline::Single,
+                procedure_kind: inference_artifacts::ProcedureKind::Single,
                 run_spec_path: base.join("inference.toml"),
                 inferences: vec![inference_artifacts::PreparedInference {
                     model_manifest_path: base.join("model-artifacts/manifest.json"),
@@ -1474,7 +1473,7 @@ mod tests {
         let spec = dir.join("inference.toml");
         fs::write(
             &spec,
-            "pipeline = \"consensus\"\nprompt = \"h\"\nraw_prompt = true\ntokens = 3\n\
+            "procedure_kind = \"consensus\"\nprompt = \"h\"\nraw_prompt = true\ntokens = 3\n\
              [[model]]\nmanifest = \"../models/alpha/manifest.json\"\n\
              [[model]]\nmanifest = \"../models/beta/manifest.json\"\n",
         )
@@ -1495,7 +1494,10 @@ mod tests {
         let prepared = prepare_challenge_run(&options(None), &run_spec, None, &[], &ids).unwrap();
 
         let run = &prepared.prepared_run;
-        assert_eq!(run.pipeline, inference_artifacts::Pipeline::Consensus);
+        assert_eq!(
+            run.procedure_kind,
+            inference_artifacts::ProcedureKind::Consensus
+        );
         assert_eq!(run.inferences.len(), 2);
         assert_ne!(run.inferences[0].model_id, run.inferences[1].model_id);
         assert_eq!(
@@ -1553,7 +1555,7 @@ mod tests {
                 Some(format!("{label}_prompt_text_0").as_str())
             );
         }
-        // Each bind is given its own model's configuration.
+        // Each bind is given its own model's procedure.
         assert_ne!(config("m0"), config("m1"));
         // The result stage reads each inference's last check.
         let result = stage("result");

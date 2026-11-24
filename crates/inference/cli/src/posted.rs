@@ -2,7 +2,7 @@
 //! the data-availability layer, with nothing taken from the directory they
 //! were built in.
 //!
-//! A challenger has the configuration and the models. [`fetch_claim`] gives
+//! A challenger has the procedure and the models. [`fetch_claim`] gives
 //! it the rest: the claim's checkpoint list, checkpoints and input
 //! manifests, and the inputs the claim's run was given, with a run spec over
 //! them. A defender has its own run of the disputed stage.
@@ -62,8 +62,8 @@ pub struct FetchClaimOptions {
     /// The claim's `claim_submission.json`, as it was submitted: with where
     /// its data is.
     pub submission_path: PathBuf,
-    /// The reader's own run spec: the pipeline, the models and the
-    /// parameters of the configuration the claim names. Its prompt, and the
+    /// The reader's own run spec: the procedure kind, the models and the
+    /// parameters of the procedure the claim names. Its prompt, and the
     /// documents of its source, are replaced by the ones the claim posted.
     pub run_spec_path: PathBuf,
     pub pins_path: Option<PathBuf>,
@@ -95,7 +95,7 @@ pub(crate) fn stage_dir_name(stage: &str) -> Result<&str> {
 }
 
 /// Read a submitted claim's data back from the layer into a new directory:
-/// everything a challenger needs that its configuration and its models do
+/// everything a challenger needs that its procedure and its models do
 /// not fix.
 ///
 /// The directory holds the submission, the claim's `checkpoints.txt` and
@@ -111,16 +111,14 @@ pub fn fetch_claim(options: FetchClaimOptions) -> Result<FetchedClaim> {
         "{} names no posted data: the claim was not posted",
         options.submission_path.display()
     );
-    let configuration = crate::claim_check::spec_configuration(
-        &options.run_spec_path,
-        options.pins_path.as_deref(),
-    )?;
+    let procedure =
+        crate::claim_check::spec_procedure(&options.run_spec_path, options.pins_path.as_deref())?;
     ensure!(
-        configuration.id() == submission.configuration,
-        "the claim is of configuration {}, and {} describes {}",
-        submission.configuration,
+        procedure.id() == submission.procedure,
+        "the claim is of procedure {}, and {} describes {}",
+        submission.procedure,
         options.run_spec_path.display(),
-        configuration.id()
+        procedure.id()
     );
 
     let layer = open_layer(options.da_dir.as_deref())?;
@@ -205,13 +203,13 @@ pub fn fetch_claim(options: FetchClaimOptions) -> Result<FetchedClaim> {
         .with_context(|| format!("failed to resolve {}", options.out_dir.display()))?;
     crate::run_inputs::save(run, &out)?;
     if let Some(posted) = &run.source {
-        // The recipe and the signer's key are the configuration's, so they
+        // The recipe and the signer's key are the procedure's, so they
         // stay the reader's own in the spec. The stages run on the posted
         // ones all the same.
         let source = spec.source.as_mut().with_context(|| {
             format!(
                 "the claim has a source, and {} names none: the recipe and the signer's key \
-                 are the configuration's",
+                 are the procedure's",
                 options.run_spec_path.display()
             )
         })?;

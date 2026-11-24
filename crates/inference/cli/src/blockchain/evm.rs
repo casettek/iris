@@ -18,7 +18,7 @@ use inference_artifacts::{
 };
 use iris_evm::{
     abi_encode, attestation_digest, call_with_bytes, challenge_id, challenge_token, claim_id,
-    claim_token, configuration_token, fault_proof_token, read_fault_journal, FaultVerdict,
+    claim_token, fault_proof_token, procedure_token, read_fault_journal, FaultVerdict,
 };
 use serde_json::{json, Value};
 
@@ -41,15 +41,10 @@ pub(crate) fn call(name: &str, encoded: &[u8]) -> Value {
     })
 }
 
-/// The call that registers a configuration, with the id it will have.
-pub fn configuration_call(
-    configuration: &inference_artifacts::registry::Configuration,
-) -> Result<Value> {
-    let mut call = call(
-        "register",
-        &abi_encode(&configuration_token(configuration)?),
-    );
-    call["configuration"] = json!(format!("0x{}", configuration.id()));
+/// The call that registers a procedure, with the id it will have.
+pub fn procedure_call(procedure: &inference_artifacts::registry::Procedure) -> Result<Value> {
+    let mut call = call("register", &abi_encode(&procedure_token(procedure)?));
+    call["procedure"] = json!(format!("0x{}", procedure.id()));
     Ok(call)
 }
 

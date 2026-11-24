@@ -1,23 +1,23 @@
-# Pipelines
+# Procedure kinds
 
-A pipeline is a named arrangement of the segments a claim is made of. Two exist:
+A procedure kind is a named arrangement of the segments a claim is made of. Two exist:
 `single`, one inference on one model, and `consensus`, the same inference on
 two models and whether they agree. Others can be added beside them without
 each command growing its own switch.
 
 `consensus` runs directly, builds a claim with a submission, passes a
 contract's checks, can be challenged, and has a leg in the parity gate. The
-backend runs either pipeline.
+backend runs either procedure kind.
 
-## What a pipeline arranges
+## What a procedure kind arranges
 
 | Segment | What it is |
 | --- | --- |
 | Source | Optional. The `source` stage, which states what the prompt text was built from |
 | Inferences | One or more. An inference is everything between the source and the result for one model: its binds, prompt checks, embeddings, layers and checks, ending in a check that states a claim record |
-| Result program | The stage program that reads every inference's last check and states the pipeline's result. Each pipeline has its own |
+| Result program | The stage program that reads every inference's last check and states the procedure kind's result. Each procedure kind has its own |
 
-| Pipeline | Inferences | Result program | Its result |
+| Procedure kind | Inferences | Result program | Its result |
 | --- | --- | --- | --- |
 | `single` | 1 | `claim-result` | The code of the first form the output is, or zero |
 | `consensus` | 2, one after the other | `consensus-result` | Each output's code, and whether the two agree |
@@ -27,20 +27,20 @@ See [Raster chain](raster-chain.md) for the stages and
 
 ## How a chain is put together
 
-A model import knows nothing of pipelines. It writes one inference's segment of a
+A model import knows nothing of procedure kinds. It writes one inference's segment of a
 chain to its `Raster.toml`: the chain inputs and the stages from the first bind
 to the last check. The first bind is given the constant source record, as every
 later bind is, so the segment on its own is a chain for a text taken as given, with
 no result.
 
-A pipeline makes the chain template from one segment per model
-(`Pipeline::chain_template`):
+A procedure kind makes the chain template from one segment per model
+(`ProcedureKind::chain_template`):
 
 1. the `[chain]` table and each segment's chain inputs;
 2. the `source` stage;
 3. each segment's stages, in order, with its first bind taking the `source` stage's
    record in place of the constant;
-4. the pipeline's result stage, reading each inference's last check.
+4. the procedure kind's result stage, reading each inference's last check.
 
 `claim build` then fills the template in for one run, as before. A run whose
 text is taken as given removes the `source` stage again and gives the first bind
@@ -54,8 +54,8 @@ neighbours.
 
 ### Labels
 
-In a pipeline of one inference the stages keep the names an import gives them:
-`prompt_bind_p0`, `check_c1`. In a pipeline of several, each inference's names
+In a procedure kind of one inference the stages keep the names an import gives them:
+`prompt_bind_p0`, `check_c1`. In a procedure kind of several, each inference's names
 carry its label in front, `m0_` for the first model and `m1_` for the second:
 its stages, its repeats, its chain inputs, what its stages take from each other,
 and the marks a run replaces with its range counts. `source` and the result
@@ -64,24 +64,24 @@ stage have no label. The native runner reads a stage's kind through the label
 
 Run preparation fills in each inference's segment of the template from that
 inference's run files, which are in a directory of their own under the run's
-`prompt/` directory: `prompt/m0/`, `prompt/m1/`. A pipeline of one inference
+`prompt/` directory: `prompt/m0/`, `prompt/m1/`. A procedure kind of one inference
 keeps its files in `prompt/`.
 
 ## Where the name is
 
 | Place | Field | Notes |
 | --- | --- | --- |
-| Run spec | `pipeline = "consensus"` | Optional. A spec that names none runs `single`. A name that is no pipeline is an error |
-| `prepared_run.json` | `pipeline` | The claim's frozen run, which its claim bundle points at. Required, version 20 |
-| `claim_submission.json` | `pipeline` | Required, version 5. It holds one entry per inference, and for `consensus` the agreement |
-| `iris infer`, `iris claim build` | a `pipeline:` line | Printed before the result |
+| Run spec | `procedure_kind = "consensus"` | Optional. A spec that names none runs `single`. A name that is no procedure kind is an error |
+| `prepared_run.json` | `procedure_kind` | The claim's frozen run, which its claim bundle points at. Required, version 20 |
+| `claim_submission.json` | `procedure_kind` | Required, version 5. It holds one entry per inference, and for `consensus` the agreement |
+| `iris infer`, `iris claim build` | a `procedure_kind:` line | Printed before the result |
 
 A `single` run names its model as `model_manifest`. A run of several
-inferences names its models as `[[model]]` tables, in the order the pipeline
+inferences names its models as `[[model]]` tables, in the order the procedure kind
 runs them, and no `model_manifest`:
 
 ```toml
-pipeline = "consensus"
+procedure_kind = "consensus"
 tokens = 16
 
 [[model]]
@@ -100,18 +100,18 @@ for every inference. Each model tokenizes the text with its own tokenizer and
 chat template, so the inferences have different prompt tokens, range counts and
 statements. Both statements name the same input text hash and source digest.
 
-Every command that acts on a run takes the run spec, so naming the pipeline
+Every command that acts on a run takes the run spec, so naming the procedure kind
 there is naming it for all of them:
 
 | Command | What it does with the name |
 | --- | --- |
-| `iris infer` | Runs the pipeline directly: each inference in turn, then the result |
-| `iris claim build` | Builds the pipeline's chain and records the name in the frozen run and the submission |
-| `iris claim pins` | Writes what a contract of the spec's pipeline over its models pins |
-| `iris claim check` | Requires the submission to be of the spec's pipeline and to hold what a claim of it does, each inference to be of the model the spec names for it, and the claim's last stage to run that pipeline's result program |
-| `iris challenge build` | Refuses a run spec that names another pipeline than the claim's, then rebuilds the claim's arrangement from what the claim froze: the text, the source inputs, the forms and each inference's claimed ids |
+| `iris infer` | Runs the procedure kind directly: each inference in turn, then the result |
+| `iris claim build` | Builds the procedure kind's chain and records the name in the frozen run and the submission |
+| `iris claim pins` | Writes what a contract of the spec's procedure kind over its models pins |
+| `iris claim check` | Requires the submission to be of the spec's procedure kind and to hold what a claim of it does, each inference to be of the model the spec names for it, and the claim's last stage to run that procedure kind's result program |
+| `iris challenge build` | Refuses a run spec that names another procedure kind than the claim's, then rebuilds the claim's arrangement from what the claim froze: the text, the source inputs, the forms and each inference's claimed ids |
 
-## The consensus pipeline
+## The consensus procedure kind
 
 The chain is `source`, the first model's stages (`m0_...`), the second model's
 (`m1_...`), then `result`. One checkpoint list covers all of it, so a challenger
@@ -145,7 +145,7 @@ such a claim, and a challenger rejects it on that record.
 inference's result under an `inference:` line:
 
 ```text
-pipeline: consensus
+procedure kind: consensus
 consensus: agree            # or: disagree, or why there is no consensus
 consensus code: 1
 same input: true
@@ -161,13 +161,13 @@ Like the single result stage, `consensus-result` is a few steps and one per
 form, so its checkpoint cannot be replayed at the challenge window
 ([short stages](../issues/short-stage-fraud-window.md)).
 
-## What holds a claim to its pipeline
+## What holds a claim to its procedure kind
 
 The name is a label a claimer writes, so nothing rests on it alone. A contract
-accepts claims of one pipeline (`check_pipeline`), and then holds the shape: the
-claim's last checkpoint must run that pipeline's result program
+accepts claims of one procedure kind (`check_procedure_kind`), and then holds the shape: the
+claim's last checkpoint must run that procedure kind's result program
 (`check_result_binding`), and every checkpoint must name a program in the
-approved set. A claim built as one pipeline and labelled as another ends in the
+approved set. A claim built as one procedure kind and labelled as another ends in the
 wrong program.
 
 ### What a contract checks of a consensus claim
@@ -190,10 +190,10 @@ For `consensus`:
 Nothing in iris itself. `iris claim pins` writes a consensus contract's pins as
 a file, and `iris claim check --pins` checks a claim against it.
 
-## Adding a pipeline
+## Adding a procedure kind
 
-In code a pipeline is a variant of `Pipeline`
-(`crates/inference/artifacts/src/pipeline.rs`) with its name, how many
+In code a procedure kind is a variant of `ProcedureKind`
+(`crates/inference/artifacts/src/procedure_kind.rs`) with its name, how many
 inferences it makes, its result program and its result stage's bindings. It
 also needs its result program (a stage project, a native routine and the
 function direct inference calls), what `iris infer` and `iris claim build`

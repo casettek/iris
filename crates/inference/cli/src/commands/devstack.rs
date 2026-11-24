@@ -40,11 +40,11 @@ pub(crate) enum DevstackCommand {
     },
     /// Send a claim, a challenge, a fault proof or a fault to the contracts,
     /// after attesting its blobs, relaying their block roots and
-    /// registering the claim's configuration. Prints what the contract said
+    /// registering the claim's procedure. Prints what the contract said
     /// and exits nonzero when it refused.
     Submit {
         what: SubmitWhat,
-        /// The run spec of the claim's configuration, to register it.
+        /// The run spec of the claim's procedure, to register it.
         #[arg(long)]
         run: Option<PathBuf>,
         /// The claim's `claim_submission.json`.
@@ -76,7 +76,7 @@ pub(crate) enum DevstackCommand {
     /// the two differ on any case.
     Replay {
         what: ReplayWhat,
-        /// The run spec of the configuration.
+        /// The run spec of the procedure.
         #[arg(long)]
         run: PathBuf,
         /// The claim's `claim_submission.json`.

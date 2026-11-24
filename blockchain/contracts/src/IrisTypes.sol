@@ -6,9 +6,9 @@ pragma solidity ^0.8.28;
 // one digest the stages compute over hex text, a source record's, keeps its
 // text here, so that it is hashed as the stages hash it.
 
-// --- a configuration: `inference_artifacts::registry::Configuration` ---
+// --- a procedure: `inference_artifacts::registry::Procedure` ---
 
-// A model the configuration pins. `commitments` is the part of the id's
+// A model the procedure pins. `commitments` is the part of the id's
 // encoding that lists what the model id hashes: a count, then each role and
 // commitment.
 struct Model {
@@ -22,9 +22,9 @@ struct Form {
     uint32 code;
 }
 
-struct Configuration {
+struct Procedure {
     uint32 version;
-    string pipeline;
+    string procedureKind;
     string family;
     // The part of the id's encoding that lists the approved programs: a
     // count, then each program's stage, id, chained inputs, run inputs and
@@ -40,7 +40,7 @@ struct Configuration {
     Form[] forms;
 }
 
-// What a configuration says of one input of one of its programs: where the
+// What a procedure says of one input of one of its programs: where the
 // input may come from. An input can be of more than one kind.
 struct InputRule {
     // Taken from an earlier stage: the stages that may produce it, each as
@@ -145,7 +145,7 @@ struct PostedBlob {
 }
 
 struct Claim {
-    bytes32 configuration;
+    bytes32 procedure;
     address claimer;
     bytes32 inputTextSha256;
     bytes32 sourceSha256;
@@ -200,7 +200,7 @@ struct Challenge {
 
 // --- a fault a challenger points at, with no replay ---
 
-// A checkpoint that is not one the configuration allows: the claim's own
+// A checkpoint that is not one the procedure allows: the claim's own
 // checkpoint at a stage, opened, and what is asked of it.
 //
 // With `input` empty the question is the stage's program, and nothing after

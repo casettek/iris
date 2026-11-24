@@ -1,5 +1,5 @@
 //! What a contract is configured with before any claim arrives: the programs
-//! of a pipeline and where each of their inputs comes from, the models, and
+//! of a procedure kind and where each of their inputs comes from, the models, and
 //! the parameters a claim must have run under. Read from a chain template
 //! and the stage projects' locks.
 
@@ -12,26 +12,26 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
 use crate::direct::{model_id_of, ModelCommitment, ModelManifest};
-use crate::pipeline::Pipeline;
+use crate::procedure_kind::ProcedureKind;
 
 /// Written beside a model import's `manifest.json`.
 pub const CONTRACT_PINS_JSON: &str = "contract_pins.json";
 
-pub const CONTRACT_PINS_VERSION: u32 = 5;
+pub const CONTRACT_PINS_VERSION: u32 = 6;
 
-/// What a contract pins before any claim arrives: the pipeline it accepts
-/// claims of, that pipeline's stage programs, and the model of each inference
-/// the pipeline makes, in order.
+/// What a contract pins before any claim arrives: the procedure kind it accepts
+/// claims of, that procedure kind's stage programs, and the model of each inference
+/// the procedure kind makes, in order.
 ///
-/// A model import writes the pins of the `single` pipeline over that model.
-/// `iris claim pins` writes those of any pipeline over the models a run spec
+/// A model import writes the pins of the `single` procedure kind over that model.
+/// `iris claim pins` writes those of any procedure kind over the models a run spec
 /// names.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ContractPins {
     pub version: u32,
-    pub pipeline: Pipeline,
-    pub programs: PipelinePins,
+    pub procedure_kind: ProcedureKind,
+    pub programs: ProgramPins,
     pub models: Vec<ModelPins>,
 }
 
@@ -42,7 +42,7 @@ pub struct ContractPins {
 /// The program ids are the ones locked in each stage's `Raster.lock` at
 /// import time, so re-locking a stage means importing again.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct PipelinePins {
+pub struct ProgramPins {
     /// The model family the stage programs belong to.
     pub family: String,
     /// The approved stage programs. A set: which stage runs where is the
@@ -61,7 +61,7 @@ pub struct StageProgram {
     pub chained_inputs: Vec<ChainedInput>,
     /// The inputs a run gives this program: the prompt, the claimed tokens,
     /// the run's configuration and schedule, the source and the forms. Each
-    /// is made from the run's new information, the configuration and the
+    /// is made from the run's new information, the procedure and the
     /// model, so a challenger makes its own. One a challenger cannot make the
     /// same is a matter for a later step, in which the claimer posts it on
     /// request.
@@ -120,18 +120,18 @@ pub struct RequiredParameters {
 }
 
 impl ContractPins {
-    /// The pins of an import: its model, and the pipeline its chain template
+    /// The pins of an import: its model, and the procedure kind its chain template
     /// describes, with the program id each stage project has locked.
     pub fn from_import(manifest: &ModelManifest, part: &str) -> Result<Self> {
-        Self::of(Pipeline::Single, &[(manifest, part)])
+        Self::of(ProcedureKind::Single, &[(manifest, part)])
     }
 
-    /// The pins of a pipeline over imported models: each model as its import
-    /// identifies it, and the stage programs of the pipeline's chain over the
+    /// The pins of a procedure kind over imported models: each model as its import
+    /// identifies it, and the stage programs of the procedure kind's chain over the
     /// imports' segments, with the program id each stage project has locked now.
-    pub fn of(pipeline: Pipeline, imports: &[(&ModelManifest, &str)]) -> Result<Self> {
+    pub fn of(procedure_kind: ProcedureKind, imports: &[(&ModelManifest, &str)]) -> Result<Self> {
         let parts: Vec<&str> = imports.iter().map(|(_, part)| *part).collect();
-        let template = pipeline.chain_template(&parts)?;
+        let template = procedure_kind.chain_template(&parts)?;
         let mut families: Vec<&str> = Vec::new();
         for (manifest, _) in imports {
             if !families.contains(&manifest.family.as_str()) {
@@ -140,8 +140,8 @@ impl ContractPins {
         }
         Ok(Self {
             version: CONTRACT_PINS_VERSION,
-            pipeline,
-            programs: PipelinePins::from_template(families.join("+"), &template)?,
+            procedure_kind,
+            programs: ProgramPins::from_template(families.join("+"), &template)?,
             models: imports
                 .iter()
                 .map(|(manifest, _)| ModelPins::of(manifest))
@@ -149,19 +149,23 @@ impl ContractPins {
         })
     }
 
-    /// Why these are not the pins of this pipeline over these models, if they
-    /// are not: another version, another pipeline, or other models.
-    pub fn mismatch(&self, pipeline: Pipeline, models: &[&ModelManifest]) -> Option<String> {
+    /// Why these are not the pins of this procedure kind over these models, if they
+    /// are not: another version, another procedure kind, or other models.
+    pub fn mismatch(
+        &self,
+        procedure_kind: ProcedureKind,
+        models: &[&ModelManifest],
+    ) -> Option<String> {
         if self.version != CONTRACT_PINS_VERSION {
             return Some(format!(
                 "they are version {}, and this build reads version {CONTRACT_PINS_VERSION}",
                 self.version
             ));
         }
-        if self.pipeline != pipeline {
+        if self.procedure_kind != procedure_kind {
             return Some(format!(
-                "they are of the `{}` pipeline, not `{pipeline}`",
-                self.pipeline
+                "they are of the `{}` procedure kind, not `{procedure_kind}`",
+                self.procedure_kind
             ));
         }
         let same = self.models.len() == models.len()
@@ -190,14 +194,14 @@ impl ModelPins {
     }
 }
 
-impl PipelinePins {
+impl ProgramPins {
     /// The stage programs a chain template names, with the program id each
     /// stage project has locked and the inputs each takes from earlier
     /// stages. `family` names the model families whose programs these are.
     pub fn from_template(family: String, template: &str) -> Result<Self> {
-        let mut run_inputs = pipeline_run_inputs(template)?;
-        let mut pinned_inputs = pipeline_pinned_inputs(template)?;
-        let stage_programs = pipeline_wiring(template)?
+        let mut run_inputs = chain_run_inputs(template)?;
+        let mut pinned_inputs = chain_pinned_inputs(template)?;
+        let stage_programs = chain_wiring(template)?
             .into_iter()
             .map(|(project, chained_inputs)| {
                 // A chained input's fixed values are its empty values.
@@ -272,8 +276,8 @@ fn project_name(project: &Path) -> Result<String> {
 /// a stage belongs to is kept as it is: two inferences of one chain may run
 /// different programs for stages of one name.
 fn stage_shape(name: &str) -> String {
-    let (mut shape, name) = match crate::pipeline::labelled_name(name) {
-        Some((inference, name)) => (crate::pipeline::inference_label(inference), name),
+    let (mut shape, name) = match crate::procedure_kind::labelled_name(name) {
+        Some((inference, name)) => (crate::procedure_kind::inference_label(inference), name),
         None => (String::new(), name),
     };
     let mut chars = name.chars().peekable();
@@ -310,7 +314,7 @@ fn stage_shape(name: &str) -> String {
 /// An input is chained when any stage of the project binds it `from` another
 /// stage. Where another stage of the same project binds it to a fixed
 /// external instead, that external is the input's empty value.
-pub fn pipeline_wiring(template: &str) -> Result<Vec<(PathBuf, Vec<ChainedInput>)>> {
+pub fn chain_wiring(template: &str) -> Result<Vec<(PathBuf, Vec<ChainedInput>)>> {
     let document: toml::Value =
         toml::from_str(template).context("the chain template is not valid TOML")?;
     let chain = document
@@ -415,7 +419,7 @@ pub const RUN_PLACEHOLDER_DIR: &str = "run-prompt-placeholder/";
 /// bound `{ run = ... }`, and those bound to an external or a chain input whose
 /// file is a run's placeholder (see [`RUN_PLACEHOLDER_DIR`]). Everything else
 /// a stage loads is an earlier output or model data.
-pub fn pipeline_run_inputs(template: &str) -> Result<BTreeMap<PathBuf, BTreeSet<String>>> {
+pub fn chain_run_inputs(template: &str) -> Result<BTreeMap<PathBuf, BTreeSet<String>>> {
     let document: toml::Value =
         toml::from_str(template).context("the chain template is not valid TOML")?;
     let chain = document
@@ -493,7 +497,7 @@ pub fn pipeline_run_inputs(template: &str) -> Result<BTreeMap<PathBuf, BTreeSet<
 /// file is not a run's, or a chain input whose files are not a run's, which
 /// lists a commitment per layer. These are the model's data and whatever
 /// else an import writes once.
-pub fn pipeline_pinned_inputs(
+pub fn chain_pinned_inputs(
     template: &str,
 ) -> Result<BTreeMap<PathBuf, BTreeMap<String, BTreeSet<String>>>> {
     let document: toml::Value =

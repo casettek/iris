@@ -351,14 +351,16 @@ impl OutputReader for HostReader {
 
     fn results(&self, payload: &[u8], index: &[u8]) -> Option<ResultInOutput> {
         let stated = crate::claim_check::output_json(payload, index).ok()?;
-        // The two pipelines' result records have no field in common at the
+        // The two procedure kinds' result records have no field in common at the
         // top, so an output reads as one of them or as neither.
         [
-            inference_artifacts::Pipeline::Consensus,
-            inference_artifacts::Pipeline::Single,
+            inference_artifacts::ProcedureKind::Consensus,
+            inference_artifacts::ProcedureKind::Single,
         ]
         .into_iter()
-        .find_map(|pipeline| crate::claim_check::result_in_output(pipeline, &stated).ok())
+        .find_map(|procedure_kind| {
+            crate::claim_check::result_in_output(procedure_kind, &stated).ok()
+        })
     }
 }
 
@@ -454,7 +456,7 @@ fn post_blobs(
 }
 
 /// The inputs a prepared run's stages were given that neither an earlier
-/// stage nor the configuration fixes, as run preparation wrote them beside
+/// stage nor the procedure fixes, as run preparation wrote them beside
 /// the run's manifest: the values its files were written from.
 pub fn posted_run(prepared: &PreparedRun) -> Result<BlobEntry> {
     let run_dir = prepared

@@ -20,7 +20,7 @@ Both chains run locally from [`blockchain/devstack/`](../../blockchain/devstack/
 | Post the blobs to Celestia | iris | `iris claim post` |
 | Sign what each blob holds, as the attester | iris, with the attester's key | `iris da attest` |
 | Read a block's root for the relayer | iris | `iris da block-root` |
-| Write the bytes of each contract call | iris | `iris evm configuration`, `iris evm claim`, `iris evm challenge`, `iris evm fault-proof` |
+| Write the bytes of each contract call | iris | `iris evm procedure`, `iris evm claim`, `iris evm challenge`, `iris evm fault-proof` |
 | Name Raster's proof programs for a deployment | iris | `iris evm proof-programs` |
 | Measure what a submission put on Celestia | iris | `iris da contents` |
 | Read a submitted claim's data back, as a challenger | iris | `iris claim fetch` |
@@ -125,7 +125,7 @@ Four contracts, in [`blockchain/contracts/src`](../../blockchain/contracts/src):
 
 | Contract | Holds | Entry points |
 | --- | --- | --- |
-| `IrisRegistry` | Each registered configuration, under its id | `register(bytes)`, by the owner |
+| `IrisRegistry` | Each registered procedure, under its id | `register(bytes)`, by the owner |
 | `DataRootOracle` | Each Celestia block's data root and time, by height | `post(height, dataRoot, time)`, by the relayer |
 | `IrisClaims` | Each accepted claim, whether a challenger showed it void, each admitted challenge, and whether a fault proof dismissed it | `submitClaim(bytes)`, `voidClaim(bytes)`, `submitChallenge(bytes)`, `submitFaultProof(bytes)` |
 | `RasterVerifier` | Nothing: RISC Zero's verifier of a Groth16 proof | `verify(seal, imageId, journalDigest)`, called by `IrisClaims` |
@@ -135,8 +135,8 @@ Each entry point takes one `bytes` argument, the ABI encoding of one struct
 (`iris_evm`), with its own ABI encoder: no ABI library is
 involved on either side of the format.
 
-**The registry** recomputes a configuration's id from what it is given, with
-the same encoding as `Configuration::id()`, and stores it under that id. A
+**The registry** recomputes a procedure's id from what it is given, with
+the same encoding as `Procedure::id()`, and stores it under that id. A
 claim names an id; the contract judges it by what is stored there.
 
 **A claim's id** is the SHA-256 of its ABI encoding. The contract encodes the
@@ -149,13 +149,13 @@ replay below compares the two.
 In the order of `iris claim check`. Each error has the name of the Rust
 rejection it is.
 
-1. The configuration is registered, and the claim has the shape of its
-   pipeline: one inference, or two and an agreement.
-2. Each inference's statement is the configuration's model and parameters
+1. The procedure is registered, and the claim has the shape of its
+   procedure kind: one inference, or two and an agreement.
+2. Each inference's statement is the procedure's model and parameters
    over the claimed input; its text is the one its record commits to; its
    record is valid.
 3. The source record is the one the statement names and meets what the
-   configuration requires; each result code is what the configuration's forms
+   procedure requires; each result code is what the procedure's forms
    give the submitted text; so is the agreement.
 4. Every blob is under a root the oracle holds, stays retrievable through the
    challenge period, carries the attester's signature, and names the claimer.
@@ -178,7 +178,7 @@ each call checks.
 
 `iris claim audit --submission <fetched>/claim_submission.json --run <spec>`
 asks these of every checkpoint of a claim and every input its program has,
-from its files and the configuration alone, with nothing run. A challenger does this first. With
+from its files and the procedure alone, with nothing run. A challenger does this first. With
 `--calls <file>` it writes every call a contract can be asked, each with what
 the contract is expected to answer, and the ones that point at a fault are
 the ones to send (`iris test devstack submit fault --calls <file> --call <n>`).
@@ -192,7 +192,7 @@ checkpoint is as it should be, and otherwise the claim is void of one of five
 faults.
 
 With no input named, the question is the stage's program. It must be one the
-claim's configuration approves, or the claim is void (`UnapprovedProgram`).
+claim's procedure approves, or the claim is void (`UnapprovedProgram`).
 
 With an input named, the question is where that input comes from. The caller
 gives the bytes of the stage's input list, which the checkpoint commits to by
@@ -200,19 +200,19 @@ hash, and the checkpoint the stage's own checkpoint names as the input's
 producer. The checks and their order are `CheckpointList::check_link`'s:
 
 1. The list is the one the checkpoint commits to, the stage's program is
-   approved, and the input is one the configuration lists for that program.
+   approved, and the input is one the procedure lists for that program.
    Otherwise the call reverts: it is not this question's to judge.
 2. The list is in its one canonical form and holds the input, or the claim
    is void (`UnreadableInputs`).
 3. An input the program is given from fixed data holds a commitment the
-   configuration pins for it, or the claim is void (`NotAPinnedValue`).
+   procedure pins for it, or the claim is void (`NotAPinnedValue`).
 4. An input the run gives holds the commitment of a value the claim posted,
    or the claim is void (`NotAPostedValue`). For that the caller presents the
    commitments of every run input the claim posted, which the contract holds
    to the hash it kept when the claim arrived (`NotThePostedInputs`). An
    input that may be either, such as the claimed ids, which are a pinned
    empty value in a prompt range, is held by either.
-5. An input from an earlier stage holds an empty value the configuration
+5. An input from an earlier stage holds an empty value the procedure
    allows, or the output commitment of the checkpoint its own checkpoint
    names as the producer, which must be an earlier one whose program may
    produce this input. Otherwise the claim is void (`NotAnEarlierOutput`).
@@ -238,7 +238,7 @@ name and field is plain text, printable ASCII with no quote and no backslash,
 so nothing is escaped. `InputManifest.sol` reads the list byte by byte in
 that form, and `read_input_manifest` in Rust holds the same rule.
 
-**The pinned inputs.** The configuration lists, for each program, every
+**The pinned inputs.** The procedure lists, for each program, every
 input the chain template binds to a file the import wrote, with every
 commitment it is bound to: the tokenizer, the embedding, the model's
 descriptor, the witness each stage checks its data with, the decoder and the
@@ -260,7 +260,7 @@ reading the input list byte by byte and opening the checkpoints.
 1. The claim is one the contract accepted, and its challenge period is open.
 2. The checkpoint the challenge gives is the claim's at that stage: its hash,
    with the Merkle path given, makes the claim's checkpoint root.
-3. The stage names a program the configuration approves. A stage that does
+3. The stage names a program the procedure approves. A stage that does
    not is `voidClaim`'s, and no replay of it is admitted.
 4. The challenge disputes that checkpoint's output.
 5. The challenger's trace is in the one shape the protocol fixes for its
@@ -338,7 +338,7 @@ again.
 
 ## Starting from the blockchains
 
-A challenger has the configuration and the models, and nothing of the
+A challenger has the procedure and the models, and nothing of the
 claimer's. A defender has its own run of the disputed stage, and nothing of
 the challenger's. Each reads the rest back from Celestia.
 
@@ -353,13 +353,13 @@ reads every blob the submission names and writes a new directory:
 | `posted_run.bin` | The inputs the claim's run was given, as it posted them |
 | `inference.toml` | The reader's run spec over what the claim posted |
 
-`--run` is the reader's own spec of the configuration: the pipeline, the
+`--run` is the reader's own spec of the procedure: the procedure kind, the
 models, the parameters, and for a claim with a source the recipe and the
 signer's key. The command keeps those and replaces the rest with what was
 posted: the prompt text the posted slices concatenate to, written into the
 spec itself, or the source's documents with their attestations.
 
-Nothing is written unless the spec describes the configuration the claim
+Nothing is written unless the spec describes the procedure the claim
 names, every blob was posted for the claimer, and together they hold the
 checkpoint list the claim names and the inputs of one run. The
 outputs that travel with the stand-in proof are not read: a challenger makes
@@ -420,7 +420,7 @@ honest party runs.
   check is run on the claim's inputs and its record stated valid, with no
   claimed token differing, and the result stage is run on that record. The
   claim arrives with a valid record, and a replay of the check shows it.
-  Built for a pipeline of one inference.
+  Built for a procedure kind of one inference.
 - `iris challenge post --commitment <corrupted_commit.bin> --out <file>` posts
   a challenge over the copy of a trace that `iris test corrupt-challenge` changed,
   in place of the bundle's own.
