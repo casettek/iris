@@ -17,7 +17,7 @@
       },
       {
         "stage": "prompt-bind",
-        "program_commitment": "a7adb6defc7a05fe2c1a119d0448aab435c95a1531b8d8ce968f1543e06bc8e8",
+        "program_commitment": "5473995de4e277557c4b7d0c75bd9f51d67f76fe3e647bfe2df072f3c5e5c1bc",
         "chained_inputs": [
           {
             "name": "previous",
@@ -67,7 +67,7 @@
       },
       {
         "stage": "prompt-check",
-        "program_commitment": "1539ad2b7589c325c026f07ddf7cdb514fde3e49b99848031a3fa1f229b8bd78",
+        "program_commitment": "c4ea5aec8466f7684fa5a73df5f8984a5a0d49a11f87c829aff1597d521e0d18",
         "chained_inputs": [
           {
             "name": "bound",
@@ -106,7 +106,7 @@
       },
       {
         "stage": "input-embedding",
-        "program_commitment": "c118d081a29e090de25670fbfe4dcd35befe8a0679f94d6b0c1e836579077acc",
+        "program_commitment": "32800a7c05c892add3e5180005b54ceb03823b5b9eb39e791eef76ca45a4b79b",
         "chained_inputs": [
           {
             "name": "previous",
@@ -153,7 +153,7 @@
       },
       {
         "stage": "sequence-check",
-        "program_commitment": "a866a8d3a52571ec8aaf7181a81203472d1c656ef7dbe3b8d52ac7dc204ecd88",
+        "program_commitment": "d34c80540ca301eb1406d569960b69ac1364085686b76204c9b4b85e286dd643",
         "chained_inputs": [
           {
             "name": "activations",
@@ -216,7 +216,7 @@
       },
       {
         "stage": "claim-result",
-        "program_commitment": "77066fab63b3e2c425d5212ed93acfb0989fa48cbaa38f97af77b0cf4991353b",
+        "program_commitment": "4e670cd5aac65aef6f02c3510eca7acf515003e5a9ed51524783b0e655a6e36b",
         "chained_inputs": [
           {
             "name": "check",
@@ -233,7 +233,7 @@
       },
       {
         "stage": "prefill-prepare-aux",
-        "program_commitment": "5260bd6207e3e44cfc89f048185445786a64755455c34d170f252be173dab38d",
+        "program_commitment": "699669b4c2d081e6e3417eda337f0d9a2f50b325ced57fc18976541ca5b18b68",
         "chained_inputs": [
           {
             "name": "embedded",
@@ -329,7 +329,7 @@
       },
       {
         "stage": "prefill-range",
-        "program_commitment": "50abb7c1c01fb0c8978900266a9883e8df672bd97d6731830e49d712cfdd12f5",
+        "program_commitment": "cc5007708541881c59dbfcbf18dad4c352868f5e8375bc2c15f23a612c82af99",
         "chained_inputs": [
           {
             "name": "activations",
