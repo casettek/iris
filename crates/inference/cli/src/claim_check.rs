@@ -812,7 +812,7 @@ pub fn check_challenge(
     });
     lines.push(CheckLine {
         check:
-            "challenge: trace body posted, proven and retrievable through the fault-proof window",
+            "challenge: trace body posted, proven and retrievable through the fault-proof period",
         rejection: inference_artifacts::availability::check_challenge_availability(
             layer,
             AvailabilityParameters::default(),

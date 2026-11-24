@@ -178,11 +178,11 @@ On a claim, at submission:
 On a challenge, at submission: it is about the checkpoint the claim lists at
 that stage, the stage names an approved program, Raster admits it, and the
 trace body is posted for the challenger it names, proven and retrievable past
-the submission time plus the fault-proof window.
+the submission time plus the fault-proof period.
 
 The parameters (`AvailabilityParameters`): retention, 30 days by default (to be
 confirmed against the network a contract settles on); challenge period, 7 days;
-fault-proof window, 2 days.
+fault-proof period, 2 days.
 
 ## The procedure registry
 

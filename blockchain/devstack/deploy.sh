@@ -58,7 +58,7 @@ journal=$(deploy RasterJournal)
 link=(--libraries "src/InputManifest.sol:InputManifest:$manifest"
   --libraries "src/RasterJournal.sol:RasterJournal:$journal")
 claims=$(deploy IrisClaims "$registry" "$oracle" "$IRIS_ATTESTER_ADDRESS" \
-  "$IRIS_RETENTION_SECS" "$IRIS_CHALLENGE_PERIOD_SECS" "$IRIS_FAULT_PROOF_WINDOW_SECS" \
+  "$IRIS_RETENTION_SECS" "$IRIS_CHALLENGE_PERIOD_SECS" "$IRIS_FAULT_PROOF_PERIOD_SECS" \
   "$verifier" "$transition" "$authorization")
 [ -n "$oracle" ] && [ -n "$registry" ] && [ -n "$verifier" ] && [ -n "$claims" ] || {
   echo "a contract did not deploy" >&2
@@ -86,4 +86,4 @@ done > "$errors"
   --set "attester=$IRIS_ATTESTER_ADDRESS" \
   --set "retention_secs=$IRIS_RETENTION_SECS" \
   --set "challenge_period_secs=$IRIS_CHALLENGE_PERIOD_SECS" \
-  --set "fault_proof_window_secs=$IRIS_FAULT_PROOF_WINDOW_SECS"
+  --set "fault_proof_period_secs=$IRIS_FAULT_PROOF_PERIOD_SECS"

@@ -271,7 +271,7 @@ reading the input list byte by byte and opening the checkpoints.
    with. A window the challenger chose, or another packing, is a trace no
    defender is held to answer.
 6. The trace body is posted under a root the oracle holds, stays retrievable
-   through the fault-proof window, carries the attester's signature, and names
+   through the fault-proof period, carries the attester's signature, and names
    the challenger.
 
 A challenge gives the header of its trace whole, and the contract makes the

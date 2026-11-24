@@ -37,7 +37,7 @@ contract IrisClaims {
     /// How long a claim stays open to challenge.
     uint64 public immutable challengePeriod;
     /// How long a defender has to answer a challenge.
-    uint64 public immutable faultProofWindow;
+    uint64 public immutable faultProofPeriod;
     /// RISC Zero's verifier of a Groth16 proof.
     IRiscZeroVerifier public immutable verifier;
     /// Raster's transition program: the one a fault proof is a proof of.
@@ -183,7 +183,7 @@ contract IrisClaims {
         address attester_,
         uint64 retention_,
         uint64 challengePeriod_,
-        uint64 faultProofWindow_,
+        uint64 faultProofPeriod_,
         IRiscZeroVerifier verifier_,
         bytes32 transitionImageId_,
         bytes32 authorizationImageId_
@@ -194,7 +194,7 @@ contract IrisClaims {
         attester = attester_;
         retention = retention_;
         challengePeriod = challengePeriod_;
-        faultProofWindow = faultProofWindow_;
+        faultProofPeriod = faultProofPeriod_;
         require(address(verifier_) != address(0), "no verifier");
         verifier = verifier_;
         transitionImageId = transitionImageId_;
@@ -457,7 +457,7 @@ contract IrisClaims {
         }
         bytes32 traceHeaderDigest = IrisEncoding.traceHeaderDigest(challenge.header);
 
-        _checkPosted(challenge.availability, challenge.challenger, uint64(block.timestamp) + faultProofWindow);
+        _checkPosted(challenge.availability, challenge.challenger, uint64(block.timestamp) + faultProofPeriod);
         bool body;
         for (uint256 i = 0; i < challenge.availability.length; i++) {
             body = body || _has(challenge.availability[i].contents.traceBodies, traceHeaderDigest);

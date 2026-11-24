@@ -47,7 +47,7 @@ pub const DEFAULT_RETENTION_SECS: u64 = 30 * 24 * 60 * 60;
 /// How long a claim stays open to challenge, by default.
 pub const DEFAULT_CHALLENGE_PERIOD_SECS: u64 = 7 * 24 * 60 * 60;
 /// How long a defender has to answer an admitted challenge, by default.
-pub const DEFAULT_FAULT_PROOF_WINDOW_SECS: u64 = 2 * 24 * 60 * 60;
+pub const DEFAULT_FAULT_PROOF_PERIOD_SECS: u64 = 2 * 24 * 60 * 60;
 
 /// Where a blob is: the block it was included in, its namespace and the
 /// layer's commitment to its bytes, all in lowercase hex where they are
@@ -619,7 +619,7 @@ pub struct AvailabilityParameters {
     /// How long a claim stays open to challenge after it is submitted.
     pub challenge_period_secs: u64,
     /// How long a defender has to answer a challenge after it is submitted.
-    pub fault_proof_window_secs: u64,
+    pub fault_proof_period_secs: u64,
 }
 
 impl Default for AvailabilityParameters {
@@ -627,7 +627,7 @@ impl Default for AvailabilityParameters {
         Self {
             retention_secs: DEFAULT_RETENTION_SECS,
             challenge_period_secs: DEFAULT_CHALLENGE_PERIOD_SECS,
-            fault_proof_window_secs: DEFAULT_FAULT_PROOF_WINDOW_SECS,
+            fault_proof_period_secs: DEFAULT_FAULT_PROOF_PERIOD_SECS,
         }
     }
 }
@@ -848,7 +848,7 @@ pub fn check_challenge_availability(
         parameters.retention_secs,
         blobs,
         challenger,
-        challenged_at.saturating_add(parameters.fault_proof_window_secs),
+        challenged_at.saturating_add(parameters.fault_proof_period_secs),
     )?;
     if !holds(&contents.trace_bodies, header_digest) {
         return Err(AvailabilityRejection::TraceBodyNotPosted {
@@ -1147,7 +1147,7 @@ mod tests {
         let parameters = AvailabilityParameters {
             retention_secs: 1_000,
             challenge_period_secs: 500,
-            fault_proof_window_secs: 200,
+            fault_proof_period_secs: 200,
         };
         let list = BlobContents {
             checkpoint_lists: vec![String::from("cc")],

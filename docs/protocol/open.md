@@ -12,7 +12,7 @@ decided. The last is what Raster would have to change.
   challenge or a dismissal. A claim with an unanswered challenge and a claim
   with none are held the same way. The clocks that close a claim or a
   challenge, bonds, and what an unchallenged claim becomes are not built.
-  `submitFaultProof` reads no clock: the fault-proof window is used only for
+  `submitFaultProof` reads no clock: the fault-proof period is used only for
   how long a challenge's trace must stay retrievable.
 - **Several challenges of one claim.** Each is admitted and dismissed alone.
   How they are settled together belongs with the clocks and bonds.
