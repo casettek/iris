@@ -1,9 +1,9 @@
-//! The gate's consensus leg: one inference on two models, and whether they
+//! The gate's consensus scenario: one inference on two models, and whether they
 //! agree.
 //!
 //! The second model is the other family's bundle, so the chain holds both
 //! families' stage programs under their labels. The run's prompt is built from
-//! the source leg's signed documents. Each model's answer is learned first by
+//! the source scenario's signed documents. Each model's answer is learned first by
 //! direct inference and named as a form, both with one code, so the claim's
 //! result stage finds two different texts that stand for the same thing.
 //!
@@ -32,7 +32,7 @@ use crate::claim::{
 
 /// The code both models' answers are given.
 const AGREED_CODE: u32 = 7;
-/// The stage of the second inference whose checkpoint the leg falsifies: long
+/// The stage of the second inference whose checkpoint the scenario falsifies: long
 /// enough to replay on either family's bundle.
 const FALSIFIED_STAGE: &str = "m1_prompt_check_p0";
 
@@ -47,7 +47,7 @@ fn import_other_family(
     let other = ModelFamily::ALL
         .into_iter()
         .find(|family| *family != own)
-        .context("this build has one model family, and a consensus leg needs two")?
+        .context("this build has one model family, and a consensus scenario needs two")?
         .parity_bundle();
     let artifact_root = dir.join("model-artifacts");
     let mut import = command(exe, root);
@@ -77,7 +77,7 @@ fn write_run(dir: &Path, source: &LoadedSource, models: &[&Path; 2]) -> Result<P
     Ok(spec)
 }
 
-pub(super) fn run_consensus_leg(
+pub(super) fn run_consensus_scenario(
     root: &Path,
     run_dir: &Path,
     exe: &Path,
@@ -103,7 +103,7 @@ pub(super) fn run_consensus_leg(
         .collect();
     ensure!(
         texts.len() == 2 && texts[0] != texts[1],
-        "the two models gave one answer, so the leg cannot show two texts agreeing: {texts:?}"
+        "the two models gave one answer, so the scenario cannot show two texts agreeing: {texts:?}"
     );
     for text in &texts {
         source.recipe.forms.push(FormFile {

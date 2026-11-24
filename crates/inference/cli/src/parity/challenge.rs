@@ -1,9 +1,9 @@
-//! The challenge leg: a claim that differs from honest execution is found by a
+//! The challenge scenario: a claim that differs from honest execution is found by a
 //! challenger's own recomputation, and the stage it differs at replays through
 //! authenticated Raster. Runs the `challenge build` command a challenger runs.
 //!
 //! A stage too short for the replay window cannot be challenged yet (see
-//! `docs/issues/short-stage-fraud-window.md`), so the leg only checks that
+//! `docs/issues/short-stage-fraud-window.md`), so the scenario only checks that
 //! recomputation finds it.
 
 use std::fs;
@@ -52,7 +52,7 @@ fn long_enough_to_challenge(stage: &str) -> bool {
         || stage.starts_with("range_c")
 }
 
-pub(super) struct Leg<'a> {
+pub(super) struct Scenario<'a> {
     pub root: &'a Path,
     pub dir: PathBuf,
     pub exe: &'a Path,
@@ -77,27 +77,32 @@ struct RunInputs {
     other_text_hash: bool,
 }
 
-pub(super) fn run_challenge_leg(leg: &Leg) -> Result<Value> {
-    fs::create_dir_all(&leg.dir)?;
-    let spec = run_spec(leg, leg.model_path, "inference.toml")?;
-    let inputs = honest_inputs(leg)?;
-    let (other_path, other) = import_other_model(leg)?;
+pub(super) fn run_challenge_scenario(scenario: &Scenario) -> Result<Value> {
+    fs::create_dir_all(&scenario.dir)?;
+    let spec = run_spec(scenario, scenario.model_path, "inference.toml")?;
+    let inputs = honest_inputs(scenario)?;
+    let (other_path, other) = import_other_model(scenario)?;
     let honest_manifest = render(
-        leg.model_path,
-        leg.model,
+        scenario.model_path,
+        scenario.model,
         &inputs,
-        &leg.dir.join("honest-run"),
+        &scenario.dir.join("honest-run"),
     )?;
-    let other_manifest = render(&other_path, &other, &inputs, &leg.dir.join("other-run"))?;
+    let other_manifest = render(
+        &other_path,
+        &other,
+        &inputs,
+        &scenario.dir.join("other-run"),
+    )?;
 
-    let honest = claim(leg, "honest", &spec, Some(leg.claimed.to_vec()))?;
+    let honest = claim(scenario, "honest", &spec, Some(scenario.claimed.to_vec()))?;
     let context = honest.claim_bundle_path.as_path();
     let honest_trace = read_checkpoint_list(&honest.checkpoint_list_path)?;
     let mut replays = Vec::new();
 
     // An honest claim has nothing to dispute and nothing to reject.
     let log = challenge(
-        leg,
+        scenario,
         "honest",
         &spec,
         context,
@@ -110,7 +115,7 @@ pub(super) fn run_challenge_leg(leg: &Leg) -> Result<Value> {
 
     for stage in FALSIFIED_STAGES {
         let name = format!("falsified-{stage}");
-        let dir = leg.dir.join(&name);
+        let dir = scenario.dir.join(&name);
         fs::create_dir_all(&dir)?;
         let hashes = dir.join("checkpoints.txt");
         corrupt_checkpoint_hashes(CorruptCheckpointHashesOptions {
@@ -119,7 +124,7 @@ pub(super) fn run_challenge_leg(leg: &Leg) -> Result<Value> {
             output_path: Some(hashes.clone()),
             selection: CorruptCheckpointSelection::Stage(stage.to_string()),
         })?;
-        let outcome = expect_divergence(leg, &name, &spec, context, &hashes, stage)?;
+        let outcome = expect_divergence(scenario, &name, &spec, context, &hashes, stage)?;
         // The same replay, against a claimer that ran this stage on the honest
         // inputs and stated another output for it. A falsified hash has no
         // checkpoint behind it, so this is the claim a contract would see: a
@@ -131,13 +136,13 @@ pub(super) fn run_challenge_leg(leg: &Leg) -> Result<Value> {
             .find(|checkpoint| checkpoint.stage == stage)
             .with_context(|| format!("the honest claim has no `{stage}`"))?;
         stated.output_sha256 = "5a".repeat(32);
-        let outcome = dispute_tie(leg, &name, &lying, &honest_trace, stage, outcome)?;
+        let outcome = dispute_tie(scenario, &name, &lying, &honest_trace, stage, outcome)?;
         ensure!(
             outcome["settled_by"] == "replay" && outcome["raster_admits"] == true,
             "`{name}`: a claim that states another output was not settled by a replay Raster admits"
         );
         let outcome = contract_challenge(
-            leg,
+            scenario,
             &name,
             &spec,
             &honest,
@@ -166,7 +171,7 @@ pub(super) fn run_challenge_leg(leg: &Leg) -> Result<Value> {
                 selection: CorruptCheckpointSelection::Stage(stage.to_string()),
                 fault: crate::lies::CorruptFault::Output,
                 claimer: Some(liar.to_string()),
-                out_dir: leg.dir.join(out),
+                out_dir: scenario.dir.join(out),
             })
         };
         let stage = FALSIFIED_STAGES[0];
@@ -186,7 +191,7 @@ pub(super) fn run_challenge_leg(leg: &Leg) -> Result<Value> {
         );
         let claim: inference_artifacts::checks::ClaimSubmission =
             read_json(&lying.submission_path)?;
-        let posting = crate::posting::PreparedPosting::read(&leg.dir.join("corrupted-claim"))?;
+        let posting = crate::posting::PreparedPosting::read(&scenario.dir.join("corrupted-claim"))?;
         ensure!(
             claim.claimer == liar
                 && inference_artifacts::availability::check_holds(
@@ -243,11 +248,11 @@ pub(super) fn run_challenge_leg(leg: &Leg) -> Result<Value> {
                 selection: CorruptCheckpointSelection::Stage(stage.to_string()),
                 fault,
                 claimer: Some(liar.to_string()),
-                out_dir: leg.dir.join(out),
+                out_dir: scenario.dir.join(out),
             })?;
             let mut claim: inference_artifacts::checks::ClaimSubmission =
                 read_json(&lie.submission_path)?;
-            claim.availability = crate::posting::PreparedPosting::read(&leg.dir.join(out))?
+            claim.availability = crate::posting::PreparedPosting::read(&scenario.dir.join(out))?
                 .post(layer.as_ref())
                 .with_context(|| format!("`{out}`: posting the lying claim's data"))?;
             inference_artifacts::write_json(&lie.submission_path, &claim)?;
@@ -274,7 +279,7 @@ pub(super) fn run_challenge_leg(leg: &Leg) -> Result<Value> {
                 run_spec_path: spec.to_path_buf(),
                 pins_path: None,
                 da_dir: None,
-                out_dir: leg.dir.join(format!("{out}-fetched")),
+                out_dir: scenario.dir.join(format!("{out}-fetched")),
             })
             .with_context(|| format!("`{out}`: reading the lying claim back from the layer"))?;
             let audit = crate::audit::audit_claim(crate::audit::AuditClaimOptions {
@@ -297,7 +302,7 @@ pub(super) fn run_challenge_leg(leg: &Leg) -> Result<Value> {
     }
 
     // A false result. The result stage is a handful of steps, under the
-    // replay window, so the leg checks only that recomputation finds it.
+    // replay window, so the scenario checks only that recomputation finds it.
     {
         let mut lying = honest_trace.clone();
         let stated = lying
@@ -323,10 +328,10 @@ pub(super) fn run_challenge_leg(leg: &Leg) -> Result<Value> {
 
     // Correct execution over ids that are not the greedy output: every
     // checkpoint agrees, and the claim's own record refutes it.
-    let not_greedy = not_greedy_ids(leg)?;
-    let refuted = claim(leg, "not-greedy", &spec, Some(not_greedy.clone()))?;
+    let not_greedy = not_greedy_ids(scenario)?;
+    let refuted = claim(scenario, "not-greedy", &spec, Some(not_greedy.clone()))?;
     let log = challenge(
-        leg,
+        scenario,
         "not-greedy",
         &spec,
         &refuted.claim_bundle_path,
@@ -337,22 +342,22 @@ pub(super) fn run_challenge_leg(leg: &Leg) -> Result<Value> {
         "a non-greedy claim was not rejected on its final record"
     );
 
-    replays.extend(posted_lies(leg, &spec, &honest, &refuted)?);
+    replays.extend(posted_lies(scenario, &spec, &honest, &refuted)?);
 
     // An honest claimer that ran a different model. Nothing of that model is
     // available to the challenger, and the run differs at the first stage that
     // names it.
-    let other_spec = run_spec(leg, &other_path, "other-model.toml")?;
-    let elsewhere = claim(leg, "other-model", &other_spec, None)?;
+    let other_spec = run_spec(scenario, &other_path, "other-model.toml")?;
+    let elsewhere = claim(scenario, "other-model", &other_spec, None)?;
     replays.push(expect_claim_found(
-        leg,
+        scenario,
         "other-model",
         &spec,
         &elsewhere,
         &honest_trace,
         "prompt_bind_p0",
     )?);
-    let log = fs::read_to_string(leg.dir.join("other-model/challenge/challenge.log"))?;
+    let log = fs::read_to_string(scenario.dir.join("other-model/challenge/challenge.log"))?;
     ensure!(
         log.contains("warning: the claim names model"),
         "the challenger did not report that the claim names another model"
@@ -424,13 +429,13 @@ pub(super) fn run_challenge_leg(leg: &Leg) -> Result<Value> {
     ];
     for (name, stage, run) in doctored {
         let manifest = render(
-            leg.model_path,
-            leg.model,
+            scenario.model_path,
+            scenario.model,
             &run,
-            &leg.dir.join(name).join("run"),
+            &scenario.dir.join(name).join("run"),
         )?;
         replays.push(expect_found(
-            leg,
+            scenario,
             name,
             &spec,
             context,
@@ -449,11 +454,11 @@ pub(super) fn run_challenge_leg(leg: &Leg) -> Result<Value> {
     // Change every bucket so each of these consuming stages sees a real mutation.
     let changed_tokenizer = tokenizer_substitution_binding(
         &honest_manifest,
-        &leg.dir.join("tokenizer-substitution-inputs"),
+        &scenario.dir.join("tokenizer-substitution-inputs"),
     )?;
     // A family whose layers take no per-layer input has no auxiliary stage to
     // give another model's table to, and none to bind to the wrong range.
-    let auxiliary = leg.model.family()?.has_auxiliary_stages();
+    let auxiliary = scenario.model.family()?.has_auxiliary_stages();
     let mut substituted = vec![
         (
             "tokenizer-at-bind",
@@ -495,7 +500,7 @@ pub(super) fn run_challenge_leg(leg: &Leg) -> Result<Value> {
         substituted.push((
             "swapped-ple",
             "aux_p0_l0",
-            swapped_ple(leg, &honest_manifest)?,
+            swapped_ple(scenario, &honest_manifest)?,
         ));
     }
     substituted.extend([
@@ -515,7 +520,7 @@ pub(super) fn run_challenge_leg(leg: &Leg) -> Result<Value> {
         ),
         // No wiring presents an earlier range's record as the claim's: the
         // final record is the last check's own output, and the three-path
-        // leg checks that an earlier check's record carries a fault.
+        // scenario checks that an earlier check's record carries a fault.
         (
             "first-prompt-context",
             "check_c0",
@@ -524,7 +529,7 @@ pub(super) fn run_challenge_leg(leg: &Leg) -> Result<Value> {
     ]);
     for (name, stage, manifest) in &substituted {
         replays.push(expect_found(
-            leg,
+            scenario,
             name,
             &spec,
             context,
@@ -539,7 +544,7 @@ pub(super) fn run_challenge_leg(leg: &Leg) -> Result<Value> {
         .filter(|(name, _, _)| *name != "other-decoder")
     {
         replays.push(expect_semantic_rejection(
-            leg,
+            scenario,
             &format!("{name}-self-replay"),
             manifest,
         )?);
@@ -549,15 +554,15 @@ pub(super) fn run_challenge_leg(leg: &Leg) -> Result<Value> {
     // rejection must come from the committed semantic fault.
     let (changed_decoder, changed_proof) = decoder_substitution_manifests(
         &honest_manifest,
-        &leg.dir.join("decoder-substitution-inputs"),
+        &scenario.dir.join("decoder-substitution-inputs"),
     )?;
     replays.push(expect_semantic_rejection(
-        leg,
+        scenario,
         "decoder-self-replay",
         &changed_decoder,
     )?);
     replays.push(expect_semantic_rejection(
-        leg,
+        scenario,
         "decoder-and-proof-self-replay",
         &changed_proof,
     )?);
@@ -604,7 +609,7 @@ pub(super) fn run_challenge_leg(leg: &Leg) -> Result<Value> {
     ]);
     for (name, manifest) in &rewired {
         replays.push(expect_semantic_rejection(
-            leg,
+            scenario,
             &format!("{name}-self-replay"),
             manifest,
         )?);
@@ -617,28 +622,33 @@ fn has_line(log: &str, wanted: &str) -> bool {
     log.lines().any(|line| line.trim() == wanted)
 }
 
-fn run_spec(leg: &Leg, model_path: &Path, file: &str) -> Result<PathBuf> {
-    let path = leg.dir.join(file);
+fn run_spec(scenario: &Scenario, model_path: &Path, file: &str) -> Result<PathBuf> {
+    let path = scenario.dir.join(file);
     fs::write(
         &path,
         format!(
             "model_manifest = {}\nprompt = {}\nraw_prompt = {}\ntokens = {}\n",
             serde_json::to_string(model_path)?,
-            serde_json::to_string(&leg.case.prompt)?,
-            leg.case.raw_prompt,
-            leg.case.tokens
+            serde_json::to_string(&scenario.case.prompt)?,
+            scenario.case.raw_prompt,
+            scenario.case.tokens
         ),
     )?;
     Ok(path)
 }
 
-fn claim(leg: &Leg, name: &str, spec: &Path, ids: Option<Vec<u32>>) -> Result<ClaimBuildResult> {
-    let base_dir = leg.dir.join(name).join("claim");
+fn claim(
+    scenario: &Scenario,
+    name: &str,
+    spec: &Path,
+    ids: Option<Vec<u32>>,
+) -> Result<ClaimBuildResult> {
+    let base_dir = scenario.dir.join(name).join("claim");
     fs::create_dir_all(&base_dir)?;
     build_posted_claim(ClaimBuildOptions {
         base_dir,
         run_spec_path: spec.to_path_buf(),
-        current_exe: leg.exe.to_path_buf(),
+        current_exe: scenario.exe.to_path_buf(),
         staged_backend: StagedExecutionBackend::InProcess,
         claimed_token_ids: ids,
         direct_output_ids: None,
@@ -648,8 +658,14 @@ fn claim(leg: &Leg, name: &str, spec: &Path, ids: Option<Vec<u32>>) -> Result<Cl
 }
 
 /// Runs `challenge build` the way a challenger does and returns its output.
-fn challenge(leg: &Leg, name: &str, spec: &Path, context: &Path, hashes: &Path) -> Result<String> {
-    let (built, log) = attempt_challenge(leg, name, spec, context, hashes)?;
+fn challenge(
+    scenario: &Scenario,
+    name: &str,
+    spec: &Path,
+    context: &Path,
+    hashes: &Path,
+) -> Result<String> {
+    let (built, log) = attempt_challenge(scenario, name, spec, context, hashes)?;
     built.with_context(|| format!("challenge `{name}`"))?;
     Ok(log)
 }
@@ -657,16 +673,16 @@ fn challenge(leg: &Leg, name: &str, spec: &Path, context: &Path, hashes: &Path) 
 /// Runs `challenge build` and returns whether it built a challenge and what
 /// it printed either way.
 fn attempt_challenge(
-    leg: &Leg,
+    scenario: &Scenario,
     name: &str,
     spec: &Path,
     context: &Path,
     hashes: &Path,
 ) -> Result<(Result<f64>, String)> {
-    let dir = leg.dir.join(name).join("challenge");
+    let dir = scenario.dir.join(name).join("challenge");
     fs::create_dir_all(&dir)?;
     let log = dir.join("challenge.log");
-    let mut run = command(leg.exe, leg.root);
+    let mut run = command(scenario.exe, scenario.root);
     run.current_dir(&dir)
         .args(["challenge", "build", "--run"])
         .arg(spec)
@@ -683,7 +699,7 @@ fn attempt_challenge(
 /// replay. For a shorter one the challenger's command is still run, for what
 /// it reports before the replay it cannot finish.
 fn expect_claim_found(
-    leg: &Leg,
+    scenario: &Scenario,
     name: &str,
     spec: &Path,
     claim: &ClaimBuildResult,
@@ -705,12 +721,12 @@ fn expect_claim_found(
     );
     let (context, hashes) = (&claim.claim_bundle_path, &claim.checkpoint_hashes_path);
     if long_enough_to_challenge(stage) {
-        let outcome = expect_divergence(leg, name, spec, context, hashes, stage)?;
-        return dispute_tie(leg, name, &claimed, honest, stage, outcome);
+        let outcome = expect_divergence(scenario, name, spec, context, hashes, stage)?;
+        return dispute_tie(scenario, name, &claimed, honest, stage, outcome);
     }
     // The replay of a stage this short is refused, so whether the command
     // built a challenge is not this case's result.
-    let (_built, _log) = attempt_challenge(leg, name, spec, context, hashes)?;
+    let (_built, _log) = attempt_challenge(scenario, name, spec, context, hashes)?;
     Ok(json!({"case": name, "stage": stage, "replayed": false}))
 }
 
@@ -718,7 +734,7 @@ fn expect_claim_found(
 /// authenticated replay matches the challenger's native checkpoint and differs
 /// from the claim's.
 fn expect_divergence(
-    leg: &Leg,
+    scenario: &Scenario,
     name: &str,
     spec: &Path,
     context: &Path,
@@ -726,7 +742,7 @@ fn expect_divergence(
     stage: &str,
 ) -> Result<Value> {
     let started = Instant::now();
-    let log = challenge(leg, name, spec, context, hashes)?;
+    let log = challenge(scenario, name, spec, context, hashes)?;
     ensure!(
         has_line(&log, &format!("divergence found: {stage}")),
         "challenge `{name}` did not find `{stage}`: {}",
@@ -734,7 +750,7 @@ fn expect_divergence(
             .find(|line| line.starts_with("divergence found") || line.starts_with("no divergence"))
             .unwrap_or("it reported no outcome")
     );
-    let replay = leg
+    let replay = scenario
         .dir
         .join(name)
         .join("challenge/target/staged-infer/runs");
@@ -768,7 +784,7 @@ fn expect_divergence(
 /// also replay.
 #[allow(clippy::too_many_arguments)]
 fn expect_found(
-    leg: &Leg,
+    scenario: &Scenario,
     name: &str,
     spec: &Path,
     context: &Path,
@@ -776,7 +792,7 @@ fn expect_found(
     manifest: &str,
     stage: &str,
 ) -> Result<Value> {
-    let (hashes, claimed) = claimed_run(leg, name, manifest)?;
+    let (hashes, claimed) = claimed_run(scenario, name, manifest)?;
     let found = locate_divergence(&hashes, &claimed, &hashes, honest)
         .with_context(|| format!("`{name}` did not differ from honest execution"))?;
     ensure!(
@@ -785,15 +801,15 @@ fn expect_found(
         found.stage
     );
     if long_enough_to_challenge(stage) {
-        let outcome = expect_divergence(leg, name, spec, context, &hashes, stage)?;
-        return dispute_tie(leg, name, &claimed, honest, stage, outcome);
+        let outcome = expect_divergence(scenario, name, spec, context, &hashes, stage)?;
+        return dispute_tie(scenario, name, &claimed, honest, stage, outcome);
     }
     Ok(json!({"case": name, "stage": stage, "replayed": false}))
 }
 
 /// Where the challenger's authenticated replay of `stage` was written.
-fn replay_stage_dir(leg: &Leg, name: &str, stage: &str) -> Result<PathBuf> {
-    let runs = leg
+fn replay_stage_dir(scenario: &Scenario, name: &str, stage: &str) -> Result<PathBuf> {
+    let runs = scenario
         .dir
         .join(name)
         .join("challenge/target/staged-infer/runs");
@@ -814,7 +830,7 @@ fn replay_stage_dir(leg: &Leg, name: &str, stage: &str) -> Result<PathBuf> {
 /// Raster stage challenge built from the claimer's checkpoint and the
 /// challenger's trace must be one Raster itself admits, about that checkpoint.
 fn dispute_tie(
-    leg: &Leg,
+    scenario: &Scenario,
     name: &str,
     claimed: &CheckpointList,
     honest: &CheckpointList,
@@ -837,7 +853,7 @@ fn dispute_tie(
     if rule != Settlement::Replay {
         return Ok(outcome);
     }
-    let replay = replay_stage_dir(leg, name, stage)?;
+    let replay = replay_stage_dir(scenario, name, stage)?;
     let commitment = CommitmentFile::read_memory(&replay.join("commit.bin"))?;
     let challenge = stage_challenge(
         &claimed,
@@ -878,7 +894,7 @@ fn dispute_tie(
 /// about the claimer's checkpoint. A contract admits it; one whose body was
 /// not posted, or is gone before a defender's window ends, it refuses.
 fn contract_challenge(
-    leg: &Leg,
+    scenario: &Scenario,
     name: &str,
     spec: &Path,
     honest: &ClaimBuildResult,
@@ -889,7 +905,7 @@ fn contract_challenge(
 ) -> Result<Value> {
     use inference_artifacts::checks::{ClaimSubmission, CLAIM_SUBMISSION_JSON};
 
-    let dir = leg.dir.join(name).join("contract");
+    let dir = scenario.dir.join(name).join("contract");
     fs::create_dir_all(&dir)?;
     let list_path = dir.join(inference_artifacts::CHECKPOINTS_TXT);
     write_checkpoint_hashes(&list_path, &checkpoint_hashes(lying)?)?;
@@ -939,7 +955,7 @@ fn contract_challenge(
         .iter()
         .position(|checkpoint| checkpoint.stage == stage)
         .with_context(|| format!("the lying claim has no `{stage}`"))?;
-    let replay = replay_stage_dir(leg, name, stage)?;
+    let replay = replay_stage_dir(scenario, name, stage)?;
     let challenger = "0x000000000000000000000000000000000000c4a1";
     let submission = crate::claim_check::challenge_submission(
         &claim.checkpoints_root,
@@ -1056,10 +1072,10 @@ fn contract_challenge(
         // And a challenge built from that directory alone, with nothing of
         // the claimer's run: the run is prepared from the spec over what the
         // claim posted, and it finds and replays the same stage.
-        let posted_dir = leg.dir.join(name).join("posted-challenge");
+        let posted_dir = scenario.dir.join(name).join("posted-challenge");
         fs::create_dir_all(&posted_dir)?;
         let log = posted_dir.join("challenge.log");
-        let mut run = command(leg.exe, leg.root);
+        let mut run = command(scenario.exe, scenario.root);
         run.current_dir(&posted_dir)
             .args(["challenge", "build", "--run"])
             .arg(&fetched.run_spec_path)
@@ -1099,11 +1115,11 @@ fn contract_challenge(
 /// model's: its last check states a valid record, and the result stage is
 /// run on that. It arrives with a valid record. The challenger differs at
 /// the check. The check of the pinned model is under the replay window, so
-/// the leg checks only that the challenger goes to replay it. The same holds
+/// the scenario checks only that the challenger goes to replay it. The same holds
 /// of the layer stage given another layer's weights on the small model of a
 /// family with no auxiliary stages.
 fn posted_lies(
-    leg: &Leg,
+    scenario: &Scenario,
     spec: &Path,
     honest: &ClaimBuildResult,
     not_greedy: &ClaimBuildResult,
@@ -1184,7 +1200,7 @@ fn posted_lies(
     let mut outcomes = Vec::new();
     for (name, source, stage, fault) in cases {
         let forged = fault == CorruptFault::Verdict;
-        let dir = leg.dir.join(name);
+        let dir = scenario.dir.join(name);
         let lie = crate::lies::corrupt_claim(crate::lies::CorruptClaimOptions {
             submission_path: source.clone(),
             selection: CorruptCheckpointSelection::Stage(stage.to_string()),
@@ -1247,7 +1263,7 @@ fn posted_lies(
         let challenge_dir = dir.join("challenge");
         fs::create_dir_all(&challenge_dir)?;
         let log = challenge_dir.join("challenge.log");
-        let mut run = command(leg.exe, leg.root);
+        let mut run = command(scenario.exe, scenario.root);
         run.current_dir(&challenge_dir)
             .args(["challenge", "build", "--run"])
             .arg(&fetched.run_spec_path)
@@ -1274,7 +1290,7 @@ fn posted_lies(
         // steps. On a real model of that family the same stage is long
         // enough, and the chain tier replays it there.
         let short_here = !long_enough_to_challenge(stage)
-            || (name == "arranged-pinned" && !leg.model.family()?.has_auxiliary_stages());
+            || (name == "arranged-pinned" && !scenario.model.family()?.has_auxiliary_stages());
         if let Err(error) = built {
             ensure!(
                 short_here && text.contains("trace length outside commitment limits"),
@@ -1292,7 +1308,7 @@ fn posted_lies(
                 .join(inference_artifacts::CHECKPOINT_LIST_JSON),
         )?;
         let claimed = &lying.checkpoints[lie.checkpoint_index];
-        let replay = replay_stage_dir(leg, name, stage)?;
+        let replay = replay_stage_dir(scenario, name, stage)?;
         let output_sha256 = file_sha256(&replay.join("output.bin"))?;
         // The replay ran on the input list the liar's checkpoint commits to.
         ensure!(
@@ -1346,14 +1362,14 @@ fn posted_lies(
 
 /// What the honest claim binds: the same text, procedure, cuts and ids a
 /// claim's preparation wrote.
-fn honest_inputs(leg: &Leg) -> Result<RunInputs> {
-    let prompt = &leg.prepared.prepared_run.first()?.prompt;
-    let range_size = leg.model.range_size;
-    let model_dir = leg
+fn honest_inputs(scenario: &Scenario) -> Result<RunInputs> {
+    let prompt = &scenario.prepared.prepared_run.first()?.prompt;
+    let range_size = scenario.model.range_size;
+    let model_dir = scenario
         .model_path
         .parent()
         .context("model manifest has no parent directory")?;
-    let tokenizer: Value = read_json(&model_dir.join(&leg.model.bundle.tokenizer_path))?;
+    let tokenizer: Value = read_json(&model_dir.join(&scenario.model.bundle.tokenizer_path))?;
     let ranges = run_prep::marked_ranges(
         &prompt.initial_pieces,
         range_size as usize,
@@ -1362,24 +1378,24 @@ fn honest_inputs(leg: &Leg) -> Result<RunInputs> {
     Ok(RunInputs {
         text: prompt.resolved_prompt.clone(),
         config: RunConfig {
-            model_id: leg.model.model_id.clone(),
-            raw_prompt: leg.case.raw_prompt,
-            max_new_tokens: leg.case.tokens,
+            model_id: scenario.model.model_id.clone(),
+            raw_prompt: scenario.case.raw_prompt,
+            max_new_tokens: scenario.case.tokens,
             range_size,
         },
         marks: ranges.into_iter().map(|range| range.marks).collect(),
-        ids: leg.claimed.to_vec(),
+        ids: scenario.claimed.to_vec(),
         schedule_skew: [0; 2],
         other_text_hash: false,
     })
 }
 
-fn not_greedy_ids(leg: &Leg) -> Result<Vec<u32>> {
-    let mut ids = leg.claimed.to_vec();
+fn not_greedy_ids(scenario: &Scenario) -> Result<Vec<u32>> {
+    let mut ids = scenario.claimed.to_vec();
     let first = ids
         .first_mut()
         .context("the pinned case claims no tokens")?;
-    *first = (*first + 1) % leg.model.shape.vocab_size() as u32;
+    *first = (*first + 1) % scenario.model.shape.vocab_size() as u32;
     Ok(ids)
 }
 
@@ -1427,8 +1443,12 @@ fn render(model_path: &Path, model: &ModelManifest, run: &RunInputs, dir: &Path)
 }
 
 /// The checkpoints a claimer gets from running this manifest natively.
-fn claimed_run(leg: &Leg, name: &str, manifest: &str) -> Result<(PathBuf, CheckpointList)> {
-    let dir = leg.dir.join(name);
+fn claimed_run(
+    scenario: &Scenario,
+    name: &str,
+    manifest: &str,
+) -> Result<(PathBuf, CheckpointList)> {
+    let dir = scenario.dir.join(name);
     fs::create_dir_all(&dir)?;
     let manifest_path = dir.join("Raster.toml");
     fs::write(&manifest_path, manifest)?;
@@ -1436,7 +1456,7 @@ fn claimed_run(leg: &Leg, name: &str, manifest: &str) -> Result<(PathBuf, Checkp
         .run(CheckpointedInferenceConfig {
             base_dir: dir.clone(),
             manifest_path: manifest_path.clone(),
-            current_exe: leg.exe.to_path_buf(),
+            current_exe: scenario.exe.to_path_buf(),
             staged_backend: StagedExecutionBackend::InProcess,
             parity_policy: ParityPolicy::Skip,
         })
@@ -1449,12 +1469,12 @@ fn claimed_run(leg: &Leg, name: &str, manifest: &str) -> Result<(PathBuf, Checkp
 
 /// Imports the pinned bundle with its weights and tokenizer changed, so every
 /// model input commits to something else.
-fn import_other_model(leg: &Leg) -> Result<(PathBuf, ModelManifest)> {
-    let source = leg
+fn import_other_model(scenario: &Scenario) -> Result<(PathBuf, ModelManifest)> {
+    let source = scenario
         .root
         .join("model-bundles")
-        .join(leg.model.family()?.parity_bundle());
-    let bundle = leg.dir.join("other-bundle");
+        .join(scenario.model.family()?.parity_bundle());
+    let bundle = scenario.dir.join("other-bundle");
     fs::create_dir_all(&bundle)?;
     fs::copy(source.join("config.json"), bundle.join("config.json"))?;
     let mut weights = fs::read(source.join("model.detwgt"))?;
@@ -1473,16 +1493,16 @@ fn import_other_model(leg: &Leg) -> Result<(PathBuf, ModelManifest)> {
         serde_json::to_vec(&tokenizer)?,
     )?;
 
-    let artifact_root = leg.dir.join("other-artifacts");
-    let mut import = command(leg.exe, leg.root);
+    let artifact_root = scenario.dir.join("other-artifacts");
+    let mut import = command(scenario.exe, scenario.root);
     import
         .args(["model", "import", "--model"])
         .arg(&bundle)
         .arg("--artifact-root")
         .arg(&artifact_root)
         .args(["--model-id", "other-model", "--no-stage-fixtures"])
-        .args(["--range-size", &leg.model.range_size.to_string()]);
-    logged(import, &leg.dir.join("other-import.log"))?;
+        .args(["--range-size", &scenario.model.range_size.to_string()]);
+    logged(import, &scenario.dir.join("other-import.log"))?;
     let path = artifact_root.join("other-model/manifest.json");
     let model = ModelManifest::load_verified(&path)?;
     Ok((path, model))
@@ -1600,15 +1620,15 @@ fn take_table(manifest: &str, other: &str, header: &str) -> Result<String> {
 
 /// The manifest with layers 0 and 1 of the PLE table exchanged, weights and
 /// commitments together, so each file still proves what the table says.
-fn swapped_ple(leg: &Leg, manifest: &str) -> Result<String> {
-    let model_dir = leg
+fn swapped_ple(scenario: &Scenario, manifest: &str) -> Result<String> {
+    let model_dir = scenario
         .model_path
         .parent()
         .context("model manifest has no parent directory")?;
     let source = model_dir.join("raster/prefill-prepare-aux");
-    let target = leg.dir.join("swapped-ple/weights");
+    let target = scenario.dir.join("swapped-ple/weights");
     fs::create_dir_all(&target)?;
-    for layer in 0..leg.model.shape.num_hidden_layers() {
+    for layer in 0..scenario.model.shape.num_hidden_layers() {
         let read_as = match layer {
             0 => 1,
             1 => 0,
@@ -1786,13 +1806,13 @@ fn decoder_substitution_manifests(manifest: &str, dir: &Path) -> Result<(String,
     Ok((changed, changed_proof))
 }
 
-fn expect_semantic_rejection(leg: &Leg, name: &str, manifest: &str) -> Result<Value> {
+fn expect_semantic_rejection(scenario: &Scenario, name: &str, manifest: &str) -> Result<Value> {
     replay_semantic_rejection(
-        leg.root,
-        leg.dir.join(name),
-        leg.exe,
-        leg.raster,
-        &leg.model.model_id,
+        scenario.root,
+        scenario.dir.join(name),
+        scenario.exe,
+        scenario.raster,
+        &scenario.model.model_id,
         name,
         manifest,
     )

@@ -91,7 +91,7 @@ In this order, because each step can be checked before the next:
    Follow the Raster skill and its check ladder. The import's chain template names the
    family's programs.
 6. **A parity bundle.** `model-bundles/parity-gemma` is a four-layer model small enough
-   for `test-parity` to run all three paths and the challenge leg. A family needs its own,
+   for `test-parity` to run all three paths and the challenge scenario. A family needs its own,
    with its own falsified-stage cases, or its programs are not under the gate.
 7. **Measure the three numbers** on a real model before tuning: claim time, the trace of
    the heaviest stage (`cargo raster run --commit … --fraud-step list` counts steps by

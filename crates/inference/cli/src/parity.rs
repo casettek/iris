@@ -57,7 +57,7 @@ pub fn run(skip_challenges: bool, bundle: &str) -> Result<()> {
     }
     let started = Instant::now();
     let mut report = json!({"version": 1, "mode": "host_no_auth", "passed": false, "cases": []});
-    report["challenge_leg"] = json!(if skip_challenges { "skipped" } else { "run" });
+    report["challenge_scenario"] = json!(if skip_challenges { "skipped" } else { "run" });
     report["bundle"] = json!(bundle);
     let result = run_suite(&root, &run_dir, &mut report, skip_challenges, bundle);
     report["elapsed_seconds"] = json!(started.elapsed().as_secs_f64());
@@ -138,7 +138,7 @@ fn outcomes(report: &Value) -> Value {
             rejected += 1;
         }
     }
-    let caught = if report["challenge_leg"] == json!("run") {
+    let caught = if report["challenge_scenario"] == json!("run") {
         json!({
             "found_at_expected_stage":
                 replayed.values().sum::<u64>() + found_only.values().sum::<u64>(),
@@ -244,7 +244,7 @@ mod outcome_tests {
     #[test]
     fn challenges_are_counted_by_the_program_that_runs_the_stage() {
         let report = json!({
-            "challenge_leg": "run",
+            "challenge_scenario": "run",
             "cases": [
                 {"passed": true, "comparison": {"checkpoints": 21, "rows_compared": 45, "kv_entries_compared": 40}},
                 {"passed": true, "comparison": {
@@ -282,7 +282,7 @@ mod outcome_tests {
         assert_eq!(outcome_lines(&found).len(), 5);
 
         let mut skipped = report.clone();
-        skipped["challenge_leg"] = json!("skipped");
+        skipped["challenge_scenario"] = json!("skipped");
         let found = outcomes(&skipped);
         assert_eq!(found["cheating_is_caught"], "skipped");
         assert_eq!(outcome_lines(&found).len(), 3);
@@ -429,20 +429,21 @@ fn run_suite(
         !cases[2].raw_prompt && cases[2].tokens == 8 && cases[2].input_token_ids.len() > 16,
         "invalid over-window case"
     );
-    // First, because it is the quickest leg to fail.
-    println!("Running the source leg...");
-    report["source"] = source::run_source_leg(root, run_dir, &exe, &raster, &model_path, &model)
-        .context("source leg")?;
+    // First, because it is the quickest scenario to fail.
+    println!("Running the source scenario...");
+    report["source"] =
+        source::run_source_scenario(root, run_dir, &exe, &raster, &model_path, &model)
+            .context("source scenario")?;
     write_json(&run_dir.join("report.json"), report)?;
     // Its challenger replays a stage through authenticated Raster, as the
-    // challenge leg does.
+    // challenge scenario does.
     if skip_challenges {
         report["consensus"] = json!("skipped");
     } else {
-        println!("Running the consensus leg...");
+        println!("Running the consensus scenario...");
         report["consensus"] =
-            consensus::run_consensus_leg(root, run_dir, &exe, &raster, &model_path, &model)
-                .context("consensus leg")?;
+            consensus::run_consensus_scenario(root, run_dir, &exe, &raster, &model_path, &model)
+                .context("consensus scenario")?;
     }
     write_json(&run_dir.join("report.json"), report)?;
     let mut selected = BTreeSet::new();
@@ -747,15 +748,15 @@ fn run_case(
     // Only the templated case has a safe first cut to build these from.
     if !case.raw_prompt {
         comparison["prompt_faults"] =
-            run_prompt_fault_leg(root, dir, exe, raster, model_path, model, &prepared)?;
-        comparison["chain_faults"] = run_chain_fault_leg(
+            run_prompt_fault_scenario(root, dir, exe, raster, model_path, model, &prepared)?;
+        comparison["chain_faults"] = run_chain_fault_scenario(
             root, dir, exe, raster, model_path, model, case, &prepared, &claimed,
         )?;
     }
     if !case.raw_prompt && skip_challenges {
         comparison["challenges"] = json!("skipped");
     } else if !case.raw_prompt {
-        comparison["challenges"] = challenge::run_challenge_leg(&challenge::Leg {
+        comparison["challenges"] = challenge::run_challenge_scenario(&challenge::Scenario {
             root,
             dir: dir.join("challenges"),
             exe,
@@ -766,7 +767,7 @@ fn run_case(
             prepared: &prepared,
             claimed: &claimed,
         })
-        .context("challenge leg")?;
+        .context("challenge scenario")?;
     }
     println!(
         "  PASS: {} checkpoints, {} direct boundaries, {} complete logit vectors, {} rows in {} prompt + {} claimed ranges ({:.2}s)",
@@ -791,7 +792,7 @@ fn run_case(
 /// and native-staged over wrong preparations and wrong claims, and checks that
 /// every stage finishes, both agree byte for byte, and the record says which.
 #[allow(clippy::too_many_arguments)]
-fn run_chain_fault_leg(
+fn run_chain_fault_scenario(
     root: &Path,
     case_dir: &Path,
     exe: &Path,
@@ -1058,7 +1059,7 @@ fn run_chain_fault_leg(
 /// output to compare or replay. Runs the prompt stages over wrong marks through
 /// Raster and native-staged, and checks that both finish, agree byte for byte,
 /// and record the fault.
-fn run_prompt_fault_leg(
+fn run_prompt_fault_scenario(
     root: &Path,
     case_dir: &Path,
     exe: &Path,
@@ -2043,7 +2044,7 @@ fn run_availability_cases(dir: &Path, spec: &Path, submission_path: &Path) -> Re
     // refused when it arrives: which inputs a claim must have posted is not
     // judged there. Every checkpoint of it that names a run input is at
     // fault, which a challenger shows with no replay
-    // (`CheckpointHashes::check_link`; the challenge leg's `corrupted-posted`
+    // (`CheckpointHashes::check_link`; the challenge scenario's `corrupted-posted`
     // case is a claim with one such checkpoint).
     let layer = crate::posting::open_layer(None)?;
     let layer = layer.as_ref();

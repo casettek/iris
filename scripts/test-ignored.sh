@@ -22,7 +22,7 @@ done
 
 parity_run="$(latest_parity_run)"
 if [ ! -d "$parity_run/over-window/challenges" ]; then
-    echo "no parity run with a challenge leg at '$parity_run'; run the parity gate first" >&2
+    echo "no parity run with a challenge scenario at '$parity_run'; run the parity gate first" >&2
     exit 1
 fi
 tokenizer="${BPE_REFERENCE_TOKENIZER:-$repo_root/../models/gemma-4-E2B-q8/tokenizer.json}"

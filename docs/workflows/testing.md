@@ -59,8 +59,8 @@ stage is longer than its replay window. On the synthetic model that is
 `prompt-check` and `prefill-range`; the gate's report says which stages replayed.
 The stage ladder is what runs the other programs through authenticated Raster,
 with a smaller window. That includes `prompt-source` and `claim-result`, on the
-claim the gate's source leg builds, and `consensus-result`, on the claim its
-consensus leg builds. The two result programs are a handful of steps and are
+claim the gate's source scenario builds, and `consensus-result`, on the claim its
+consensus scenario builds. The two result programs are a handful of steps and are
 committed at a window of two.
 
 ## The chain tier

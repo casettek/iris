@@ -8,7 +8,7 @@ just test-parity
 cargo run --release --locked -p iris-cli -- test parity
 ```
 
-Add `--skip-challenges` to leave out the [challenge leg](#challenge-leg), whose
+Add `--skip-challenges` to leave out the [challenge scenario](#challenge-scenario), whose
 authenticated replays take about an hour. The report records that it was skipped,
 so such a run is not the full gate.
 
@@ -92,13 +92,13 @@ the chain then checks it.
   submission names another address than its blobs; and at the records check
   when its proof states no records. A claim that posts its checkpoints and
   none of its run's inputs is not refused there: its checkpoints are at
-  fault, which the challenge leg shows.
+  fault, which the challenge scenario shows.
 - For each falsified claim whose stage replays: which rule settles the
   difference between the claimed checkpoint and the honest one. Where that is a
   replay, the Raster stage challenge built from the claimer's checkpoint and the
   challenger's trace is one Raster's own admission accepts, about that
   checkpoint, and the same trace against the honest checkpoint is refused.
-  The same challenge as a contract receives it (challenge leg only): the lying
+  The same challenge as a contract receives it (challenge scenario only): the lying
   claim posts its own checkpoint list, and a contract takes its data and its
   stated records, since nothing at arrival tells a false output from a true
   one. The challenge, its trace body posted, is admitted against that claim,
@@ -129,7 +129,7 @@ the chain then checks it.
   nothing, and the challenger must go to replay the last check. That check
   is under the replay window on the pinned model, so the replay itself is
   not run here.
-  The claim with a source is read back the same way (source leg): the
+  The claim with a source is read back the same way (source scenario): the
   documents must be the posted ones, and the run spec written over them must
   give the source record the claim names.
   Run against a Celestia node
@@ -173,7 +173,7 @@ layer at a time.
 Batched prefill over `N` rows and single-row decode must be bit-identical, or an
 honest claimer would convict itself.
 
-## Source leg
+## Source scenario
 
 Before the three cases, the gate builds one claim whose prompt comes from two signed
 documents (`crates/inference/cli/src/parity/source.rs`). The documents, the recipe and
@@ -207,18 +207,18 @@ source stage's own, and the bind's fault that its source has one.
 | `object-for-a-value` | a field's value is not a scalar | the source has a fault |
 | `other-text` | no fault | the text is not the one its source gives |
 
-The challenge leg has no case that falsifies the source stage. On this model the stage is
+The challenge scenario has no case that falsifies the source stage. On this model the stage is
 shorter than the replay window. It has one for the result stage, which is shorter than the
 window on any model: a false `result` checkpoint must be where recomputation first differs,
 and no replay is asked for.
 
-## Consensus leg
+## Consensus scenario
 
-After the source leg the gate builds one claim of the `consensus`
+After the source scenario the gate builds one claim of the `consensus`
 [procedure kind](../protocol/procedure-kinds.md) (`crates/inference/cli/src/parity/consensus.rs`).
 Its first model is the gate's own. Its second is the other family's bundle,
 imported into the run, so one chain holds both families' stage programs under
-their labels. The prompt is the source leg's, built from its two signed
+their labels. The prompt is the source scenario's, built from its two signed
 documents.
 
 The gate first asks direct inference for each model's answer and names both as
@@ -242,9 +242,9 @@ The claim is then run directly, natively and through Raster:
   falsified `m1_prompt_check_p0` and replays it through authenticated Raster,
   and recomputation finds a false `result`.
 
-The leg is skipped with the challenge leg, because it replays a stage.
+The scenario is skipped with the challenge scenario, because it replays a stage.
 
-## Challenge leg
+## Challenge scenario
 
 On the templated case the gate then runs `challenge build`, the command a
 challenger runs, under `<case>/challenges/`:
@@ -263,7 +263,7 @@ challenger runs, under `<case>/challenges/`:
   each, PLE layers exchanged, and stages wired to the wrong predecessor.
 
 A stage [too short for the replay window](../issues/short-stage-fraud-window.md)
-cannot be challenged yet, so for those the leg checks only that recomputation finds
+cannot be challenged yet, so for those the scenario checks only that recomputation finds
 it. Each case's result in `report.json` says whether it `replayed`. A bind stage is
 one of them here: a range of the pinned model is six tokens and its bind about 110
 steps, so no case replays `prompt-bind` through authenticated Raster. On a real
@@ -275,7 +275,7 @@ and dropping a range's cache. The claimer has no output to post, and only a mani
 the claimer rewired reaches this. The same holds for transformer layers exchanged,
 whose caches differ by attention type and donor.
 
-This leg needs `cargo raster` on the path, because `challenge build` calls it. Fault
+This scenario needs `cargo raster` on the path, because `challenge build` calls it. Fault
 proving is not part of the gate.
 
 ## Results and failures
@@ -290,7 +290,7 @@ Under the final `PASS` the command prints what the run covered, and the report
 holds the same as `outcomes`: how many honest checkpoints, rows and cache entries
 agreed; how many bad prompts and bad chains published their fault; how many
 checkpoints the claim with a source had and how many bad sources recorded theirs; and,
-for the challenge leg, how many claims were found at the expected stage, which stage
+for the challenge scenario, how many claims were found at the expected stage, which stage
 programs a falsified claim was replayed through authenticated Raster, and which
 were found only because the stage is shorter than the replay window. See
 [testing](testing.md) for where this gate sits among the other checks.
@@ -493,7 +493,7 @@ and sampled process-tree memory. Then repeat the original full-length run.
 
 ## Model-fault self-replay
 
-The challenge leg also executes substituted tokenizer inputs at each prompt
+The challenge scenario also executes substituted tokenizer inputs at each prompt
 stage, embedding inputs in prompt and claimed ranges, auxiliary layers,
 transformer weights, and the output head through both implementations. It includes
 exchanged auxiliary roles. Each case retains the original statement model ID

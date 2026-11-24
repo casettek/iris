@@ -13,7 +13,7 @@ use crate::*;
 pub(crate) enum TestCommand {
     /// Run the pinned three-path end-to-end parity suite.
     Parity {
-        /// Leave out the challenge leg, whose authenticated replays take about an
+        /// Leave out the challenge scenario, whose authenticated replays take about an
         /// hour. The report records that it was skipped.
         #[arg(long)]
         skip_challenges: bool,

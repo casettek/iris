@@ -239,7 +239,7 @@ until the notary replaces it.
 3. The two Raster programs, authored against the Raster skill. Measure trace steps and
    the heaviest tile on a real document, choose the page size, run the check ladder,
    re-lock every program, bump the versions.
-4. The challenge leg on the tampered cases.
+4. The challenge scenario on the tampered cases.
 
 ## What is built
 
@@ -329,7 +329,7 @@ The batch, the same day:
 | What | Result |
 | --- | --- |
 | Re-lock of all eight stage programs | verified, 19 minutes |
-| Full test tier: unit tests, lock check, both parity gates with their challenge legs, the stage ladder | all pass, 41 minutes |
+| Full test tier: unit tests, lock check, both parity gates with their challenge scenarios, the stage ladder | all pass, 41 minutes |
 | A claim with a source on the parity model: direct, native, and the whole chain through Raster | one statement; `claim check` holds every native checkpoint to the boundary the Raster run committed |
 | Re-import of Gemma 4 E2B, Gemma 4 E4B and Ministral 3B at version 17 | done; the version 16 imports are in `runtime/model-artifact-backups` |
 | Real-model check, with its references rewritten | E2B and E4B claims build with no fault; one stage of each program as Raster gives the native output |
@@ -339,11 +339,11 @@ The batch, the same day:
 On the parity model the same challenge finds `source` and cannot replay it: the stage is
 under the trace length a replay needs there, like that model's bind stages.
 
-The gate's source leg, the same day (`docs/workflows/test-parity.md` has its cases). The
+The gate's source scenario, the same day (`docs/workflows/test-parity.md` has its cases). The
 parity gate now builds one claim from two signed documents and runs it three ways, then
 runs seven wrong sources through the source stage and the binds, in Raster and natively.
 The stage ladder runs `prompt-source` on that claim's inputs. With these in place the
-full test tier passes again, for both families, challenge legs included:
+full test tier passes again, for both families, challenge scenarios included:
 
 | Family | The claim with a source | Bad sources |
 | --- | --- | --- |

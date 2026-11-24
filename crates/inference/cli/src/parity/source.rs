@@ -1,4 +1,4 @@
-//! The gate's source leg: a prompt built from signed documents.
+//! The gate's source scenario: a prompt built from signed documents.
 //!
 //! One honest claim with a source is run three ways, as every case is: direct,
 //! native stages, and the whole chain through Raster. Its recipe names the
@@ -435,7 +435,7 @@ fn run_fault(
     }))
 }
 
-pub(super) fn run_source_leg(
+pub(super) fn run_source_scenario(
     root: &Path,
     run_dir: &Path,
     exe: &Path,

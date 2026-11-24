@@ -6,7 +6,7 @@ two models and whether they agree. Others can be added beside them without
 each command growing its own switch.
 
 `consensus` runs directly, builds a claim with a submission, passes a
-contract's checks, can be challenged, and has a leg in the parity gate. The
+contract's checks, can be challenged, and has a scenario in the parity gate. The
 backend runs either procedure kind.
 
 ## What a procedure kind arranges
@@ -180,7 +180,7 @@ plaintexts by its own forms and refuses a claim whose codes or agreement are not
 what that gives. When a challenge arrives it holds each record to the check the
 result stage read for that inference. See [the contract](checks.md).
 
-The parity gate's [consensus leg](../workflows/test-parity.md#consensus-leg)
+The parity gate's [consensus scenario](../workflows/test-parity.md#consensus-scenario)
 runs one consensus claim over the gate's own model and the other family's.
 
 ## What is not built
