@@ -408,7 +408,7 @@ impl CheckpointVerifierState {
 
         if let Some(reason) = reason {
             self.divergence = Some(Divergence {
-                version: 1,
+                version: 2,
                 checkpoint_index,
                 stage: stage_name.to_string(),
                 reason,
@@ -431,7 +431,7 @@ impl CheckpointVerifierState {
         let checkpoint_index = self.recomputed_checkpoints.len();
         if let Some(claimed_hash) = self.claimed_hashes.get(checkpoint_index).cloned() {
             self.divergence = Some(Divergence {
-                version: 1,
+                version: 2,
                 checkpoint_index,
                 stage: format!("<checkpoint-{checkpoint_index}>"),
                 reason: DivergenceReason::MissingRecomputedHash,

@@ -827,7 +827,7 @@ mod tests {
             ..recomputed.clone()
         };
         let divergence = Divergence {
-            version: 1,
+            version: 2,
             checkpoint_index: 0,
             stage: String::from("stage_a"),
             reason: DivergenceReason::OutputCommitment,
