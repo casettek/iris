@@ -51,7 +51,7 @@ pub fn relay(node: &Node, layer: &dyn PostingLayer, heights: &[u64]) -> Result<(
 }
 
 /// The heights a call's blobs are at.
-pub(crate) fn heights_of(call: &Value) -> Vec<u64> {
+pub fn heights_of(call: &Value) -> Vec<u64> {
     call["heights"]
         .as_array()
         .into_iter()

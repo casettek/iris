@@ -734,6 +734,39 @@ dependencies = [
 ]
 
 [[package]]
+name = "blockchain-host"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "blockchain-rules",
+ "clap",
+ "direct-infer",
+ "hex",
+ "iris-celestia",
+ "iris-evm",
+ "k256",
+ "model-manifest",
+ "postcard",
+ "procedure-definition",
+ "raster",
+ "raster-analysis",
+ "raster-backend-risc0",
+ "raster-compiler",
+ "raster-core",
+ "raster-prover",
+ "raster-runtime",
+ "result-core",
+ "risc0-zkvm",
+ "run-prep",
+ "serde",
+ "serde_json",
+ "sha2",
+ "source-core",
+ "staged-infer",
+ "toml",
+]
+
+[[package]]
 name = "blockchain-rules"
 version = "0.1.0"
 dependencies = [
@@ -2626,36 +2659,30 @@ name = "iris-cli"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "blockchain-host",
  "blockchain-rules",
  "clap",
- "det-num",
  "direct-infer",
  "hex",
- "iris-celestia",
- "iris-evm",
- "k256",
  "model-identity",
  "model-import",
  "model-manifest",
  "postcard",
  "procedure-definition",
+ "procedure-direct",
  "raster",
  "raster-analysis",
  "raster-backend",
  "raster-backend-risc0",
  "raster-compiler",
- "raster-core",
- "raster-prover",
  "raster-runtime",
- "result-core",
- "risc0-zkvm",
  "run-prep",
  "sequence-check",
  "serde",
  "serde_json",
- "sha2",
  "source-core",
  "staged-infer",
+ "testing",
  "toml",
 ]
 
@@ -3147,6 +3174,7 @@ dependencies = [
 name = "model-import"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "det-num",
  "detwgt",
  "inference-kernels",
@@ -3684,6 +3712,16 @@ dependencies = [
  "sha2",
  "source-core",
  "toml",
+]
+
+[[package]]
+name = "procedure-direct"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "direct-infer",
+ "procedure-definition",
+ "staged-infer",
 ]
 
 [[package]]
@@ -5444,6 +5482,34 @@ dependencies = [
  "once_cell",
  "rustix 1.1.5",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "testing"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "blockchain-host",
+ "blockchain-rules",
+ "det-num",
+ "direct-infer",
+ "hex",
+ "model-manifest",
+ "postcard",
+ "procedure-definition",
+ "procedure-direct",
+ "raster",
+ "raster-compiler",
+ "raster-prover",
+ "raster-runtime",
+ "run-prep",
+ "sequence-check",
+ "serde",
+ "serde_json",
+ "sha2",
+ "source-core",
+ "staged-infer",
+ "toml",
 ]
 
 [[package]]

@@ -53,7 +53,7 @@ step ignored-direct "direct inference on the real model gives the known token" \
 
 IRIS_PARITY_RUN="$parity_run" \
     step ignored-parity-attacks "kept attacks replay the same natively and through Raster" \
-    cargo test --release -p iris-cli --features "$cli_features" --lib --no-fail-fast -- \
+    cargo test --release -p testing "${features[@]}" --lib --no-fail-fast -- \
     --ignored --test-threads=1 parity::challenge
 
 step ignored-guests "tiles run in the zkVM guest as they do natively" \

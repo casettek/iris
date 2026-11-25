@@ -1,0 +1,33 @@
+[package]
+name = "testing"
+version = "0.1.0"
+edition = "2021"
+description = "The parity gate, the claims a lying claimer would submit, and the stage schema check"
+
+[features]
+cuda = ["blockchain-host/cuda"]
+gpu-kernels = ["blockchain-host/gpu-kernels", "direct-infer/gpu-kernels", "staged-infer/gpu-kernels"]
+
+[dependencies]
+anyhow = "1.0"
+blockchain-host = { path = "../blockchain/host" }
+blockchain-rules = { path = "../blockchain/rules" }
+det-num = { path = "../segments/inference/numerics" }
+direct-infer = { path = "../segments/inference/generation" }
+hex = "0.4"
+model-manifest = { path = "../segments/inference/manifest" }
+postcard = { version = "1", features = ["alloc"] }
+procedure-definition = { path = "../procedure/definition" }
+procedure-direct = { path = "../procedure/direct" }
+raster = { path = "../../raster/crates/raster" }
+raster-compiler = { path = "../../raster/crates/raster-compiler" }
+raster-prover = { path = "../../raster/crates/raster-prover" }
+raster-runtime = { path = "../../raster/crates/raster-runtime" }
+run-prep = { path = "../procedure/prepare" }
+sequence-check = { path = "../raster-stages/sequence-check" }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sha2 = "0.10"
+source-core = { path = "../segments/source", features = ["sign"] }
+staged-infer = { path = "../procedure/staged" }
+toml = "0.8"

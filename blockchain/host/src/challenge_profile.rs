@@ -31,7 +31,7 @@ pub struct ProfileArgs {
     #[arg(long, default_value_t = 8589934592u64)]
     pub sample_max_bytes: u64,
 }
-pub(crate) fn reference(bundle: &Path, path: &Path) -> PathBuf {
+pub fn reference(bundle: &Path, path: &Path) -> PathBuf {
     if path.is_absolute() {
         path.to_owned()
     } else {
@@ -52,7 +52,7 @@ fn logged(command: &mut Command, directory: &Path, name: &str) -> Result<PathBuf
     );
     Ok(stdout)
 }
-pub(crate) fn run_directory(log: &Path, project: &Path) -> Result<PathBuf> {
+pub fn run_directory(log: &Path, project: &Path) -> Result<PathBuf> {
     let mut paths = std::collections::BTreeSet::new();
     for line in BufReader::new(File::open(log)?).lines() {
         let line = line?;
@@ -71,7 +71,7 @@ pub(crate) fn run_directory(log: &Path, project: &Path) -> Result<PathBuf> {
     );
     Ok(path)
 }
-pub(crate) fn summarize(
+pub fn summarize(
     report: &ReplayProfile,
     length: usize,
     window: usize,
@@ -194,7 +194,7 @@ pub(crate) fn summarize(
     )
 }
 
-pub(crate) fn verify_output(stage: &str, baseline_dir: &Path, run: &Path) -> Result<()> {
+pub fn verify_output(stage: &str, baseline_dir: &Path, run: &Path) -> Result<()> {
     let baseline = procedure_definition::read_checkpoint_from_stage_dir(stage, baseline_dir)?;
     let output: Value = read_json(&run.join("output_manifest.json"))?;
     ensure!(

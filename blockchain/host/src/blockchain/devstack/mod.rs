@@ -253,7 +253,7 @@ pub fn returned_u64(returned: &[u8], index: usize) -> Result<u64> {
 }
 
 /// `0x` and the hex of a call's `calldata` or `argument` field.
-pub(crate) fn bytes_of(call: &Value, field: &str) -> Result<Vec<u8>> {
+pub fn bytes_of(call: &Value, field: &str) -> Result<Vec<u8>> {
     let text = call[field]
         .as_str()
         .with_context(|| format!("the call has no {field}"))?;

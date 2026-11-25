@@ -227,7 +227,7 @@ fn contract_of(
 /// The procedure a claim of this prepared run is of: what a contract
 /// registers for its procedure kind, models and parameters. `Ok(None)` when an
 /// import has no pins: it was made where the stage projects are not locked.
-pub(crate) fn run_procedure(prepared: &PreparedRun) -> Result<Option<Procedure>> {
+pub fn run_procedure(prepared: &PreparedRun) -> Result<Option<Procedure>> {
     let specification = read_specification(&prepared.specification_path)?;
     contract_of(&prepared.specification_path, &specification, None)
 }
@@ -251,7 +251,7 @@ enum Posting<'a> {
 /// the first one a contract would reject it at, against `procedure`.
 /// `prepared` is what the blobs it is about to post hold. `Ok(None)` when the
 /// claim would be accepted once they are posted.
-pub(crate) fn claim_rejection(
+pub fn claim_rejection(
     procedure: &Procedure,
     submission_path: &Path,
     prepared: BlobContents,
@@ -709,7 +709,7 @@ pub fn post_challenge(options: ChallengePostOptions) -> Result<ChallengePosted> 
 /// challenge built from that checkpoint and the challenger's own run of the
 /// stage (its trace commitment at `commit_path`, the output it ends in), with
 /// the trace body posted.
-pub(crate) fn challenge_submission(
+pub fn challenge_submission(
     checkpoints_root: &str,
     stage: u32,
     checkpoint: &Checkpoint,
@@ -823,7 +823,7 @@ pub fn check_challenge(
 
 /// A stage's output as JSON, read from its payload with its index. The
 /// index has to be of the same value as the payload.
-pub(crate) fn output_json(payload: &[u8], index: &[u8]) -> Result<serde_json::Value> {
+pub fn output_json(payload: &[u8], index: &[u8]) -> Result<serde_json::Value> {
     let artifact = raster_runtime::read_raster_artifact_from_bytes(
         payload,
         index,
@@ -833,10 +833,10 @@ pub(crate) fn output_json(payload: &[u8], index: &[u8]) -> Result<serde_json::Va
         artifact.roots_agree(),
         "the index is of another value than the payload"
     );
-    crate::parity::compare::value_json(&artifact.value)
+    crate::raster_json::value_json(&artifact.value)
 }
 
-pub(crate) fn claim_record(claim: &serde_json::Value) -> Result<SubmittedRecord> {
+pub fn claim_record(claim: &serde_json::Value) -> Result<SubmittedRecord> {
     let hash = |field: &str| -> Result<String> {
         let bytes = claim
             .get(field)
@@ -880,7 +880,7 @@ fn stated_inference(stated: &serde_json::Value) -> Result<StatedInference> {
 }
 
 /// What the result stage of this procedure kind states in its output.
-pub(crate) fn result_in_output(
+pub fn result_in_output(
     procedure_kind: ProcedureKind,
     stated: &serde_json::Value,
 ) -> Result<ResultInOutput> {

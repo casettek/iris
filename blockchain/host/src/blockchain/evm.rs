@@ -27,13 +27,13 @@ use crate::posting::PostingLayer;
 /// The attester's secret key: 32 bytes of hex, with or without `0x`.
 pub const ATTESTER_KEY_ENV: &str = "IRIS_ATTESTER_KEY";
 
-pub(crate) fn hex0x(bytes: &[u8]) -> String {
+pub fn hex0x(bytes: &[u8]) -> String {
     format!("0x{}", hex::encode(bytes))
 }
 
 /// A call as a sender needs it: what the contract decodes, and the whole
 /// calldata of `name(bytes)` over it.
-pub(crate) fn call(name: &str, encoded: &[u8]) -> Value {
+pub fn call(name: &str, encoded: &[u8]) -> Value {
     json!({
         "function": format!("{name}(bytes)"),
         "argument": hex0x(encoded),

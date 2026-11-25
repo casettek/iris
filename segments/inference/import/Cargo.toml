@@ -10,6 +10,7 @@ name = "model-import"
 path = "src/main.rs"
 
 [dependencies]
+anyhow = "1.0"
 model-identity = { path = "../../common/identity" }
 sequence-check = { path = "../../../raster-stages/sequence-check" }
 det-num = { path = "../numerics" }

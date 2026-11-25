@@ -44,14 +44,14 @@ pub struct ClaimBuildOptions {
     pub claimer: Option<String>,
 }
 
-pub(crate) struct PreparedClaimRun {
-    pub(crate) prepared_run: PreparedRun,
-    pub(crate) manifest_path: PathBuf,
+pub struct PreparedClaimRun {
+    pub prepared_run: PreparedRun,
+    pub manifest_path: PathBuf,
     /// The ids written into the run's `claimed_ids` externals: the first
     /// inference's, which are all of them in a procedure kind of one. Kept for the
     /// claimer's own tooling only: the claim posts no copy of them, because its
     /// output is the chain's final record.
-    pub(crate) claimed_token_ids: Vec<u32>,
+    pub claimed_token_ids: Vec<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -358,7 +358,7 @@ impl ClaimBuildOptions {
     }
 }
 
-pub(crate) fn prepare_claim_run(options: &ClaimBuildOptions) -> Result<PreparedClaimRun> {
+pub fn prepare_claim_run(options: &ClaimBuildOptions) -> Result<PreparedClaimRun> {
     let specification_path = absolute(&options.base_dir, &options.specification_path);
     let specification = read_specification(&specification_path)?;
     let (case_path, case) = read_options_case(options)?;
@@ -393,7 +393,7 @@ fn read_options_case(options: &ClaimBuildOptions) -> Result<(PathBuf, Case)> {
 /// that is not the claimed text and ids that are not the greedy output each
 /// end in a record that says so, which is another output than a claim that
 /// stated a clean one.
-pub(crate) fn prepare_posted_run(
+pub fn prepare_posted_run(
     options: &ClaimBuildOptions,
     posted: &blockchain_rules::availability::PostedRun,
 ) -> Result<PreparedClaimRun> {
@@ -421,7 +421,7 @@ pub(crate) fn prepare_posted_run(
 /// `forms` the forms its result stage compared the output with, and `ids` the
 /// ids each of its inferences claimed, in order. A challenger reruns every
 /// stage on what the claim committed to.
-pub(crate) fn prepare_challenge_run(
+pub fn prepare_challenge_run(
     options: &ClaimBuildOptions,
     specification: &Specification,
     case: &Case,
@@ -443,7 +443,7 @@ pub(crate) fn prepare_challenge_run(
 
 /// A claim's source as a challenger is given it: the record, and the files
 /// the source stage ran on.
-pub(crate) type FrozenSource<'a> = (
+pub type FrozenSource<'a> = (
     &'a run_prep::source::SourceRecord,
     &'a procedure_definition::PreparedSourceInputs,
 );
@@ -785,7 +785,7 @@ const LAST_CLAIMED_RANGE: &str = "@LAST_CLAIMED_RANGE@";
 /// The chain of a run whose text is taken as given: the template without its
 /// source stage, and each inference's first bind given the constant its later
 /// binds are.
-pub(crate) fn without_source_stage(template: &str) -> Result<String> {
+pub fn without_source_stage(template: &str) -> Result<String> {
     let lines: Vec<&str> = template.lines().collect();
     let takes_record = |line: &str| line.trim() == "inputs.source = { from = \"source\" }";
     let mut out = Vec::new();
@@ -833,17 +833,17 @@ pub(crate) fn without_source_stage(template: &str) -> Result<String> {
 
 /// The run files of one inference, and the label its names carry in the
 /// template: empty in a chain of one inference.
-pub(crate) struct InferenceFiles<'a> {
-    pub(crate) label: &'a str,
+pub struct InferenceFiles<'a> {
+    pub label: &'a str,
     /// One slice of the text per prompt range.
-    pub(crate) text: &'a [run_prep::RunFile],
-    pub(crate) config: &'a run_prep::RunFile,
-    pub(crate) schedule: &'a run_prep::RunFile,
-    pub(crate) text_digest: &'a run_prep::RunFile,
+    pub text: &'a [run_prep::RunFile],
+    pub config: &'a run_prep::RunFile,
+    pub schedule: &'a run_prep::RunFile,
+    pub text_digest: &'a run_prep::RunFile,
     /// One set of token marks per prompt range.
-    pub(crate) marks: &'a [run_prep::RunFile],
+    pub marks: &'a [run_prep::RunFile],
     /// One set of claimed ids per claimed range.
-    pub(crate) claimed: &'a [run_prep::RunFile],
+    pub claimed: &'a [run_prep::RunFile],
 }
 
 /// The inference a stage, a repeat or a chain input belongs to, and its name
@@ -867,7 +867,7 @@ fn inference_name<'n>(
 /// Fills the template of a chain of one inference for one run. See
 /// [`render_chain`].
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn render_ranged_manifest(
+pub fn render_ranged_manifest(
     template: &str,
     template_dir: &Path,
     text: &[run_prep::RunFile],
@@ -901,7 +901,7 @@ pub(crate) fn render_ranged_manifest(
 /// and claimed ranges' indexes, and each range's committed text, marks or
 /// claimed ids. For the run: the source stage's inputs and the result stage's
 /// forms. A run without a source gets a chain without the source stage.
-pub(crate) fn render_chain(
+pub fn render_chain(
     template: &str,
     template_dir: &Path,
     inferences: &[InferenceFiles<'_>],
@@ -1149,14 +1149,14 @@ fn iterations(ranges: usize, start: usize) -> Result<usize> {
 
 /// One run-specific external: the files and commitment a template
 /// placeholder is replaced with.
-pub(crate) struct RunExternal<'a> {
+pub struct RunExternal<'a> {
     path: &'a Path,
     index_path: &'a Path,
     commitment: &'a str,
 }
 
 impl<'a> RunExternal<'a> {
-    pub(crate) fn new(path: &'a Path, index_path: &'a Path, commitment: &'a str) -> Self {
+    pub fn new(path: &'a Path, index_path: &'a Path, commitment: &'a str) -> Self {
         Self {
             path,
             index_path,
@@ -1164,7 +1164,7 @@ impl<'a> RunExternal<'a> {
         }
     }
 
-    pub(crate) fn binding(&self, param: &str) -> String {
+    pub fn binding(&self, param: &str) -> String {
         format!(
             "inputs.{param} = {{ external = {{ path = {:?}, index_path = {:?}, commitment = {:?} }} }}",
             self.path, self.index_path, self.commitment,
@@ -1180,7 +1180,7 @@ fn absolute(base: &Path, path: &Path) -> PathBuf {
     }
 }
 
-pub(crate) fn select_checkpoint_index(
+pub fn select_checkpoint_index(
     selection: &CorruptCheckpointSelection,
     hashes: &[String],
     list: Option<&procedure_definition::CheckpointList>,
@@ -1236,7 +1236,7 @@ fn random_checkpoint_index(seed: &Option<String>, hashes: &[String]) -> usize {
     (u64::from_be_bytes(bytes) as usize) % hashes.len()
 }
 
-pub(crate) fn corrupt_hash(hash: &str) -> String {
+pub fn corrupt_hash(hash: &str) -> String {
     let mut bytes = hash.as_bytes().to_vec();
     bytes[0] = if bytes[0] == b'0' { b'1' } else { b'0' };
     String::from_utf8(bytes).expect("checkpoints are valid hex")

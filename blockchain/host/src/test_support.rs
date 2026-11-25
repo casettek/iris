@@ -6,7 +6,7 @@ use procedure_definition::write_json;
 use serde_json::json;
 
 /// Small bundle for exercising preparation without running any model stages.
-pub(crate) fn model_fixture(base: &Path, name: &str) -> PathBuf {
+pub fn model_fixture(base: &Path, name: &str) -> PathBuf {
     let dir = base.join("models").join(name);
     fs::create_dir_all(&dir).unwrap();
     fs::write(dir.join("model.detwgt"), name).unwrap();
@@ -152,7 +152,7 @@ count = 0
 
 /// Writes a specification of one model, with the case of a one-letter prompt
 /// beside it, and returns the specification's path.
-pub(crate) fn specification(base: &Path, name: &str) -> PathBuf {
+pub fn specification(base: &Path, name: &str) -> PathBuf {
     let dir = base.join("specs");
     fs::create_dir_all(&dir).unwrap();
     let path = dir.join(procedure_definition::SPECIFICATION_TOML);
@@ -178,6 +178,6 @@ manifest = \"../models/{name}/manifest.json\"
 }
 
 /// The case file beside a specification [`specification`] wrote.
-pub(crate) fn case_beside(specification: &Path) -> PathBuf {
+pub fn case_beside(specification: &Path) -> PathBuf {
     specification.with_file_name(procedure_definition::CASE_TOML)
 }

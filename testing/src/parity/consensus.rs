@@ -26,8 +26,8 @@ use staged_infer::chain_runner::StagedExecutionBackend;
 
 use super::compare::{compare, read_boundaries};
 use super::{case_beside, command, logged, source};
-use crate::challenge::locate_divergence;
-use crate::claim::{
+use blockchain_host::challenge::locate_divergence;
+use blockchain_host::claim::{
     build_posted_claim, corrupt_checkpoint_hashes, ClaimBuildOptions,
     CorruptCheckpointHashesOptions, CorruptCheckpointSelection,
 };
@@ -87,8 +87,9 @@ pub(super) fn run_consensus_scenario(
     // they are.
     let mut source = source::honest_source()?;
     let specification = write_run(&dir.join("answers"), &source, &models)?;
-    let answers = crate::infer::run_infer(specification.clone(), case_beside(&specification))
-        .context("the two models' answers")?;
+    let answers =
+        procedure_direct::infer::run_infer(specification.clone(), case_beside(&specification))
+            .context("the two models' answers")?;
     let texts: Vec<String> = answers
         .reports
         .iter()
@@ -108,8 +109,9 @@ pub(super) fn run_consensus_scenario(
     // The claim, three ways.
     let claim_dir = dir.join("claim");
     let specification = write_run(&claim_dir, &source, &models)?;
-    let direct = crate::infer::run_infer(specification.clone(), case_beside(&specification))
-        .context("direct inference")?;
+    let direct =
+        procedure_direct::infer::run_infer(specification.clone(), case_beside(&specification))
+            .context("direct inference")?;
     let direct_consensus = direct
         .consensus
         .as_ref()
@@ -205,8 +207,8 @@ pub(super) fn run_consensus_scenario(
     // The contract's pins are a file: the consensus procedure kind's programs and
     // both models, as `iris claim pins` writes them.
     let pins_path = claim_dir.join(blockchain_rules::checks::CONTRACT_PINS_JSON);
-    let pins =
-        crate::claim_check::run_pins(&claim_dir, &specification).context("the contract's pins")?;
+    let pins = blockchain_host::claim_check::run_pins(&claim_dir, &specification)
+        .context("the contract's pins")?;
     ensure!(
         pins.procedure_kind == ProcedureKind::Consensus
             && pins.models.len() == 2
@@ -217,7 +219,7 @@ pub(super) fn run_consensus_scenario(
     );
     procedure_definition::write_json(&pins_path, &pins)?;
     let check = |submission: &Path, raster_run: Option<PathBuf>| {
-        crate::claim_check::check_claim(crate::claim_check::ClaimCheckOptions {
+        blockchain_host::claim_check::check_claim(blockchain_host::claim_check::ClaimCheckOptions {
             base_dir: claim_dir.clone(),
             specification_path: specification.clone(),
             submission_path: submission.to_path_buf(),

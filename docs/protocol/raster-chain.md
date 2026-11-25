@@ -234,7 +234,7 @@ leave a value to whoever writes the trace, so no stage uses them:
 
 Through version 12 the chain had both: those three seeds, and four literal
 arguments in `prefill-range`. The parity gate and `cargo test` now refuse a stage
-with either (`cli/src/stage_bindings.rs`).
+with either (`testing/src/stage_bindings.rs`).
 
 Causal attention means row `i` sees exactly the tokens direct generation's decode
 step at position `i` saw. For an honest claim every row and K/V entry equals

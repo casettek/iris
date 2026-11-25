@@ -21,18 +21,18 @@ use sha2::{Digest, Sha256};
 use staged_infer::chain_runner::{expanded_stages, ExpandedInput, ExpandedStage};
 
 /// The arranged chain's file name, beside the run's own manifest.
-pub(crate) const ARRANGED_MANIFEST: &str = "claim_arranged.toml";
+pub const ARRANGED_MANIFEST: &str = "claim_arranged.toml";
 
 /// A chain manifest that binds every stage as a claim's checkpoints do.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Arranged {
+pub struct Arranged {
     pub manifest: String,
     /// The inputs the claim gives a stage otherwise than the chain does.
     pub rearranged: Vec<Rearranged>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Rearranged {
+pub struct Rearranged {
     pub checkpoint: usize,
     pub stage: String,
     pub input: String,
@@ -57,7 +57,7 @@ const AUDIT: &str = "Audit the claim (`iris claim audit`): a program outside the
 /// what the stage loads is not followed: where the procedure takes the
 /// input from an earlier stage the link comparison voids such a claim, and
 /// elsewhere the pointer says nothing of what the stage ran on.
-pub(crate) fn arrange(
+pub fn arrange(
     run_manifest: &Path,
     claimed: &CheckpointList,
     claim_dir: &Path,

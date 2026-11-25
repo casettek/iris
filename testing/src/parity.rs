@@ -2,7 +2,7 @@
 //! checked against direct generation position by position. Every worker owns its
 //! runtime state.
 mod challenge;
-pub(crate) mod compare;
+pub mod compare;
 mod consensus;
 mod source;
 
@@ -21,7 +21,7 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use staged_infer::chain_runner::StagedExecutionBackend;
 
-use crate::claim::{build_posted_claim, prepare_claim_run, ClaimBuildOptions};
+use blockchain_host::claim::{build_posted_claim, prepare_claim_run, ClaimBuildOptions};
 use compare::{
     check_inventory, compare, final_record, read_boundaries, teacher_forced_names, with_result,
     Boundary, RangedShape,
@@ -700,16 +700,18 @@ fn run_case(
     // What a contract would check on the native claim, and that each of its
     // checkpoints is the boundary the Raster run of the same chain committed:
     // the program id, the input manifest and the output.
-    let contract = crate::claim_check::check_claim(crate::claim_check::ClaimCheckOptions {
-        base_dir: dir.to_path_buf(),
-        specification_path: specification.clone(),
-        submission_path: native_dir.join(blockchain_rules::checks::CLAIM_SUBMISSION_JSON),
-        raster_run: Some(raster_dir.clone()),
-        pins_path: None,
-        registry_path: None,
-        da_dir: None,
-        submitted_at: None,
-    })
+    let contract = blockchain_host::claim_check::check_claim(
+        blockchain_host::claim_check::ClaimCheckOptions {
+            base_dir: dir.to_path_buf(),
+            specification_path: specification.clone(),
+            submission_path: native_dir.join(blockchain_rules::checks::CLAIM_SUBMISSION_JSON),
+            raster_run: Some(raster_dir.clone()),
+            pins_path: None,
+            registry_path: None,
+            da_dir: None,
+            submitted_at: None,
+        },
+    )
     .context("contract checks")?;
     for line in &contract.lines {
         ensure!(
@@ -795,7 +797,7 @@ fn run_chain_fault_scenario(
     model_path: &Path,
     model: &ModelManifest,
     case: &Case,
-    prepared: &crate::claim::PreparedClaimRun,
+    prepared: &blockchain_host::claim::PreparedClaimRun,
     claimed: &[u32],
 ) -> Result<Value> {
     let prompt = &prepared.prepared_run.first()?.prompt;
@@ -928,7 +930,7 @@ fn run_chain_fault_scenario(
             &run_prep::prompt_tokenizer(&tokenizer)?,
             marks.len(),
         )?;
-        let rendered = crate::claim::render_ranged_manifest(
+        let rendered = blockchain_host::claim::render_ranged_manifest(
             &template,
             template_dir,
             &run_prep::write_text_slices(&slices, &files)?,
@@ -1061,7 +1063,7 @@ fn run_prompt_fault_scenario(
     raster: &Path,
     model_path: &Path,
     model: &ModelManifest,
-    prepared: &crate::claim::PreparedClaimRun,
+    prepared: &blockchain_host::claim::PreparedClaimRun,
 ) -> Result<Value> {
     use run_prep::{
         RunFile, FAULT_CUT_BEYOND_TEXT, FAULT_EMPTY_RANGE, FAULT_NONE, FAULT_NOT_THE_MERGE,
@@ -1369,7 +1371,7 @@ fn prompt_only_manifest(
     // These chains have no source stage: the first bind is given the constant.
     let plain;
     let template = if source.is_none() && template.contains("name = \"source\"") {
-        plain = crate::claim::without_source_stage(template)?;
+        plain = blockchain_host::claim::without_source_stage(template)?;
         plain.as_str()
     } else {
         template
@@ -1419,7 +1421,7 @@ fn prompt_only_manifest(
                     .find(|(param, _)| line.trim().starts_with(&format!("inputs.{param} =")));
                     match binding {
                         Some((param, file)) => out.push_str(
-                            &crate::claim::RunExternal::new(
+                            &blockchain_host::claim::RunExternal::new(
                                 &file.path,
                                 &file.index_path,
                                 &file.commitment,
@@ -1438,7 +1440,7 @@ fn prompt_only_manifest(
                     match text_digest {
                         Some(text_digest) if line.trim().starts_with("inputs.text_digest =") => {
                             out.push_str(
-                                &crate::claim::RunExternal::new(
+                                &blockchain_host::claim::RunExternal::new(
                                     &text_digest.path,
                                     &text_digest.index_path,
                                     &text_digest.commitment,
@@ -1478,7 +1480,7 @@ fn prompt_only_manifest(
 ///
 /// Stages are read one layer at a time, so real-model chains with hundreds of
 /// rows fit in memory.
-pub(crate) fn compare_teacher_forced(tf_dir: &Path, direct_dir: &Path) -> Result<Value> {
+pub fn compare_teacher_forced(tf_dir: &Path, direct_dir: &Path) -> Result<Value> {
     let load = |dir: &Path, stage: &str| -> Result<Boundary> {
         let boundary = compare::read_boundary(&dir.join(stage))
             .with_context(|| format!("{stage} in {}", dir.display()))?;
@@ -1962,14 +1964,14 @@ fn run_availability_cases(
     specification: &Path,
     submission_path: &Path,
 ) -> Result<Value> {
-    use crate::claim_check::{check_claim, ClaimCheckOptions};
+    use blockchain_host::claim_check::{check_claim, ClaimCheckOptions};
     use blockchain_rules::checks::ClaimSubmission;
 
     let claim_dir = submission_path
         .parent()
         .context("the submission has no directory")?;
     let honest: ClaimSubmission = read_json(submission_path)?;
-    let procedure = crate::claim_check::spec_procedure(specification, None)?;
+    let procedure = blockchain_host::claim_check::spec_procedure(specification, None)?;
     let registry_path = dir.join("registry.json");
     let mut registry = blockchain_rules::registry::Registry::default();
     ensure!(
@@ -2034,7 +2036,8 @@ fn run_availability_cases(
         "submission: data posted",
     )?);
     // Submitted so late that the blobs are gone before the period ends.
-    let late = crate::posting::now()? + blockchain_rules::availability::DEFAULT_RETENTION_SECS;
+    let late =
+        blockchain_host::posting::now()? + blockchain_rules::availability::DEFAULT_RETENTION_SECS;
     cases.push(refused_at(
         "expires",
         check("expires", &honest, None, Some(late))?,
@@ -2046,10 +2049,11 @@ fn run_availability_cases(
     // fault, which a challenger shows with no replay
     // (`CheckpointHashes::check_link`; the challenge scenario's `corrupted-posted`
     // case is a claim with one such checkpoint).
-    let layer = crate::posting::open_layer(None)?;
+    let layer = blockchain_host::posting::open_layer(None)?;
     let layer = layer.as_ref();
     let mut unavailable = honest.clone();
-    unavailable.availability = crate::posting::post_claim(layer, claim_dir, &honest.claimer, None)?;
+    unavailable.availability =
+        blockchain_host::posting::post_claim(layer, claim_dir, &honest.claimer, None)?;
     ensure!(
         unavailable.posted_run_inputs().is_empty() && !honest.posted_run_inputs().is_empty(),
         "the honest claim posted no run inputs, or a posting without them states some"

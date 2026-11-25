@@ -2,6 +2,7 @@
 #[path = "main.rs"]
 mod main_impl;
 
+pub mod convert;
 pub mod externals;
 
 pub use main_impl::{

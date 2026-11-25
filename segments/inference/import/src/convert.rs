@@ -4,8 +4,8 @@ use std::fs;
 use std::path::Path;
 
 use anyhow::{ensure, Context, Result};
-use direct_infer::detwgt::convert::convert;
-use direct_infer::detwgt::gguf::Gguf;
+use detwgt::convert::convert;
+use detwgt::gguf::Gguf;
 
 /// Bundle files taken from `metadata` alongside the converted weights.
 const METADATA_FILES: &[&str] = &["config.json", "tokenizer.json", "chat_template.jinja"];
@@ -49,7 +49,7 @@ pub fn convert_bundle(
 /// The GGUF and config.json must describe the same model.
 fn check_shape(gguf: &Gguf, text: &serde_json::Value) -> Result<()> {
     let arch = match gguf.metadata.get("general.architecture") {
-        Some(direct_infer::detwgt::gguf::Value::Str(arch)) => arch.clone(),
+        Some(detwgt::gguf::Value::Str(arch)) => arch.clone(),
         _ => anyhow::bail!("GGUF has no general.architecture"),
     };
     for (gguf_key, config_key) in [

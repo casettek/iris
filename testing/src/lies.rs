@@ -19,9 +19,9 @@ use procedure_definition::{
 };
 use sha2::{Digest, Sha256};
 
-use crate::claim::{corrupt_hash, select_checkpoint_index, CorruptCheckpointSelection};
-use crate::posted::{fresh_dir, parent, stage_dir_name, INPUT_MANIFEST_JSON};
-use crate::posting::PreparedPosting;
+use blockchain_host::claim::{corrupt_hash, select_checkpoint_index, CorruptCheckpointSelection};
+use blockchain_host::posted::{fresh_dir, parent, stage_dir_name, INPUT_MANIFEST_JSON};
+use blockchain_host::posting::PreparedPosting;
 
 /// The file `corrupt_claim` writes beside the lying claim: which checkpoint
 /// it changed, in the form `test corrupt-checkpoints --checkpoints` writes.
@@ -321,7 +321,7 @@ pub fn corrupt_claim(options: CorruptClaimOptions) -> Result<CorruptedClaim> {
         given.index = hex::encode(&output.index);
     }
     if let Some((_, result)) = forged_outputs.last() {
-        let stated = crate::posting::stated_results(&result.data, &result.index)
+        let stated = blockchain_host::posting::stated_results(&result.data, &result.index)
             .context("the forged result is not a result record")?;
         ensure!(
             stated.inferences.len() == claim.inferences.len(),

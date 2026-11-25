@@ -27,8 +27,8 @@ use super::{
     block_name, case_beside, command, logged, manifest_blocks, write_case, write_specification,
     Case,
 };
-use crate::challenge::locate_divergence;
-use crate::claim::{
+use blockchain_host::challenge::locate_divergence;
+use blockchain_host::claim::{
     build_posted_claim, corrupt_checkpoint_hashes, render_ranged_manifest, ClaimBuildOptions,
     ClaimBuildResult, CorruptCheckpointHashesOptions, CorruptCheckpointSelection, PreparedClaimRun,
 };
@@ -201,7 +201,8 @@ pub(super) fn run_challenge_scenario(scenario: &Scenario) -> Result<Value> {
             "a corrupted claim's list differs from the honest one elsewhere than at `{stage}`"
         );
         let claim: blockchain_rules::checks::ClaimSubmission = read_json(&lying.submission_path)?;
-        let posting = crate::posting::PreparedPosting::read(&scenario.dir.join("corrupted-claim"))?;
+        let posting =
+            blockchain_host::posting::PreparedPosting::read(&scenario.dir.join("corrupted-claim"))?;
         ensure!(
             claim.claimer == liar
                 && blockchain_rules::availability::check_holds(
@@ -223,8 +224,8 @@ pub(super) fn run_challenge_scenario(scenario: &Scenario) -> Result<Value> {
         // each claim, since nothing at arrival reads that checkpoint. A challenger who reads the claim back finds the
         // fault by auditing it, with nothing run, at the checkpoint that
         // lies.
-        let layer = crate::posting::open_layer(None)?;
-        let procedure = crate::claim_check::spec_procedure(&specification, None)?;
+        let layer = blockchain_host::posting::open_layer(None)?;
+        let procedure = blockchain_host::claim_check::spec_procedure(&specification, None)?;
         for (fault, out, expected) in [
             (
                 crate::lies::CorruptFault::Program,
@@ -262,16 +263,17 @@ pub(super) fn run_challenge_scenario(scenario: &Scenario) -> Result<Value> {
             })?;
             let mut claim: blockchain_rules::checks::ClaimSubmission =
                 read_json(&lie.submission_path)?;
-            claim.availability = crate::posting::PreparedPosting::read(&scenario.dir.join(out))?
-                .post(layer.as_ref())
-                .with_context(|| format!("`{out}`: posting the lying claim's data"))?;
+            claim.availability =
+                blockchain_host::posting::PreparedPosting::read(&scenario.dir.join(out))?
+                    .post(layer.as_ref())
+                    .with_context(|| format!("`{out}`: posting the lying claim's data"))?;
             procedure_definition::write_json(&lie.submission_path, &claim)?;
             let posted = blockchain_rules::availability::check_claim_availability(
                 layer.as_ref(),
                 blockchain_rules::availability::AvailabilityParameters::default(),
                 &claim.availability,
                 &blockchain_rules::availability::RequiredPosting::of(&claim),
-                crate::posting::now()?,
+                blockchain_host::posting::now()?,
             )
             .map_err(|rejection| {
                 anyhow::anyhow!(
@@ -284,19 +286,21 @@ pub(super) fn run_challenge_scenario(scenario: &Scenario) -> Result<Value> {
                         "`{out}`: a contract does not take the lying claim: {rejection}"
                     )
                 })?;
-            let fetched = crate::posted::fetch_claim(crate::posted::FetchClaimOptions {
-                submission_path: lie.submission_path.clone(),
-                specification_path: specification.to_path_buf(),
-                pins_path: None,
-                da_dir: None,
-                out_dir: scenario.dir.join(format!("{out}-fetched")),
-            })
-            .with_context(|| format!("`{out}`: reading the lying claim back from the layer"))?;
-            let audit = crate::audit::audit_claim(crate::audit::AuditClaimOptions {
-                submission_path: fetched.submission_path,
-                specification_path: specification.to_path_buf(),
-                pins_path: None,
-            })?;
+            let fetched =
+                blockchain_host::posted::fetch_claim(blockchain_host::posted::FetchClaimOptions {
+                    submission_path: lie.submission_path.clone(),
+                    specification_path: specification.to_path_buf(),
+                    pins_path: None,
+                    da_dir: None,
+                    out_dir: scenario.dir.join(format!("{out}-fetched")),
+                })
+                .with_context(|| format!("`{out}`: reading the lying claim back from the layer"))?;
+            let audit =
+                blockchain_host::audit::audit_claim(blockchain_host::audit::AuditClaimOptions {
+                    submission_path: fetched.submission_path,
+                    specification_path: specification.to_path_buf(),
+                    pins_path: None,
+                })?;
             let found = audit
                 .faults
                 .first()
@@ -922,18 +926,19 @@ fn contract_challenge(
     claim.checkpoint_count = lying.checkpoints.len() as u32;
     claim.checkpoints_root = procedure_definition::checkpoints_root(&checkpoint_hashes(lying)?)?;
     let claim_path = dir.join(CLAIM_SUBMISSION_JSON);
-    let procedure = crate::claim_check::spec_procedure(specification, None)?;
-    let layer = crate::posting::open_layer(None)?;
+    let procedure = blockchain_host::claim_check::spec_procedure(specification, None)?;
+    let layer = blockchain_host::posting::open_layer(None)?;
     let layer = layer.as_ref();
-    let now = crate::posting::now()?;
+    let now = blockchain_host::posting::now()?;
 
     // What the liar posts: the honest claim's data, with the lying hashes and
     // checkpoints in place of the honest ones.
-    let posting = crate::posting::PreparedPosting::read(&honest.chain_dir)?.with_checkpoints(
-        &claim.claimer,
-        &fs::read(&list_path)?,
-        &fs::read(dir.join(procedure_definition::CHECKPOINT_LIST_JSON))?,
-    )?;
+    let posting = blockchain_host::posting::PreparedPosting::read(&honest.chain_dir)?
+        .with_checkpoints(
+            &claim.claimer,
+            &fs::read(&list_path)?,
+            &fs::read(dir.join(procedure_definition::CHECKPOINT_LIST_JSON))?,
+        )?;
     claim.availability = posting
         .post(layer)
         .with_context(|| format!("`{name}`: posting the lying claim's data"))?;
@@ -961,7 +966,7 @@ fn contract_challenge(
         .with_context(|| format!("the lying claim has no `{stage}`"))?;
     let replay = replay_stage_dir(scenario, name, stage)?;
     let challenger = "0x000000000000000000000000000000000000c4a1";
-    let submission = crate::claim_check::challenge_submission(
+    let submission = blockchain_host::claim_check::challenge_submission(
         &claim.checkpoints_root,
         index as u32,
         &lying.checkpoints[index],
@@ -975,8 +980,14 @@ fn contract_challenge(
         &submission,
     )?;
     let check = |submission: &blockchain_rules::checks::ChallengeSubmission, at: u64| {
-        crate::claim_check::check_challenge(&procedure, &claim_path, submission, layer, at)
-            .map(|report| report.rejection())
+        blockchain_host::claim_check::check_challenge(
+            &procedure,
+            &claim_path,
+            submission,
+            layer,
+            at,
+        )
+        .map(|report| report.rejection())
     };
     if let Some(rejection) = check(&submission, now)? {
         anyhow::bail!("`{name}`: a contract refuses the challenge: {rejection}");
@@ -1002,14 +1013,15 @@ fn contract_challenge(
     // The challenger's side of the same claim: read back from the layer into
     // a directory that holds nothing else, it is the liar's hashes and
     // checkpoints exactly, with every stage's input manifest.
-    let fetched = crate::posted::fetch_claim(crate::posted::FetchClaimOptions {
-        submission_path: claim_path.clone(),
-        specification_path: specification.to_path_buf(),
-        pins_path: None,
-        da_dir: None,
-        out_dir: dir.join("fetched"),
-    })
-    .with_context(|| format!("`{name}`: reading the lying claim back from the layer"))?;
+    let fetched =
+        blockchain_host::posted::fetch_claim(blockchain_host::posted::FetchClaimOptions {
+            submission_path: claim_path.clone(),
+            specification_path: specification.to_path_buf(),
+            pins_path: None,
+            da_dir: None,
+            out_dir: dir.join("fetched"),
+        })
+        .with_context(|| format!("`{name}`: reading the lying claim back from the layer"))?;
     let fetched_dir = fetched
         .submission_path
         .parent()
@@ -1034,7 +1046,7 @@ fn contract_challenge(
     // What the claim put on the layer, measured there: every byte of the
     // blobs it names, with the hashes and the checkpoints at the sizes of the
     // files that were posted.
-    let measured = crate::measure::measure_posting(&claim_path, None)
+    let measured = blockchain_host::measure::measure_posting(&claim_path, None)
         .with_context(|| format!("`{name}`: measuring what the lying claim posted"))?;
     let posted: blockchain_rules::checks::ClaimSubmission = read_json(&claim_path)?;
     ensure!(
@@ -1060,7 +1072,7 @@ fn contract_challenge(
     // A lie about a stage's output is no fault to point at: every program is
     // approved and every input is its producer's output, so the claim is
     // disputed by a replay or not at all.
-    let audit = crate::audit::audit_claim(crate::audit::AuditClaimOptions {
+    let audit = blockchain_host::audit::audit_claim(blockchain_host::audit::AuditClaimOptions {
         submission_path: fetched.submission_path.clone(),
         specification_path: specification.to_path_buf(),
         pins_path: None,
@@ -1131,10 +1143,10 @@ fn posted_lies(
     use crate::lies::CorruptFault;
     use blockchain_rules::checks::ClaimSubmission;
 
-    let layer = crate::posting::open_layer(None)?;
+    let layer = blockchain_host::posting::open_layer(None)?;
     let layer = layer.as_ref();
-    let procedure = crate::claim_check::spec_procedure(specification, None)?;
-    let now = crate::posting::now()?;
+    let procedure = blockchain_host::claim_check::spec_procedure(specification, None)?;
+    let now = blockchain_host::posting::now()?;
     let liar = "0x00000000000000000000000000000000000011a3";
     let challenger = "0x000000000000000000000000000000000000c4a2";
     let submission_of = |claim: &ClaimBuildResult, what: &str| {
@@ -1214,7 +1226,7 @@ fn posted_lies(
         })
         .with_context(|| format!("`{name}`: writing the lying claim"))?;
         let mut claim: ClaimSubmission = read_json(&lie.submission_path)?;
-        claim.availability = crate::posting::PreparedPosting::read(&dir.join("claim"))?
+        claim.availability = blockchain_host::posting::PreparedPosting::read(&dir.join("claim"))?
             .post(layer)
             .with_context(|| format!("`{name}`: posting the lying claim's data"))?;
         procedure_definition::write_json(&lie.submission_path, &claim)?;
@@ -1243,19 +1255,21 @@ fn posted_lies(
             "`{name}`: the forged claim does not arrive with a valid record"
         );
 
-        let fetched = crate::posted::fetch_claim(crate::posted::FetchClaimOptions {
-            submission_path: lie.submission_path.clone(),
-            specification_path: specification.to_path_buf(),
-            pins_path: None,
-            da_dir: None,
-            out_dir: dir.join("fetched"),
-        })
-        .with_context(|| format!("`{name}`: reading the lying claim back from the layer"))?;
-        let audit = crate::audit::audit_claim(crate::audit::AuditClaimOptions {
-            submission_path: fetched.submission_path.clone(),
-            specification_path: specification.to_path_buf(),
-            pins_path: None,
-        })?;
+        let fetched =
+            blockchain_host::posted::fetch_claim(blockchain_host::posted::FetchClaimOptions {
+                submission_path: lie.submission_path.clone(),
+                specification_path: specification.to_path_buf(),
+                pins_path: None,
+                da_dir: None,
+                out_dir: dir.join("fetched"),
+            })
+            .with_context(|| format!("`{name}`: reading the lying claim back from the layer"))?;
+        let audit =
+            blockchain_host::audit::audit_claim(blockchain_host::audit::AuditClaimOptions {
+                submission_path: fetched.submission_path.clone(),
+                specification_path: specification.to_path_buf(),
+                pins_path: None,
+            })?;
         ensure!(
             audit.faults.is_empty(),
             "`{name}`: an audit voids a claim whose every input is one a challenger holds: {} at \
@@ -1335,7 +1349,7 @@ fn posted_lies(
                     == claimed.input_commitment,
             "`{name}`: the admitted challenge is not about the lying checkpoint"
         );
-        let submission = crate::claim_check::challenge_submission(
+        let submission = blockchain_host::claim_check::challenge_submission(
             &claim.checkpoints_root,
             lie.checkpoint_index as u32,
             claimed,
@@ -1344,7 +1358,7 @@ fn posted_lies(
             challenger,
             layer,
         )?;
-        let rejection = crate::claim_check::check_challenge(
+        let rejection = blockchain_host::claim_check::check_challenge(
             &procedure,
             &lie.submission_path,
             &submission,
@@ -1865,7 +1879,7 @@ fn replay_semantic_rejection(
         result.model_fault != 0,
         "substitution produced a clean model/execution binding verdict"
     );
-    let rejection = crate::challenge::claimed_output_rejection(Some(&result))?
+    let rejection = blockchain_host::challenge::claimed_output_rejection(Some(&result))?
         .context("matching dishonest execution was accepted")?;
     ensure!(!rejection.is_empty(), "missing semantic rejection");
     Ok(

@@ -109,7 +109,7 @@ fn unpinned_bindings(cfs: &Value) -> Vec<String> {
 
 /// Refuses a stage program that reads a value its schema does not pin.
 /// `root` is the repository.
-pub(crate) fn check_stage_programs(root: &Path) -> Result<()> {
+pub fn check_stage_programs(root: &Path) -> Result<()> {
     let stages = stage_dirs(root)?;
     ensure!(stages.len() >= 6, "found {} stage programs", stages.len());
     let mut found = Vec::new();

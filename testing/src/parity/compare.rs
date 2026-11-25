@@ -3,8 +3,8 @@ use std::fs;
 use std::path::Path;
 
 use anyhow::{bail, ensure, Context, Result};
-use raster_runtime::{read_raster_artifact_from_bytes, RasterValue, ReadLimits};
-use serde_json::{json, Value};
+use raster_runtime::{read_raster_artifact_from_bytes, ReadLimits};
+use serde_json::Value;
 
 #[derive(Debug)]
 pub(super) struct Boundary {
@@ -170,63 +170,7 @@ fn decode_boundary(bytes: Vec<u8>, index: &[u8], recorded: &str) -> Result<Bound
     })
 }
 
-pub(crate) fn value_json(value: &RasterValue) -> Result<Value> {
-    Ok(match value {
-        RasterValue::Unit => Value::Null,
-        RasterValue::Bool(v) => json!(v),
-        RasterValue::Int { value, .. } => match u64::try_from(*value) {
-            Ok(v) => json!(v),
-            Err(_) => json!(i64::try_from(*value)?),
-        },
-        RasterValue::Str {
-            value,
-            truncated: false,
-        } => json!(value),
-        RasterValue::Bytes {
-            data,
-            truncated: false,
-            ..
-        } => json!({"bytes": hex::encode(data)}),
-        RasterValue::Struct {
-            fields,
-            truncated: false,
-            ..
-        } => {
-            let mut object = serde_json::Map::new();
-            for (key, child) in fields {
-                ensure!(
-                    object.insert(key.clone(), value_json(child)?).is_none(),
-                    "duplicate field {key}"
-                );
-            }
-            Value::Object(object)
-        }
-        RasterValue::List {
-            elements,
-            truncated: false,
-            ..
-        } => Value::Array(elements.iter().map(value_json).collect::<Result<_>>()?),
-        RasterValue::Map {
-            entries,
-            truncated: false,
-            ..
-        } => {
-            let mut object = serde_json::Map::new();
-            for (key, child) in entries {
-                let key = value_json(key)?
-                    .as_str()
-                    .context("non-string map key")?
-                    .to_string();
-                ensure!(
-                    object.insert(key.clone(), value_json(child)?).is_none(),
-                    "duplicate map key {key}"
-                );
-            }
-            Value::Object(object)
-        }
-        _ => bail!("unsupported or truncated inference boundary value"),
-    })
-}
+pub use blockchain_host::raster_json::value_json;
 
 pub(super) fn validate_errors(stage: &str, value: &Value) -> Result<()> {
     // A stage of a chain of several inferences is named for its own.
@@ -387,6 +331,7 @@ fn short(value: &Value) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     fn boundary(value: &Value) -> Boundary {
         raster::init();

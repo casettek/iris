@@ -1,0 +1,14 @@
+[package]
+name = "procedure-direct"
+version = "0.1.0"
+edition = "2021"
+description = "The direct run of a procedure: its result as fast as possible"
+
+[features]
+gpu-kernels = ["direct-infer/gpu-kernels", "staged-infer/gpu-kernels"]
+
+[dependencies]
+anyhow = "1.0"
+direct-infer = { path = "../../segments/inference/generation" }
+procedure-definition = { path = "../definition" }
+staged-infer = { path = "../staged" }

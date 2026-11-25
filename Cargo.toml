@@ -14,9 +14,12 @@ members = [
     "segments/inference/generation",
     "procedure/definition",
     "procedure/prepare",
+    "procedure/direct",
     "procedure/staged",
+    "testing",
     "cli",
     "blockchain/rules",
+    "blockchain/host",
     "blockchain/evm",
     "blockchain/celestia",
     "raster-stages/claim-result",
@@ -45,7 +48,9 @@ default-members = [
     "segments/inference/generation",
     "procedure/definition",
     "procedure/prepare",
+    "procedure/direct",
     "procedure/staged",
+    "testing",
     "cli",
 ]
 

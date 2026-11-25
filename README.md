@@ -153,11 +153,14 @@ segments/                   # the logic of each piece of a procedure, written on
 procedure/                  # a procedure and the ways to run it
   definition/               # what a procedure is, and the record of a run: specification, checkpoints
   prepare/                  # a run's inputs, written as the files its stages load
+  direct/                   # the direct run: a procedure's result as fast as possible
   staged/                   # the stage-by-stage run a claim and a challenge make
+testing/                    # the parity gate, the lying claims, the stage schema check
 cli/                        # the `iris` binary: one module per command group under src/commands/
 raster-stages/              # one Raster program per kind of stage, each with its Raster.lock
 blockchain/
   rules/                    # what a claim, a challenge and a contract hold, and the contract's rules in Rust
+  host/                     # what a claimer, a challenger and a defender do: build, post, fetch, audit, prove
   evm/                      # what iris sends to its contracts: the ABI encoding and the calldata
   celestia/                 # Celestia's commitment to a blob, as iris computes it
   contracts/                # the Solidity contracts and their tests

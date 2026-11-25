@@ -29,7 +29,7 @@ use staged_infer::chain_runner::StagedExecutionBackend;
 
 use super::compare::{compare, read_boundaries};
 use super::{case_beside, command, logged, prompt_only_manifest};
-use crate::claim::{prepare_claim_run, ClaimBuildOptions};
+use blockchain_host::claim::{prepare_claim_run, ClaimBuildOptions};
 
 const SERVER: &str = "example.org";
 const EVENT_TARGET: &str = "/event/us1.json";
@@ -215,7 +215,7 @@ fn run_honest(
     raster: &Path,
     model_path: &Path,
     source: &LoadedSource,
-) -> Result<(Value, crate::claim::PreparedClaimRun)> {
+) -> Result<(Value, blockchain_host::claim::PreparedClaimRun)> {
     let specification = write_run(dir, source, ProcedureKind::Single, &[model_path])?;
     let prepared = prepare_claim_run(&ClaimBuildOptions {
         base_dir: dir.to_path_buf(),
@@ -304,16 +304,18 @@ fn run_honest(
 
     // What a contract would check, and every native checkpoint against the
     // boundary the Raster run committed.
-    let contract = crate::claim_check::check_claim(crate::claim_check::ClaimCheckOptions {
-        base_dir: dir.to_path_buf(),
-        specification_path: specification.clone(),
-        submission_path: native_dir.join(blockchain_rules::checks::CLAIM_SUBMISSION_JSON),
-        raster_run: Some(raster_dir),
-        pins_path: None,
-        registry_path: None,
-        da_dir: None,
-        submitted_at: None,
-    })
+    let contract = blockchain_host::claim_check::check_claim(
+        blockchain_host::claim_check::ClaimCheckOptions {
+            base_dir: dir.to_path_buf(),
+            specification_path: specification.clone(),
+            submission_path: native_dir.join(blockchain_rules::checks::CLAIM_SUBMISSION_JSON),
+            raster_run: Some(raster_dir),
+            pins_path: None,
+            registry_path: None,
+            da_dir: None,
+            submitted_at: None,
+        },
+    )
     .context("contract checks")?;
     for line in &contract.lines {
         ensure!(
@@ -327,14 +329,15 @@ fn run_honest(
     // The challenger's side: read back from the layer into an empty
     // directory, the claim's source is the documents it posted, and the case
     // written over them gives the source record the claim names.
-    let fetched = crate::posted::fetch_claim(crate::posted::FetchClaimOptions {
-        submission_path: native_dir.join(blockchain_rules::checks::CLAIM_SUBMISSION_JSON),
-        specification_path: specification.clone(),
-        pins_path: None,
-        da_dir: None,
-        out_dir: dir.join("fetched"),
-    })
-    .context("reading the claim back from the layer")?;
+    let fetched =
+        blockchain_host::posted::fetch_claim(blockchain_host::posted::FetchClaimOptions {
+            submission_path: native_dir.join(blockchain_rules::checks::CLAIM_SUBMISSION_JSON),
+            specification_path: specification.clone(),
+            pins_path: None,
+            da_dir: None,
+            out_dir: dir.join("fetched"),
+        })
+        .context("reading the claim back from the layer")?;
     let fetched_source = run_prep::source::load_source(
         &procedure_definition::read_specification(&specification)?,
         fetched

@@ -26,16 +26,16 @@ use sha2::{Digest, Sha256};
 use crate::posting::{contents_of, open_layer, trace_header_digest};
 
 /// A stage's input list, in the stage's directory.
-pub(crate) const INPUT_MANIFEST_JSON: &str = "input_manifest.json";
+pub const INPUT_MANIFEST_JSON: &str = "input_manifest.json";
 
-pub(crate) fn parent(path: &Path) -> Result<&Path> {
+pub fn parent(path: &Path) -> Result<&Path> {
     path.parent()
         .with_context(|| format!("{} has no parent directory", path.display()))
 }
 
 /// A directory to write into that holds nothing yet, so that what is read
 /// from the layer is never mixed with files of another origin.
-pub(crate) fn fresh_dir(dir: &Path) -> Result<()> {
+pub fn fresh_dir(dir: &Path) -> Result<()> {
     if dir.exists() {
         ensure!(
             fs::read_dir(dir)
@@ -75,7 +75,7 @@ pub struct FetchedClaim {
 
 /// A stage name as a directory name. The names in a posted claim are the
 /// claimer's, and the directory is the reader's.
-pub(crate) fn stage_dir_name(stage: &str) -> Result<&str> {
+pub fn stage_dir_name(stage: &str) -> Result<&str> {
     ensure!(
         !stage.is_empty()
             && stage

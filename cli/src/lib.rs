@@ -6,29 +6,18 @@ use std::process::{Command as ProcessCommand, ExitCode, ExitStatus};
 use anyhow::{bail, Context, Result};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 
-mod arrangement;
-mod audit;
-mod blockchain;
-mod challenge;
-mod challenge_profile;
-mod claim;
-mod claim_check;
 mod commands;
-mod convert;
-mod fault;
-mod infer;
-mod lies;
-mod measure;
-mod parity;
-mod posted;
-mod posting;
 #[cfg(feature = "replay-profile")]
 mod replay_profile;
-mod run_inputs;
 mod source;
-mod stage_bindings;
-#[cfg(test)]
-mod test_support;
+
+use blockchain_host::{
+    audit, blockchain, challenge, challenge_profile, claim, claim_check, fault, measure, posted,
+    posting,
+};
+use model_import::convert;
+use procedure_direct::{absolute, infer};
+use testing::{lies, parity};
 
 pub use blockchain_rules::{
     write_claim_artifacts, ChallengeBundle, ChallengeTrace, ClaimBundle, ClaimEndpoint,
@@ -305,14 +294,6 @@ fn execute(cli: Cli) -> Result<ExitCode> {
 #[cfg(not(debug_assertions))]
 fn warn_if_debug_build(_workflow: &str) {}
 
-fn absolute(base: &Path, path: &Path) -> PathBuf {
-    if path.is_absolute() {
-        path.to_path_buf()
-    } else {
-        base.join(path)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -505,8 +486,8 @@ mod tests {
     }
 
     /// The core does not depend on the blockchain code: of the crates under
-    /// `segments/`, `procedure/`, `cli/` and `raster-stages/`, only this one
-    /// names a path that leads into `blockchain/`.
+    /// `segments/`, `procedure/`, `cli/`, `testing/` and `raster-stages/`,
+    /// only this one and the tests name a path that leads into `blockchain/`.
     #[test]
     fn nothing_but_the_cli_depends_on_blockchain() {
         fn manifests(dir: &Path, found: &mut Vec<PathBuf>) {
@@ -567,10 +548,11 @@ mod tests {
                 .any(|path| resolved(manifest.parent().unwrap(), path).starts_with(&blockchain))
         };
         let mut found = Vec::new();
-        for dir in ["segments", "procedure", "cli", "raster-stages"] {
+        for dir in ["segments", "procedure", "cli", "testing", "raster-stages"] {
             manifests(&root.join(dir), &mut found);
         }
         let own = here.join("Cargo.toml");
+        let tests = root.join("testing/Cargo.toml");
         assert!(found.contains(&own), "the search did not find this crate");
         assert!(
             reaches_blockchain(&own),
@@ -578,11 +560,13 @@ mod tests {
         );
         let others: Vec<&PathBuf> = found
             .iter()
-            .filter(|manifest| **manifest != own && reaches_blockchain(manifest))
+            .filter(|manifest| {
+                **manifest != own && **manifest != tests && reaches_blockchain(manifest)
+            })
             .collect();
         assert!(
             others.is_empty(),
-            "only the CLI may depend on blockchain/: {others:?}"
+            "only the CLI and the tests may depend on blockchain/: {others:?}"
         );
     }
 }

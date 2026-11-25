@@ -176,7 +176,7 @@ honest claimer would convict itself.
 ## Source scenario
 
 Before the three cases, the gate builds one claim whose prompt comes from two signed
-documents (`cli/src/parity/source.rs`). The documents, the recipe and
+documents (`testing/src/parity/source.rs`). The documents, the recipe and
 the signing key are made in the run. The recipe takes values from both documents, one of
 them through an array and a key with a dot in it.
 
@@ -215,7 +215,7 @@ and no replay is asked for.
 ## Consensus scenario
 
 After the source scenario the gate builds one claim of the `consensus`
-[procedure kind](../protocol/procedure-kinds.md) (`cli/src/parity/consensus.rs`).
+[procedure kind](../protocol/procedure-kinds.md) (`testing/src/parity/consensus.rs`).
 Its first model is the gate's own. Its second is the other family's bundle,
 imported into the run, so one chain holds both families' stage programs under
 their labels. The prompt is the source scenario's, built from its two signed

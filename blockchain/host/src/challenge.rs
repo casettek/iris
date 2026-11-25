@@ -20,7 +20,7 @@ use procedure_definition::{
 };
 use raster_runtime::{read_raster_artifact_from_bytes, ReadLimits};
 
-use crate::parity::compare::value_json;
+use crate::raster_json::value_json;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ChallengeInput {
@@ -729,7 +729,7 @@ fn bound_commitments(manifest_path: &Path, name: &str) -> Result<Vec<String>> {
 /// Honest execution over non-greedy claimed ids publishes a non-zero verdict; a
 /// claimer who wanted a clean one instead had to doctor a stage, which diverges
 /// and is replayed rather than reaching this point.
-pub(crate) fn claimed_output_rejection(
+pub fn claimed_output_rejection(
     final_result: Option<&procedure_definition::InferenceResult>,
 ) -> Result<Option<String>> {
     let result = final_result
@@ -855,7 +855,7 @@ fn replay_package(stage: &str, replay_run_dir: &Path) -> Result<ReplayPackage> {
     Ok(package)
 }
 
-pub(crate) fn seed_replay_directory(
+pub fn seed_replay_directory(
     source_chain_dir: &Path,
     list: &CheckpointList,
     checkpoint_index: usize,
