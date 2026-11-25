@@ -8,16 +8,20 @@ use serde::Serialize;
 use crate::artifact_io::{encode_output, write_output, EncodedArtifact};
 use crate::cache::{CachedInputs, CachedStageValue, MaterializationCache};
 
-pub mod claim_result;
-pub mod consensus_result;
-pub mod input_embedding;
-pub mod layer_mistral;
-pub mod prefill_prepare_aux;
-pub mod prefill_range;
-pub mod prompt_bind;
-pub mod prompt_check;
-pub mod prompt_source;
-pub mod sequence_check;
+// The routines, grouped by the segment of a procedure they belong to. What is
+// in this file and at the top of the crate is the runner, which is not any
+// one segment's.
+pub mod inference;
+pub mod result;
+pub mod source;
+
+// Each stage program's routine under the name of its program.
+pub use inference::{
+    input_embedding, layer_mistral, prefill_prepare_aux, prefill_range, prompt_bind, prompt_check,
+    sequence_check,
+};
+pub use result::{claim_result, consensus_result};
+pub use source::prompt_source;
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum StageKind {

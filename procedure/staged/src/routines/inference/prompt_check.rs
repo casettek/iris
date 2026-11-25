@@ -56,17 +56,15 @@ pub(crate) struct WitnessProofs<'a> {
 impl BucketProofs for WitnessProofs<'_> {
     fn merge_bucket(&mut self, index: u32) -> bool {
         let (tokenizer, witness) = (self.tokenizer, self.witness);
-        *self
-            .merges
-            .entry(index)
-            .or_insert_with(|| crate::prompt_identity::merge_bucket(tokenizer, witness, index))
+        *self.merges.entry(index).or_insert_with(|| {
+            crate::routines::inference::prompt_identity::merge_bucket(tokenizer, witness, index)
+        })
     }
     fn vocab_bucket(&mut self, index: u32) -> bool {
         let (tokenizer, witness) = (self.tokenizer, self.witness);
-        *self
-            .vocab
-            .entry(index)
-            .or_insert_with(|| crate::prompt_identity::vocab_bucket(tokenizer, witness, index))
+        *self.vocab.entry(index).or_insert_with(|| {
+            crate::routines::inference::prompt_identity::vocab_bucket(tokenizer, witness, index)
+        })
     }
 }
 
@@ -79,7 +77,7 @@ pub fn run_direct(inputs: &Inputs) -> Result<PromptState> {
     };
     run_prompt_check(
         &inputs.tokenizer,
-        &crate::prompt_identity::root(&inputs.tokenizer, &inputs.witness),
+        &crate::routines::inference::prompt_identity::root(&inputs.tokenizer, &inputs.witness),
         &inputs.bound,
         &inputs.previous,
         inputs.marks.starts.as_slice(),

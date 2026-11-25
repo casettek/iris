@@ -4,8 +4,8 @@ use crate::{
         materialization_key_from_stage_files, materialize_with_cache, CachedInputs,
         MaterializationCache, MaterializationCacheKey,
     },
-    embedding::{self, SelectedEmbedding, StaticEmbedding},
-    verified_weights::{input_documents_from_args, raster_inputs},
+    routines::inference::embedding::{self, SelectedEmbedding, StaticEmbedding},
+    routines::inference::verified_weights::{input_documents_from_args, raster_inputs},
 };
 use anyhow::Result;
 use inference_kernels::kernels::input_embedding::{
@@ -179,14 +179,15 @@ fn load_inputs_from_initialized_runtime(
 
     let mut sparse_valid = true;
     let embedding = if raster_inputs(&binding) {
-        let identity_source = crate::verified_weights::VerifiedSelections::new(
-            raster_runtime::EntryArgumentsBinding {
-                reference: binding.reference.clone(),
-                arguments: binding.arguments.clone(),
-            },
-            input,
-            manifest,
-        )?;
+        let identity_source =
+            crate::routines::inference::verified_weights::VerifiedSelections::new(
+                raster_runtime::EntryArgumentsBinding {
+                    reference: binding.reference.clone(),
+                    arguments: binding.arguments.clone(),
+                },
+                input,
+                manifest,
+            )?;
         let selected = embedding::load(
             binding,
             input,

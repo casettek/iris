@@ -2,9 +2,11 @@
 use crate::{
     artifact_io::with_stage_sequence_scope,
     cache::{materialization_key_from_stage_files, CachedInputs, MaterializationCache},
-    embedding::{self, SelectedEmbedding, StaticEmbedding},
     routines,
-    verified_weights::{Q8_HEAD_PAGE_SIZE as HEAD_PAGE_SIZE, Q8_PAGE_SIZE as PAGE_SIZE},
+    routines::inference::embedding::{self, SelectedEmbedding, StaticEmbedding},
+    routines::inference::verified_weights::{
+        Q8_HEAD_PAGE_SIZE as HEAD_PAGE_SIZE, Q8_PAGE_SIZE as PAGE_SIZE,
+    },
 };
 use anyhow::Result;
 use inference_kernels::weight_budget::WeightBudget;
@@ -458,7 +460,7 @@ fn embedding_loading_benchmark() {
     );
 }
 
-use crate::head::{self, PagedHead, StaticHead, BATCH_PAGES};
+use crate::routines::inference::head::{self, PagedHead, StaticHead, BATCH_PAGES};
 use sequence_check::input::{
     pack_i32s, ActivationRow, ActivationSequence, ClaimedOutput, DecodeEdge, FinalHead,
     FinalHeadParams,

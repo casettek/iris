@@ -156,7 +156,8 @@ procedure/                  # a procedure and the ways to run it
   definition/               # what a procedure is, and the record of a run: specification, checkpoints
   prepare/                  # a run's inputs and files, and the chain a staged run is made from
   direct/                   # the direct run: a procedure's result as fast as possible
-  staged/                   # the stage-by-stage run a claim and a challenge make
+  staged/                   # the stage-by-stage run a claim and a challenge make: the runner,
+                            # and each stage's routine under routines/{source,inference,result}
   run/                      # a procedure run with no blockchain: direct, then staged, held equal
 testing/                    # the parity gate, the lying claims, the stage schema check
 cli/                        # the `iris` binary: one module per command group under src/commands/

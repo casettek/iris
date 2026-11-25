@@ -18,8 +18,8 @@ use sha2::{Digest, Sha256};
 
 use crate::cache::{CachedInputs, CachedStageValue, StageOutputCache};
 use crate::parity::{parity_dir, EXECUTION_TIMES_JSON};
+use crate::routines::inference::weights::{RunWeights, WeightAllocation};
 use crate::routines::{self, StageKind};
-use crate::weights::{RunWeights, WeightAllocation};
 use crate::worker::{WorkerJob, WorkerPool};
 
 #[derive(Debug)]
@@ -297,7 +297,7 @@ struct StagePerformance {
 
 struct ChainRunState {
     auxiliary_process_starts: usize,
-    memory: crate::weights::MemorySampler,
+    memory: crate::routines::inference::weights::MemorySampler,
     weights: RunWeights,
     allocation: WeightAllocation,
     workers: Option<WorkerPool>,
@@ -573,7 +573,7 @@ fn run_inner(
     checkpoint_verifier: Option<CheckpointHashVerifier>,
     through_stage: Option<&str>,
 ) -> Result<ChainRunOutput> {
-    let ple_loading = crate::ple::Loading::from_env()?;
+    let ple_loading = crate::routines::inference::ple::Loading::from_env()?;
     let base_dir = std::env::current_dir().context("failed to read current directory")?;
     let mut manifest = read_manifest(manifest_path)?;
     validate_supported_stages(&manifest.chain.stage)?;
@@ -623,7 +623,7 @@ fn run_inner(
     );
     let mut state = ChainRunState {
         auxiliary_process_starts: 0,
-        memory: crate::weights::MemorySampler::start(),
+        memory: crate::routines::inference::weights::MemorySampler::start(),
         weights: RunWeights::new(allocation.main_bytes),
         allocation,
         workers: None,

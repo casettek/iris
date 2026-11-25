@@ -9,7 +9,7 @@ use crate::cache::{
     materialization_key_from_stage_files, materialize_with_cache, CachedInputs,
     MaterializationCache, MaterializationCacheKey,
 };
-use crate::ple::{self, Loading, SelectedWeights, StaticWeights};
+use crate::routines::inference::ple::{self, Loading, SelectedWeights, StaticWeights};
 use inference_kernels::kernels::prefill_prepare_aux::{
     run_prefill_prepare_aux_direct, PrefillPrepareAuxDirectInputs,
 };
@@ -136,14 +136,15 @@ fn load_inputs_from_initialized_runtime(
             .iter()
             .all(|arg| arg.encoding == ExternalEncoding::Raster)
     {
-        let identity_source = crate::verified_weights::VerifiedSelections::new(
-            raster_runtime::EntryArgumentsBinding {
-                reference: binding.reference.clone(),
-                arguments: binding.arguments.clone(),
-            },
-            input,
-            input_manifest,
-        )?;
+        let identity_source =
+            crate::routines::inference::verified_weights::VerifiedSelections::new(
+                raster_runtime::EntryArgumentsBinding {
+                    reference: binding.reference.clone(),
+                    arguments: binding.arguments.clone(),
+                },
+                input,
+                input_manifest,
+            )?;
         let selected = ple::load(
             binding,
             input,

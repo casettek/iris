@@ -4,8 +4,8 @@ use crate::{
         materialization_key_from_stage_files, materialize_with_cache, CachedInputs,
         MaterializationCache, MaterializationCacheKey,
     },
-    head::{self, PagedHead, StaticHead},
-    verified_weights::{input_documents_from_args, raster_inputs},
+    routines::inference::head::{self, PagedHead, StaticHead},
+    routines::inference::verified_weights::{input_documents_from_args, raster_inputs},
 };
 use anyhow::Result;
 use inference_kernels::kernels::finalize::{claim_record, output_record, FinalizeInputs};

@@ -64,7 +64,10 @@ pub fn run_direct(inputs: &Inputs) -> Result<PromptState> {
     run_prompt_bind(
         PromptBindInputs {
             tokenizer: &inputs.tokenizer,
-            root: &crate::prompt_identity::root(&inputs.tokenizer, &inputs.witness),
+            root: &crate::routines::inference::prompt_identity::root(
+                &inputs.tokenizer,
+                &inputs.witness,
+            ),
             text: &inputs.text,
             config: &inputs.config,
             descriptor: inputs.descriptor.as_slice(),

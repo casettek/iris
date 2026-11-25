@@ -379,12 +379,12 @@ The focused regression and loading benchmark are in the staged crate:
 
 ```sh
 RASTER_AUTH=0 cargo test --release --locked -p staged-infer --lib ple::tests -- --test-threads=1
-RASTER_AUTH=0 cargo test --release --locked -p staged-infer --lib ple::tests::selective_loading_benchmark -- --ignored --exact --nocapture
+RASTER_AUTH=0 cargo test --release --locked -p staged-infer --lib routines::inference::ple::tests::selective_loading_benchmark -- --ignored --exact --nocapture
 cargo test --release --locked -p staged-infer --test worker_parity -- --test-threads=1
 ```
 
 With `STAGED_INFER_REPLAY_BIN_DIR` pointing at the built stage binaries, also run
-`ple::tests::multi_page_matches_authenticated_raster_stage` with
+`routines::inference::ple::tests::multi_page_matches_authenticated_raster_stage` with
 `--lib -- --ignored --exact`, and the existing
 `repeated_ranges_match_authenticated_raster_stage_execution` test with
 `--test worker_parity -- --ignored --exact`. They cover authenticated multi-page
@@ -457,7 +457,7 @@ and checkpoint hashes, and checks that the Raster binaries themselves did not
 change. Its report includes wall times and sampled memory; the small-model
 numbers are not estimates of Gemma speedup.
 
-Focused tests live in `weight_tests` in the staged crate. Run them both normally
+Focused tests live in `routines::inference::weight_tests` in the staged crate. Run them both normally
 and in a separate process with `RASTER_AUTH=0`. With
 `STAGED_INFER_REPLAY_BIN_DIR` pointing to `target/windows/release`, explicitly run
 the ignored authenticated multi-page and standalone-publication tests. Run the

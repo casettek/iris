@@ -1,7 +1,7 @@
 //! Selective PLE loading for the staged host only. Raster remains the oracle.
 use std::{collections::BTreeMap, sync::Arc};
 
-use crate::verified_weights::{fields, VerifiedSelections};
+use crate::routines::inference::verified_weights::{fields, VerifiedSelections};
 use anyhow::{bail, ensure, Context, Result};
 use inference_kernels::{
     tensor::{matvec_from_source, Matrix},

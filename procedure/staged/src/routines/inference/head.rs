@@ -1,7 +1,7 @@
 //! Scoring over verified Raster pages, without an owned full-head matrix.
 use crate::{
     cache::{MaterializationCache, MaterializationCacheKey},
-    verified_weights::{fields, PageRegion, VerifiedSelections},
+    routines::inference::verified_weights::{fields, PageRegion, VerifiedSelections},
 };
 use anyhow::{ensure, Context, Result};
 use inference_kernels::kernels::sequence_check::{score_row, Argmax, Selection};
@@ -52,7 +52,7 @@ impl StaticHead {
         let region = PageRegion::load(
             source,
             &["head", "projection"],
-            crate::verified_weights::Q8_HEAD_PAGE_SIZE,
+            crate::routines::inference::verified_weights::Q8_HEAD_PAGE_SIZE,
         )?;
         Ok(Self { params, region })
     }

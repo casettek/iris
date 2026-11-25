@@ -1,8 +1,8 @@
 //! Private line protocol for serial jobs in long-lived auxiliary processes.
 use crate::cache::CachedInputs;
 use crate::chain_runner::StageEnvGuard;
+use crate::routines::inference::weights::RunWeights;
 use crate::routines::{self, DirectTimings, StageKind};
-use crate::weights::RunWeights;
 use anyhow::{bail, Context, Result};
 use inference_kernels::weight_budget::WeightCacheStats;
 use serde::{Deserialize, Serialize};
@@ -63,7 +63,7 @@ fn write_message(writer: &mut impl Write, message: &impl Serialize) -> Result<()
 
 /// Called only by the hidden entrypoint. stdout is reserved for protocol frames.
 pub fn run_worker(budget_bytes: usize) -> Result<()> {
-    crate::ple::Loading::from_env()?;
+    crate::routines::inference::ple::Loading::from_env()?;
     let weights = RunWeights::new(budget_bytes);
     let stdin = std::io::stdin();
     let stdout = std::io::stdout();

@@ -1,7 +1,7 @@
 //! Select only the committed main embedding pages touched by this invocation.
 use crate::{
     cache::{MaterializationCache, MaterializationCacheKey},
-    verified_weights::{fields, PageRegion, VerifiedSelections},
+    routines::inference::verified_weights::{fields, PageRegion, VerifiedSelections},
 };
 use anyhow::{Context, Result};
 use det_num::{ops::mul_sat, Act};
@@ -39,7 +39,7 @@ impl StaticEmbedding {
             region: PageRegion::load(
                 source,
                 &["embedding", "values"],
-                crate::verified_weights::Q8_PAGE_SIZE,
+                crate::routines::inference::verified_weights::Q8_PAGE_SIZE,
             )?,
         })
     }
