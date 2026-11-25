@@ -10,10 +10,10 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use crate::RunFile;
 use anyhow::{Context, Result};
-use blockchain_rules::availability::{PostedInference, PostedRun, PostedSourceInputs, RunInput};
+use procedure_definition::run_inputs::{PostedInference, PostedRun, PostedSourceInputs, RunInput};
 use procedure_definition::{PreparedSourceInputs, RunFileRef};
-use run_prep::RunFile;
 
 /// A run's inputs, beside its frozen manifest and beside a fetched claim.
 pub const POSTED_RUN_BIN: &str = "posted_run.bin";
@@ -23,7 +23,7 @@ pub const POSTED_RUN_BIN: &str = "posted_run.bin";
 pub fn commitments(run: &PostedRun) -> Result<Vec<String>> {
     run.values()
         .into_iter()
-        .map(run_prep::run_input_commitment)
+        .map(crate::run_input_commitment)
         .collect()
 }
 
@@ -69,18 +69,14 @@ pub fn write_inference(inference: &PostedInference, dir: &Path) -> Result<Infere
         values
             .into_iter()
             .enumerate()
-            .map(|(index, value)| run_prep::write_run_input(value, dir, &format!("{name}_{index}")))
+            .map(|(index, value)| crate::write_run_input(value, dir, &format!("{name}_{index}")))
             .collect()
     };
     Ok(InferenceRunFiles {
         text: indexed(inference.text.iter().map(RunInput::Text).collect(), "text")?,
-        config: run_prep::write_run_input(RunInput::Config(&inference.config), dir, "config")?,
-        schedule: run_prep::write_run_input(
-            RunInput::Schedule(&inference.schedule),
-            dir,
-            "schedule",
-        )?,
-        text_digest: run_prep::write_run_input(
+        config: crate::write_run_input(RunInput::Config(&inference.config), dir, "config")?,
+        schedule: crate::write_run_input(RunInput::Schedule(&inference.schedule), dir, "schedule")?,
+        text_digest: crate::write_run_input(
             RunInput::TextDigest(&inference.text_digest),
             dir,
             "text_digest",
@@ -107,7 +103,7 @@ pub fn write_inference(inference: &PostedInference, dir: &Path) -> Result<Infere
 /// Writes the source stage's inputs into `dir`.
 pub fn write_source(source: &PostedSourceInputs, dir: &Path) -> Result<PreparedSourceInputs> {
     let file = |value: RunInput<'_>, name: &str| -> Result<RunFileRef> {
-        let file = run_prep::write_run_input(value, dir, name)?;
+        let file = crate::write_run_input(value, dir, name)?;
         Ok(RunFileRef {
             path: file.path,
             index_path: file.index_path,
@@ -174,15 +170,15 @@ mod tests {
             max_new_tokens: 3,
             range_size: 2,
         };
-        let own_marks = run_prep::write_marks(&marks, &dir).unwrap();
-        let own_claimed = run_prep::write_claimed_ranges(&ids, 2, &dir).unwrap();
-        let own_text = run_prep::write_text_slices(std::slice::from_ref(&text), &dir).unwrap();
-        let own_config = run_prep::write_run_config(&config, &dir).unwrap();
-        let own_schedule = run_prep::write_run_schedule(2, 2, &dir).unwrap();
+        let own_marks = crate::write_marks(&marks, &dir).unwrap();
+        let own_claimed = crate::write_claimed_ranges(&ids, 2, &dir).unwrap();
+        let own_text = crate::write_text_slices(std::slice::from_ref(&text), &dir).unwrap();
+        let own_config = crate::write_run_config(&config, &dir).unwrap();
+        let own_schedule = crate::write_run_schedule(2, 2, &dir).unwrap();
 
         let posted = PostedInference {
             config: recast(&config).unwrap(),
-            schedule: blockchain_rules::availability::RunSchedule {
+            schedule: prompt_core::RunSchedule {
                 prompt_ranges: 2,
                 claimed_ranges: 2,
             },

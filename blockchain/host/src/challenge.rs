@@ -15,12 +15,13 @@ use blockchain_rules::{
 use model_manifest::verify_file_sha256;
 use procedure_definition::{
     checkpoint_hashes, read_checkpoint_hashes, read_checkpoint_list,
-    write_checkpoint_list_artifact, Case, Checkpoint, CheckpointList, Divergence, DivergenceReason,
-    PreparedRun, Specification, CASE_TOML,
+    write_checkpoint_list_artifact, Case, CheckpointList, Divergence, PreparedRun, Specification,
+    CASE_TOML,
 };
 use raster_runtime::{read_raster_artifact_from_bytes, ReadLimits};
 
 use crate::raster_json::value_json;
+pub use procedure_definition::divergence::locate_divergence;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ChallengeInput {
@@ -556,73 +557,6 @@ fn frozen_claimed_ids(manifest_path: &Path, label: &str) -> Result<Vec<u32>> {
     Ok(ids)
 }
 
-pub fn locate_divergence(
-    claimed_list_path: &Path,
-    claimed: &CheckpointList,
-    recomputed_list_path: &Path,
-    recomputed: &CheckpointList,
-) -> Option<Divergence> {
-    let checkpoint_count = claimed.checkpoints.len().max(recomputed.checkpoints.len());
-    for index in 0..checkpoint_count {
-        let claimed_checkpoint = claimed.checkpoints.get(index);
-        let recomputed_checkpoint = recomputed.checkpoints.get(index);
-        let Some(reason) = divergence_reason(claimed_checkpoint, recomputed_checkpoint) else {
-            continue;
-        };
-        let stage = claimed_checkpoint
-            .or(recomputed_checkpoint)
-            .map(|checkpoint| checkpoint.stage.clone())
-            .unwrap_or_else(|| String::from("<unknown>"));
-        return Some(Divergence {
-            version: 2,
-            checkpoint_index: index,
-            stage,
-            reason,
-            claimed_list_path: Some(claimed_list_path.to_path_buf()),
-            claimed_checkpoint_hashes_path: None,
-            recomputed_list_path: recomputed_list_path.to_path_buf(),
-            claimed_hash: None,
-            recomputed_hash: None,
-            claimed: claimed_checkpoint.cloned(),
-            recomputed: recomputed_checkpoint.cloned(),
-        });
-    }
-    None
-}
-
-fn divergence_reason(
-    claimed: Option<&Checkpoint>,
-    recomputed: Option<&Checkpoint>,
-) -> Option<DivergenceReason> {
-    match (claimed, recomputed) {
-        (None, None) => None,
-        (None, Some(_)) => Some(DivergenceReason::MissingClaimedCheckpoint),
-        (Some(_), None) => Some(DivergenceReason::MissingRecomputedCheckpoint),
-        (Some(claimed), Some(recomputed)) if claimed.stage != recomputed.stage => {
-            Some(DivergenceReason::StageName)
-        }
-        (Some(claimed), Some(recomputed))
-            if claimed.program_commitment != recomputed.program_commitment =>
-        {
-            Some(DivergenceReason::ProgramCommitment)
-        }
-        (Some(claimed), Some(recomputed))
-            if claimed.input_commitment != recomputed.input_commitment =>
-        {
-            Some(DivergenceReason::InputCommitment)
-        }
-        (Some(claimed), Some(recomputed))
-            if claimed.output_commitment != recomputed.output_commitment =>
-        {
-            Some(DivergenceReason::OutputCommitment)
-        }
-        (Some(claimed), Some(recomputed)) if claimed.output_sha256 != recomputed.output_sha256 => {
-            Some(DivergenceReason::OutputSha256)
-        }
-        _ => None,
-    }
-}
-
 /// The claim's checkpoint list, and the run the claimer built it from when
 /// that is in hand.
 struct ClaimedInput {
@@ -938,6 +872,7 @@ impl ChallengeBuildOptions {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use procedure_definition::{Checkpoint, DivergenceReason};
     use sha2::Digest;
     use std::time::{SystemTime, UNIX_EPOCH};
 

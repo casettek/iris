@@ -14,7 +14,9 @@ use prompt_prep::{
 };
 use raster::List;
 
+pub mod run_inputs;
 pub mod source;
+pub mod staged;
 
 /// `case_dir` is the directory the case's paths are relative to.
 pub fn prepare_prompt(

@@ -14,6 +14,6 @@ pub mod measure;
 pub mod posted;
 pub mod posting;
 pub mod raster_json;
-pub mod run_inputs;
+pub use run_prep::run_inputs;
 #[cfg(test)]
 mod test_support;

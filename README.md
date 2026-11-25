@@ -153,7 +153,7 @@ segments/                   # the logic of each piece of a procedure, written on
     generation/             # fast deterministic inference: finds the output a claim states
 procedure/                  # a procedure and the ways to run it
   definition/               # what a procedure is, and the record of a run: specification, checkpoints
-  prepare/                  # a run's inputs, written as the files its stages load
+  prepare/                  # a run's inputs and files, and the chain a staged run is made from
   direct/                   # the direct run: a procedure's result as fast as possible
   staged/                   # the stage-by-stage run a claim and a challenge make
 testing/                    # the parity gate, the lying claims, the stage schema check

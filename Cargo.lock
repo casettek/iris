@@ -4837,17 +4837,22 @@ name = "run-prep"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "hex",
  "inference-kernels",
  "input-embedding",
  "model-manifest",
+ "postcard",
  "procedure-definition",
  "prompt-check",
+ "prompt-core",
  "prompt-prep",
  "raster",
  "result-core",
  "serde",
  "serde_json",
+ "sha2",
  "source-core",
+ "toml",
 ]
 
 [[package]]
