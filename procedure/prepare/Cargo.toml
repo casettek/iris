@@ -2,20 +2,20 @@
 name = "run-prep"
 version = "0.1.0"
 edition = "2021"
+description = "A run's inputs: its text and source, and the files its stages load"
 
 [dependencies]
 anyhow = "1.0"
+input-embedding = { path = "../../raster-stages/input-embedding" }
 model-manifest = { path = "../../segments/inference/manifest" }
 procedure-definition = { path = "../definition" }
-inference-kernels = { path = "../../segments/inference/kernels" }
 prompt-check = { path = "../../raster-stages/prompt-check" }
-sequence-check = { path = "../../raster-stages/sequence-check" }
+prompt-prep = { path = "../../segments/inference/prompt" }
 raster = { path = "../../../raster/crates/raster" }
-input-embedding = { path = "../../raster-stages/input-embedding" }
-serde = "1.0"
-source-core = { path = "../../segments/source" }
 result-core = { path = "../../segments/result" }
+serde = "1.0"
 serde_json = "1.0"
+source-core = { path = "../../segments/source" }
 
 [dev-dependencies]
-sha2 = "0.10"
+inference-kernels = { path = "../../segments/inference/kernels" }

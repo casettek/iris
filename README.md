@@ -145,6 +145,7 @@ segments/                   # the logic of each piece of a procedure, written on
   inference/
     numerics/               # deterministic numbers
     tokenizer/              # the tokenizer
+    prompt/                 # preparing a prompt for a model: pieces, ranges, the decoder table
     weights/                # the weight format's readers
     manifest/               # a model as an import leaves it: the manifest, the families
     kernels/                # the inference kernels generation and verification share

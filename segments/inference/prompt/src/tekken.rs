@@ -18,8 +18,8 @@
 
 use std::collections::HashMap;
 
+use crate::PreparedPiece;
 use anyhow::{ensure, Context, Result};
-use procedure_definition::PreparedPiece;
 
 use prompt_check::input::tekken::unicode_classes::{
     LOWER, MARK, MODIFIER, NUMBER, OTHER, OTHER_LETTER, RANGES, TITLE, UPPER,

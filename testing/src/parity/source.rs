@@ -384,11 +384,11 @@ fn run_fault(
     text: &str,
     raw_prompt: bool,
     range_size: usize,
-    tokenizer: &run_prep::PromptTokenizer,
+    tokenizer: &prompt_prep::PromptTokenizer,
     expected: (u32, u32),
 ) -> Result<Value> {
     let files = dir.join("prompt");
-    let bound = run_prep::bound_ranges(text, raw_prompt, range_size, tokenizer)?;
+    let bound = prompt_prep::bound_ranges(text, raw_prompt, range_size, tokenizer)?;
     let texts = run_prep::write_bound_text(&bound.ranges, &files)?;
     let text_digest = run_prep::write_text_digest(&bound.text_digest, &files)?;
     let manifest = dir.join("Raster.toml");
@@ -459,7 +459,7 @@ pub(super) fn run_source_scenario(
     model_path: &Path,
     model: &ModelManifest,
 ) -> Result<Value> {
-    use run_prep::{FAULT_SOURCE, FAULT_TEXT_SOURCE};
+    use prompt_prep::{FAULT_SOURCE, FAULT_TEXT_SOURCE};
     let dir = run_dir.join("source");
     let mut honest = honest_source()?;
     // The answer is learned first and named as the second form, so the claim's
@@ -484,7 +484,7 @@ pub(super) fn run_source_scenario(
             .context("model manifest has no parent directory")?
             .join(&model.bundle.tokenizer_path),
     )?;
-    let tokenizer = run_prep::prompt_tokenizer(&tokenizer)?;
+    let tokenizer = prompt_prep::prompt_tokenizer(&tokenizer)?;
 
     let other_secret = [9_u8; 32];
     let edited = |edit: &dyn Fn(&mut LoadedSource) -> Result<()>| -> Result<LoadedSource> {

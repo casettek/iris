@@ -10,7 +10,7 @@ fn root() -> std::path::PathBuf {
 }
 fn pieces(text: &str, tokenizer: &Value) -> BpePieces {
     BpePieces::of_pieces(
-        run_prep::split_prompt(text, tokenizer)
+        prompt_prep::split_prompt(text, tokenizer)
             .unwrap()
             .into_iter()
             .map(|p| BpePiece {
@@ -31,7 +31,7 @@ fn check_reference(tokenizer_path: &Path, corpus_path: &Path) {
         corpus["tokenizer_sha256"]
     );
     assert_eq!(corpus["reference_version"], "0.22.2");
-    let table = run_prep::prompt_tokenizer(&tokenizer).unwrap();
+    let table = prompt_prep::prompt_tokenizer(&tokenizer).unwrap();
     for case in corpus["cases"].as_array().unwrap() {
         let initial = pieces(case["text"].as_str().unwrap(), &tokenizer);
         let direct = run_prompt_prepare_direct(PromptPrepareDirectInputs {
@@ -74,7 +74,7 @@ fn unknown_handling_and_literal_space_segmentation_match_reference() {
         (false, false, vec![2]),
     ] {
         let tokenizer = json!({"model":{"type":"BPE","vocab":{"a":0,"b":1,"ab":2,"<unk>":3},"merges":[["a","b"]],"unk_token":if unknown {Some("<unk>")} else {None}, "fuse_unk":fuse}});
-        let table = run_prep::prompt_tokenizer(&tokenizer).unwrap();
+        let table = prompt_prep::prompt_tokenizer(&tokenizer).unwrap();
         let input = pieces("a🙂中b", &tokenizer);
         assert_eq!(
             run_prompt_prepare_direct(PromptPrepareDirectInputs {
@@ -88,7 +88,7 @@ fn unknown_handling_and_literal_space_segmentation_match_reference() {
         );
     }
     let tokenizer = json!({"model":{"type":"BPE","vocab":{"a":0,"b":1," ":2,"a ":3," b":4},"merges":[[" ","b"],["a"," "]]}, "pre_tokenizer":{"type":"Split","pattern":{"String":" "},"behavior":"MergedWithPrevious","invert":false}});
-    let table = run_prep::prompt_tokenizer(&tokenizer).unwrap();
+    let table = prompt_prep::prompt_tokenizer(&tokenizer).unwrap();
     let input = pieces("a  b", &tokenizer);
     assert_eq!(
         run_prompt_prepare_direct(PromptPrepareDirectInputs {
@@ -116,7 +116,7 @@ fn production_reference_ids() {
 fn pieces_that_could_still_merge_are_recorded_and_merging_them_clears_it() {
     let tokenizer =
         json!({"model":{"type":"BPE","vocab":{"a":0,"b":1,"ab":2},"merges":[["a","b"]]}});
-    let table = run_prep::prompt_tokenizer(&tokenizer).unwrap();
+    let table = prompt_prep::prompt_tokenizer(&tokenizer).unwrap();
     let unmerged = pieces("ab", &tokenizer);
     assert!(
         best_merge(unmerged.pieces.as_slice(), &table)
@@ -145,7 +145,7 @@ fn pieces_that_could_still_merge_are_recorded_and_merging_them_clears_it() {
 fn special_segments_forbid_otherwise_eligible_merges() {
     let tokenizer =
         json!({"model":{"type":"BPE","vocab":{"a":0,"b":1,"ab":2},"merges":[["a","b"]]}});
-    let table = run_prep::prompt_tokenizer(&tokenizer).unwrap();
+    let table = prompt_prep::prompt_tokenizer(&tokenizer).unwrap();
     let input = BpePieces {
         pieces: vec![
             BpePiece {

@@ -1,0 +1,18 @@
+[package]
+name = "prompt-prep"
+version = "0.1.0"
+edition = "2021"
+description = "Preparing a prompt for a model: tokenizer, pieces, ranges and the decoder table"
+
+[dependencies]
+anyhow = "1.0"
+inference-kernels = { path = "../kernels" }
+input-embedding = { path = "../../../raster-stages/input-embedding" }
+prompt-check = { path = "../../../raster-stages/prompt-check" }
+raster = { path = "../../../../raster/crates/raster" }
+sequence-check = { path = "../../../raster-stages/sequence-check" }
+serde = "1.0"
+serde_json = "1.0"
+
+[dev-dependencies]
+sha2 = "0.10"

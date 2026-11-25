@@ -250,10 +250,10 @@ impl DirectInferenceModel {
     /// preparation counts it. `None` when the prompt cannot be cut into ranges,
     /// which only a chain needs.
     pub fn prompt_ranges(&self, prompt: &PreparedPrompt) -> Option<u32> {
-        let ranges = run_prep::marked_ranges(
+        let ranges = prompt_prep::marked_ranges(
             &prompt.initial_pieces,
             self.manifest.range_size as usize,
-            &run_prep::prompt_tokenizer(&self.tokenizer).ok()?,
+            &prompt_prep::prompt_tokenizer(&self.tokenizer).ok()?,
         )
         .ok()?;
         u32::try_from(ranges.len()).ok()
@@ -289,7 +289,7 @@ impl DirectInferenceModel {
         &self,
         prompt: &PreparedPrompt,
     ) -> Result<prompt_check::input::PromptTokenization> {
-        let tokenizer = run_prep::prompt_tokenizer(&self.tokenizer)?;
+        let tokenizer = prompt_prep::prompt_tokenizer(&self.tokenizer)?;
         let pieces = BpePieces {
             pieces: List::from(
                 prompt
@@ -603,7 +603,7 @@ impl DirectInferenceModel {
     }
 
     pub fn decoder_table(&self) -> Result<sequence_check::input::DecoderTable> {
-        run_prep::decoder_table(&self.tokenizer, &self.manifest.eos_token_ids)
+        prompt_prep::decoder_table(&self.tokenizer, &self.manifest.eos_token_ids)
     }
 
     pub fn manifest(&self) -> &ModelManifest {

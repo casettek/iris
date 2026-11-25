@@ -748,6 +748,7 @@ dependencies = [
  "model-manifest",
  "postcard",
  "procedure-definition",
+ "prompt-prep",
  "raster",
  "raster-analysis",
  "raster-backend-risc0",
@@ -1560,6 +1561,7 @@ dependencies = [
  "prefill-range",
  "procedure-definition",
  "prompt-check",
+ "prompt-prep",
  "raster",
  "run-prep",
  "sequence-check",
@@ -3182,8 +3184,8 @@ dependencies = [
  "model-identity",
  "model-manifest",
  "prompt-check",
+ "prompt-prep",
  "raster",
- "run-prep",
  "sequence-check",
  "serde",
  "serde_json",
@@ -3705,6 +3707,7 @@ dependencies = [
  "model-manifest",
  "postcard",
  "prompt-core",
+ "prompt-prep",
  "raster-core",
  "result-core",
  "serde",
@@ -3751,6 +3754,21 @@ dependencies = [
  "model-identity",
  "raster",
  "serde",
+ "sha2",
+]
+
+[[package]]
+name = "prompt-prep"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "inference-kernels",
+ "input-embedding",
+ "prompt-check",
+ "raster",
+ "sequence-check",
+ "serde",
+ "serde_json",
  "sha2",
 ]
 
@@ -4817,12 +4835,11 @@ dependencies = [
  "model-manifest",
  "procedure-definition",
  "prompt-check",
+ "prompt-prep",
  "raster",
  "result-core",
- "sequence-check",
  "serde",
  "serde_json",
- "sha2",
  "source-core",
 ]
 
@@ -5337,11 +5354,11 @@ dependencies = [
  "prefill-range",
  "procedure-definition",
  "prompt-check",
+ "prompt-prep",
  "raster",
  "raster-core",
  "raster-runtime",
  "rayon",
- "run-prep",
  "sequence-check",
  "serde",
  "serde_json",
@@ -5498,6 +5515,7 @@ dependencies = [
  "postcard",
  "procedure-definition",
  "procedure-direct",
+ "prompt-prep",
  "raster",
  "raster-compiler",
  "raster-prover",

@@ -167,8 +167,8 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
         let marks = vec![vec![1u32, 0, 0, 1], vec![1]];
         let ids = [5u32, 6, 7];
-        let text = run_prep::prompt_text("hello there");
-        let config = run_prep::RunConfig {
+        let text = prompt_prep::prompt_text("hello there");
+        let config = prompt_prep::RunConfig {
             model_id: "ab".repeat(32),
             raw_prompt: true,
             max_new_tokens: 3,

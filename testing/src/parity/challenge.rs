@@ -17,8 +17,8 @@ use procedure_definition::{
     build_checkpoint_list, checkpoint_hashes, read_checkpoint_list, read_json,
     write_checkpoint_hashes, CheckpointList,
 };
+use prompt_prep::RunConfig;
 use raster_prover::commitment_file::CommitmentFile;
-use run_prep::RunConfig;
 use serde_json::{json, Value};
 use staged_infer::chain_runner::StagedExecutionBackend;
 use staged_infer::{CheckpointedInferenceConfig, CheckpointedInferenceExecutor, ParityPolicy};
@@ -1388,10 +1388,10 @@ fn honest_inputs(scenario: &Scenario) -> Result<RunInputs> {
         .parent()
         .context("model manifest has no parent directory")?;
     let tokenizer: Value = read_json(&model_dir.join(&scenario.model.bundle.tokenizer_path))?;
-    let ranges = run_prep::marked_ranges(
+    let ranges = prompt_prep::marked_ranges(
         &prompt.initial_pieces,
         range_size as usize,
-        &run_prep::prompt_tokenizer(&tokenizer)?,
+        &prompt_prep::prompt_tokenizer(&tokenizer)?,
     )?;
     Ok(RunInputs {
         text: prompt.resolved_prompt.clone(),
@@ -1430,11 +1430,11 @@ fn render(model_path: &Path, model: &ModelManifest, run: &RunInputs, dir: &Path)
             .context("model manifest has no parent directory")?
             .join(&model.bundle.tokenizer_path),
     )?;
-    let (slices, mut text_digest) = run_prep::text_for_ranges(
+    let (slices, mut text_digest) = prompt_prep::text_for_ranges(
         &run.text,
         run.config.raw_prompt,
         range_size,
-        &run_prep::prompt_tokenizer(&tokenizer)?,
+        &prompt_prep::prompt_tokenizer(&tokenizer)?,
         run.marks.len(),
     )?;
     if run.other_text_hash {

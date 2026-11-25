@@ -40,4 +40,4 @@ toml = "0.8"
 sysinfo = { version = "0.33", default-features = false, features = ["system"] }
 
 [dev-dependencies]
-run-prep = { path = "../prepare" }
+prompt-prep = { path = "../../segments/inference/prompt" }

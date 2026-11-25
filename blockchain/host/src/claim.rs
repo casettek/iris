@@ -652,22 +652,22 @@ fn prepare_run(
             }
         };
         if check_claimed_length {
-            run_prep::validate_claimed_length(
+            prompt_prep::validate_claimed_length(
                 &ids,
                 specification.max_new_tokens,
                 &model.prompt.eos_token_ids,
             )?;
         }
         let range_size = model.manifest.range_size;
-        let bound = run_prep::bound_ranges(
+        let bound = prompt_prep::bound_ranges(
             &model.prompt.resolved_prompt,
             specification.raw_prompt,
             range_size as usize,
-            &run_prep::prompt_tokenizer(&model.tokenizer)?,
+            &prompt_prep::prompt_tokenizer(&model.tokenizer)?,
         )?;
         // A claim's ids are cut as `claimed_ranges` cuts them, which also
         // refuses a claim of no ids.
-        run_prep::claimed_ranges(&ids, range_size as usize)?;
+        prompt_prep::claimed_ranges(&ids, range_size as usize)?;
         let claimed: Vec<Vec<u32>> = ids
             .chunks(range_size as usize)
             .map(<[u32]>::to_vec)

@@ -1245,11 +1245,11 @@ fn write_tokenizer(
 ) -> Result<(String, String), Box<dyn Error>> {
     // Reject unsupported profiles, invalid IDs and malformed merge tables
     // before replacing any existing tokenizer/decoder artifact.
-    let prepared_tokenizer = run_prep::prompt_tokenizer(tokenizer)?;
+    let prepared_tokenizer = prompt_prep::prompt_tokenizer(tokenizer)?;
     let model = tokenizer
         .get("model")
         .ok_or("tokenizer.json has no model")?;
-    let vocab_map = run_prep::vocab_map(model)?;
+    let vocab_map = prompt_prep::vocab_map(model)?;
 
     let mut vocab: Vec<TokenEntry> = vocab_map
         .iter()
@@ -1276,8 +1276,8 @@ fn write_tokenizer(
         .collect();
 
     let max_token_id = vocab.iter().map(|entry| entry.id).max().unwrap_or(0);
-    // As `run_prep::decoder_table` builds it, which direct inference decodes with.
-    let byte_level = run_prep::is_tekken(tokenizer);
+    // As `prompt_prep::decoder_table` builds it, which direct inference decodes with.
+    let byte_level = prompt_prep::is_tekken(tokenizer);
     let mut decoder_tokens = vec![DecoderToken::default(); max_token_id.saturating_add(1) as usize];
     for entry in &vocab {
         decoder_tokens[entry.id as usize] = DecoderToken {

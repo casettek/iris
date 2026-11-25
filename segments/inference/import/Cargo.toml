@@ -27,6 +27,6 @@ sha2 = "0.10"
 # exactly how they would silently drift into different buckets.
 prompt-check = { path = "../../../raster-stages/prompt-check" }
 
-run-prep = { path = "../../../procedure/prepare" }
+prompt-prep = { path = "../prompt" }
 # The `mistral-dense` layer external is the stage's own type.
 layer-mistral = { path = "../../../raster-stages/layer-mistral" }

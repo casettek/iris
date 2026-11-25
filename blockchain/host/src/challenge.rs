@@ -747,7 +747,7 @@ fn final_record_rejection(result: &procedure_definition::InferenceResult) -> Opt
     if result.prompt_fault != 0 {
         return Some(format!(
             "the prompt was not prepared correctly: {} (fault {}, at position {})",
-            run_prep::fault_description(result.prompt_fault),
+            prompt_prep::fault_description(result.prompt_fault),
             result.prompt_fault,
             result.prompt_fault_position
         ));
@@ -760,7 +760,7 @@ fn final_record_rejection(result: &procedure_definition::InferenceResult) -> Opt
     if result.check_fault != 0 {
         return Some(format!(
             "the claimed output was not checked: {} (fault {}, at sequence position {})",
-            run_prep::check_fault_description(result.check_fault),
+            prompt_prep::check_fault_description(result.check_fault),
             result.check_fault,
             result.check_fault_position
         ));
@@ -774,7 +774,7 @@ fn final_record_rejection(result: &procedure_definition::InferenceResult) -> Opt
     if result.output_fault != 0 {
         return Some(format!(
             "the claimed output breaks the run's rules: {} (fault {})",
-            run_prep::output_fault_description(result.output_fault),
+            prompt_prep::output_fault_description(result.output_fault),
             result.output_fault
         ));
     }
@@ -1156,7 +1156,7 @@ mod tests {
             ),
             (
                 procedure_definition::InferenceResult {
-                    prompt_fault: run_prep::FAULT_NOT_THE_MERGE,
+                    prompt_fault: prompt_prep::FAULT_NOT_THE_MERGE,
                     prompt_fault_position: 7,
                     ..clean.clone()
                 },

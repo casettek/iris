@@ -5,6 +5,7 @@ edition = "2021"
 description = "What a procedure is and the record of a run: specification, procedure kinds, run inputs, checkpoints"
 
 [dependencies]
+prompt-prep = { path = "../../segments/inference/prompt" }
 anyhow = "1.0"
 hex = "0.4"
 postcard = { version = "1", default-features = false, features = ["alloc"] }

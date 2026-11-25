@@ -78,13 +78,7 @@ pub struct PreparedPrompt {
     pub forms: Vec<result_core::Form>,
 }
 
-/// Frozen normalization/segmentation output. Old sentinel-based inputs cannot
-/// deserialize as this shape and must be prepared again under the new identity.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct PreparedPiece {
-    pub text: String,
-    pub segment: u32,
-}
+pub use prompt_prep::PreparedPiece;
 
 impl PreparedRun {
     /// The first inference: the only one of a procedure kind that makes one, and

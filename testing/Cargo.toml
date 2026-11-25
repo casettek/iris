@@ -24,6 +24,7 @@ raster-compiler = { path = "../../raster/crates/raster-compiler" }
 raster-prover = { path = "../../raster/crates/raster-prover" }
 raster-runtime = { path = "../../raster/crates/raster-runtime" }
 run-prep = { path = "../procedure/prepare" }
+prompt-prep = { path = "../segments/inference/prompt" }
 sequence-check = { path = "../raster-stages/sequence-check" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"

@@ -806,10 +806,10 @@ fn run_chain_fault_scenario(
         .parent()
         .context("model manifest has no parent directory")?;
     let tokenizer: Value = read_json(&model_dir.join(&model.bundle.tokenizer_path))?;
-    let ranges = run_prep::marked_ranges(
+    let ranges = prompt_prep::marked_ranges(
         &prompt.initial_pieces,
         range_size as usize,
-        &run_prep::prompt_tokenizer(&tokenizer)?,
+        &prompt_prep::prompt_tokenizer(&tokenizer)?,
     )?;
     let canonical: Vec<Vec<u32>> = ranges.iter().map(|range| range.marks.clone()).collect();
     // Every piece's mark, and the first place after the start where a token begins.
@@ -847,7 +847,7 @@ fn run_chain_fault_scenario(
             greedy,
             2,
             true,
-            run_prep::CHECK_FAULT_NO_CLAIMED_TOKENS,
+            prompt_prep::CHECK_FAULT_NO_CLAIMED_TOKENS,
             positions,
             [0, 0],
         ),
@@ -857,7 +857,7 @@ fn run_chain_fault_scenario(
             greedy,
             2,
             true,
-            run_prep::CHECK_FAULT_NO_CLAIMED_TOKENS,
+            prompt_prep::CHECK_FAULT_NO_CLAIMED_TOKENS,
             positions,
             [0, 0],
         ),
@@ -923,11 +923,11 @@ fn run_chain_fault_scenario(
         let manifest = dir.join("Raster.toml");
         let mark_files = run_prep::write_marks(&marks, &files)?;
         let claimed_files = run_prep::write_claimed_ranges(ids, range_size as usize, &files)?;
-        let (slices, text_digest) = run_prep::text_for_ranges(
+        let (slices, text_digest) = prompt_prep::text_for_ranges(
             &prompt.resolved_prompt,
             case.raw_prompt,
             range_size as usize,
-            &run_prep::prompt_tokenizer(&tokenizer)?,
+            &prompt_prep::prompt_tokenizer(&tokenizer)?,
             marks.len(),
         )?;
         let rendered = blockchain_host::claim::render_ranged_manifest(
@@ -935,7 +935,7 @@ fn run_chain_fault_scenario(
             template_dir,
             &run_prep::write_text_slices(&slices, &files)?,
             &run_prep::write_run_config(
-                &run_prep::RunConfig {
+                &prompt_prep::RunConfig {
                     model_id: model.model_id.clone(),
                     raw_prompt: case.raw_prompt,
                     max_new_tokens: budget,
@@ -1029,7 +1029,7 @@ fn run_chain_fault_scenario(
             ),
             "short-of-budget" => ensure!(
                 record["claim_mismatches"] == json!(0)
-                    && record["output_fault"] == json!(run_prep::OUTPUT_FAULT_SHORT_WITHOUT_EOS),
+                    && record["output_fault"] == json!(prompt_prep::OUTPUT_FAULT_SHORT_WITHOUT_EOS),
                 "chain fault `{name}`: the output fault is not published: {record}"
             ),
             _ => {}
@@ -1065,10 +1065,11 @@ fn run_prompt_fault_scenario(
     model: &ModelManifest,
     prepared: &blockchain_host::claim::PreparedClaimRun,
 ) -> Result<Value> {
-    use run_prep::{
-        RunFile, FAULT_CUT_BEYOND_TEXT, FAULT_EMPTY_RANGE, FAULT_NONE, FAULT_NOT_THE_MERGE,
+    use prompt_prep::{
+        FAULT_CUT_BEYOND_TEXT, FAULT_EMPTY_RANGE, FAULT_NONE, FAULT_NOT_THE_MERGE,
         FAULT_TEXT_DIGEST,
     };
+    use run_prep::RunFile;
     let pieces = &prepared.prepared_run.first()?.prompt.initial_pieces;
     let tokenizer: Value = read_json(
         &model_path
@@ -1077,10 +1078,10 @@ fn run_prompt_fault_scenario(
             .join(&model.bundle.tokenizer_path),
     )?;
     // The merge's own marks, range by range.
-    let canonical: Vec<Vec<u32>> = run_prep::marked_ranges(
+    let canonical: Vec<Vec<u32>> = prompt_prep::marked_ranges(
         pieces,
         model.range_size as usize,
-        &run_prep::prompt_tokenizer(&tokenizer)?,
+        &prompt_prep::prompt_tokenizer(&tokenizer)?,
     )?
     .into_iter()
     .map(|range| range.marks)
@@ -1165,7 +1166,7 @@ fn run_prompt_fault_scenario(
     ));
 
     let template = fs::read_to_string(&prepared.manifest_path)?;
-    let prompt_tokenizer = run_prep::prompt_tokenizer(&tokenizer)?;
+    let prompt_tokenizer = prompt_prep::prompt_tokenizer(&tokenizer)?;
     let text = &prepared.prepared_run.first()?.prompt.resolved_prompt;
     let raw_prompt = prepared.prepared_run.raw_prompt;
     let mut report = Vec::new();
@@ -1174,7 +1175,7 @@ fn run_prompt_fault_scenario(
         let files: Vec<RunFile> = run_prep::write_marks(&marks, &dir.join("prompt"))?;
         // The same text and the same digest of it, for however many ranges
         // these marks make.
-        let (mut slices, mut text_digest) = run_prep::text_for_ranges(
+        let (mut slices, mut text_digest) = prompt_prep::text_for_ranges(
             text,
             raw_prompt,
             model.range_size as usize,
@@ -1269,14 +1270,14 @@ fn run_long_text_case(
     raster: &Path,
     template: &str,
     raw_prompt: bool,
-    tokenizer: &run_prep::PromptTokenizer,
+    tokenizer: &prompt_prep::PromptTokenizer,
 ) -> Result<Value> {
     let dir = case_dir.join("prompt-faults/long-text");
     let files = dir.join("prompt");
     let text = "ab ".repeat(1024);
     // All of it in one range, with what is true of it claimed.
     let (slices, text_digest) =
-        run_prep::text_for_ranges(&text, raw_prompt, usize::MAX, tokenizer, 1)?;
+        prompt_prep::text_for_ranges(&text, raw_prompt, usize::MAX, tokenizer, 1)?;
     let texts = run_prep::write_text_slices(&slices, &files)?;
     let text_digest = run_prep::write_text_digest(&text_digest, &files)?;
     let manifest = dir.join("Raster.toml");
