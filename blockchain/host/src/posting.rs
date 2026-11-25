@@ -351,16 +351,11 @@ impl OutputReader for HostReader {
 
     fn results(&self, payload: &[u8], index: &[u8]) -> Option<ResultInOutput> {
         let stated = crate::claim_check::output_json(payload, index).ok()?;
-        // The two procedure kinds' result records have no field in common at the
-        // top, so an output reads as one of them or as neither.
-        [
-            procedure_definition::ProcedureKind::Consensus,
-            procedure_definition::ProcedureKind::Single,
-        ]
-        .into_iter()
-        .find_map(|procedure_kind| {
-            crate::claim_check::result_in_output(procedure_kind, &stated).ok()
-        })
+        // The result kinds' records have no field in common at the top, so an
+        // output reads as one of them or as neither.
+        procedure_definition::ResultKind::ALL
+            .iter()
+            .find_map(|result| crate::claim_check::result_in_output(*result, &stated).ok())
     }
 }
 

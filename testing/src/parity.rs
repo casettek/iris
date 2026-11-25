@@ -13,9 +13,9 @@ use std::process::{Command, Stdio};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{bail, ensure, Context, Result};
-use direct_infer::{DirectInferenceConfig, DirectInferenceExecutor};
 use model_manifest::{file_sha256, ModelManifest};
 use procedure_definition::{read_json, write_json, InferenceResult};
+use procedure_direct::{DirectInferenceConfig, DirectInferenceExecutor};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};

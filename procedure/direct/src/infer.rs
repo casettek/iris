@@ -1,8 +1,8 @@
 use std::path::PathBuf;
 
+use crate::{DirectInferenceConfig, DirectInferenceExecutor};
 use anyhow::{Context, Result};
-use direct_infer::{DirectInferenceConfig, DirectInferenceExecutor};
-use procedure_definition::{ConsensusOutcome, ProcedureKind};
+use procedure_definition::{ConsensusOutcome, ProcedureKind, ResultKind};
 use staged_infer::InferenceRunReport;
 
 /// A procedure kind run directly: one report per inference, in order, and what a
@@ -38,9 +38,9 @@ pub fn run_infer(specification_path: PathBuf, case_path: PathBuf) -> Result<Infe
                 })?,
         );
     }
-    let consensus = match (procedure_kind, reports.as_slice()) {
-        (ProcedureKind::Single, _) => None,
-        (ProcedureKind::Consensus, [first, second]) => {
+    let consensus = match (procedure_kind.result(), reports.as_slice()) {
+        (ResultKind::OneOutput, _) => None,
+        (ResultKind::Agreement, [first, second]) => {
             let forms = specification.forms();
             Some(ConsensusOutcome::of(
                 &forms,
@@ -48,7 +48,7 @@ pub fn run_infer(specification_path: PathBuf, case_path: PathBuf) -> Result<Infe
                 second.result.clone(),
             ))
         }
-        (ProcedureKind::Consensus, _) => anyhow::bail!("a consensus is of two inferences"),
+        (ResultKind::Agreement, _) => anyhow::bail!("a consensus is of two inferences"),
     };
     Ok(InferRun {
         procedure_kind,

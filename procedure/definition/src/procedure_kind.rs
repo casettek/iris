@@ -41,6 +41,44 @@ pub enum ProcedureKind {
     Consensus,
 }
 
+/// What a procedure's last stage states.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ResultKind {
+    /// The code of the form one output is.
+    OneOutput,
+    /// The code of each of two outputs, and whether they agree.
+    Agreement,
+}
+
+impl ResultKind {
+    /// Every result kind, in the order an output that does not say which it
+    /// holds is read as one: their records have no field in common at the top.
+    pub const ALL: &'static [ResultKind] = &[ResultKind::Agreement, ResultKind::OneOutput];
+
+    /// The stage program that states this result: the stage project's
+    /// directory name.
+    pub fn program(self) -> &'static str {
+        match self {
+            Self::OneOutput => "claim-result",
+            Self::Agreement => "consensus-result",
+        }
+    }
+
+    /// The inputs of the result stage that are an inference's last check, in
+    /// the order of the inferences.
+    pub fn inputs(self) -> &'static [&'static str] {
+        match self {
+            Self::OneOutput => &["check"],
+            Self::Agreement => &["first", "second"],
+        }
+    }
+
+    /// Whether the result says anything of several outputs together.
+    pub fn states_agreement(self) -> bool {
+        self == Self::Agreement
+    }
+}
+
 impl ProcedureKind {
     /// Every procedure kind, in the order they are listed to a user.
     pub const ALL: &'static [ProcedureKind] = &[ProcedureKind::Single, ProcedureKind::Consensus];
@@ -53,22 +91,25 @@ impl ProcedureKind {
         }
     }
 
+    /// What this procedure kind's result is. Everything that depends on the
+    /// result asks this, so a kind says it in one place.
+    pub fn result(self) -> ResultKind {
+        match self {
+            Self::Single => ResultKind::OneOutput,
+            Self::Consensus => ResultKind::Agreement,
+        }
+    }
+
     /// The stage program that ends a claim of this procedure kind and states its
     /// result: the stage project's directory name.
     pub fn result_program(self) -> &'static str {
-        match self {
-            Self::Single => "claim-result",
-            Self::Consensus => "consensus-result",
-        }
+        self.result().program()
     }
 
     /// The inputs of the result stage that are an inference's last check, in
     /// the order of the inferences.
     pub fn result_inputs(self) -> &'static [&'static str] {
-        match self {
-            Self::Single => &["check"],
-            Self::Consensus => &["first", "second"],
-        }
+        self.result().inputs()
     }
 
     pub fn is_default(&self) -> bool {

@@ -2,8 +2,8 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
 use model_manifest::{DirectInferShape, MistralShape, ModelFamily, ModelManifest};
-use procedure_definition::{Case, PreparedPrompt, Specification};
 use prompt_check::input::BpePieces;
+use prompt_prep::PreparedPiece;
 use raster::{Bytes, List};
 
 use detwgt::{DetwgtMatrixView, DetwgtSlice, MmapDetwgt, Q8MatrixView};
@@ -231,27 +231,17 @@ impl DirectInferenceModel {
         })
     }
 
-    pub fn prepare_prompt(
-        &self,
-        specification: &Specification,
-        case_dir: &Path,
-        case: &Case,
-    ) -> Result<PreparedPrompt> {
-        run_prep::prepare_prompt(
-            &self.tokenizer,
-            specification,
-            case_dir,
-            case,
-            &self.manifest,
-        )
+    /// The bundle's `tokenizer.json`, which a run's prompt is prepared with.
+    pub fn tokenizer(&self) -> &serde_json::Value {
+        &self.tokenizer
     }
 
     /// The prompt's part of the run's stage schedule: its range count, as run
     /// preparation counts it. `None` when the prompt cannot be cut into ranges,
     /// which only a chain needs.
-    pub fn prompt_ranges(&self, prompt: &PreparedPrompt) -> Option<u32> {
+    pub fn prompt_ranges(&self, pieces: &[PreparedPiece]) -> Option<u32> {
         let ranges = prompt_prep::marked_ranges(
-            &prompt.initial_pieces,
+            pieces,
             self.manifest.range_size as usize,
             &prompt_prep::prompt_tokenizer(&self.tokenizer).ok()?,
         )
@@ -287,13 +277,12 @@ impl DirectInferenceModel {
 
     pub fn prompt_inputs(
         &self,
-        prompt: &PreparedPrompt,
+        pieces: &[PreparedPiece],
     ) -> Result<prompt_check::input::PromptTokenization> {
         let tokenizer = prompt_prep::prompt_tokenizer(&self.tokenizer)?;
         let pieces = BpePieces {
             pieces: List::from(
-                prompt
-                    .initial_pieces
+                pieces
                     .iter()
                     .map(|p| prompt_check::input::BpePiece {
                         text: p.text.clone(),

@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
-use direct_infer::{DirectInferenceConfig, DirectInferenceExecutor};
+use procedure_direct::{DirectInferenceConfig, DirectInferenceExecutor};
 use staged_infer::chain_runner::StagedExecutionBackend;
 use staged_infer::{
     CheckpointedInferenceConfig, CheckpointedInferenceExecutor, CheckpointedInferenceResult,

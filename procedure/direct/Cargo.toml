@@ -8,7 +8,17 @@ description = "The direct run of a procedure: its result as fast as possible"
 gpu-kernels = ["direct-infer/gpu-kernels", "staged-infer/gpu-kernels"]
 
 [dependencies]
+run-prep = { path = "../prepare" }
 anyhow = "1.0"
 direct-infer = { path = "../../segments/inference/generation" }
 procedure-definition = { path = "../definition" }
 staged-infer = { path = "../staged" }
+
+[dev-dependencies]
+inference-kernels = { path = "../../segments/inference/kernels" }
+model-manifest = { path = "../../segments/inference/manifest" }
+prefill-range = { path = "../../raster-stages/prefill-range" }
+raster = { path = "../../../raster/crates/raster" }
+sequence-check = { path = "../../raster-stages/sequence-check" }
+sha2 = "0.10"
+serde_json = "1.0"

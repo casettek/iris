@@ -24,3 +24,18 @@ impl DirectInferenceConfig {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn direct_infer_uses_direct_manifest_by_default() {
+        let config = DirectInferenceConfig::from_current_dir().expect("config should build");
+        assert_eq!(
+            config.specification_path,
+            config.base_dir.join(SPECIFICATION_TOML)
+        );
+        assert_eq!(config.case_path, config.base_dir.join(CASE_TOML));
+    }
+}

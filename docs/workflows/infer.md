@@ -10,9 +10,9 @@ just infer specification.toml case.toml
 
 Flow:
 
-1. `iris-cli` dispatches `infer` to `procedure_direct::run_infer`, which runs `direct_infer::DirectInferenceExecutor` once per inference of the procedure kind.
-2. `direct-infer` loads the specification and its model manifest, verifies the recorded weight, config, and tokenizer hashes once, then loads tokenizer metadata and mmap-backed DETWGT weights.
-3. The executor prepares prompt pieces from the case, then runs embedding, prefill layers, decode, and output finalization in host memory.
+1. `iris-cli` dispatches `infer` to `procedure_direct::run_infer`, which runs `procedure_direct::DirectInferenceExecutor` once per inference of the procedure kind.
+2. `procedure-direct` reads the specification and the case. `direct-infer` loads the model manifest, verifies the recorded weight, config, and tokenizer hashes once, then loads tokenizer metadata and mmap-backed DETWGT weights.
+3. The executor resolves the run's text and prepares its pieces with the model's tokenizer. `direct_infer::generate` then runs embedding, prefill layers, decode, and output finalization in host memory, and the executor matches the output against the result forms.
 4. The command prints an `InferenceResult` and timing summary.
 
 Direct decoding stops immediately after selecting any EOS token listed in the model manifest. The specification's `max_new_tokens` value is a maximum, used only if EOS has not appeared. The reported count and token IDs include the terminal token and contain no post-EOS generation. `claim build` discovers its claimed output this way, so a claim's specification uses the same `max_new_tokens`.

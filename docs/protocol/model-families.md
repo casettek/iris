@@ -113,14 +113,14 @@ What exists:
 | Native twin of the stage | `inference-kernels`' `mistral::stage`, run by `staged-infer`'s `layer_mistral` routine. It reads the committed weight pages in place, and a `gpu-kernels` build sends its larger matrix products to the GPU from those pages |
 | Parity bundle | `model-bundles/parity-mistral`: four layers, a tekken-style vocabulary of 512 with a forty-byte token, three cases. `iris test parity --bundle parity-mistral` runs the gate on it |
 | Layer | `inference-kernels`' `mistral::layer`, and in `det-num`'s `mistral.rs` the integer SiLU, rotation and score scale that only this family uses |
-| Tokenizer, reference | `run-prep`'s `tekken.rs`: the pattern as a backtracking matcher and the merge, which direct inference runs |
+| Tokenizer, reference | `prompt-prep`'s `tekken.rs`: the pattern as a backtracking matcher and the merge, which direct inference runs |
 | Tokenizer, prompt stages | `prompt-core`'s `tekken.rs`: the same split as a scanner that takes one character at a time, with the Unicode categories in `unicode_classes.rs` (written by `scripts/gen-unicode-classes.py`) |
 | Output decoding | `sequence-check`: a decoder entry says its text is bytes, and a character that spans tokens is put together |
 | Direct inference | `direct-infer`, which branches on the family where it loads layers and runs them |
 
 How it is checked (`segments/inference/generation/tests/mistral_reference.rs`, an ignored test
 that needs an imported model): the integer logits are compared with the same weights
-computed in `f64`, and with another implementation's logits read from a file. `run-prep`'s
+computed in `f64`, and with another implementation's logits read from a file. `prompt-prep`'s
 ignored `ids_match_a_reference_tokenizer` compares token ids the same way, both the
 reference tokenizer's and the ones the prompt stages' pieces merge to.
 
@@ -129,7 +129,7 @@ How the prompt stages read the tokenizer:
 - **Words.** `prompt-bind` cuts plain text into words by the tokenizer's pattern, one
   character at a time, and makes each word one unit with one vocabulary lookup. A word
   that is a token is one piece, which is the tokenizer's own rule. Any other word is one
-  piece a byte. Each word is a segment, so no merge crosses words. `run-prep`'s tests
+  piece a byte. Each word is a segment, so no merge crosses words. `prompt-prep`'s tests
   compare the scanner with the pattern on every string of up to five character kinds, and
   an ignored test on every string of seven.
 - **Long words.** A word longer than the longest token (76 bytes) is no token. It is put

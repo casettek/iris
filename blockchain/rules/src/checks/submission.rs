@@ -535,7 +535,7 @@ pub fn check_procedure_kind(
     }
     // A claim of a procedure kind holds one entry per inference it makes, and an
     // agreement exactly when the procedure kind states one.
-    let states_consensus = required == ProcedureKind::Consensus;
+    let states_consensus = required.result().states_agreement();
     if submission.inferences.len() != required.inferences()
         || submission.consensus.is_some() != states_consensus
     {

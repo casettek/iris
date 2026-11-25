@@ -2,7 +2,6 @@
 use std::collections::BTreeSet;
 
 use anyhow::{bail, ensure, Result};
-use procedure_definition::InferenceRunReport;
 use serde::Serialize;
 
 #[derive(Debug, Clone)]
@@ -11,12 +10,6 @@ pub struct DirectBoundaryRecord {
     pub output_bytes: Vec<u8>,
     pub output_index: Vec<u8>,
     pub output_commitment: String,
-}
-
-#[derive(Debug)]
-pub struct DirectDiagnosticRunReport {
-    pub report: InferenceRunReport,
-    pub boundaries: Vec<DirectBoundaryRecord>,
 }
 
 /// Semantic inventory, independent of the order in which PLE work is scheduled.

@@ -4,8 +4,12 @@
 
 use std::path::{Path, PathBuf};
 
+pub mod config;
+pub mod executor;
 pub mod infer;
 
+pub use config::DirectInferenceConfig;
+pub use executor::{DirectDiagnosticRunReport, DirectInferenceExecutor};
 pub use infer::{run_infer, InferRun};
 
 /// `path` as it is, or under `base` when it is relative.

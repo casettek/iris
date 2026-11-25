@@ -1,308 +1,248 @@
+//! One model's generation: from a prompt's pieces to the output and the
+//! final record a chain publishes for the same run, byte for byte.
+//!
+//! This is the fast path that finds an output. It reads no specification and
+//! no case: whoever runs a procedure prepares the prompt and gives it here.
+
 use std::time::{Duration, Instant};
 
-use anyhow::{Context, Result};
-use procedure_definition::{
-    read_case, read_specification, InferStageTiming, InferenceResult, InferenceRunReport,
-    InferenceTimings,
-};
+use anyhow::Result;
+use prompt_prep::PreparedPiece;
+use sequence_check::input::GeneratedOutput;
 
-use crate::diagnostics::{DirectDiagnosticRunReport, DirectTrace};
+use crate::diagnostics::{DirectBoundaryRecord, DirectTrace};
 use crate::model::DirectInferenceModel;
 use crate::view_kernels::{
     run_decode_embed_view, run_input_embedding_view, run_ple_prepare_view, run_prefill_range_view,
     score_prefill_logits_view,
 };
-use crate::DirectInferenceConfig;
 
-#[derive(Debug, Default)]
-pub struct DirectInferenceExecutor;
+/// What a generation is given besides its model.
+#[derive(Debug, Clone, Copy)]
+pub struct GenerationInput<'a> {
+    /// The run's text, which its statement names by hash.
+    pub text: &'a str,
+    /// The text as the model's tokenizer first cuts it, in the model's
+    /// template unless the prompt is raw.
+    pub pieces: &'a [PreparedPiece],
+    /// What the statement names as the text's source: 64 zeros for none.
+    pub source_sha256: &'a str,
+    pub raw_prompt: bool,
+    pub max_new_tokens: u32,
+}
 
-impl DirectInferenceExecutor {
-    pub fn run(&self, config: DirectInferenceConfig) -> Result<InferenceResult> {
-        Ok(self.run_with_report(config)?.result)
-    }
+/// One phase of a generation, and how long it took.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PhaseTiming {
+    pub phase: String,
+    pub duration: Duration,
+}
 
-    pub fn run_with_report(&self, config: DirectInferenceConfig) -> Result<InferenceRunReport> {
-        let mut trace = DirectTrace::new(false)?;
-        self.run_traced(config, &mut trace)
-    }
+/// What a generation produced.
+#[derive(Debug)]
+pub struct Generation {
+    pub output: GeneratedOutput,
+    /// The model's input length after templating and tokenization.
+    pub input_token_count: usize,
+    pub phases: Vec<PhaseTiming>,
+}
 
-    pub fn run_with_diagnostics(
-        &self,
-        config: DirectInferenceConfig,
-    ) -> Result<DirectDiagnosticRunReport> {
-        let mut trace = DirectTrace::new(true)?;
-        let report = self.run_traced(config, &mut trace)?;
-        Ok(DirectDiagnosticRunReport {
-            report,
-            boundaries: trace.records,
-        })
-    }
+pub fn generate(model: &DirectInferenceModel, input: &GenerationInput<'_>) -> Result<Generation> {
+    let mut trace = DirectTrace::new(false)?;
+    generate_traced(model, input, &mut trace)
+}
 
-    fn run_traced(
-        &self,
-        config: DirectInferenceConfig,
-        trace: &mut DirectTrace,
-    ) -> Result<InferenceRunReport> {
-        let infer_started = Instant::now();
-        let mut timings = Vec::new();
-        let specification_path = if config.specification_path.is_absolute() {
-            config.specification_path.clone()
-        } else {
-            config.base_dir.join(&config.specification_path)
-        };
-        let specification = read_specification(&specification_path).with_context(|| {
-            format!(
-                "failed to load specification {}; create specification.toml with a `[[model]]` table, raw_prompt and max_new_tokens",
-                specification_path.display()
-            )
-        })?;
-        let specification_dir = specification_path
-            .parent()
-            .ok_or_else(|| anyhow::anyhow!("specification has no parent directory"))?;
-        let case_path = if config.case_path.is_absolute() {
-            config.case_path.clone()
-        } else {
-            config.base_dir.join(&config.case_path)
-        };
-        let case = read_case(&case_path).with_context(|| {
-            format!(
-                "failed to load case {}; create case.toml with a prompt, or the documents of the specification's source",
-                case_path.display()
-            )
-        })?;
-        let case_dir = case_path
-            .parent()
-            .ok_or_else(|| anyhow::anyhow!("case has no parent directory"))?;
-        // One inference of the run: the same text, on this one of its models.
-        let model_manifest = specification.model_manifest_of(config.inference)?;
-        let model_manifest_path = if model_manifest.is_absolute() {
-            model_manifest.to_path_buf()
-        } else {
-            specification_dir.join(model_manifest)
-        };
+/// The same generation, with every boundary it crosses kept as a stage would
+/// publish it.
+pub fn generate_with_boundaries(
+    model: &DirectInferenceModel,
+    input: &GenerationInput<'_>,
+) -> Result<(Generation, Vec<DirectBoundaryRecord>)> {
+    let mut trace = DirectTrace::new(true)?;
+    let generation = generate_traced(model, input, &mut trace)?;
+    Ok((generation, trace.records))
+}
 
-        let load_started = Instant::now();
-        let model = DirectInferenceModel::load(&model_manifest_path)
-            .context("failed to load direct-infer model")?;
-        timings.push(phase_timing("load_direct_model", load_started.elapsed()));
-
-        let prompt_started = Instant::now();
-        let prepared_prompt = model.prepare_prompt(&specification, case_dir, &case)?;
-        trace.configure(
-            model.num_layers(),
-            specification.max_new_tokens,
-            model.family().has_auxiliary_stages(),
+fn generate_traced(
+    model: &DirectInferenceModel,
+    input: &GenerationInput<'_>,
+    trace: &mut DirectTrace,
+) -> Result<Generation> {
+    let mut timings = Vec::new();
+    let prompt_started = Instant::now();
+    trace.configure(
+        model.num_layers(),
+        input.max_new_tokens,
+        model.family().has_auxiliary_stages(),
+    );
+    let prompt = model.prompt_inputs(input.pieces)?;
+    // Direct inference is the independent numerical oracle; construct its
+    // diagnostic statement/history from the actual prompt and selected IDs.
+    let prompt_ranges = model.prompt_ranges(input.pieces);
+    // What the statement names as the text's source: zeros when the text
+    // is taken as given.
+    let source_sha256 = input.source_sha256.to_string();
+    let execution_context = |generated: Option<&[u32]>, claimed_tokens: usize| {
+        let mut context = crate::view_kernels::bound_model_context(model);
+        context.bind_statement(
+            &sequence_check::sha256_hex(input.text.as_bytes()),
+            &source_sha256,
+            input.raw_prompt,
+            input.max_new_tokens,
+            model.manifest().range_size,
         );
-        let prompt = model.prompt_inputs(&prepared_prompt)?;
-        // Direct inference is the independent numerical oracle; construct its
-        // diagnostic statement/history from the actual prompt and selected IDs.
-        let prompt_ranges = model.prompt_ranges(&prepared_prompt);
-        // What the statement names as the text's source: zeros when the text
-        // is taken as given.
-        let source_sha256 = run_prep::source_id(prepared_prompt.source.as_ref());
-        let execution_context = |generated: Option<&[u32]>, claimed_tokens: usize| {
-            let mut context = crate::view_kernels::bound_model_context(&model);
-            context.bind_statement(
-                &sequence_check::sha256_hex(prepared_prompt.resolved_prompt.as_bytes()),
-                &source_sha256,
-                specification.raw_prompt,
-                specification.max_new_tokens,
-                model.manifest().range_size,
-            );
-            // The schedule the chain runs this output under, so the two final
-            // records agree byte for byte.
-            if let Some(prompt_ranges) = prompt_ranges {
-                let claimed_ranges = claimed_tokens.div_ceil(model.manifest().range_size as usize);
-                context.bind_schedule(model_identity::statement_core::StageSchedule {
-                    prompt_ranges,
-                    claimed_ranges: u32::try_from(claimed_ranges).unwrap_or(u32::MAX),
-                });
+        // The schedule the chain runs this output under, so the two final
+        // records agree byte for byte.
+        if let Some(prompt_ranges) = prompt_ranges {
+            let claimed_ranges = claimed_tokens.div_ceil(model.manifest().range_size as usize);
+            context.bind_schedule(model_identity::statement_core::StageSchedule {
+                prompt_ranges,
+                claimed_ranges: u32::try_from(claimed_ranges).unwrap_or(u32::MAX),
+            });
+        }
+        if let Some(mut e) = context.execution_context() {
+            for id in prompt.token_ids.iter() {
+                context.require_execution(e.end.append(*id).is_ok());
             }
-            if let Some(mut e) = context.execution_context() {
-                for id in prompt.token_ids.iter() {
+            e.prompt = Some(e.end);
+            e.phase = model_identity::statement_core::PREPARED;
+            // The steps the chain's last prompt range and last check record.
+            e.step = model_identity::statement_core::Step::tokens(
+                e.schedule.prompt_ranges.saturating_sub(1),
+            );
+            if let Some(ids) = generated {
+                e.before = e.end;
+                e.claimed = true;
+                for id in ids {
                     context.require_execution(e.end.append(*id).is_ok());
                 }
-                e.prompt = Some(e.end);
-                e.phase = model_identity::statement_core::PREPARED;
-                // The steps the chain's last prompt range and last check record.
-                e.step = model_identity::statement_core::Step::tokens(
-                    e.schedule.prompt_ranges.saturating_sub(1),
+                e.phase = model_identity::statement_core::CHECKED;
+                e.step = model_identity::statement_core::Step::check(
+                    e.schedule.claimed_ranges.saturating_sub(1),
                 );
-                if let Some(ids) = generated {
-                    e.before = e.end;
-                    e.claimed = true;
-                    for id in ids {
-                        context.require_execution(e.end.append(*id).is_ok());
-                    }
-                    e.phase = model_identity::statement_core::CHECKED;
-                    e.step = model_identity::statement_core::Step::check(
-                        e.schedule.claimed_ranges.saturating_sub(1),
-                    );
-                    context.completed_layers = context.layers;
-                    context.producer = model_identity::context::DECODE;
-                }
-                context.set_execution(&e);
+                context.completed_layers = context.layers;
+                context.producer = model_identity::context::DECODE;
             }
-            context
-        };
-        trace.record("prompt_prepare", &prompt)?;
-        timings.push(phase_timing("prompt_prepare", prompt_started.elapsed()));
+            context.set_execution(&e);
+        }
+        context
+    };
+    trace.record("prompt_prepare", &prompt)?;
+    timings.push(phase_timing("prompt_prepare", prompt_started.elapsed()));
 
-        let embedding_started = Instant::now();
-        let empty_or_embedding = run_input_embedding_view(&model, &prompt)?;
-        trace.record("input_embedding", &empty_or_embedding)?;
-        timings.push(phase_timing("input_embedding", embedding_started.elapsed()));
+    let embedding_started = Instant::now();
+    let empty_or_embedding = run_input_embedding_view(model, &prompt)?;
+    trace.record("input_embedding", &empty_or_embedding)?;
+    timings.push(phase_timing("input_embedding", embedding_started.elapsed()));
 
-        let prefill_started = Instant::now();
-        let (mut prior_layers, mut logits) = run_layers_and_logits(
-            &model,
+    let prefill_started = Instant::now();
+    let (mut prior_layers, mut logits) = run_layers_and_logits(
+        model,
+        empty_or_embedding.clone(),
+        empty_or_embedding.clone(),
+        None,
+        &mut timings,
+        "prefill",
+        trace,
+    )?;
+    timings.push(phase_timing("prefill", prefill_started.elapsed()));
+
+    let decode_started = Instant::now();
+    let mut edge = inference_kernels::kernels::origin::empty_decode_edge();
+    trace.record("decode_init", &edge)?;
+    for token_idx in 0..input.max_new_tokens {
+        edge = crate::generation::select_next_token(&logits, &edge)?;
+        edge.model = execution_context(
+            Some(edge.generated_token_ids.as_slice()),
+            edge.generated_token_ids.len(),
+        );
+        trace.record(&format!("decode_select_t{token_idx}"), &edge)?;
+        if model.manifest().eos_token_ids.contains(&edge.token_id) {
+            // Keep EOS in the result, but never run another decode pass.
+            trace.stop_at_eos(model.num_layers(), token_idx + 1);
+            break;
+        }
+        if token_idx + 1 == input.max_new_tokens {
+            break;
+        }
+        let decode_seed = run_decode_embed_view(model, &edge)?;
+        trace.record(&format!("decode_embed_t{token_idx}"), &decode_seed)?;
+        let (next_prior_layers, next_logits) = run_layers_and_logits(
+            model,
+            decode_seed,
             empty_or_embedding.clone(),
-            empty_or_embedding.clone(),
-            None,
+            Some(&prior_layers),
             &mut timings,
-            "prefill",
+            &format!("decode_t{token_idx}"),
             trace,
         )?;
-        timings.push(phase_timing("prefill", prefill_started.elapsed()));
-
-        let decode_started = Instant::now();
-        let mut edge = inference_kernels::kernels::origin::empty_decode_edge();
-        trace.record("decode_init", &edge)?;
-        for token_idx in 0..specification.max_new_tokens {
-            edge = crate::generation::select_next_token(&logits, &edge)?;
-            edge.model = execution_context(
-                Some(edge.generated_token_ids.as_slice()),
-                edge.generated_token_ids.len(),
-            );
-            trace.record(&format!("decode_select_t{token_idx}"), &edge)?;
-            if prepared_prompt.eos_token_ids.contains(&edge.token_id) {
-                // Keep EOS in the result, but never run another decode pass.
-                trace.stop_at_eos(model.num_layers(), token_idx + 1);
-                break;
-            }
-            if token_idx + 1 == specification.max_new_tokens {
-                break;
-            }
-            let decode_seed = run_decode_embed_view(&model, &edge)?;
-            trace.record(&format!("decode_embed_t{token_idx}"), &decode_seed)?;
-            let (next_prior_layers, next_logits) = run_layers_and_logits(
-                &model,
-                decode_seed,
-                empty_or_embedding.clone(),
-                Some(&prior_layers),
-                &mut timings,
-                &format!("decode_t{token_idx}"),
-                trace,
-            )?;
-            prior_layers = next_prior_layers;
-            logits = next_logits;
-        }
-        timings.push(phase_timing("decode", decode_started.elapsed()));
-
-        let finalize_started = Instant::now();
-        let output_edge = edge.clone();
-        let decoder = model.decoder_table()?;
-        let descriptor = raster::BytesPage::__from_parts(
-            0,
-            0,
-            if model.manifest().model_commitments.is_empty() {
-                Vec::new()
-            } else {
-                model
-                    .manifest()
-                    .descriptor()?
-                    .encode()
-                    .map_err(|f| anyhow::anyhow!("{f:?}"))?
-            },
-        );
-        let witness =
-            sequence_check::decoder_witness(&decoder).map_err(|f| anyhow::anyhow!("{f:?}"))?;
-        let finalize_inputs = inference_kernels::kernels::finalize::FinalizeInputs {
-            decoder: &decoder,
-            descriptor: &descriptor,
-            witness: &witness,
-            // The record the chain publishes for this run: a direct result
-            // and an honest claim's final record are the same bytes.
-            context: &sequence_check::prompt::PromptContext {
-                model: execution_context(None, output_edge.generated_token_ids.len()),
-                input_text_sha256: sequence_check::sha256_hex(
-                    prepared_prompt.resolved_prompt.as_bytes(),
-                ),
-                source_sha256: source_sha256.clone(),
-                model_id: model.manifest().model_id.clone(),
-                raw_prompt: specification.raw_prompt,
-                max_new_tokens: specification.max_new_tokens,
-                range_size: model.manifest().range_size,
-                next_piece: prepared_prompt.initial_pieces.len() as u64,
-                prompt_tokens: prompt.token_ids.len() as u32,
-                complete: true,
-                fault: 0,
-                fault_position: 0,
-            },
-        };
-        let final_edge = if model.manifest().model_commitments.is_empty() {
-            inference_kernels::kernels::finalize::run_output_finalize_discovery(
-                &output_edge,
-                finalize_inputs.decoder,
-                finalize_inputs.context,
-            )?
-        } else {
-            inference_kernels::kernels::finalize::run_output_finalize_direct(
-                &output_edge,
-                &finalize_inputs,
-            )?
-        };
-
-        // The run's last boundary is its final edge with the output record.
-        trace.record("output_finalize", &final_edge)?;
-        let output = sequence_check::input::generated_output(&final_edge);
-        // What the chain's result stage states of this output.
-        let matched =
-            run_prep::source::run_forms(prepared_prompt.forms.iter(), &output.generated_text);
-        let result = InferenceResult {
-            model_fault: output.model_fault,
-            generated_token_count: output.generated_token_count,
-            generated_token_ids: output.generated_token_ids.iter().copied().collect(),
-            generated_token_ids_sha256: output.generated_token_ids_sha256,
-            generated_text: output.generated_text,
-            stop_reason: output.stop_reason,
-            claim_mismatches: output.claim_mismatches,
-            first_claim_mismatch_position: output.first_claim_mismatch_position,
-            check_fault: output.check_fault,
-            check_fault_position: output.check_fault_position,
-            output_text_sha256: output.output_text_sha256,
-            output_fault: output.output_fault,
-            input_text_sha256: output.input_text_sha256,
-            source_sha256: output.source_sha256,
-            model_id: output.model_id,
-            raw_prompt: output.raw_prompt,
-            max_new_tokens: output.max_new_tokens,
-            range_size: output.range_size,
-            prompt_tokens: output.prompt_tokens,
-            prompt_complete: output.prompt_complete,
-            prompt_fault: output.prompt_fault,
-            prompt_fault_position: output.prompt_fault_position,
-            statement_sha256: procedure_definition::inference::lower_hex(
-                output.claim.statement.as_slice(),
-            ),
-            valid: output.claim.valid,
-            result_code: matched.code,
-            result_forms_sha256: run_prep::source::forms_id(&matched),
-        };
-        timings.push(phase_timing("output_finalize", finalize_started.elapsed()));
-
-        trace.finish()?;
-        Ok(InferenceRunReport {
-            input_token_count: Some(prompt.token_ids.len()),
-            result,
-            timings: InferenceTimings {
-                total_duration: infer_started.elapsed(),
-                stages: timings,
-                aux_waves: Vec::new(),
-            },
-        })
+        prior_layers = next_prior_layers;
+        logits = next_logits;
     }
+    timings.push(phase_timing("decode", decode_started.elapsed()));
+
+    let finalize_started = Instant::now();
+    let output_edge = edge.clone();
+    let decoder = model.decoder_table()?;
+    let descriptor = raster::BytesPage::__from_parts(
+        0,
+        0,
+        if model.manifest().model_commitments.is_empty() {
+            Vec::new()
+        } else {
+            model
+                .manifest()
+                .descriptor()?
+                .encode()
+                .map_err(|f| anyhow::anyhow!("{f:?}"))?
+        },
+    );
+    let witness =
+        sequence_check::decoder_witness(&decoder).map_err(|f| anyhow::anyhow!("{f:?}"))?;
+    let finalize_inputs = inference_kernels::kernels::finalize::FinalizeInputs {
+        decoder: &decoder,
+        descriptor: &descriptor,
+        witness: &witness,
+        // The record the chain publishes for this run: a direct result
+        // and an honest claim's final record are the same bytes.
+        context: &sequence_check::prompt::PromptContext {
+            model: execution_context(None, output_edge.generated_token_ids.len()),
+            input_text_sha256: sequence_check::sha256_hex(input.text.as_bytes()),
+            source_sha256: source_sha256.clone(),
+            model_id: model.manifest().model_id.clone(),
+            raw_prompt: input.raw_prompt,
+            max_new_tokens: input.max_new_tokens,
+            range_size: model.manifest().range_size,
+            next_piece: input.pieces.len() as u64,
+            prompt_tokens: prompt.token_ids.len() as u32,
+            complete: true,
+            fault: 0,
+            fault_position: 0,
+        },
+    };
+    let final_edge = if model.manifest().model_commitments.is_empty() {
+        inference_kernels::kernels::finalize::run_output_finalize_discovery(
+            &output_edge,
+            finalize_inputs.decoder,
+            finalize_inputs.context,
+        )?
+    } else {
+        inference_kernels::kernels::finalize::run_output_finalize_direct(
+            &output_edge,
+            &finalize_inputs,
+        )?
+    };
+
+    // The run's last boundary is its final edge with the output record.
+    trace.record("output_finalize", &final_edge)?;
+    timings.push(phase_timing("output_finalize", finalize_started.elapsed()));
+
+    trace.finish()?;
+    Ok(Generation {
+        output: sequence_check::input::generated_output(&final_edge),
+        input_token_count: prompt.token_ids.len(),
+        phases: timings,
+    })
 }
 
 fn run_layers_and_logits(
@@ -310,7 +250,7 @@ fn run_layers_and_logits(
     seed: prefill_range::input::ActivationSequence,
     empty_or_embedding: prefill_range::input::ActivationSequence,
     prior_layers: Option<&[prefill_range::input::ActivationSequence]>,
-    timings: &mut Vec<InferStageTiming>,
+    timings: &mut Vec<PhaseTiming>,
     label: &str,
     trace: &mut DirectTrace,
 ) -> Result<(
@@ -380,7 +320,7 @@ fn run_mistral_layers_and_logits(
     model: &DirectInferenceModel,
     seed: prefill_range::input::ActivationSequence,
     prior_layers: Option<&[prefill_range::input::ActivationSequence]>,
-    timings: &mut Vec<InferStageTiming>,
+    timings: &mut Vec<PhaseTiming>,
     label: &str,
     trace: &mut DirectTrace,
 ) -> Result<(
@@ -459,34 +399,9 @@ fn finalize_stage_name(label: &str) -> String {
     }
 }
 
-fn phase_timing(stage: &str, duration: Duration) -> InferStageTiming {
-    InferStageTiming {
-        stage: stage.to_string(),
-        routine: String::from("direct-infer"),
-        input_synthesis_duration: Duration::ZERO,
-        input_load_duration: Duration::ZERO,
-        kernel_duration: duration,
-        encode_duration: Duration::ZERO,
-        total_duration: duration,
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn direct_infer_uses_direct_manifest_by_default() {
-        let config = DirectInferenceConfig::from_current_dir().expect("config should build");
-        assert_eq!(
-            config.specification_path,
-            config
-                .base_dir
-                .join(procedure_definition::SPECIFICATION_TOML)
-        );
-        assert_eq!(
-            config.case_path,
-            config.base_dir.join(procedure_definition::CASE_TOML)
-        );
+fn phase_timing(phase: &str, duration: Duration) -> PhaseTiming {
+    PhaseTiming {
+        phase: phase.to_string(),
+        duration,
     }
 }

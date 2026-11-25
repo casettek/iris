@@ -59,7 +59,7 @@ BPE_REFERENCE_TOKENIZER="$tokenizer" \
     cargo test --release -p staged-infer --test prompt_check -- --ignored
 
 step ignored-direct "direct inference on the real model gives the known token" \
-    cargo test --release -p direct-infer --test executor -- --ignored
+    cargo test --release -p procedure-direct --test executor -- --ignored
 
 IRIS_PARITY_RUN="$parity_run" \
     step ignored-parity-attacks "kept attacks replay the same natively and through Raster" \

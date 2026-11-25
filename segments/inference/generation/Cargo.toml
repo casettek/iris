@@ -15,12 +15,10 @@ det-num = { path = "../numerics" }
 detwgt = { path = "../weights" }
 input-embedding = { path = "../../../raster-stages/input-embedding" }
 model-manifest = { path = "../manifest" }
-procedure-definition = { path = "../../../procedure/definition" }
 prefill-prepare-aux = { path = "../../../raster-stages/prefill-prepare-aux" }
 prefill-range = { path = "../../../raster-stages/prefill-range" }
 prompt-check = { path = "../../../raster-stages/prompt-check" }
 raster = { path = "../../../../raster/crates/raster" }
-run-prep = { path = "../../../procedure/prepare" }
 prompt-prep = { path = "../prompt" }
 sequence-check = { path = "../../../raster-stages/sequence-check" }
 serde = { version = "1.0", features = ["derive"] }

@@ -485,11 +485,13 @@ mod tests {
         }
     }
 
-    /// The core does not depend on the blockchain code: of the crates under
-    /// `segments/`, `procedure/`, `cli/`, `testing/` and `raster-stages/`,
-    /// only this one and the tests name a path that leads into `blockchain/`.
+    /// The layers depend one way. The core does not depend on the blockchain
+    /// code: of the crates under `segments/`, `procedure/`, `cli/`, `testing/`
+    /// and `raster-stages/`, only this one and the tests name a path that
+    /// leads into `blockchain/`. And a segment does not depend on a procedure:
+    /// no crate under `segments/` names a path that leads into `procedure/`.
     #[test]
-    fn nothing_but_the_cli_depends_on_blockchain() {
+    fn the_layers_depend_one_way() {
         fn manifests(dir: &Path, found: &mut Vec<PathBuf>) {
             for entry in fs::read_dir(dir).unwrap() {
                 let path = entry.unwrap().path();
@@ -567,6 +569,26 @@ mod tests {
         assert!(
             others.is_empty(),
             "only the CLI and the tests may depend on blockchain/: {others:?}"
+        );
+
+        let procedure = root.join("procedure");
+        let mut segments = Vec::new();
+        manifests(&root.join("segments"), &mut segments);
+        assert!(!segments.is_empty(), "the search found no segment");
+        let reaching: Vec<&PathBuf> = segments
+            .iter()
+            .filter(|manifest| {
+                let text = fs::read_to_string(manifest).unwrap();
+                let mut named = Vec::new();
+                paths(&toml::from_str(&text).unwrap(), &mut named);
+                named
+                    .iter()
+                    .any(|path| resolved(manifest.parent().unwrap(), path).starts_with(&procedure))
+            })
+            .collect();
+        assert!(
+            reaching.is_empty(),
+            "no segment may depend on procedure/: {reaching:?}"
         );
     }
 }

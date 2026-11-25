@@ -879,17 +879,18 @@ fn stated_inference(stated: &serde_json::Value) -> Result<StatedInference> {
     })
 }
 
-/// What the result stage of this procedure kind states in its output.
+/// What a result stage of this kind states in its output.
 pub fn result_in_output(
-    procedure_kind: ProcedureKind,
+    result: procedure_definition::ResultKind,
     stated: &serde_json::Value,
 ) -> Result<ResultInOutput> {
-    Ok(match procedure_kind {
-        ProcedureKind::Single => ResultInOutput {
+    use procedure_definition::ResultKind;
+    Ok(match result {
+        ResultKind::OneOutput => ResultInOutput {
             inferences: vec![stated_inference(stated)?],
             consensus: None,
         },
-        ProcedureKind::Consensus => {
+        ResultKind::Agreement => {
             let part = |name: &str| {
                 stated
                     .get(name)

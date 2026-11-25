@@ -1,13 +1,10 @@
-pub mod config;
 pub mod diagnostics;
 pub use detwgt;
-pub use diagnostics::{DirectBoundaryRecord, DirectDiagnosticRunReport};
+pub use diagnostics::DirectBoundaryRecord;
 pub mod executor;
 pub mod generation;
 pub mod model;
 pub mod state;
 pub mod view_kernels;
 
-pub use config::DirectInferenceConfig;
-pub use executor::DirectInferenceExecutor;
-pub use procedure_definition::InferenceResult;
+pub use executor::{generate, generate_with_boundaries, Generation, GenerationInput, PhaseTiming};

@@ -26,7 +26,7 @@ pub use inference::{
     InferenceTimings,
 };
 pub use model_manifest::io::{read_json, write_json};
-pub use procedure_kind::ProcedureKind;
+pub use procedure_kind::{ProcedureKind, ResultKind};
 pub use run::{
     PreparedInference, PreparedPiece, PreparedPrompt, PreparedRun, PreparedSourceInputs,
     RunFileRef, PREPARED_RUN_JSON, PREPARED_RUN_VERSION,
