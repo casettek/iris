@@ -51,7 +51,7 @@ fn direct_executor_reports_missing_direct_manifest_message() {
 #[ignore = "requires local Gemma model artifacts and runs the full direct inference path"]
 fn current_say_ciao_direct_first_token_matches_claim_reference() {
     let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../..")
+        .join("../..")
         .canonicalize()
         .expect("repo root should resolve");
     let result = DirectInferenceExecutor
