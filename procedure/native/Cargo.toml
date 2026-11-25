@@ -1,0 +1,24 @@
+[package]
+name = "procedure-direct"
+version = "0.1.0"
+edition = "2021"
+description = "The direct run of a procedure: its result as fast as possible"
+
+[features]
+gpu-kernels = ["direct-infer/gpu-kernels", "staged-infer/gpu-kernels"]
+
+[dependencies]
+run-prep = { path = "../prepare" }
+anyhow = "1.0"
+direct-infer = { path = "../../phases/inference/generation" }
+procedure-definition = { path = "../definition" }
+staged-infer = { path = "../pipeline" }
+
+[dev-dependencies]
+inference-kernels = { path = "../../phases/inference/kernels" }
+model-manifest = { path = "../../phases/inference/manifest" }
+prefill-range = { path = "../../raster-stages/prefill-range" }
+raster = { path = "../../../raster/crates/raster" }
+sequence-check = { path = "../../raster-stages/sequence-check" }
+sha2 = "0.10"
+serde_json = "1.0"

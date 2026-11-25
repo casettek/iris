@@ -10,12 +10,12 @@ std = ["raster/std"]
 profiling = ["raster/profiling"]
 
 [dependencies]
-model-identity = { path = "../../segments/common/identity", default-features = false }
+model-identity = { path = "../../phases/common/identity", default-features = false }
 raster = { path = "../../../raster/crates/raster", default-features = false }
 serde = { version = "1.0", default-features = false, features = ["derive", "alloc"] }
 # Canonical fixed-point kernels, and in its `mistral` module the functions
 # only this family uses.
-det-num = { path = "../../segments/inference/numerics" }
+det-num = { path = "../../phases/inference/numerics" }
 
 [dev-dependencies]
 raster-runtime = { path = "../../../raster/crates/raster-runtime" }

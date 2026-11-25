@@ -14,12 +14,12 @@ serde_json = "1.0"
 sha2 = "0.10"
 toml = "0.8"
 
-model-identity = { path = "../../segments/common/identity" }
-model-manifest = { path = "../../segments/inference/manifest" }
+model-identity = { path = "../../phases/common/identity" }
+model-manifest = { path = "../../phases/inference/manifest" }
 procedure-definition = { path = "../../procedure/definition" }
-prompt-core = { path = "../../segments/inference/tokenizer" }
-result-core = { path = "../../segments/result" }
-source-core = { path = "../../segments/source" }
+prompt-core = { path = "../../phases/inference/tokenizer" }
+result-core = { path = "../../phases/result" }
+source-core = { path = "../../phases/source" }
 
 [dev-dependencies]
-source-core = { path = "../../segments/source", features = ["sign"] }
+source-core = { path = "../../phases/source", features = ["sign"] }

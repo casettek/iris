@@ -159,7 +159,7 @@ and the full run stopped, so no rule joins them (A3, A4) and the pair run stops 
 ## Tests of the rule
 
 The check is written natively in `inference-kernels`
-([prompt_check.rs](../../segments/inference/kernels/src/kernels/prompt_check.rs)). No stage
+([prompt_check.rs](../../phases/inference/kernels/src/kernels/prompt_check.rs)). No stage
 uses it. Each test below compares it with the current full merge.
 
 | Test | Scope | Result |
@@ -345,7 +345,7 @@ cases are in place. These points differ from the plan above:
 The stage's logic is one set of plain functions in
 [check.rs](../../raster-stages/prompt-check/src/check.rs), called by its tiles and by the
 native twin
-([prompt_check_stage.rs](../../segments/inference/kernels/src/kernels/prompt_check_stage.rs)).
+([prompt_check_stage.rs](../../phases/inference/kernels/src/kernels/prompt_check_stage.rs)).
 
 ## Questions for you
 

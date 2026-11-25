@@ -10,7 +10,7 @@ gpu-kernels = ["procedure-direct/gpu-kernels", "staged-infer/gpu-kernels"]
 [dependencies]
 anyhow = "1.0"
 procedure-definition = { path = "../definition" }
-procedure-direct = { path = "../direct" }
+procedure-direct = { path = "../native" }
 run-prep = { path = "../prepare" }
 serde_json = "1.0"
-staged-infer = { path = "../staged" }
+staged-infer = { path = "../pipeline" }

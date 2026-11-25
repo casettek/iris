@@ -19,7 +19,7 @@ pub const EXECUTION_TIMES_JSON: &str = "execution-times.json";
 /// stage runs.
 pub const STAGE_PROGRAM_JSON: &str = "program.json";
 
-/// Ordered routine-boundary checkpoints from one checkpointed inference run.
+/// The checkpoints of one checkpointed inference run, one per stage, in order.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(transparent)]
 pub struct CheckpointList {

@@ -28,7 +28,7 @@ takes.
 | Command | What it does |
 | --- | --- |
 | `iris infer` | Fast deterministic inference of a case under a specification. This is the only path that generates: it finds the output a claim then states. |
-| `iris run` | Run a procedure with no blockchain: its direct result, then a staged run of it with a checkpoint per stage. `--compare` names the first stage where it differs from another run. |
+| `iris run` | Run a procedure with no blockchain: the result of its native run, then a pipeline run of it with a checkpoint per stage. `--compare` names the first stage where it differs from another run. |
 
 ### Claim
 
@@ -137,7 +137,7 @@ the chain and the contracts work, and what is open.
 ## Layout
 
 ```text
-segments/                   # the logic of each piece of a procedure, written once
+phases/                     # the logic of each phase of a procedure, written once
   common/
     statement/              # the stage schedule and the statement a claim makes
     identity/               # binding what a stage reads to the model a claim names
@@ -154,11 +154,11 @@ segments/                   # the logic of each piece of a procedure, written on
     generation/             # fast deterministic inference: finds the output a claim states
 procedure/                  # a procedure and the ways to run it
   definition/               # what a procedure is, and the record of a run: specification, checkpoints
-  prepare/                  # a run's inputs and files, and the chain a staged run is made from
-  direct/                   # the direct run: a procedure's result as fast as possible
-  staged/                   # the stage-by-stage run a claim and a challenge make: the runner,
-                            # and each stage's routine under routines/{source,inference,result}
-  run/                      # a procedure run with no blockchain: direct, then staged, held equal
+  prepare/                  # a run's inputs and files, and the chain a pipeline run is made from
+  native/                   # the native run: a procedure's result as fast as possible
+  pipeline/                 # the pipeline run, stage by stage, that a claim and a challenge make:
+                            # the runner, and each native stage under segments/{source,inference,result}
+  run/                      # a procedure run with no blockchain: native, then pipeline, held equal
 testing/                    # the parity gate, the lying claims, the stage schema check
 cli/                        # the `iris` binary: one module per command group under src/commands/
 raster-stages/              # one Raster program per kind of stage, each with its Raster.lock

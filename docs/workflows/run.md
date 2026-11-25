@@ -12,10 +12,10 @@ It reads a specification and a case, as [`infer`](infer.md) does (`specification
 
 Flow:
 
-1. **The direct run.** `procedure_run::run_direct` runs the procedure as `infer` does: each inference generated in turn, then what the procedure states of them. The command prints the result here, before any stage runs.
-2. **The staged run.** `procedure_run::run_staged` prepares a staged run on the output the direct run generated and runs it stage by stage, as [`claim build`](claim-build.md) does. Each stage verifies its part of that output and leaves a checkpoint.
-3. **The two results are held equal.** The command fails if the staged run states any field of any inference's result otherwise than the direct run did, or another consensus. That is a failure of parity between generation and verification, and the error names the field.
-4. **The checkpoints are written**: `checkpoint_list.json` and `checkpoints.txt` in the staged run's directory under `target/staged-infer/runs/`.
+1. **The native run.** `procedure_run::run_direct` runs the procedure as `infer` does: each inference generated in turn, then what the procedure states of them. The command prints the result here, before any stage runs.
+2. **The pipeline run.** `procedure_run::run_staged` prepares a pipeline run on the output the native run generated and runs it stage by stage, as [`claim build`](claim-build.md) does. Each stage verifies its part of that output and leaves a checkpoint.
+3. **The two results are held equal.** The command fails if the pipeline run states any field of any inference's result otherwise than the native run did, or another consensus. That is a failure of parity between generation and verification, and the error names the field.
+4. **The checkpoints are written**: `checkpoint_list.json` and `checkpoints.txt` in the pipeline run's directory under `target/staged-infer/runs/`.
 
 Output: everything `infer` prints, then
 
@@ -42,4 +42,4 @@ This finds where two runs differ. It does not settle who is right: that is what 
 
 ## What a claim adds
 
-`claim build` makes the same staged run and leaves the same checkpoints. The [parity gate](test-parity.md) holds the two equal. A claim adds what a blockchain needs: the claim's submission and bundle, the data it has to post, and the checks a contract makes.
+`claim build` makes the same pipeline run and leaves the same checkpoints. The [parity gate](test-parity.md) holds the two equal. A claim adds what a blockchain needs: the claim's submission and bundle, the data it has to post, and the checks a contract makes.

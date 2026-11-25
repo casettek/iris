@@ -55,4 +55,4 @@ same bytes, so a tag that both sides compute changes in both.
 - A stage program has no version. Its identity is its `Raster.lock`, which
   changes whenever its code does.
 - The worker protocol between the staged runner and its helper processes
-  (`VERSION` in `staged/src/worker.rs`) never leaves one run of one binary.
+  (`VERSION` in `pipeline/src/worker.rs`) never leaves one run of one binary.

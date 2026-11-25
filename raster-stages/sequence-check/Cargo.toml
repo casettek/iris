@@ -10,11 +10,11 @@ std = ["raster/std"]
 profiling = ["raster/profiling"]
 
 [dependencies]
-model-identity = { path = "../../segments/common/identity", default-features = false }
+model-identity = { path = "../../phases/common/identity", default-features = false }
 raster = { path = "../../../raster/crates/raster", default-features = false }
 serde = { version = "1.0", default-features = false, features = ["derive", "alloc"] }
 # Canonical fixed-point kernels, vendored verbatim from the reference.
-det-num = { path = "../../segments/inference/numerics" }
+det-num = { path = "../../phases/inference/numerics" }
 # The shared prompt source hashes with the guest-accelerated compression function.
 sha2 = { version = "0.10", default-features = false, features = ["compress"] }
 

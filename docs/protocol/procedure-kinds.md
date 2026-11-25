@@ -118,7 +118,7 @@ as for any chain. Each inference is a whole claim of its own model: it has its
 own statement and its last check states its own claim record.
 
 `result` runs `consensus-result`. It reads both last checks and the run's forms
-(`segments/result/src/consensus.rs`) and states a `ConsensusRecord`:
+(`phases/result/src/consensus.rs`) and states a `ConsensusRecord`:
 
 | Field | Meaning |
 | --- | --- |
@@ -193,6 +193,6 @@ a file, and `iris claim check --pins` checks a claim against it.
 In code a procedure kind is a variant of `ProcedureKind`
 (`procedure/definition/src/procedure_kind.rs`) with its name, how many
 inferences it makes, its result program and its result stage's bindings. It
-also needs its result program (a stage project, a native routine and the
+also needs its result program (a stage project, a native stage and the
 function direct inference calls), what `iris infer` and `iris claim build`
 print for it, and how a claim of it is judged when every checkpoint matches.

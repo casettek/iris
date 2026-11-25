@@ -23,7 +23,7 @@ generation. Each execution owns its intermediate outputs and runtime state.
 All three fixed cases run every time. There are no numerical tolerances.
 
 Independent exact-ID tokenizer references are in `tests/tokenizer/`, checked by
-`procedure/staged/tests/tokenizer.rs`.
+`procedure/pipeline/tests/tokenizer.rs`.
 
 The sibling `../raster` checkout and its normal Rust/RISC Zero build prerequisites
 must be available, as required by this workspace's path dependencies. The gate
@@ -372,19 +372,19 @@ $env:STAGED_INFER_PLE_LOADING = 'selective'
 ```
 
 Rust callers constructing auxiliary inputs from owned weights use
-`routines::prefill_prepare_aux::Inputs::eager(embedded, layer)`; file loaders
+`segments::prefill_prepare_aux::Inputs::eager(embedded, layer)`; file loaders
 choose the configured representation internally.
 
 The focused regression and loading benchmark are in the staged crate:
 
 ```sh
 RASTER_AUTH=0 cargo test --release --locked -p staged-infer --lib ple::tests -- --test-threads=1
-RASTER_AUTH=0 cargo test --release --locked -p staged-infer --lib routines::inference::ple::tests::selective_loading_benchmark -- --ignored --exact --nocapture
+RASTER_AUTH=0 cargo test --release --locked -p staged-infer --lib segments::inference::ple::tests::selective_loading_benchmark -- --ignored --exact --nocapture
 cargo test --release --locked -p staged-infer --test worker_parity -- --test-threads=1
 ```
 
 With `STAGED_INFER_REPLAY_BIN_DIR` pointing at the built stage binaries, also run
-`routines::inference::ple::tests::multi_page_matches_authenticated_raster_stage` with
+`segments::inference::ple::tests::multi_page_matches_authenticated_raster_stage` with
 `--lib -- --ignored --exact`, and the existing
 `repeated_ranges_match_authenticated_raster_stage_execution` test with
 `--test worker_parity -- --ignored --exact`. They cover authenticated multi-page
@@ -395,7 +395,7 @@ stage binaries in release mode into the same directory, with `RISC0_SKIP_BUILD=1
 for this host-only test. Then run (use the configured Python executable on Windows):
 
 ```sh
-python procedure/staged/tests/selective_ple_parity.py \
+python procedure/pipeline/tests/selective_ple_parity.py \
   --bin-dir target/windows/release --output target/selective-ple-parity
 ```
 
@@ -434,14 +434,14 @@ only PLE. The diagnostic performance report records `embedding_loading=selective
 and `head_loading=paged`. Head page loading and verification occur inside its
 kernel-duration interval; focused benchmarks report those costs separately.
 Canonical outputs, indexes, manifests, post-write verification, and checkpoint
-hashes are unchanged. Eager constructors on the affected routine `Inputs`
+hashes are unchanged. Eager constructors on the affected native stage's `Inputs`
 types support comparisons from already-materialized test values.
 
 Preserve release builds before editing and after embedding-only implementation.
 Then run the complete pinned small-model gate against those builds:
 
 ```powershell
-python procedure/staged/tests/paged_weights_parity.py `
+python procedure/pipeline/tests/paged_weights_parity.py `
   --baseline-bin target/staged-pages-validation/baseline-bin `
   --embedding-bin target/staged-pages-validation/embedding-bin `
   --bin-dir target/windows/release `
@@ -457,7 +457,7 @@ and checkpoint hashes, and checks that the Raster binaries themselves did not
 change. Its report includes wall times and sampled memory; the small-model
 numbers are not estimates of Gemma speedup.
 
-Focused tests live in `routines::inference::weight_tests` in the staged crate. Run them both normally
+Focused tests live in `segments::inference::weight_tests` in the staged crate. Run them both normally
 and in a separate process with `RASTER_AUTH=0`. With
 `STAGED_INFER_REPLAY_BIN_DIR` pointing to `target/windows/release`, explicitly run
 the ignored authenticated multi-page and standalone-publication tests. Run the

@@ -150,7 +150,7 @@ valid one.
 The two `result` values are what the chain's last stage, `result`
 (`raster-stages/claim-result`), states. It reads the last check's output and the
 run's forms, and states the claim record it was given beside the code
-(`ResultRecord` in `segments/result/src/forms.rs`). The record stays the last
+(`ResultRecord` in `phases/result/src/forms.rs`). The record stays the last
 check's: the verdict rests on the stage that scored the output, which is long
 enough to replay, and not on the few steps after it.
 

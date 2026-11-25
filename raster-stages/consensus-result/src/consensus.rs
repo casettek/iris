@@ -1,1 +1,1 @@
-../../../segments/result/src/consensus.rs
+../../../phases/result/src/consensus.rs

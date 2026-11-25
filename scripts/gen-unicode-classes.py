@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Write the Unicode general-category table the tekken text split reads.
 
-    python3 scripts/gen-unicode-classes.py > segments/inference/tokenizer/src/unicode_classes.rs
+    python3 scripts/gen-unicode-classes.py > phases/inference/tokenizer/src/unicode_classes.rs
 
 The table is part of how a `mistral-dense` prompt becomes tokens, so it is
 committed rather than taken from whatever library a build links. It holds the

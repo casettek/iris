@@ -110,7 +110,7 @@ What exists:
 | Conversion from GGUF | `iris model convert`, unchanged: every tensor name was already mapped |
 | Import | `model-import`'s `mistral.rs`: the shape, the tensors a bundle may hold and the layer externals. The tokenizer, the embedding table, the head and the chain template are the shared code's, told by `ChainLayers` that this family has no auxiliary stage and no donor caches |
 | Layer stage program | `raster-stages/layer-mistral`: three inputs, the activations, the layer and its own cache from the range before |
-| Native twin of the stage | `inference-kernels`' `mistral::stage`, run by `staged-infer`'s `layer_mistral` routine. It reads the committed weight pages in place, and a `gpu-kernels` build sends its larger matrix products to the GPU from those pages |
+| Native stage | `inference-kernels`' `mistral::stage`, run by `staged-infer`'s `layer_mistral` native stage. It reads the committed weight pages in place, and a `gpu-kernels` build sends its larger matrix products to the GPU from those pages |
 | Parity bundle | `model-bundles/parity-mistral`: four layers, a tekken-style vocabulary of 512 with a forty-byte token, three cases. `iris test parity --bundle parity-mistral` runs the gate on it |
 | Layer | `inference-kernels`' `mistral::layer`, and in `det-num`'s `mistral.rs` the integer SiLU, rotation and score scale that only this family uses |
 | Tokenizer, reference | `prompt-prep`'s `tekken.rs`: the pattern as a backtracking matcher and the merge, which direct inference runs |
@@ -118,7 +118,7 @@ What exists:
 | Output decoding | `sequence-check`: a decoder entry says its text is bytes, and a character that spans tokens is put together |
 | Direct inference | `direct-infer`, which branches on the family where it loads layers and runs them |
 
-How it is checked (`segments/inference/generation/tests/mistral_reference.rs`, an ignored test
+How it is checked (`phases/inference/generation/tests/mistral_reference.rs`, an ignored test
 that needs an imported model): the integer logits are compared with the same weights
 computed in `f64`, and with another implementation's logits read from a file. `prompt-prep`'s
 ignored `ids_match_a_reference_tokenizer` compares token ids the same way, both the

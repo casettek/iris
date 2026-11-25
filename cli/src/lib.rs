@@ -502,10 +502,10 @@ mod tests {
     }
 
     /// The layers depend one way. The core does not depend on the blockchain
-    /// code: of the crates under `segments/`, `procedure/`, `cli/`, `testing/`
+    /// code: of the crates under `phases/`, `procedure/`, `cli/`, `testing/`
     /// and `raster-stages/`, only this one and the tests name a path that
     /// leads into `blockchain/`. And a segment does not depend on a procedure:
-    /// no crate under `segments/` names a path that leads into `procedure/`.
+    /// no crate under `phases/` names a path that leads into `procedure/`.
     #[test]
     fn the_layers_depend_one_way() {
         fn manifests(dir: &Path, found: &mut Vec<PathBuf>) {
@@ -566,7 +566,7 @@ mod tests {
                 .any(|path| resolved(manifest.parent().unwrap(), path).starts_with(&blockchain))
         };
         let mut found = Vec::new();
-        for dir in ["segments", "procedure", "cli", "testing", "raster-stages"] {
+        for dir in ["phases", "procedure", "cli", "testing", "raster-stages"] {
             manifests(&root.join(dir), &mut found);
         }
         let own = here.join("Cargo.toml");
@@ -588,10 +588,10 @@ mod tests {
         );
 
         let procedure = root.join("procedure");
-        let mut segments = Vec::new();
-        manifests(&root.join("segments"), &mut segments);
-        assert!(!segments.is_empty(), "the search found no segment");
-        let reaching: Vec<&PathBuf> = segments
+        let mut phases = Vec::new();
+        manifests(&root.join("phases"), &mut phases);
+        assert!(!phases.is_empty(), "the search found no phase");
+        let reaching: Vec<&PathBuf> = phases
             .iter()
             .filter(|manifest| {
                 let text = fs::read_to_string(manifest).unwrap();

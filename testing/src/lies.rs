@@ -399,7 +399,7 @@ struct ForgedVerdict {
 /// directories are the claimer's own, with the files each stage was given.
 fn forge_valid_verdict(check_dir: &Path, result_dir: &Path) -> Result<ForgedVerdict> {
     use staged_infer::artifact_io::encode_output;
-    use staged_infer::routines::{claim_result, sequence_check, StageKind};
+    use staged_infer::segments::{claim_result, sequence_check, StageKind};
 
     ensure!(
         StageKind::from_stage_dir(result_dir)? == StageKind::ClaimResult,

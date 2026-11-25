@@ -158,7 +158,7 @@ Both are Python because each drives something outside this repository.
   writes the token ids an independent tokenizer (`tokenizers` 0.22.2) gives a
   fixed set of texts. `tests/tokenizer/gemma-reference.json` and
   `synthetic-reference.json` came from it, and the tokenizer unit tests hold
-  the stage routines to them. Run it again only for a new tokenizer.
+  the native stages to them. Run it again only for a new tokenizer.
   `tests/tokenizer/generate_ranked.py` does the same for the adversarial
   ranked-merge tokenizer beside it.
 - `scripts/test_prompt_bucket_transitions.py prompt-check <stage dir> vocab|merge`
