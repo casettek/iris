@@ -24,7 +24,8 @@ def require(condition, message):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("stage", choices=["prompt-bind", "prompt-check"])
+    # Only prompt-check walks its buckets as `identity_*bucket_*` sequences.
+    parser.add_argument("stage", choices=["prompt-check"])
     parser.add_argument("fixture", type=Path)
     parser.add_argument("bucket", choices=["vocab", "merge"])
     parser.add_argument("--window", type=int, default=8)

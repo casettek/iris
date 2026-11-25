@@ -150,6 +150,26 @@ just test-real-model --update
 and commit the new `checkpoints.txt` with the change. A difference you did not
 intend is a regression: the check names the first stage that differs.
 
+### Two scripts no tier runs
+
+Both are Python because each drives something outside this repository.
+
+- `scripts/tokenizer_reference.py TOKENIZER_JSON OUTPUT_JSON [--production]`
+  writes the token ids an independent tokenizer (`tokenizers` 0.22.2) gives a
+  fixed set of texts. `tests/tokenizer/gemma-reference.json` and
+  `synthetic-reference.json` came from it, and the tokenizer unit tests hold
+  the stage routines to them. Run it again only for a new tokenizer.
+  `tests/tokenizer/generate_ranked.py` does the same for the adversarial
+  ranked-merge tokenizer beside it.
+- `scripts/test_prompt_bucket_transitions.py prompt-check <stage dir> vocab|merge`
+  checks that a fault placed in `prompt-check`'s walk of one sparse bucket
+  is reached by Raster's transition guest: it records an authenticated run
+  with the fault, estimates its window without proving, and requires every
+  transition to run and the stage's output to be unchanged. The stage
+  directory is a kept Raster run of `prompt_check_p0` from a parity run
+  (`<parity run>/short/raster/prompt_check_p0`). A few minutes. Run it
+  after a change to how `prompt-check` walks its buckets.
+
 ## What no tier tells you
 
 - **No fault proof of a real stage.** The proof in the release tier is of a
