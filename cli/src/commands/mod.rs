@@ -10,5 +10,6 @@ pub(crate) mod fault;
 pub(crate) mod infer;
 pub(crate) mod model;
 pub(crate) mod registry;
+pub(crate) mod run;
 pub(crate) mod stage;
 pub(crate) mod testing;

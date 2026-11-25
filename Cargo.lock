@@ -748,7 +748,7 @@ dependencies = [
  "model-manifest",
  "postcard",
  "procedure-definition",
- "procedure-direct",
+ "procedure-run",
  "prompt-prep",
  "raster",
  "raster-analysis",
@@ -2671,6 +2671,7 @@ dependencies = [
  "postcard",
  "procedure-definition",
  "procedure-direct",
+ "procedure-run",
  "raster",
  "raster-analysis",
  "raster-backend",
@@ -3731,6 +3732,18 @@ dependencies = [
  "sequence-check",
  "serde_json",
  "sha2",
+ "staged-infer",
+]
+
+[[package]]
+name = "procedure-run"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "procedure-definition",
+ "procedure-direct",
+ "run-prep",
+ "serde_json",
  "staged-infer",
 ]
 

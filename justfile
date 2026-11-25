@@ -9,6 +9,9 @@ import model:
 infer specification="specification.toml" case="case.toml":
     cargo run --release -p iris-cli -- infer --specification "{{specification}}" --case "{{case}}"
 
+run specification="specification.toml" case="case.toml":
+    cargo run --release -p iris-cli -- run --specification "{{specification}}" --case "{{case}}"
+
 claim specification="specification.toml" case="case.toml":
     cargo run --release -p iris-cli -- claim build --specification "{{specification}}" --case "{{case}}"
 

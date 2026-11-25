@@ -2,7 +2,6 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
-use procedure_direct::{DirectInferenceConfig, DirectInferenceExecutor};
 use staged_infer::chain_runner::StagedExecutionBackend;
 use staged_infer::{
     CheckpointedInferenceConfig, CheckpointedInferenceExecutor, CheckpointedInferenceResult,
@@ -446,19 +445,8 @@ fn prepare_run(
     given: Option<&blockchain_rules::availability::PostedRun>,
     check_claimed_length: bool,
 ) -> Result<PreparedClaimRun> {
-    let discover = |inference: usize| -> Result<Vec<u32>> {
-        Ok(DirectInferenceExecutor
-            .run(DirectInferenceConfig {
-                base_dir: options.base_dir.clone(),
-                specification_path: specification_path.clone(),
-                case_path: case_path
-                    .clone()
-                    .context("direct inference runs a case, and none is named")?,
-                inference,
-            })
-            .context("direct inference to discover the claimed output failed")?
-            .generated_token_ids)
-    };
+    let discover =
+        procedure_run::direct_output(&options.base_dir, &specification_path, case_path.as_deref());
     run_prep::staged::prepare_run(run_prep::staged::StagedRun {
         base_dir: &options.base_dir,
         specification_path: specification_path.clone(),

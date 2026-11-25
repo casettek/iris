@@ -49,6 +49,7 @@ use commands::fault::FaultCommand;
 use commands::infer::InferArgs;
 use commands::model::ModelCommand;
 use commands::registry::RegistryCommand;
+use commands::run::RunArgs;
 use commands::stage::*;
 use commands::testing::TestCommand;
 
@@ -91,6 +92,9 @@ enum Commands {
     },
     /// Fast deterministic inference: the output a claim then states.
     Infer(InferArgs),
+    /// Run a procedure with no blockchain: its direct result, then a staged
+    /// run of it with a checkpoint per stage.
+    Run(RunArgs),
     /// The host signer: a trusted stand-in for a notary.
     Attest {
         #[command(subcommand)]
@@ -246,6 +250,7 @@ fn execute(cli: Cli) -> Result<ExitCode> {
         Some(Commands::Model { command }) => commands::model::run(command),
         Some(Commands::Claim { command }) => commands::claim::run(command),
         Some(Commands::Infer(args)) => commands::infer::run(args),
+        Some(Commands::Run(args)) => commands::run::run(args),
         Some(Commands::Attest { command }) => {
             match command {
                 source::AttestCommand::Keygen { out } => source::keygen(&out)?,
@@ -382,6 +387,17 @@ mod tests {
             "specification.toml",
             "--case",
             "case.toml",
+        ])
+        .unwrap();
+        parse_for_test([
+            "iris",
+            "run",
+            "--specification",
+            "specification.toml",
+            "--case",
+            "case.toml",
+            "--compare",
+            "checkpoint_list.json",
         ])
         .unwrap();
         // The flag the two replaced is no flag any more.

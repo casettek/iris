@@ -9,7 +9,7 @@ cuda = ["risc0-zkvm/cuda", "raster-backend-risc0/cuda"]
 gpu-kernels = ["direct-infer/gpu-kernels", "staged-infer/gpu-kernels"]
 
 [dependencies]
-procedure-direct = { path = "../../procedure/direct" }
+procedure-run = { path = "../../procedure/run" }
 anyhow = "1.0"
 blockchain-rules = { path = "../rules" }
 clap = { version = "4.5", features = ["derive"] }

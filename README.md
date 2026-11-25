@@ -28,6 +28,7 @@ takes.
 | Command | What it does |
 | --- | --- |
 | `iris infer` | Fast deterministic inference of a case under a specification. This is the only path that generates: it finds the output a claim then states. |
+| `iris run` | Run a procedure with no blockchain: its direct result, then a staged run of it with a checkpoint per stage. `--compare` names the first stage where it differs from another run. |
 
 ### Claim
 
@@ -156,6 +157,7 @@ procedure/                  # a procedure and the ways to run it
   prepare/                  # a run's inputs and files, and the chain a staged run is made from
   direct/                   # the direct run: a procedure's result as fast as possible
   staged/                   # the stage-by-stage run a claim and a challenge make
+  run/                      # a procedure run with no blockchain: direct, then staged, held equal
 testing/                    # the parity gate, the lying claims, the stage schema check
 cli/                        # the `iris` binary: one module per command group under src/commands/
 raster-stages/              # one Raster program per kind of stage, each with its Raster.lock

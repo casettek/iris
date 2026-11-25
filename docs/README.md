@@ -26,6 +26,7 @@ Three kinds of page. Start with [how iris works](protocol/overview.md). The
 
 - [Model import](workflows/model-import.md)
 - [Infer](workflows/infer.md)
+- [Run](workflows/run.md): a procedure with no blockchain
 - [Claim build](workflows/claim-build.md)
 - [Challenge build](workflows/challenge-build.md)
 - [Fault proving](workflows/fault-prove.md)

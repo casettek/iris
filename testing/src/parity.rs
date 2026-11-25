@@ -555,6 +555,13 @@ fn run_case(
             .context("missing native chain directory")?,
     );
     let direct_dir = dir.join("native-direct");
+    report["procedure-run_seconds"] = json!(run_with_no_blockchain(
+        root,
+        exe,
+        &dir.join("procedure-run"),
+        &specification,
+        &native_dir,
+    )?);
 
     // Raster and native-staged, byte for byte, in the expected order.
     let order = procedure_definition::read_stage_order(&native_dir)?
@@ -2131,6 +2138,30 @@ pub fn worker(specification: &Path, case: &Path, output: &Path, direct: bool) ->
         )?;
     }
     Ok(())
+}
+
+/// `iris run` on a claim's specification and case, in a directory of its
+/// own: a procedure run with no blockchain. The command fails unless its
+/// staged run states the result its direct run did, and unless every one of
+/// its checkpoints is the one the claim's staged run left in `claim_chain`.
+/// So the run a claim is built on is the run anyone makes without one.
+fn run_with_no_blockchain(
+    root: &Path,
+    exe: &Path,
+    dir: &Path,
+    specification: &Path,
+    claim_chain: &Path,
+) -> Result<f64> {
+    fs::create_dir(dir)?;
+    let mut run = command(exe, root);
+    run.current_dir(dir)
+        .args(["run", "--specification"])
+        .arg(specification)
+        .arg("--case")
+        .arg(case_beside(specification))
+        .arg("--compare")
+        .arg(claim_chain.join(procedure_definition::CHECKPOINT_LIST_JSON));
+    logged(run, &dir.join("run.log")).context("`iris run`, held to the claim's checkpoints")
 }
 
 /// The case file of a gate run: `case.toml` beside its specification.

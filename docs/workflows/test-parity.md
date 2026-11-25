@@ -66,6 +66,10 @@ the chain then checks it.
   inherited or its own, equals direct's entry at the same position. Direct runs no
   pass for its last token, so the chain's row for it has no reference. Nothing is
   scored from that row, and it still matches between Raster and native-staged.
+- `iris run` and the claim: [a run with no blockchain](run.md) of the same
+  specification and case leaves the checkpoints the claim's native-staged run
+  left, at every stage, and its staged run states the result its direct run did.
+  The consensus claim is held to the same.
 - Layers 2 and 3 of every range borrow layers 0 and 1 of the same range.
 - The last prompt context: no fault, complete, and holding the prompt's SHA-256, the
   model id and the prompt's token count.

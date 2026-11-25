@@ -17,6 +17,7 @@ members = [
     "procedure/prepare",
     "procedure/direct",
     "procedure/staged",
+    "procedure/run",
     "testing",
     "cli",
     "blockchain/rules",
@@ -52,6 +53,7 @@ default-members = [
     "procedure/prepare",
     "procedure/direct",
     "procedure/staged",
+    "procedure/run",
     "testing",
     "cli",
 ]

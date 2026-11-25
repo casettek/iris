@@ -401,46 +401,54 @@ pub(crate) fn format_duration(duration: std::time::Duration) -> String {
     }
 }
 
-pub(crate) fn run(args: InferArgs) -> Result<ExitCode> {
-    {
-        warn_if_debug_build("infer");
-        let specification_path = args.specification.clone();
-        let run = run_infer(args.specification, args.case.clone())?;
-        println!("procedure kind: {}", run.procedure_kind);
-        let source = source::run_source_of(&specification_path, &args.case)?;
-        match (run.reports.as_slice(), run.consensus.as_ref()) {
-            ([report], None) => {
+/// What a direct run found: the procedure kind, the source, and each
+/// inference's result and timings.
+pub(crate) fn print_direct_run(
+    run: &procedure_direct::InferRun,
+    specification_path: &Path,
+    case_path: &Path,
+) -> Result<()> {
+    println!("procedure kind: {}", run.procedure_kind);
+    let source = source::run_source_of(specification_path, case_path)?;
+    match (run.reports.as_slice(), run.consensus.as_ref()) {
+        ([report], None) => {
+            if let Some(count) = report.input_token_count {
+                println!("input token count: {count}");
+            }
+            // Before the result: its last lines are the generated text.
+            if let Some(source) = &source {
+                source::print_source_lines(source);
+            }
+            print_infer_result(&report.result, Some(specification_path), 0);
+            print_infer_timing_summary(&report.timings);
+        }
+        ([first, second], Some(consensus)) => {
+            if let Some(source) = &source {
+                source::print_source_lines(source);
+            }
+            print_consensus(&first.result, consensus);
+            for (inference, report) in [first, second].into_iter().enumerate() {
+                println!("inference: {inference}");
                 if let Some(count) = report.input_token_count {
                     println!("input token count: {count}");
                 }
-                // Before the result: its last lines are the generated text.
-                if let Some(source) = &source {
-                    source::print_source_lines(source);
-                }
-                print_infer_result(&report.result, Some(&specification_path), 0);
+                print_infer_result(&report.result, Some(specification_path), inference);
                 print_infer_timing_summary(&report.timings);
             }
-            ([first, second], Some(consensus)) => {
-                if let Some(source) = &source {
-                    source::print_source_lines(source);
-                }
-                print_consensus(&first.result, consensus);
-                for (inference, report) in [first, second].into_iter().enumerate() {
-                    println!("inference: {inference}");
-                    if let Some(count) = report.input_token_count {
-                        println!("input token count: {count}");
-                    }
-                    print_infer_result(&report.result, Some(&specification_path), inference);
-                    print_infer_timing_summary(&report.timings);
-                }
-            }
-            _ => anyhow::bail!(
-                "the `{}` procedure kind gave no result to print",
-                run.procedure_kind
-            ),
         }
-        Ok(ExitCode::SUCCESS)
+        _ => anyhow::bail!(
+            "the `{}` procedure kind gave no result to print",
+            run.procedure_kind
+        ),
     }
+    Ok(())
+}
+
+pub(crate) fn run(args: InferArgs) -> Result<ExitCode> {
+    warn_if_debug_build("infer");
+    let run = run_infer(args.specification.clone(), args.case.clone())?;
+    print_direct_run(&run, &args.specification, &args.case)?;
+    Ok(ExitCode::SUCCESS)
 }
 
 #[cfg(test)]

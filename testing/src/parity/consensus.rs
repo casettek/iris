@@ -139,6 +139,14 @@ pub(super) fn run_consensus_scenario(
         direct.consensus,
         built.consensus
     );
+    // And with no blockchain: the same checkpoints as the claim's run.
+    super::run_with_no_blockchain(
+        root,
+        exe,
+        &claim_dir.join("procedure-run"),
+        &specification,
+        &built.chain_dir,
+    )?;
     let bundle = blockchain_rules::read_claim_bundle(&built.claim_bundle_path)?;
     let prepared: PreparedRun = procedure_definition::read_json(
         bundle

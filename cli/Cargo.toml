@@ -10,7 +10,7 @@ path = "src/main.rs"
 
 [features]
 cuda = ["blockchain-host/cuda", "testing/cuda"]
-gpu-kernels = ["direct-infer/gpu-kernels", "staged-infer/gpu-kernels", "blockchain-host/gpu-kernels", "testing/gpu-kernels", "procedure-direct/gpu-kernels"]
+gpu-kernels = ["direct-infer/gpu-kernels", "staged-infer/gpu-kernels", "blockchain-host/gpu-kernels", "testing/gpu-kernels", "procedure-direct/gpu-kernels", "procedure-run/gpu-kernels"]
 replay-profile = []
 
 [dependencies]
@@ -24,6 +24,7 @@ model-import = { path = "../segments/inference/import" }
 model-manifest = { path = "../segments/inference/manifest" }
 procedure-definition = { path = "../procedure/definition" }
 procedure-direct = { path = "../procedure/direct" }
+procedure-run = { path = "../procedure/run" }
 raster-analysis = { path = "../../raster/crates/raster-analysis" }
 raster-runtime = { path = "../../raster/crates/raster-runtime" }
 run-prep = { path = "../procedure/prepare" }
