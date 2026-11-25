@@ -10,7 +10,7 @@ just infer specification.toml case.toml
 
 Flow:
 
-1. `iris-cli` dispatches `infer` to `direct_infer::DirectInferenceExecutor`.
+1. `iris-cli` dispatches `infer` to `procedure_direct::run_infer`, which runs `direct_infer::DirectInferenceExecutor` once per inference of the procedure kind.
 2. `direct-infer` loads the specification and its model manifest, verifies the recorded weight, config, and tokenizer hashes once, then loads tokenizer metadata and mmap-backed DETWGT weights.
 3. The executor prepares prompt pieces from the case, then runs embedding, prefill layers, decode, and output finalization in host memory.
 4. The command prints an `InferenceResult` and timing summary.

@@ -108,7 +108,7 @@ from unauthenticated native checkpoint generation.
 
 ## Validation and benchmarking
 
-`cargo test -p staged-infer -p inference-kernels -p iris-cli` includes a two-layer,
+`cargo test -p staged-infer -p inference-kernels -p blockchain-host -p iris-cli` includes a two-layer,
 three-claimed-range fixture that compares every checkpoint across cache
 budgets, worker counts, and the diagnostic backend. To compare the same fixture
 against actual authenticated Raster stage execution:

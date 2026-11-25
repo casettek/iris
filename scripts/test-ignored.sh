@@ -20,7 +20,17 @@ for arg in "$@"; do
     esac
 done
 
-parity_run="$(latest_parity_run)"
+# The kept attacks are of the gemma family's small model: the newest run of
+# it, which is not the newest run when the full tier's other gate ran last.
+parity_run="${IRIS_PARITY_RUN:-}"
+if [ -z "$parity_run" ]; then
+    for run in $(ls -td "$repo_root"/target/parity/*/ 2> /dev/null); do
+        if [ -d "$run/model-artifacts/parity-gemma" ]; then
+            parity_run="${run%/}"
+            break
+        fi
+    done
+fi
 if [ ! -d "$parity_run/over-window/challenges" ]; then
     echo "no parity run with a challenge scenario at '$parity_run'; run the parity gate first" >&2
     exit 1
