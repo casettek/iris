@@ -133,7 +133,10 @@ pub(super) fn run_consensus_scenario(
     .context("the consensus claim")?;
     ensure!(
         built.procedure_kind.name() == "consensus"
-            && built.final_result.as_ref() == Some(&direct.reports[0].result)
+            && built
+                .results
+                .iter()
+                .eq(direct.reports.iter().map(|report| &report.result))
             && built.consensus == direct.consensus,
         "direct inference and the claim state different results: {:?} and {:?}",
         direct.consensus,

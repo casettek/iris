@@ -1870,7 +1870,11 @@ fn replay_semantic_rejection(
     for stage in &order {
         super::compare(stage, &raster_outputs[stage], &native_outputs[stage])?;
     }
-    let result = native.final_result.context("missing final record")?;
+    let result = native
+        .results
+        .into_iter()
+        .next()
+        .context("missing final record")?;
     ensure!(
         result.model_id == expected_model_id,
         "substitution replaced the statement model ID"
@@ -2010,7 +2014,7 @@ mod tests {
                     parity_policy: ParityPolicy::Skip,
                 })
                 .unwrap();
-            let result = run.final_result.unwrap();
+            let result = run.results.into_iter().next().unwrap();
             assert_eq!(result.model_id, model.model_id);
             assert_ne!(
                 result.model_fault, 0,

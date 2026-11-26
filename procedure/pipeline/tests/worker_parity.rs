@@ -541,7 +541,9 @@ fn uncheckpointed_inference_gives_the_checkpointed_result() {
         })
         .unwrap();
     let result = checkpointed
-        .final_result
+        .results
+        .into_iter()
+        .next()
         .expect("a checkpointed chain ends in a check with its output record");
     assert_eq!(report.result, result);
     // Three claimed ranges of one token each, and the last check is the

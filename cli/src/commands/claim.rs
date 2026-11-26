@@ -193,18 +193,21 @@ pub(crate) fn build(options: ClaimBuildOptions, specification_path: PathBuf) -> 
     warn_if_debug_build("claim build");
     let result = build_claim(options)?;
     println!("procedure kind: {}", result.procedure_kind);
-    match (result.final_result.as_ref(), result.consensus.as_ref()) {
-        (Some(first), Some(consensus)) => {
-            print_consensus(first, consensus);
-            for (inference, result) in [first, &consensus.second].into_iter().enumerate() {
+    match (result.results.as_slice(), result.consensus.as_ref()) {
+        ([first, second], Some(consensus)) => {
+            print_consensus(first, second, consensus);
+            for (inference, result) in [first, second].into_iter().enumerate() {
                 println!("inference: {inference}");
                 print_infer_result(result, Some(&specification_path), inference);
             }
         }
-        (Some(final_result), None) => {
-            print_infer_result(final_result, Some(&specification_path), 0)
+        ([only], _) => print_infer_result(only, Some(&specification_path), 0),
+        (results, _) => {
+            for (inference, result) in results.iter().enumerate() {
+                println!("inference: {inference}");
+                print_infer_result(result, Some(&specification_path), inference);
+            }
         }
-        (None, _) => {}
     }
     println!("checkpoint list: {}", result.checkpoint_list_path.display());
     println!("checkpoints: {}", result.checkpoint_hashes_path.display());

@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
@@ -26,10 +27,11 @@ pub struct CheckpointedInferenceConfig {
 pub struct CheckpointedInferenceResult {
     pub chain_dir: PathBuf,
     pub selected_stage_dir: Option<PathBuf>,
-    /// The first inference's result: the whole result of a procedure kind of one.
-    pub final_result: Option<InferenceResult>,
-    /// What a consensus chain states besides: its second inference's result,
-    /// and whether the two agree.
+    /// Each inference's result, in the order the chain runs them: its last
+    /// check's record, with what the result stage made of its output when
+    /// that stage read it. Empty for a run that reached no check.
+    pub results: Vec<InferenceResult>,
+    /// What a consensus chain states of its two inferences.
     pub consensus: Option<ConsensusOutcome>,
 }
 
@@ -52,10 +54,10 @@ pub struct CheckpointHashChallengeResult {
     pub chain_dir: PathBuf,
     pub recomputed_list: CheckpointList,
     pub divergence: Option<Divergence>,
-    /// The output record of the last check recomputation reached of the
-    /// first inference. It is the claim's once the last claimed range is
-    /// reached.
-    pub final_result: Option<InferenceResult>,
+    /// The output record of the last check recomputation reached of each
+    /// inference, in order. Each is the claim's once that inference's last
+    /// claimed range is reached.
+    pub results: Vec<InferenceResult>,
     /// What a consensus chain states besides, once recomputation reaches its
     /// result stage.
     pub consensus: Option<ConsensusOutcome>,
@@ -97,11 +99,11 @@ impl CheckpointedInferenceExecutor {
             &config.current_exe,
             config.staged_backend,
         )?;
-        let (final_result, consensus) = final_result(run.final_checks, run.final_output);
+        let (results, consensus) = results(run.final_checks, run.final_output, &run.final_reads);
         Ok(CheckpointedInferenceResult {
             chain_dir: run.chain_dir,
             selected_stage_dir: run.selected_stage_dir,
-            final_result,
+            results,
             consensus,
         })
     }
@@ -122,10 +124,13 @@ impl CheckpointedInferenceExecutor {
                 claimed_sources: config.claimed_sources,
             },
         )?;
-        let (final_result, consensus) =
-            final_result(verified.run.final_checks, verified.run.final_output);
+        let (results, consensus) = results(
+            verified.run.final_checks,
+            verified.run.final_output,
+            &verified.run.final_reads,
+        );
         Ok(CheckpointHashChallengeResult {
-            final_result,
+            results,
             consensus,
             chain_dir: verified.run.chain_dir,
             recomputed_list: verified.recomputed_list,
@@ -134,42 +139,55 @@ impl CheckpointedInferenceExecutor {
     }
 }
 
-/// A run's result: each inference's last check's record, with what the
-/// result stage made of it when the run reached that stage.
-fn final_result(
+/// A run's results: each inference's last check's record, with what the
+/// result stage made of its output when the run reached that stage and the
+/// stage read that check. `reads` says which inference each of the stage's
+/// inputs is of.
+fn results(
     checks: Vec<CachedStageValue>,
     last: Option<CachedStageValue>,
-) -> (Option<InferenceResult>, Option<ConsensusOutcome>) {
-    let mut results = checks.into_iter().filter_map(|check| match check {
-        CachedStageValue::DecodeEdge(edge) => Some(inference_result_from_generated(
-            sequence_check::input::generated_output(&edge),
-        )),
-        _ => None,
-    });
-    let Some(mut first) = results.next() else {
-        return (None, None);
-    };
-    match (last, results.next()) {
-        (Some(CachedStageValue::ResultRecord(record)), _) => {
-            first.result_code = record.code;
-            first.result_forms_sha256 = record.forms_sha256;
-            (Some(first), None)
+    reads: &BTreeMap<String, usize>,
+) -> (Vec<InferenceResult>, Option<ConsensusOutcome>) {
+    let mut results: Vec<InferenceResult> = checks
+        .into_iter()
+        .filter_map(|check| match check {
+            CachedStageValue::DecodeEdge(edge) => Some(inference_result_from_generated(
+                sequence_check::input::generated_output(&edge),
+            )),
+            _ => None,
+        })
+        .collect();
+    // What the result stage made of the output of the check it took as
+    // `input`. Both inputs must be there for an agreement to be of two.
+    let mut read = |input: &str, code: u32, forms_sha256: String| -> bool {
+        let result = reads
+            .get(input)
+            .and_then(|inference| results.get_mut(*inference));
+        if let Some(result) = result {
+            result.result_code = code;
+            result.result_forms_sha256 = forms_sha256;
+            true
+        } else {
+            false
         }
-        (Some(CachedStageValue::ConsensusRecord(record)), Some(mut second)) => {
-            first.result_code = record.first.code;
-            first.result_forms_sha256 = record.first.forms_sha256;
-            second.result_code = record.second.code;
-            second.result_forms_sha256 = record.second.forms_sha256;
-            let consensus = ConsensusOutcome {
-                second,
+    };
+    let consensus = match last {
+        Some(CachedStageValue::ResultRecord(record)) => {
+            read("check", record.code, record.forms_sha256);
+            None
+        }
+        Some(CachedStageValue::ConsensusRecord(record)) => {
+            let first = read("first", record.first.code, record.first.forms_sha256);
+            let second = read("second", record.second.code, record.second.forms_sha256);
+            (first && second).then_some(ConsensusOutcome {
                 same_input: record.same_input,
                 agree: record.agree,
                 code: record.code,
-            };
-            (Some(first), Some(consensus))
+            })
         }
-        _ => (Some(first), None),
-    }
+        _ => None,
+    };
+    (results, consensus)
 }
 
 fn ensure_supported_manifest_path(base_dir: &Path, manifest_path: &Path) -> Result<()> {

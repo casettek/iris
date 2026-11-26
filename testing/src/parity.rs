@@ -1043,7 +1043,7 @@ fn run_chain_fault_scenario(
         }
         let result: InferenceResult = serde_json::from_value(record.clone())?;
         ensure!(
-            native_run.final_result.as_ref() == Some(&result),
+            native_run.results.first() == Some(&result),
             "chain fault `{name}`: the native result is not the final record"
         );
         report.push(json!({
@@ -2134,7 +2134,7 @@ pub fn worker(specification: &Path, case: &Path, output: &Path, direct: bool) ->
         })?;
         write_json(
             &output.join("result.json"),
-            &json!({"chain_dir": result.chain_dir, "result": result.final_result.context("native-staged did not finalize")?}),
+            &json!({"chain_dir": result.chain_dir, "result": result.results.first().context("native-staged did not finalize")?}),
         )?;
     }
     Ok(())

@@ -43,9 +43,9 @@ pub struct CheckpointedRun {
     pub checkpoint_hashes_path: PathBuf,
     /// How many stages ran: one checkpoint each.
     pub checkpoints: usize,
-    /// The first inference's result: the whole result of a procedure kind of one.
-    pub final_result: InferenceResult,
-    /// What a consensus chain states besides.
+    /// Each inference's result, in the order the procedure kind runs them.
+    pub results: Vec<InferenceResult>,
+    /// What a consensus chain states of its two inferences.
     pub consensus: Option<ConsensusOutcome>,
 }
 
@@ -125,19 +125,15 @@ pub fn run_staged(options: &RunOptions, direct: &InferRun) -> Result<Checkpointe
             &list,
         )?;
 
-    let final_result = staged
-        .final_result
-        .context("the staged run reached no final record")?;
-    let stated: Vec<&InferenceResult> = std::iter::once(&final_result)
-        .chain(staged.consensus.iter().map(|consensus| &consensus.second))
-        .collect();
+    let stated = staged.results;
+    anyhow::ensure!(!stated.is_empty(), "the staged run reached no final record");
     anyhow::ensure!(
         stated.len() == direct.reports.len(),
         "the staged run states {} result(s), and the direct run made {} inference(s)",
         stated.len(),
         direct.reports.len()
     );
-    for (inference, (report, staged)) in direct.reports.iter().zip(stated).enumerate() {
+    for (inference, (report, staged)) in direct.reports.iter().zip(&stated).enumerate() {
         if let Some(difference) = result_difference(&report.result, staged)? {
             anyhow::bail!(
                 "inference {inference}: {difference}; direct and staged inference are not in \
@@ -157,7 +153,7 @@ pub fn run_staged(options: &RunOptions, direct: &InferRun) -> Result<Checkpointe
         checkpoint_list_path,
         checkpoint_hashes_path,
         checkpoints: list.checkpoints.len(),
-        final_result,
+        results: stated,
         consensus: staged.consensus,
     })
 }

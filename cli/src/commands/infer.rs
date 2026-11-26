@@ -18,9 +18,10 @@ pub(crate) struct InferArgs {
 /// inference's result, whose last lines are its generated text.
 pub(crate) fn print_consensus(
     first: &staged_infer::InferenceResult,
+    second: &staged_infer::InferenceResult,
     consensus: &procedure_definition::ConsensusOutcome,
 ) {
-    println!("consensus: {}", consensus.description(first));
+    println!("consensus: {}", consensus.description(first, second));
     println!("consensus code: {}", consensus.code);
     println!("same input: {}", consensus.same_input);
 }
@@ -426,7 +427,7 @@ pub(crate) fn print_direct_run(
             if let Some(source) = &source {
                 source::print_source_lines(source);
             }
-            print_consensus(&first.result, consensus);
+            print_consensus(&first.result, &second.result, consensus);
             for (inference, report) in [first, second].into_iter().enumerate() {
                 println!("inference: {inference}");
                 if let Some(count) = report.input_token_count {

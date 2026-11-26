@@ -61,11 +61,9 @@ pub struct InferenceResult {
     pub result_forms_sha256: String,
 }
 
-/// What a consensus run states besides its first inference's result.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+/// What a consensus run states of its two inferences' results.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ConsensusOutcome {
-    /// The second inference's result.
-    pub second: InferenceResult,
     /// The two inferences name the same input text and source.
     pub same_input: bool,
     /// Both records are valid, they name the same input, and the outputs
@@ -82,7 +80,7 @@ impl ConsensusOutcome {
     pub fn of(
         forms: &[result_core::Form],
         first: &InferenceResult,
-        second: InferenceResult,
+        second: &InferenceResult,
     ) -> Self {
         let matched = result_core::run_consensus(
             forms,
@@ -102,20 +100,19 @@ impl ConsensusOutcome {
             output_text_sha256: &[],
             valid: result.valid,
         };
-        let record = result_core::close_consensus(matched, claimed(first), claimed(&second));
+        let record = result_core::close_consensus(matched, claimed(first), claimed(second));
         Self {
-            second,
             same_input: record.same_input,
             agree: record.agree,
             code: record.code,
         }
     }
 
-    /// The answer in words, given the first inference's result.
-    pub fn description(&self, first: &InferenceResult) -> &'static str {
+    /// The answer in words, given the two inferences' results.
+    pub fn description(&self, first: &InferenceResult, second: &InferenceResult) -> &'static str {
         if self.agree {
             "agree"
-        } else if !first.valid || !self.second.valid {
+        } else if !first.valid || !second.valid {
             "no consensus: a claim record is not valid"
         } else if !self.same_input {
             "no consensus: the inferences name different inputs"

@@ -42,11 +42,7 @@ pub fn run_infer(specification_path: PathBuf, case_path: PathBuf) -> Result<Infe
         (ResultKind::OneOutput, _) => None,
         (ResultKind::Agreement, [first, second]) => {
             let forms = specification.forms();
-            Some(ConsensusOutcome::of(
-                &forms,
-                &first.result,
-                second.result.clone(),
-            ))
+            Some(ConsensusOutcome::of(&forms, &first.result, &second.result))
         }
         (ResultKind::Agreement, _) => anyhow::bail!("a consensus is of two inferences"),
     };

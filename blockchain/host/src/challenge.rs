@@ -122,11 +122,11 @@ pub fn build_challenge(options: ChallengeBuildOptions) -> Result<ChallengeBuildR
                 .collect()
         }),
     })?;
-    let (recomputed_chain_dir, recomputed_list, divergence, final_result, consensus) = (
+    let (recomputed_chain_dir, recomputed_list, divergence, results, consensus) = (
         recomputed.chain_dir,
         recomputed.recomputed_list,
         recomputed.divergence,
-        recomputed.final_result,
+        recomputed.results,
         recomputed.consensus,
     );
     let recomputed_list_path =
@@ -139,14 +139,8 @@ pub fn build_challenge(options: ChallengeBuildOptions) -> Result<ChallengeBuildR
         // non-greedy ids commits a non-zero verdict.
         if let Some(prepared_run) = &prepared_run {
             // A claim of several inferences is refuted by any one's record.
-            let mut rejection = claimed_output_rejection(final_result.as_ref())?;
-            if prepared_run.procedure_kind.result().states_agreement() && rejection.is_none() {
-                let consensus = consensus
-                    .as_ref()
-                    .context("recomputation produced no result to check the claim against")?;
-                rejection = claimed_output_rejection(Some(&consensus.second))?
-                    .map(|reason| format!("the second inference: {reason}"));
-            }
+            let rejection =
+                claimed_outputs_rejection(prepared_run.procedure_kind, &results, consensus)?;
             if let Some(reason) = rejection {
                 return Ok(ChallengeBuildResult {
                     outcome: ChallengeBuildOutcome::ClaimedOutputRejected {
@@ -669,6 +663,31 @@ pub fn claimed_output_rejection(
     let result = final_result
         .context("recomputation produced no final output to check the claim against")?;
     Ok(final_record_rejection(result))
+}
+
+/// Why a claim of this procedure kind is refuted by the records a run of it
+/// stated, if it is: a claim of several inferences is refuted by any one's
+/// record, and the first found is named. An error when the run did not reach
+/// every record the kind states.
+pub fn claimed_outputs_rejection(
+    procedure_kind: procedure_definition::ProcedureKind,
+    results: &[procedure_definition::InferenceResult],
+    consensus: Option<procedure_definition::ConsensusOutcome>,
+) -> Result<Option<String>> {
+    for inference in 0..procedure_kind.inferences() {
+        let reason = claimed_output_rejection(results.get(inference))?;
+        if let Some(reason) = reason {
+            return Ok(Some(match inference {
+                0 => reason,
+                1 => format!("the second inference: {reason}"),
+                later => format!("inference {later}: {reason}"),
+            }));
+        }
+    }
+    if procedure_kind.result().states_agreement() {
+        consensus.context("recomputation produced no result to check the claim against")?;
+    }
+    Ok(None)
 }
 
 fn final_record_rejection(result: &procedure_definition::InferenceResult) -> Option<String> {

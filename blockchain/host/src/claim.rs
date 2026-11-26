@@ -57,9 +57,10 @@ pub struct ClaimBuildResult {
     /// What a claimer would submit to a contract. Absent when the chain
     /// published no final record to submit.
     pub claim_submission_path: Option<PathBuf>,
-    /// The first inference's result: the whole result of a procedure kind of one.
-    pub final_result: Option<InferenceResult>,
-    /// What a consensus chain states besides.
+    /// Each inference's result, in the order the procedure kind runs them.
+    /// Empty when the chain published no final record.
+    pub results: Vec<InferenceResult>,
+    /// What a consensus chain states of its two inferences.
     pub consensus: Option<procedure_definition::ConsensusOutcome>,
 }
 
@@ -116,16 +117,12 @@ pub fn build_claim(options: ClaimBuildOptions) -> Result<ClaimBuildResult> {
     // A claimer applies the rule a challenger will: the claim is judged by
     // its own final record, and a claim of several inferences by each one's.
     let procedure_kind = prepared.prepared_run.procedure_kind;
-    let mut rejection =
-        crate::challenge::claimed_output_rejection(checkpointed.final_result.as_ref())?;
-    if procedure_kind.result().states_agreement() && rejection.is_none() {
-        let consensus = checkpointed
-            .consensus
-            .as_ref()
-            .with_context(|| format!("the `{procedure_kind}` chain stated no result"))?;
-        rejection = crate::challenge::claimed_output_rejection(Some(&consensus.second))?
-            .map(|reason| format!("the second inference: {reason}"));
-    }
+    let rejection = crate::challenge::claimed_outputs_rejection(
+        procedure_kind,
+        &checkpointed.results,
+        checkpointed.consensus,
+    )
+    .with_context(|| format!("the `{procedure_kind}` chain did not state its result"))?;
     if let Some(reason) = rejection {
         if options.claimed_token_ids.is_none() {
             if options.direct_output_ids.is_some() {
@@ -283,16 +280,7 @@ fn write_claim_result(
         )?;
     // The submission is stated over the checkpoint list written just above:
     // each inference's result, and what a consensus states of them.
-    let results: Vec<&InferenceResult> = checkpointed
-        .final_result
-        .iter()
-        .chain(
-            checkpointed
-                .consensus
-                .iter()
-                .map(|consensus| &consensus.second),
-        )
-        .collect();
+    let results: Vec<&InferenceResult> = checkpointed.results.iter().collect();
     let consensus = checkpointed.consensus.as_ref().map(|consensus| {
         blockchain_rules::checks::SubmittedConsensus {
             same_input: consensus.same_input,
@@ -324,7 +312,7 @@ fn write_claim_result(
         checkpoint_hashes_path,
         claim_bundle_path,
         claim_submission_path,
-        final_result: checkpointed.final_result,
+        results: checkpointed.results,
         consensus: checkpointed.consensus,
     })
 }
@@ -678,7 +666,7 @@ mod tests {
             CheckpointedInferenceResult {
                 chain_dir: base.clone(),
                 selected_stage_dir: None,
-                final_result: None,
+                results: Vec::new(),
                 consensus: None,
             },
             &manifest_path,
@@ -725,7 +713,7 @@ mod tests {
             result.claim_bundle_path.file_name().unwrap(),
             CLAIM_BUNDLE_JSON
         );
-        assert_eq!(result.final_result, None);
+        assert!(result.results.is_empty());
 
         fs::remove_dir_all(result.chain_dir).unwrap();
     }

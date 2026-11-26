@@ -30,6 +30,9 @@ pub struct HybridRun {
     /// The output of the last check the run reached of each inference, in
     /// the order the chain runs them. The result stage follows them.
     pub final_checks: Vec<CachedStageValue>,
+    /// For each input the run's last stage took from an earlier stage, the
+    /// inference that stage is of: which check a result stage read.
+    pub final_reads: BTreeMap<String, usize>,
 }
 
 /// A native prefix ending at one exact expanded chain stage.
@@ -310,6 +313,8 @@ struct ChainRunState {
     last_output: Option<CachedStageValue>,
     /// The last check reached of each inference, by the inference's index.
     last_checks: std::collections::BTreeMap<usize, CachedStageValue>,
+    /// The inference each chained input of the last stage run is of.
+    last_reads: BTreeMap<String, usize>,
     checkpoint_verifier: Option<CheckpointVerifierState>,
 }
 
@@ -635,6 +640,7 @@ fn run_inner(
         selected_stage_dir: None,
         last_output: None,
         last_checks: std::collections::BTreeMap::new(),
+        last_reads: BTreeMap::new(),
         checkpoint_verifier: checkpoint_verifier.map(CheckpointVerifierState::new),
     };
     let recomputed_list_path = chain_dir.join(CHECKPOINT_LIST_JSON);
@@ -745,6 +751,7 @@ fn run_inner(
             selected_stage_dir: state.selected_stage_dir,
             final_output: state.last_output,
             final_checks: state.last_checks.into_values().collect(),
+            final_reads: state.last_reads,
         },
         recomputed_list,
         divergence,
@@ -1199,6 +1206,19 @@ fn finish_stage(
             state.last_checks.insert(inference, value.clone());
         }
         state.last_output = Some(value.clone());
+        // A stage of a chain of several inferences is named for its own.
+        state.last_reads = stage
+            .inputs
+            .iter()
+            .filter_map(|(param, binding)| match binding {
+                InputBinding::From(producer) => Some((
+                    param.clone(),
+                    procedure_definition::procedure_kind::labelled_name(producer)
+                        .map_or(0, |(inference, _)| inference),
+                )),
+                _ => None,
+            })
+            .collect();
         output_cache_insert(
             &mut state.output_cache,
             &stage.name,
@@ -1207,6 +1227,7 @@ fn finish_stage(
         );
     } else {
         state.last_output = None;
+        state.last_reads.clear();
     }
     print_stage_output(&output);
     state.output_commitments[idx] = Some(output.structural_commitment);
