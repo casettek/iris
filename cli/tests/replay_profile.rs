@@ -5,7 +5,7 @@ use std::process::{Command, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use procedure_definition::{read_json, EXECUTION_TIMES_JSON};
-use staged_infer::chain_runner::StagedExecutionBackend;
+use staged_infer::pipeline_runner::StagedExecutionBackend;
 use staged_infer::{CheckpointedInferenceConfig, CheckpointedInferenceExecutor, ParityPolicy};
 
 fn repo_root() -> PathBuf {
@@ -87,22 +87,22 @@ fn native_prefix_stops_before_later_sequential_and_parallel_stages() {
         &manifest,
         format!(
             r#"
-[chain]
+[pipeline]
 name = "prefix-test"
-[[chain.stage]]
+[[pipeline.stage]]
 name = "prompt_check_p0"
 project = "raster-stages/prompt-check"
 {inputs}
-[[chain.stage]]
+[[pipeline.stage]]
 name = "prefill_prepare_aux_l0"
 project = "raster-stages/prefill-prepare-aux"
-[[chain.stage]]
+[[pipeline.stage]]
 name = "prefill_prepare_aux_l1"
 project = "raster-stages/prefill-prepare-aux"
-[[chain.stage]]
+[[pipeline.stage]]
 name = "prefill_prepare_aux_l2"
 project = "raster-stages/prefill-prepare-aux"
-[[chain.stage]]
+[[pipeline.stage]]
 name = "check_c0"
 project = "raster-stages/sequence-check"
 "#
@@ -122,7 +122,10 @@ project = "raster-stages/sequence-check"
     assert!(sequential.output_path.is_file());
     assert!(sequential.output_index_path.is_file());
     assert!(sequential.input_manifest_path.is_file());
-    assert!(!sequential.chain_dir.join("prefill_prepare_aux_l0").exists());
+    assert!(!sequential
+        .pipeline_dir
+        .join("prefill_prepare_aux_l0")
+        .exists());
     assert_eq!(
         sequential.project_dir,
         root.join("raster-stages/prompt-check")
@@ -160,14 +163,17 @@ for line in sys.stdin:
         .run_through_stage(parallel_config, "prefill_prepare_aux_l1")
         .unwrap();
     assert!(parallel
-        .chain_dir
+        .pipeline_dir
         .join("prefill_prepare_aux_l0/output.bin")
         .exists());
     assert!(parallel.output_path.is_file());
-    assert!(!parallel.chain_dir.join("prefill_prepare_aux_l2").exists());
-    assert!(!parallel.chain_dir.join("check_c0").exists());
+    assert!(!parallel
+        .pipeline_dir
+        .join("prefill_prepare_aux_l2")
+        .exists());
+    assert!(!parallel.pipeline_dir.join("check_c0").exists());
     let times: serde_json::Value =
-        read_json(&parallel.chain_dir.join(EXECUTION_TIMES_JSON)).unwrap();
+        read_json(&parallel.pipeline_dir.join(EXECUTION_TIMES_JSON)).unwrap();
     assert_eq!(times["stages"].as_array().unwrap().len(), 3);
     assert_eq!(times["aux_waves"][0]["stage_count"], 2);
     assert_eq!(

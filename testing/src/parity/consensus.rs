@@ -1,7 +1,7 @@
 //! The gate's consensus scenario: one inference on two models, and whether they
 //! agree.
 //!
-//! The second model is the other family's bundle, so the chain holds both
+//! The second model is the other family's bundle, so the pipeline holds both
 //! families' stage programs under their labels. The run's prompt is built from
 //! the source scenario's signed documents. Each model's answer is learned first by
 //! direct inference and named as a form, both with one code, so the claim's
@@ -22,7 +22,7 @@ use procedure_definition::SpecificationForm;
 use procedure_definition::{PreparedRun, ProcedureKind};
 use run_prep::source::LoadedSource;
 use serde_json::{json, Value};
-use staged_infer::chain_runner::StagedExecutionBackend;
+use staged_infer::pipeline_runner::StagedExecutionBackend;
 
 use super::compare::{compare, read_boundaries};
 use super::{case_beside, command, logged, source};
@@ -148,7 +148,7 @@ pub(super) fn run_consensus_scenario(
         exe,
         &claim_dir.join("procedure-run"),
         &specification,
-        &built.chain_dir,
+        &built.pipeline_dir,
     )?;
     let bundle = blockchain_rules::read_claim_bundle(&built.claim_bundle_path)?;
     let prepared: PreparedRun = procedure_definition::read_json(
@@ -160,18 +160,18 @@ pub(super) fn run_consensus_scenario(
     let manifest = prepared
         .run_manifest_path
         .as_ref()
-        .context("the prepared run names no chain manifest")?;
+        .context("the prepared run names no pipeline manifest")?;
 
     let raster_dir = claim_dir.join("raster");
     fs::create_dir(&raster_dir)?;
     let mut run = command(raster, root);
-    run.args(["raster", "chain", "run"])
+    run.args(["raster", "pipeline", "run"])
         .arg(manifest)
         .args(["--no-auth", "--run"])
         .arg(&raster_dir);
     logged(run, &claim_dir.join("raster.log")).context("Raster-staged execution")?;
-    let order = procedure_definition::read_stage_order(&built.chain_dir)?
-        .context("native chain recorded no stage inventory")?;
+    let order = procedure_definition::read_stage_order(&built.pipeline_dir)?
+        .context("native pipeline recorded no stage inventory")?;
     let of = |label: &str| {
         order
             .iter()
@@ -184,10 +184,10 @@ pub(super) fn run_consensus_scenario(
             && of("m0_") > 0
             && of("m1_") > 0
             && of("m0_") + of("m1_") + 2 == order.len(),
-        "a consensus chain is the source, two inferences and the result; ran {order:?}"
+        "a consensus pipeline is the source, two inferences and the result; ran {order:?}"
     );
     let raster_outputs = read_boundaries(&raster_dir, &order, false).context("Raster-staged")?;
-    let native = read_boundaries(&built.chain_dir, &order, false).context("native-staged")?;
+    let native = read_boundaries(&built.pipeline_dir, &order, false).context("native-staged")?;
     for stage in &order {
         compare(stage, &raster_outputs[stage], &native[stage])
             .context("Raster-staged ↔ native-staged")?;
@@ -261,7 +261,7 @@ pub(super) fn run_consensus_scenario(
     overstated["consensus"]["agree"] = json!(false);
     overstated["consensus"]["code"] = json!(0);
     let overstated_path = built
-        .chain_dir
+        .pipeline_dir
         .join(format!("denied.{CLAIM_SUBMISSION_JSON}"));
     procedure_definition::write_json(&overstated_path, &overstated)?;
     let refused = check(&overstated_path, None)?;

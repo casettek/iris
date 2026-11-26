@@ -11,7 +11,7 @@ use layer_mistral::input::{LayerParams, TransformerLayer};
 use model_manifest::MistralShape;
 
 use super::externals::page_of_i32s;
-use super::{external_line, mapped_weights, write_external, ArtifactLayout, ChainLayers};
+use super::{external_line, mapped_weights, write_external, ArtifactLayout, PipelineLayers};
 
 const LAYER_PROJECT: &str = "raster-stages/layer-mistral";
 const LANGUAGE_MODEL: &str = "model.language_model.";
@@ -39,7 +39,7 @@ pub(super) fn require_known_tensors<'a>(
 ) -> Result<(), Box<dyn Error>> {
     let known = |name: &str| {
         let Some(rest) = name.strip_prefix(LANGUAGE_MODEL) else {
-            // Another tower's weights are not this chain's.
+            // Another tower's weights are not this pipeline's.
             return true;
         };
         if MODEL_TENSORS.contains(&rest) {
@@ -65,10 +65,10 @@ pub(super) fn require_known_tensors<'a>(
     .into())
 }
 
-/// What the chain template needs of this model's layers: each one runs alone,
+/// What the pipeline template needs of this model's layers: each one runs alone,
 /// after the layer below, with its own cache.
-pub(super) fn chain_layers(shape: &MistralShape) -> ChainLayers {
-    ChainLayers {
+pub(super) fn pipeline_layers(shape: &MistralShape) -> PipelineLayers {
+    PipelineLayers {
         layers: shape.num_hidden_layers as usize,
         project: LAYER_PROJECT,
         stage: "layer_mistral",
@@ -154,7 +154,7 @@ pub(super) fn write_layers(
             None => String::from("input_embedding"),
         };
         stages.push(format!(
-            "[[chain.stage]]\n\
+            "[[pipeline.stage]]\n\
              name = \"layer_mistral_l{layer_idx}\"\n\
              project = \"{LAYER_PROJECT}\"\n\
              inputs.activations = {{ from = \"{upstream}\" }}\n\

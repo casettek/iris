@@ -18,7 +18,7 @@ use procedure_definition::{
 };
 use procedure_direct::{absolute, DirectInferenceConfig, DirectInferenceExecutor, InferRun};
 use run_prep::staged::StagedRun;
-use staged_infer::chain_runner::StagedExecutionBackend;
+use staged_infer::pipeline_runner::StagedExecutionBackend;
 use staged_infer::{CheckpointedInferenceConfig, CheckpointedInferenceExecutor, ParityPolicy};
 
 /// What a procedure is run from.
@@ -40,14 +40,14 @@ pub struct CheckpointedRun {
     pub procedure_kind: ProcedureKind,
     /// The pipeline the run was made from: its `Raster.toml`.
     pub manifest_path: PathBuf,
-    pub chain_dir: PathBuf,
+    pub pipeline_dir: PathBuf,
     pub checkpoint_list_path: PathBuf,
     pub checkpoint_hashes_path: PathBuf,
     /// How many stages ran: one checkpoint each.
     pub checkpoints: usize,
     /// Each inference's result, in the order the procedure kind runs them.
     pub results: Vec<InferenceResult>,
-    /// What a consensus chain states of its two inferences.
+    /// What a consensus pipeline states of its two inferences.
     pub consensus: Option<ConsensusOutcome>,
 }
 
@@ -117,12 +117,14 @@ pub fn run_staged(options: &RunOptions, direct: &InferRun) -> Result<Checkpointe
         staged_backend: options.staged_backend,
         parity_policy: ParityPolicy::Skip,
     })?;
-    let list = build_checkpoint_list(&staged.chain_dir, &prepared.manifest_path)?;
-    let checkpoint_list_path =
-        procedure_definition::checkpoint::write_checkpoint_list_artifact(&staged.chain_dir, &list)?;
+    let list = build_checkpoint_list(&staged.pipeline_dir, &prepared.manifest_path)?;
+    let checkpoint_list_path = procedure_definition::checkpoint::write_checkpoint_list_artifact(
+        &staged.pipeline_dir,
+        &list,
+    )?;
     let checkpoint_hashes_path =
         procedure_definition::checkpoint::write_checkpoint_hashes_artifact(
-            &staged.chain_dir,
+            &staged.pipeline_dir,
             &list,
         )?;
 
@@ -151,7 +153,7 @@ pub fn run_staged(options: &RunOptions, direct: &InferRun) -> Result<Checkpointe
     Ok(CheckpointedRun {
         procedure_kind,
         manifest_path: prepared.manifest_path,
-        chain_dir: staged.chain_dir,
+        pipeline_dir: staged.pipeline_dir,
         checkpoint_list_path,
         checkpoint_hashes_path,
         checkpoints: list.checkpoints.len(),

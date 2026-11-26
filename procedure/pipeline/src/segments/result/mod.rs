@@ -14,10 +14,10 @@ pub mod consensus_result;
 /// project tells them apart.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Stage {
-    /// What the claim's output stands for: the last stage of a chain of one
+    /// What the claim's output stands for: the last stage of a pipeline of one
     /// inference.
     ClaimResult,
-    /// Whether two inferences agree: the last stage of a consensus chain.
+    /// Whether two inferences agree: the last stage of a consensus pipeline.
     ConsensusResult,
 }
 

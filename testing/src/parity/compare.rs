@@ -13,7 +13,7 @@ pub(super) struct Boundary {
     pub value: Value,
 }
 
-/// The shape of a ranged teacher-forced chain.
+/// The shape of a ranged teacher-forced pipeline.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct RangedShape {
     pub layers: u32,
@@ -24,7 +24,7 @@ pub(super) struct RangedShape {
 }
 
 impl RangedShape {
-    /// Reads the shape back from an executed chain's stage inventory.
+    /// Reads the shape back from an executed pipeline's stage inventory.
     pub(super) fn from_names(names: &[String]) -> Self {
         let count =
             |prefix: &str| names.iter().filter(|name| name.starts_with(prefix)).count() as u32;
@@ -37,10 +37,10 @@ impl RangedShape {
     }
 }
 
-/// The ranged teacher-forced chain: every prompt range bound, tokenized and
+/// The ranged teacher-forced pipeline: every prompt range bound, tokenized and
 /// embedded, every claimed range embedded, each layer across all ranges, then
 /// each claimed range checked. The result stage reads the last check and is
-/// the chain's last stage.
+/// the pipeline's last stage.
 pub(super) fn teacher_forced_names(shape: RangedShape) -> Vec<String> {
     let mut names = Vec::new();
     for j in 0..shape.prompt_ranges {
@@ -85,20 +85,20 @@ pub(super) fn read_boundaries(
     expected: &[String],
     direct: bool,
 ) -> Result<BTreeMap<String, Boundary>> {
-    // Current Raster also writes public chain-commitment metadata in no-auth
+    // Current Raster also writes public pipeline-commitment metadata in no-auth
     // mode. Only per-stage execution traces/commit.bin imply authentication.
     let names = if direct {
         procedure_definition::read_json::<Vec<String>>(&dir.join("boundary-order.json"))?
     } else {
         procedure_definition::read_stage_order(dir)?.context(
-            "missing recorded stage inventory: expected chain-commitment or execution-times.json",
+            "missing recorded stage inventory: expected pipeline-commitment or execution-times.json",
         )?
     };
     check_inventory(expected, &names)?;
     if !direct {
         ensure!(
             names == expected,
-            "staged execution order differs from expected chain"
+            "staged execution order differs from expected pipeline"
         );
     }
     let dirs = fs::read_dir(dir)?
@@ -173,10 +173,10 @@ fn decode_boundary(bytes: Vec<u8>, index: &[u8], recorded: &str) -> Result<Bound
 pub use blockchain_host::raster_json::value_json;
 
 pub(super) fn validate_errors(stage: &str, value: &Value) -> Result<()> {
-    // A stage of a chain of several inferences is named for its own.
+    // A stage of a pipeline of several inferences is named for its own.
     let stage = procedure_definition::procedure_kind::unlabelled(stage);
     // `decode_init` and `output_finalize` are direct inference's names for
-    // its empty edge and its final one; no chain stage has them.
+    // its empty edge and its final one; no pipeline stage has them.
     if stage != "prompt_prepare"
         && stage != "source"
         && stage != procedure_definition::procedure_kind::RELAY_STAGE
@@ -436,8 +436,8 @@ mod tests {
     }
 
     #[test]
-    fn no_auth_allows_public_chain_metadata_but_rejects_execution_traces() {
-        use raster::core::chain::{ChainCommitment, ChainShape, StageCheckpoint};
+    fn no_auth_allows_public_pipeline_metadata_but_rejects_execution_traces() {
+        use raster::core::pipeline::{PipelineCommitment, PipelineShape, StageCheckpoint};
         raster::init();
         let dir = std::env::temp_dir().join(format!("parity-no-auth-{}", std::process::id()));
         let stage = dir.join("prompt_prepare");
@@ -454,7 +454,7 @@ mod tests {
             &json!({"output": {"commitment": root}}),
         )
         .unwrap();
-        let mut chain = ChainCommitment {
+        let mut pipeline = PipelineCommitment {
             stages: vec![StageCheckpoint {
                 name: "prompt_prepare".into(),
                 program_commitment: vec![],
@@ -463,24 +463,24 @@ mod tests {
                 output_payload_commitment: vec![],
                 output_structural_commitment: vec![],
             }],
-            shape: ChainShape {
+            shape: PipelineShape {
                 spec_digest: vec![],
                 repeats: vec![],
             },
         };
-        let commitment = dir.join("chain-commitment");
-        fs::write(&commitment, postcard::to_allocvec(&chain).unwrap()).unwrap();
+        let commitment = dir.join("pipeline-commitment");
+        fs::write(&commitment, postcard::to_allocvec(&pipeline).unwrap()).unwrap();
         let expected = vec!["prompt_prepare".to_string()];
         assert!(!dir.join("execution-times.json").exists());
         read_boundaries(&dir, &expected, false).unwrap();
-        chain.stages.push(chain.stages[0].clone());
-        fs::write(&commitment, postcard::to_allocvec(&chain).unwrap()).unwrap();
+        pipeline.stages.push(pipeline.stages[0].clone());
+        fs::write(&commitment, postcard::to_allocvec(&pipeline).unwrap()).unwrap();
         assert!(read_boundaries(&dir, &expected, false)
             .unwrap_err()
             .to_string()
             .contains("duplicate boundary"));
-        chain.stages.pop();
-        fs::write(&commitment, postcard::to_allocvec(&chain).unwrap()).unwrap();
+        pipeline.stages.pop();
+        fs::write(&commitment, postcard::to_allocvec(&pipeline).unwrap()).unwrap();
         fs::write(stage.join("commit.bin"), b"execution commitment").unwrap();
         assert!(read_boundaries(&dir, &expected, false)
             .unwrap_err()

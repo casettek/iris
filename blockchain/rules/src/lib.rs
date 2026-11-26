@@ -27,7 +27,7 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
-    fn claim_artifacts_summarize_chain_outputs() {
+    fn claim_artifacts_summarize_pipeline_outputs() {
         let base = temp_dir("claim-artifacts");
         fs::create_dir_all(&base).unwrap();
         write_stage(&base, "stage_a", "aaa", b"stage-a");
@@ -39,7 +39,7 @@ mod tests {
         .unwrap();
 
         let manifest_path = base.join("Raster.toml");
-        fs::write(&manifest_path, "[chain]\nname = \"test\"\n").unwrap();
+        fs::write(&manifest_path, "[pipeline]\nname = \"test\"\n").unwrap();
         let (list_path, hashes_path, bundle_path) =
             write_claim_artifacts(&base, &manifest_path).unwrap();
         assert_eq!(list_path.file_name().unwrap(), CHECKPOINT_LIST_JSON);

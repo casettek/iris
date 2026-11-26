@@ -5,7 +5,7 @@ use anyhow::{bail, Context, Result};
 use procedure_definition::{CheckpointList, ConsensusOutcome, Divergence, InferenceResult};
 
 use crate::cache::CachedStageValue;
-use crate::chain_runner::{self, CheckpointHashVerifier, StagedExecutionBackend};
+use crate::pipeline_runner::{self, CheckpointHashVerifier, StagedExecutionBackend};
 use crate::uncheckpointed::inference_result_from_generated;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -25,13 +25,13 @@ pub struct CheckpointedInferenceConfig {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CheckpointedInferenceResult {
-    pub chain_dir: PathBuf,
+    pub pipeline_dir: PathBuf,
     pub selected_stage_dir: Option<PathBuf>,
-    /// Each inference's result, in the order the chain runs them: its last
+    /// Each inference's result, in the order the pipeline runs them: its last
     /// check's record, with what the result stage made of its output when
     /// that stage read it. Empty for a run that reached no check.
     pub results: Vec<InferenceResult>,
-    /// What a consensus chain states of its two inferences.
+    /// What a consensus pipeline states of its two inferences.
     pub consensus: Option<ConsensusOutcome>,
 }
 
@@ -44,21 +44,21 @@ pub struct CheckpointHashChallengeConfig {
     pub claimed_hashes_path: PathBuf,
     pub claimed_hashes: Vec<String>,
     /// The producers each of the claim's checkpoints points at, for a run of
-    /// the chain as the claim arranges it (see
+    /// the pipeline as the claim arranges it (see
     /// [`CheckpointHashVerifier::claimed_sources`]).
     pub claimed_sources: Option<Vec<std::collections::BTreeMap<String, u32>>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CheckpointHashChallengeResult {
-    pub chain_dir: PathBuf,
+    pub pipeline_dir: PathBuf,
     pub recomputed_list: CheckpointList,
     pub divergence: Option<Divergence>,
     /// The output record of the last check recomputation reached of each
     /// inference, in order. Each is the claim's once that inference's last
     /// claimed range is reached.
     pub results: Vec<InferenceResult>,
-    /// What a consensus chain states besides, once recomputation reaches its
+    /// What a consensus pipeline states besides, once recomputation reaches its
     /// result stage.
     pub consensus: Option<ConsensusOutcome>,
 }
@@ -72,13 +72,13 @@ impl CheckpointedInferenceExecutor {
         &self,
         config: CheckpointedInferenceConfig,
         stage: &str,
-    ) -> Result<chain_runner::StagePrefixRun> {
+    ) -> Result<pipeline_runner::StagePrefixRun> {
         if config.parity_policy != ParityPolicy::Skip {
             bail!("run_through_stage requires native execution (ParityPolicy::Skip)");
         }
         ensure_supported_manifest_path(&config.base_dir, &config.manifest_path)?;
         let _cwd = CurrentDirGuard::enter(&config.base_dir)?;
-        chain_runner::run_through_stage(
+        pipeline_runner::run_through_stage(
             &config.manifest_path,
             stage,
             &config.current_exe,
@@ -93,7 +93,7 @@ impl CheckpointedInferenceExecutor {
             ParityPolicy::Skip => None,
             ParityPolicy::ReferenceStage(stage) => Some(stage.as_str()),
         };
-        let run = chain_runner::run(
+        let run = pipeline_runner::run(
             &config.manifest_path,
             raster_stage,
             &config.current_exe,
@@ -101,7 +101,7 @@ impl CheckpointedInferenceExecutor {
         )?;
         let (results, consensus) = results(run.final_checks, run.final_output, &run.final_reads);
         Ok(CheckpointedInferenceResult {
-            chain_dir: run.chain_dir,
+            pipeline_dir: run.pipeline_dir,
             selected_stage_dir: run.selected_stage_dir,
             results,
             consensus,
@@ -114,7 +114,7 @@ impl CheckpointedInferenceExecutor {
     ) -> Result<CheckpointHashChallengeResult> {
         ensure_supported_manifest_path(&config.base_dir, &config.manifest_path)?;
         let _cwd = CurrentDirGuard::enter(&config.base_dir)?;
-        let verified = chain_runner::run_until_hash_divergence(
+        let verified = pipeline_runner::run_until_hash_divergence(
             &config.manifest_path,
             &config.current_exe,
             config.staged_backend,
@@ -132,7 +132,7 @@ impl CheckpointedInferenceExecutor {
         Ok(CheckpointHashChallengeResult {
             results,
             consensus,
-            chain_dir: verified.run.chain_dir,
+            pipeline_dir: verified.run.pipeline_dir,
             recomputed_list: verified.recomputed_list,
             divergence: verified.divergence,
         })
@@ -284,7 +284,7 @@ mod tests {
             std::env::temp_dir().join(format!("staged-infer-manifest-path-{}", std::process::id()));
         std::fs::create_dir_all(base.join("target/run")).unwrap();
         let manifest = base.join("target/run/Raster.toml");
-        std::fs::write(&manifest, "[chain]\nname = \"test\"\n").unwrap();
+        std::fs::write(&manifest, "[pipeline]\nname = \"test\"\n").unwrap();
 
         ensure_supported_manifest_path(&base, &manifest).unwrap();
 

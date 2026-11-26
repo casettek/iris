@@ -5,7 +5,7 @@ use std::process::{Command, Stdio};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{bail, ensure, Context, Result};
-use staged_infer::chain_runner::StagedExecutionBackend;
+use staged_infer::pipeline_runner::StagedExecutionBackend;
 use staged_infer::{CheckpointHashChallengeConfig, CheckpointedInferenceExecutor};
 
 use blockchain_rules::{
@@ -67,14 +67,14 @@ pub enum ChallengeBuildOutcome {
     NoDivergence {
         claimed_reference_path: PathBuf,
         recomputed_list_path: PathBuf,
-        recomputed_chain_dir: PathBuf,
+        recomputed_pipeline_dir: PathBuf,
     },
     /// Every checkpoint matched, but the claim's own final record refutes it.
     ClaimedOutputRejected {
         reason: String,
         claimed_reference_path: PathBuf,
         recomputed_list_path: PathBuf,
-        recomputed_chain_dir: PathBuf,
+        recomputed_pipeline_dir: PathBuf,
     },
     DivergenceBuilt {
         divergence: Divergence,
@@ -92,7 +92,7 @@ pub fn build_challenge(options: ChallengeBuildOptions) -> Result<ChallengeBuildR
     challenge_progress("checkpoint-list", None, None)?;
     let claimed_input = load_claimed_input(&options.input)?;
     let (manifest_path, prepared_run) = challenge_run(&options, &claimed_input)?;
-    // A posted claim's chain is run as the claim arranges it, so that every
+    // A posted claim's pipeline is run as the claim arranges it, so that every
     // stage is a run on the inputs its checkpoint names.
     let posted_claim = match &options.input {
         ChallengeInput::Posted { submission_path } => Some(arrange_posted_claim(
@@ -122,15 +122,15 @@ pub fn build_challenge(options: ChallengeBuildOptions) -> Result<ChallengeBuildR
                 .collect()
         }),
     })?;
-    let (recomputed_chain_dir, recomputed_list, divergence, results, consensus) = (
-        recomputed.chain_dir,
+    let (recomputed_pipeline_dir, recomputed_list, divergence, results, consensus) = (
+        recomputed.pipeline_dir,
         recomputed.recomputed_list,
         recomputed.divergence,
         recomputed.results,
         recomputed.consensus,
     );
     let recomputed_list_path =
-        write_checkpoint_list_artifact(&recomputed_chain_dir, &recomputed_list)?;
+        write_checkpoint_list_artifact(&recomputed_pipeline_dir, &recomputed_list)?;
     let checkpoint_list_duration = checkpoint_list_started.elapsed();
 
     let Some(divergence) = divergence else {
@@ -147,7 +147,7 @@ pub fn build_challenge(options: ChallengeBuildOptions) -> Result<ChallengeBuildR
                         reason,
                         claimed_reference_path: claimed_input.hashes_path.clone(),
                         recomputed_list_path,
-                        recomputed_chain_dir,
+                        recomputed_pipeline_dir,
                     },
                 });
             }
@@ -156,7 +156,7 @@ pub fn build_challenge(options: ChallengeBuildOptions) -> Result<ChallengeBuildR
             outcome: ChallengeBuildOutcome::NoDivergence {
                 claimed_reference_path: claimed_input.hashes_path.clone(),
                 recomputed_list_path,
-                recomputed_chain_dir,
+                recomputed_pipeline_dir,
             },
         });
     };
@@ -178,7 +178,7 @@ pub fn build_challenge(options: ChallengeBuildOptions) -> Result<ChallengeBuildR
     // A replay disputes a stage only when it is a run of the claimer's
     // program on the claimer's inputs. This run gave every stage the inputs
     // its checkpoint names, so a checkpoint that differs in more than its
-    // output names another program than the chain runs the stage with. The
+    // output names another program than the pipeline runs the stage with. The
     // claimer could answer a replay of such a stage with a fault proof, since
     // the replay is not a run of the program its checkpoint names.
     let mut disputed = None;
@@ -219,14 +219,14 @@ pub fn build_challenge(options: ChallengeBuildOptions) -> Result<ChallengeBuildR
         disputed = Some(claimed.clone());
     }
 
-    let challenge_dir = recomputed_chain_dir
+    let challenge_dir = recomputed_pipeline_dir
         .join("challenge")
         .join(sanitize_stage_name(&divergence.stage));
     let replay_run_dir = challenge_dir.join("raster-replay");
     println!("stage to replay: {}", divergence.stage);
     challenge_progress("replay-preparing", Some(checkpoint_list_duration), None)?;
     seed_replay_directory(
-        &recomputed_chain_dir,
+        &recomputed_pipeline_dir,
         &recomputed_list,
         divergence.checkpoint_index,
         &replay_run_dir,
@@ -301,13 +301,13 @@ pub fn build_challenge(options: ChallengeBuildOptions) -> Result<ChallengeBuildR
     })
 }
 
-/// A posted claim, with the chain its checkpoints describe.
+/// A posted claim, with the pipeline its checkpoints describe.
 struct PostedClaim {
     list: CheckpointList,
     manifest_path: PathBuf,
 }
 
-/// Write the chain a posted claim's checkpoints describe beside the manifest
+/// Write the pipeline a posted claim's checkpoints describe beside the manifest
 /// of the run prepared from its inputs.
 fn arrange_posted_claim(
     run_manifest_path: &Path,
@@ -327,7 +327,7 @@ fn arrange_posted_claim(
     let arranged = crate::arrangement::arrange(run_manifest_path, &list, claim_dir)?;
     for found in &arranged.rearranged {
         println!(
-            "checkpoint {} (`{}`) gives `{}` another value than the chain does",
+            "checkpoint {} (`{}`) gives `{}` another value than the pipeline does",
             found.checkpoint, found.stage, found.input
         );
     }
@@ -521,7 +521,7 @@ fn frozen_claimed_ids(manifest_path: &Path, label: &str) -> Result<Vec<u32>> {
             .with_context(|| format!("failed to read {}", manifest_path.display()))?,
     )
     .with_context(|| format!("failed to parse {}", manifest_path.display()))?;
-    let input = &manifest["chain"]["input"][input_name.as_str()];
+    let input = &manifest["pipeline"]["input"][input_name.as_str()];
     let path_of = |key: &str, index: usize| -> Result<PathBuf> {
         let pattern = input
             .get(key)
@@ -639,14 +639,14 @@ fn verify_prepared_run(prepared: &PreparedRun) -> Result<()> {
     verify_file_sha256(manifest_path, manifest_sha256, "frozen run manifest")
 }
 
-/// The commitments an indexed `[chain.input.<name>]` table binds, in order.
+/// The commitments an indexed `[pipeline.input.<name>]` table binds, in order.
 fn bound_commitments(manifest_path: &Path, name: &str) -> Result<Vec<String>> {
     let manifest: toml::Value = toml::from_str(
         &fs::read_to_string(manifest_path)
             .with_context(|| format!("failed to read {}", manifest_path.display()))?,
     )
     .with_context(|| format!("failed to parse {}", manifest_path.display()))?;
-    manifest["chain"]["input"][name]["commitments"]
+    manifest["pipeline"]["input"][name]["commitments"]
         .as_array()
         .with_context(|| format!("frozen run manifest has no {name} commitments"))?
         .iter()
@@ -658,7 +658,7 @@ fn bound_commitments(manifest_path: &Path, name: &str) -> Result<Vec<String>> {
 /// Why a claim whose every checkpoint matched is still rejected, if it is.
 ///
 /// With no divergent stage to dispute, a claim stands or falls on its own
-/// final record, in the order the chain established it: the prompt's
+/// final record, in the order the pipeline established it: the prompt's
 /// preparation, then the checks, the verdict, and the output's budget and EOS
 /// rules. Every rule here reads only that record: a contract reading the same
 /// committed output reaches the same answer.
@@ -740,12 +740,12 @@ fn final_record_rejection(result: &procedure_definition::InferenceResult) -> Opt
             result.output_fault
         ));
     }
-    // The chain states one verdict over the same fields. It is what a contract
+    // The pipeline states one verdict over the same fields. It is what a contract
     // reads, so a record whose verdict disagrees with its fields is rejected
     // here too.
     if !result.valid {
         return Some(String::from(
-            "the chain's own verdict on its run is not valid, though no fault field says why",
+            "the pipeline's own verdict on its run is not valid, though no fault field says why",
         ));
     }
     None
@@ -769,7 +769,13 @@ fn run_raster_replay(
         .with_context(|| format!("failed to create {}", replay_run_dir.display()))?;
     let status = Command::new("cargo")
         .current_dir(base_dir)
-        .args(["raster", "chain", "run", "--fraud-proof-window-size", "128"])
+        .args([
+            "raster",
+            "pipeline",
+            "run",
+            "--fault-proof-window-size",
+            "128",
+        ])
         .arg(manifest_path)
         .arg("--run")
         .arg(replay_run_dir)
@@ -818,7 +824,7 @@ fn replay_package(stage: &str, replay_run_dir: &Path) -> Result<ReplayPackage> {
 }
 
 pub fn seed_replay_directory(
-    source_chain_dir: &Path,
+    source_pipeline_dir: &Path,
     list: &CheckpointList,
     checkpoint_index: usize,
     replay_run_dir: &Path,
@@ -830,7 +836,7 @@ pub fn seed_replay_directory(
     fs::create_dir_all(replay_run_dir)
         .with_context(|| format!("failed to create {}", replay_run_dir.display()))?;
     for checkpoint in list.checkpoints.iter().take(checkpoint_index) {
-        let source_stage_dir = source_chain_dir.join(&checkpoint.stage);
+        let source_stage_dir = source_pipeline_dir.join(&checkpoint.stage);
         copy_dir_recursive(&source_stage_dir, &replay_run_dir.join(&checkpoint.stage))
             .with_context(|| format!("failed to seed producer `{}`", checkpoint.stage))?;
     }
@@ -1060,7 +1066,7 @@ mod tests {
         fs::write(&model_manifest, b"model").unwrap();
         let run_manifest = base.join("runs").join("Raster.toml");
         fs::create_dir_all(run_manifest.parent().unwrap()).unwrap();
-        fs::write(&run_manifest, b"[chain]\nname = \"test\"\n").unwrap();
+        fs::write(&run_manifest, b"[pipeline]\nname = \"test\"\n").unwrap();
 
         let prepared = PreparedRun {
             version: procedure_definition::PREPARED_RUN_VERSION,
@@ -1187,16 +1193,16 @@ mod tests {
         prepared.prepared_run
     }
 
-    /// An external a stage is bound to, among the chain's own stages and
+    /// An external a stage is bound to, among the pipeline's own stages and
     /// its repeated ones.
     fn bound_external(manifest: &Path, stage: &str, parameter: &str) -> String {
         let manifest: toml::Value = toml::from_str(&fs::read_to_string(manifest).unwrap()).unwrap();
-        let repeated = manifest["chain"]["repeat"]
+        let repeated = manifest["pipeline"]["repeat"]
             .as_array()
             .unwrap()
             .iter()
             .flat_map(|repeat| repeat["stage"].as_array().unwrap().iter());
-        manifest["chain"]["stage"]
+        manifest["pipeline"]["stage"]
             .as_array()
             .unwrap()
             .iter()
@@ -1213,7 +1219,7 @@ mod tests {
     /// The commitments of a run's text, range by range.
     fn text_commitments(manifest: &Path) -> toml::Value {
         let manifest: toml::Value = toml::from_str(&fs::read_to_string(manifest).unwrap()).unwrap();
-        manifest["chain"]["input"]["prompt_text"]["commitments"].clone()
+        manifest["pipeline"]["input"]["prompt_text"]["commitments"].clone()
     }
 
     #[test]

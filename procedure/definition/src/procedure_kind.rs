@@ -16,10 +16,10 @@
 //! ([`crate::shape::Shape`]), compiled in, and a [`ProcedureKind`] is one of
 //! them by name. Everything that depends on the arrangement asks the shape.
 //!
-//! A model import writes one inference's segment of a chain: its chain inputs
+//! A model import writes one inference's segment of a pipeline: its pipeline inputs
 //! and its stages, from the first bind to the last check, with the first
-//! bind given the constant source. [`ProcedureKind::chain_template`] makes the
-//! chain template of a run from one segment per model, by the kind's shape.
+//! bind given the constant source. [`ProcedureKind::pipeline_template`] makes the
+//! pipeline template of a run from one segment per model, by the kind's shape.
 //!
 //! See `docs/protocol/procedure-kinds.md`.
 
@@ -154,19 +154,19 @@ impl ProcedureKind {
         self.0.inferences()
     }
 
-    /// What marks a stage or a chain input as this inference's. Nothing in a
+    /// What marks a stage or a pipeline input as this inference's. Nothing in a
     /// procedure kind of one inference, whose stages are named as an import names
     /// them.
     pub fn label(self, inference: usize) -> String {
         self.0.label(inference)
     }
 
-    /// The chain template of this procedure kind over model imports: `segments` are
+    /// The pipeline template of this procedure kind over model imports: `segments` are
     /// the templates the imports wrote, one per inference, in order.
     ///
     /// The template always has the source stage. A run whose text is taken as
-    /// given removes it when it renders its own chain.
-    pub fn chain_template(self, segments: &[&str]) -> Result<String> {
+    /// given removes it when it renders its own pipeline.
+    pub fn pipeline_template(self, segments: &[&str]) -> Result<String> {
         self.0.pipeline_template(segments)
     }
 }
@@ -270,15 +270,15 @@ mod tests {
     #[test]
     fn the_single_procedure_kind_puts_a_source_before_its_inference_and_a_result_after() {
         let single = ProcedureKind::single();
-        let template = single.chain_template(&[PART]).unwrap();
+        let template = single.pipeline_template(&[PART]).unwrap();
         let expected = PART
             .replacen(
-                "\n[[chain.stage]]\nname = \"prompt_bind_p0\"",
-                "\n[[chain.stage]]\nname = \"source\"\nproject = \"raster-stages/prompt-source\"\n\
+                "\n[[pipeline.stage]]\nname = \"prompt_bind_p0\"",
+                "\n[[pipeline.stage]]\nname = \"source\"\nproject = \"raster-stages/prompt-source\"\n\
                  inputs.signer = { run = \"source_signer\" }\n\
                  inputs.recipe = { run = \"source_recipe\" }\n\
                  inputs.documents = { run = \"source_documents\" }\n\
-                 \n[[chain.stage]]\nname = \"prompt_bind_p0\"",
+                 \n[[pipeline.stage]]\nname = \"prompt_bind_p0\"",
                 1,
             )
             // Only range 0's bind takes the record: the later ones keep the
@@ -288,18 +288,18 @@ mod tests {
                 "inputs.source = { from = \"source\" }",
                 1,
             )
-            + "\n[[chain.stage]]\nname = \"result\"\nproject = \"raster-stages/claim-result\"\n\
+            + "\n[[pipeline.stage]]\nname = \"result\"\nproject = \"raster-stages/claim-result\"\n\
                inputs.check = { from = \"check_c@LAST_CLAIMED_RANGE@\" }\n\
                inputs.forms = { run = \"result_forms\" }\n";
         assert_eq!(template, expected);
-        // The stages a run does not fill in are a chain Raster's own reader
+        // The stages a run does not fill in are a pipeline Raster's own reader
         // would take: the template is TOML.
         toml::from_str::<toml::Value>(&template).unwrap();
 
-        assert!(single.chain_template(&[]).is_err());
-        assert!(single.chain_template(&[PART, PART]).is_err());
+        assert!(single.pipeline_template(&[]).is_err());
+        assert!(single.pipeline_template(&[PART, PART]).is_err());
         let no_bind = PART.replace("prompt_bind_p0", "bind_0");
-        assert!(single.chain_template(&[&no_bind]).is_err());
+        assert!(single.pipeline_template(&[&no_bind]).is_err());
 
         assert_eq!(single.inferences(), 1);
         assert_eq!(single.result(), ResultKind::OneOutput);
@@ -363,9 +363,9 @@ mod tests {
             [consensus.result_input_of(0), consensus.result_input_of(1)],
             [Some("first"), Some("second")]
         );
-        let template = consensus.chain_template(&[PART, PART]).unwrap();
-        let chain: toml::Value = toml::from_str(&template).unwrap();
-        let stages = chain["chain"]["stage"].as_array().unwrap();
+        let template = consensus.pipeline_template(&[PART, PART]).unwrap();
+        let pipeline: toml::Value = toml::from_str(&template).unwrap();
+        let stages = pipeline["pipeline"]["stage"].as_array().unwrap();
         let names: Vec<&str> = stages
             .iter()
             .map(|stage| stage["name"].as_str().unwrap())
@@ -402,7 +402,7 @@ mod tests {
         for bind in [&stages[1], &stages[3]] {
             assert_eq!(bind["inputs"]["source"]["from"].as_str(), Some("source"));
         }
-        assert!(consensus.chain_template(&[PART]).is_err());
+        assert!(consensus.pipeline_template(&[PART]).is_err());
         assert!(!consensus.relays());
         assert_eq!(consensus.relayed_from(1), None);
     }
@@ -426,7 +426,7 @@ mod tests {
             [relay.result_input_of(0), relay.result_input_of(1)],
             [None, Some("check")]
         );
-        let template = relay.chain_template(&[PART, PART]).unwrap();
+        let template = relay.pipeline_template(&[PART, PART]).unwrap();
         let at = |stage: &str| {
             template
                 .find(&format!("name = \"{stage}\""))

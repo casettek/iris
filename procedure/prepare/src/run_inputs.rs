@@ -62,7 +62,7 @@ pub struct InferenceRunFiles {
     pub claimed: Vec<RunFile>,
 }
 
-/// Writes one inference's inputs into `dir`, under the names the chain
+/// Writes one inference's inputs into `dir`, under the names the pipeline
 /// template gives them.
 pub fn write_inference(inference: &PostedInference, dir: &Path) -> Result<InferenceRunFiles> {
     let indexed = |values: Vec<RunInput<'_>>, name: &str| -> Result<Vec<RunFile>> {

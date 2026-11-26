@@ -1,6 +1,6 @@
 //! `consensus-result`: tiles.
 //!
-//! The last stage of a consensus chain. It reads the outputs the two
+//! The last stage of a consensus pipeline. It reads the outputs the two
 //! inferences' last checks stated by the run's forms, and states each one's
 //! code and whether the two agree, beside the claim record each check stated.
 //!

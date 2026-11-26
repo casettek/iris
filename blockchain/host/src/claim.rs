@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
-use staged_infer::chain_runner::StagedExecutionBackend;
+use staged_infer::pipeline_runner::StagedExecutionBackend;
 use staged_infer::{
     CheckpointedInferenceConfig, CheckpointedInferenceExecutor, CheckpointedInferenceResult,
     ParityPolicy,
@@ -17,7 +17,7 @@ use procedure_definition::{
 };
 use run_prep::staged::Frozen;
 pub use run_prep::staged::{
-    render_chain, render_ranged_manifest, without_source_stage, FrozenSource, InferenceFiles,
+    render_pipeline, render_ranged_manifest, without_source_stage, FrozenSource, InferenceFiles,
     PreparedClaimRun, RunExternal,
 };
 use serde::Serialize;
@@ -38,7 +38,7 @@ pub struct ClaimBuildOptions {
     pub claimed_token_ids: Option<Vec<u32>>,
     /// The output a direct run of this same specification and case already produced. Taken in
     /// place of running direct inference again, and held to every rule a
-    /// discovered output is: the chain re-derives each token, and a claim it
+    /// discovered output is: the pipeline re-derives each token, and a claim it
     /// rejects is not written.
     pub direct_output_ids: Option<Vec<u32>>,
     /// The address the claim is attributed to, `0x` and 40 hex digits. With
@@ -50,17 +50,17 @@ pub struct ClaimBuildOptions {
 pub struct ClaimBuildResult {
     /// The procedure kind the claim is of.
     pub procedure_kind: procedure_definition::ProcedureKind,
-    pub chain_dir: PathBuf,
+    pub pipeline_dir: PathBuf,
     pub checkpoint_list_path: PathBuf,
     pub checkpoint_hashes_path: PathBuf,
     pub claim_bundle_path: PathBuf,
-    /// What a claimer would submit to a contract. Absent when the chain
+    /// What a claimer would submit to a contract. Absent when the pipeline
     /// published no final record to submit.
     pub claim_submission_path: Option<PathBuf>,
     /// Each inference's result, in the order the procedure kind runs them.
-    /// Empty when the chain published no final record.
+    /// Empty when the pipeline published no final record.
     pub results: Vec<InferenceResult>,
-    /// What a consensus chain states of its two inferences.
+    /// What a consensus pipeline states of its two inferences.
     pub consensus: Option<procedure_definition::ConsensusOutcome>,
 }
 
@@ -122,12 +122,12 @@ pub fn build_claim(options: ClaimBuildOptions) -> Result<ClaimBuildResult> {
         &checkpointed.results,
         checkpointed.consensus,
     )
-    .with_context(|| format!("the `{procedure_kind}` chain did not state its result"))?;
+    .with_context(|| format!("the `{procedure_kind}` pipeline did not state its result"))?;
     if let Some(reason) = rejection {
         if options.claimed_token_ids.is_none() {
             if options.direct_output_ids.is_some() {
                 anyhow::bail!(
-                    "{reason}; the ids given as this run's direct output are not what the chain \
+                    "{reason}; the ids given as this run's direct output are not what the pipeline \
                      derives, so they are not that output or direct and teacher-forced \
                      inference are not in parity"
                 );
@@ -143,7 +143,7 @@ pub fn build_claim(options: ClaimBuildOptions) -> Result<ClaimBuildResult> {
         &prepared.manifest_path,
         &prepared.prepared_run,
     )?;
-    // And the rules a contract will: the statement the chain bound is the one
+    // And the rules a contract will: the statement the pipeline bound is the one
     // recomputed from the pinned model and this run's parameters, every
     // checkpoint names an approved program, and the record is the last
     // stage's.
@@ -167,12 +167,12 @@ pub fn build_claim(options: ClaimBuildOptions) -> Result<ClaimBuildResult> {
         }
         procedure_definition::write_json(path, &submission)?;
         let posting = crate::posting::claim_blobs(
-            &result.chain_dir,
+            &result.pipeline_dir,
             &submission.claimer,
             Some(crate::posting::posted_run(&prepared.prepared_run)?),
         )
         .context("preparing the claim's data")?;
-        posting.write(&result.chain_dir)?;
+        posting.write(&result.pipeline_dir)?;
         if let Some(reason) =
             crate::claim_check::claim_rejection(&procedure, path, posting.contents()?)?
         {
@@ -274,7 +274,7 @@ fn write_claim_result(
         .map(|dir| dir.join(PREPARED_RUN_JSON));
     let (checkpoint_list_path, checkpoint_hashes_path, claim_bundle_path) =
         write_claim_artifacts_with_prepared_run(
-            &checkpointed.chain_dir,
+            &checkpointed.pipeline_dir,
             manifest_path,
             prepared_run_path.as_deref(),
         )?;
@@ -315,9 +315,9 @@ fn write_claim_result(
                     })
                 })
                 .collect::<Result<_>>()?,
-            &checkpointed.chain_dir,
+            &checkpointed.pipeline_dir,
         )?;
-        let path = checkpointed.chain_dir.join(CLAIM_SUBMISSION_JSON);
+        let path = checkpointed.pipeline_dir.join(CLAIM_SUBMISSION_JSON);
         procedure_definition::write_json(&path, &submission)?;
         Some(path)
     } else {
@@ -325,7 +325,7 @@ fn write_claim_result(
     };
     Ok(ClaimBuildResult {
         procedure_kind: prepared_run.procedure_kind,
-        chain_dir: checkpointed.chain_dir,
+        pipeline_dir: checkpointed.pipeline_dir,
         checkpoint_list_path,
         checkpoint_hashes_path,
         claim_bundle_path,
@@ -413,7 +413,7 @@ pub fn prepare_posted_run(
 /// challenger does. The case is the claim's own prompt and no file.
 ///
 /// The ids are not held to the run's token budget here. A claim that breaks the
-/// budget still has a chain to recompute, and is rejected on its final record.
+/// budget still has a pipeline to recompute, and is rejected on its final record.
 ///
 /// `source` is the claim's source record with the source stage's inputs,
 /// `forms` the forms its result stage compared the output with, and `ids` the
@@ -447,7 +447,7 @@ pub fn prepare_challenge_run(
 
 /// Prepares the run, finding by direct inference the output of any inference
 /// whose ids no one gave: the only autoregression left, since the claim
-/// posts what direct decode produced and the chain checks it.
+/// posts what direct decode produced and the pipeline checks it.
 fn prepare_run(
     options: &ClaimBuildOptions,
     specification_path: PathBuf,
@@ -684,11 +684,11 @@ mod tests {
         fs::create_dir_all(&base).unwrap();
         write_stage(&base, "check_c0", "abc", b"output");
         let manifest_path = base.join("Raster.toml");
-        fs::write(&manifest_path, "[chain]\nname = \"test\"\n").unwrap();
+        fs::write(&manifest_path, "[pipeline]\nname = \"test\"\n").unwrap();
 
         let result = write_claim_result(
             CheckpointedInferenceResult {
-                chain_dir: base.clone(),
+                pipeline_dir: base.clone(),
                 selected_stage_dir: None,
                 results: Vec::new(),
                 consensus: None,
@@ -724,7 +724,7 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(result.chain_dir, base);
+        assert_eq!(result.pipeline_dir, base);
         assert_eq!(
             result.checkpoint_list_path.file_name().unwrap(),
             CHECKPOINT_LIST_JSON
@@ -739,7 +739,7 @@ mod tests {
         );
         assert!(result.results.is_empty());
 
-        fs::remove_dir_all(result.chain_dir).unwrap();
+        fs::remove_dir_all(result.pipeline_dir).unwrap();
     }
 
     #[test]
@@ -820,7 +820,7 @@ mod tests {
     }
 
     #[test]
-    fn a_consensus_run_is_one_chain_of_two_inferences() {
+    fn a_consensus_run_is_one_pipeline_of_two_inferences() {
         let base = temp_dir("claim-consensus");
         crate::test_support::model_fixture(&base, "alpha");
         crate::test_support::model_fixture(&base, "beta");
@@ -869,10 +869,10 @@ mod tests {
 
         let manifest: toml::Value =
             toml::from_str(&fs::read_to_string(&prepared.manifest_path).unwrap()).unwrap();
-        let chain = &manifest["chain"];
+        let pipeline = &manifest["pipeline"];
         // Each inference has its own run files, in a directory of its own.
         for (label, claimed_ranges) in [("m0", 1), ("m1", 2)] {
-            let claimed = &chain["input"][format!("{label}_claimed_ids").as_str()];
+            let claimed = &pipeline["input"][format!("{label}_claimed_ids").as_str()];
             assert_eq!(
                 claimed["commitments"].as_array().unwrap().len(),
                 claimed_ranges
@@ -883,16 +883,16 @@ mod tests {
                 "{path}"
             );
             for input in ["prompt_text", "prompt_marks"] {
-                let input = &chain["input"][format!("{label}_{input}").as_str()];
+                let input = &pipeline["input"][format!("{label}_{input}").as_str()];
                 assert_eq!(input["commitments"].as_array().unwrap().len(), 1);
             }
         }
-        let stages = chain["stage"].as_array().unwrap();
+        let stages = pipeline["stage"].as_array().unwrap();
         let stage = |name: &str| {
             stages
                 .iter()
                 .find(|stage| stage["name"].as_str() == Some(name))
-                .unwrap_or_else(|| panic!("the chain has no stage `{name}`"))
+                .unwrap_or_else(|| panic!("the pipeline has no stage `{name}`"))
         };
         // A text taken as given: no source stage, and each first bind is given
         // the constant of its own model.
@@ -935,7 +935,7 @@ mod tests {
         assert!(result["inputs"]["forms"]["external"]["commitment"].is_str());
         // The repeat of the checks after the first runs for the second
         // inference only.
-        let repeats = chain["repeat"].as_array().unwrap();
+        let repeats = pipeline["repeat"].as_array().unwrap();
         let count = |name: &str| {
             repeats
                 .iter()
@@ -977,34 +977,34 @@ mod tests {
 
     #[test]
     fn ranged_manifest_fills_counts_inputs_and_last_prompt_range() {
-        let template = r#"[chain]
+        let template = r#"[pipeline]
 name = "iris"
 
-[chain.input.prompt_marks]
+[pipeline.input.prompt_marks]
 index = "j"
 path = "/repo/target/iris/run-prompt-placeholder/marks_{j}.rastered"
 index_path = "/repo/target/iris/run-prompt-placeholder/marks_{j}.rindex"
 commitments = []
 
-[chain.input.prompt_text]
+[pipeline.input.prompt_text]
 index = "j"
 path = "/repo/target/iris/run-prompt-placeholder/text_{j}.rastered"
 index_path = "/repo/target/iris/run-prompt-placeholder/text_{j}.rindex"
 commitments = []
 
-[chain.input.claimed_ids]
+[pipeline.input.claimed_ids]
 index = "k"
 path = "/repo/target/iris/run-prompt-placeholder/claimed_{k}.rastered"
 index_path = "/repo/target/iris/run-prompt-placeholder/claimed_{k}.rindex"
 commitments = []
 
-[[chain.stage]]
+[[pipeline.stage]]
 name = "source"
 inputs.signer = { external = { path = "/repo/target/iris/run-prompt-placeholder/source_signer.rastered", index_path = "/repo/target/iris/run-prompt-placeholder/source_signer.rindex", commitment = "0" } }
 inputs.recipe = { external = { path = "/repo/target/iris/run-prompt-placeholder/source_recipe.rastered", index_path = "/repo/target/iris/run-prompt-placeholder/source_recipe.rindex", commitment = "0" } }
 inputs.documents = { external = { path = "/repo/target/iris/run-prompt-placeholder/source_documents.rastered", index_path = "/repo/target/iris/run-prompt-placeholder/source_documents.rindex", commitment = "0" } }
 
-[[chain.stage]]
+[[pipeline.stage]]
 name = "prompt_bind_p0"
 inputs.text = { input = "prompt_text_0" }
 inputs.config = { external = { path = "/repo/target/iris/run-prompt-placeholder/config.rastered", index_path = "/repo/target/iris/run-prompt-placeholder/config.rindex", commitment = "0" } }
@@ -1013,19 +1013,19 @@ inputs.text_digest = { external = { path = "/repo/target/iris/run-prompt-placeho
 inputs.source = { from = "source" }
 inputs.previous = { external = { path = "/repo/model/empty_prompt.rastered", index_path = "/repo/model/empty_prompt.rindex", commitment = "e0" } }
 
-[[chain.stage]]
+[[pipeline.stage]]
 name = "prompt_check_p0"
 inputs.bound = { from = "prompt_bind_p0" }
 inputs.previous = { external = { path = "/repo/model/empty_prompt.rastered", index_path = "/repo/model/empty_prompt.rindex", commitment = "e0" } }
 inputs.marks = { input = "prompt_marks_0" }
 
-[[chain.repeat]]
+[[pipeline.repeat]]
 name = "prompt"
 index = "j"
 start = 1
 count = 0
 
-  [[chain.repeat.stage]]
+  [[pipeline.repeat.stage]]
 name = "prompt_bind_p{j}"
 inputs.text = { input = "prompt_text_{j}" }
 inputs.config = { external = { path = "/repo/target/iris/run-prompt-placeholder/config.rastered", index_path = "/repo/target/iris/run-prompt-placeholder/config.rindex", commitment = "0" } }
@@ -1034,61 +1034,61 @@ inputs.text_digest = { external = { path = "/repo/target/iris/run-prompt-placeho
 inputs.source = { external = { path = "/repo/model/prompt-bind/no_source.rastered", index_path = "/repo/model/prompt-bind/no_source.rindex", commitment = "n0" } }
 inputs.previous = { from = "prompt_bind_p{j-1}", first = "prompt_bind_p0" }
 
-  [[chain.repeat.stage]]
+  [[pipeline.repeat.stage]]
 name = "prompt_check_p{j}"
 inputs.bound = { from = "prompt_bind_p{j}" }
 inputs.previous = { from = "prompt_check_p{j-1}", first = "prompt_check_p0" }
 inputs.marks = { input = "prompt_marks_{j}" }
 
-[[chain.repeat]]
+[[pipeline.repeat]]
 name = "claimed_embed"
 index = "k"
 count = 0
 
-  [[chain.repeat.stage]]
+  [[pipeline.repeat.stage]]
 name = "embed_c{k}"
 inputs.previous = { from = "embed_c{k-1}", first = "embed_p@LAST_PROMPT_RANGE@" }
 
-[[chain.repeat]]
+[[pipeline.repeat]]
 name = "layers"
 index = "l"
 start = 0
 count = 4
 
-  [[chain.repeat.stage]]
+  [[pipeline.repeat.stage]]
 name = "aux_p{j}_l{l}"
 index = "j"
 count = 0
 
-  [[chain.repeat.stage]]
+  [[pipeline.repeat.stage]]
 name = "aux_c{k}_l{l}"
 index = "k"
 count = 0
 
-  [[chain.repeat.stage]]
+  [[pipeline.repeat.stage]]
 name = "range_p0_l{l}"
 
-  [[chain.repeat.stage]]
+  [[pipeline.repeat.stage]]
 name = "range_p{j}_l{l}"
 index = "j"
 start = 1
 count = 0
 
-  [[chain.repeat.stage]]
+  [[pipeline.repeat.stage]]
 name = "range_c{k}_l{l}"
 index = "k"
 count = 0
 
-[[chain.stage]]
+[[pipeline.stage]]
 name = "check_c0"
 
-[[chain.repeat]]
+[[pipeline.repeat]]
 name = "claimed"
 index = "k"
 start = 1
 count = 0
 
-[[chain.stage]]
+[[pipeline.stage]]
 name = "result"
 inputs.check = { from = "check_c@LAST_CLAIMED_RANGE@" }
 inputs.forms = { external = { path = "/repo/target/iris/run-prompt-placeholder/result_forms.rastered", index_path = "/repo/target/iris/run-prompt-placeholder/result_forms.rindex", commitment = "0" } }
@@ -1129,7 +1129,7 @@ inputs.forms = { external = { path = "/repo/target/iris/run-prompt-placeholder/r
         };
         let manifest = render(template, &claimed).unwrap();
         let parsed: toml::Value = toml::from_str(&manifest).unwrap();
-        let inputs = &parsed["chain"]["input"];
+        let inputs = &parsed["pipeline"]["input"];
         assert_eq!(
             inputs["prompt_marks"]["path"].as_str(),
             Some("/tmp/run/prompt/marks_{j}.rastered")
@@ -1146,7 +1146,7 @@ inputs.forms = { external = { path = "/repo/target/iris/run-prompt-placeholder/r
             inputs["claimed_ids"]["commitments"],
             toml::Value::try_from(["c0"]).unwrap()
         );
-        let repeats = parsed["chain"]["repeat"].as_array().unwrap();
+        let repeats = parsed["pipeline"]["repeat"].as_array().unwrap();
         let count = |value: &toml::Value| value.get("count").and_then(toml::Value::as_integer);
         // Range 0 of the prompt is plain stages, so the repeat runs twice.
         assert_eq!(count(&repeats[0]), Some(2));
@@ -1238,7 +1238,7 @@ inputs.forms = { external = { path = "/repo/target/iris/run-prompt-placeholder/r
         .is_err());
         assert!(!manifest.contains("run-prompt-placeholder"));
         assert!(render(template, &[]).is_err());
-        // A template for the removed cut-and-merge stages is not this chain's.
+        // A template for the removed cut-and-merge stages is not this pipeline's.
         let cuts = template.replace("prompt_marks", "prompt_cuts");
         assert!(render(&cuts, &claimed).is_err());
     }

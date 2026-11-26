@@ -58,7 +58,7 @@ mod tests {
         fs::create_dir_all(base.join("scratch")).unwrap();
 
         let manifest_path = base.join("Raster.toml");
-        fs::write(&manifest_path, "[chain]\nname = \"test\"\n").unwrap();
+        fs::write(&manifest_path, "[pipeline]\nname = \"test\"\n").unwrap();
         let list = build_checkpoint_list(&base, &manifest_path).unwrap();
 
         assert_eq!(
@@ -73,9 +73,9 @@ mod tests {
     }
 
     #[test]
-    fn raster_chain_commitment_preserves_order_without_timing_report() {
-        use raster_core::chain::{ChainCommitment, ChainShape, StageCheckpoint};
-        let base = temp_dir("chain-commitment-order");
+    fn raster_pipeline_commitment_preserves_order_without_timing_report() {
+        use raster_core::pipeline::{PipelineCommitment, PipelineShape, StageCheckpoint};
+        let base = temp_dir("pipeline-commitment-order");
         fs::create_dir_all(&base).unwrap();
         for name in ["prompt_bind", "prompt_check_p0", "embed_p0"] {
             write_stage(&base, name, "abc", name.as_bytes());
@@ -85,7 +85,7 @@ mod tests {
             "prompt_check_p0".to_string(),
             "embed_p0".to_string(),
         ];
-        let chain = ChainCommitment {
+        let pipeline = PipelineCommitment {
             stages: expected
                 .iter()
                 .map(|name| StageCheckpoint {
@@ -97,14 +97,14 @@ mod tests {
                     output_structural_commitment: vec![],
                 })
                 .collect(),
-            shape: ChainShape {
+            shape: PipelineShape {
                 spec_digest: vec![],
                 repeats: vec![],
             },
         };
         fs::write(
-            base.join("chain-commitment"),
-            postcard::to_allocvec(&chain).unwrap(),
+            base.join("pipeline-commitment"),
+            postcard::to_allocvec(&pipeline).unwrap(),
         )
         .unwrap();
         assert!(!base.join(EXECUTION_TIMES_JSON).exists());
@@ -124,11 +124,11 @@ mod tests {
             r#"{"stages":[{"name":"embed_p0"}]}"#,
         )
         .unwrap();
-        fs::write(base.join("chain-commitment"), b"invalid").unwrap();
+        fs::write(base.join("pipeline-commitment"), b"invalid").unwrap();
         assert!(read_stage_order(&base)
             .unwrap_err()
             .to_string()
-            .contains("chain-commitment"));
+            .contains("pipeline-commitment"));
         fs::remove_dir_all(base).unwrap();
     }
 
@@ -218,7 +218,7 @@ mod tests {
             ("prompt = \"hi\"\n", "in the case file"),
             ("prompt_file = \"p.txt\"\n", "in the case file"),
             ("pipeline = \"consensus\"\n", "`procedure_kind`"),
-            ("chain = \"teacher-forced\"\n", "only staged chain"),
+            ("pipeline = \"teacher-forced\"\n", "only staged pipeline"),
         ] {
             fs::write(&path, format!("{old}{MODEL}")).unwrap();
             let error = format!("{:#}", read_specification(&path).unwrap_err());

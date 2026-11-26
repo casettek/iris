@@ -2,7 +2,7 @@
 //!
 //! One transformer layer over the prompt. Weight matrices are paged byte
 //! regions; each matvec is a recur over `.pages`. Attention is two passes:
-//! pass 1 drafts K/V, pass 2 attends. The layer loop lives in the chain
+//! pass 1 drafts K/V, pass 2 attends. The layer loop lives in the pipeline
 //! manifest.
 //!
 //! `#![no_std]` so the same tiles compile into RISC0 replay guests.
@@ -181,7 +181,7 @@ pub fn begin_layer_output(start_position: u32, model: ModelContext) -> Draft<Act
 /// Copies one chunk of the inherited cache into this stage's published cache,
 /// dropping rows the sliding window has already retired.
 ///
-/// This is what makes a decode step's cache survive a chain boundary: stage
+/// This is what makes a decode step's cache survive a pipeline boundary: stage
 /// `t`'s output `kv` is stage `t+1`'s `prior_kv`. The site derives from the
 /// object [`begin_layer_output`] opened, and `attend_token` then derives from
 /// this site's result to append this stage's own keys — `rows` ends up one
@@ -435,7 +435,7 @@ pub fn finish_qkv(
 /// Delegates to the vendored canonical kernel rather than reimplementing the
 /// rotation: `det_num::ops::rope_rotate_pairs_in_place` is a byte-for-byte copy
 /// of the reference's, held there by an equivalence test. The only work here is
-/// moving between the chain's raw Q16.16 `i32` lanes and the `Act` newtype.
+/// moving between the pipeline's raw Q16.16 `i32` lanes and the `Act` newtype.
 ///
 /// `position == 0` and `rotary_dim == 0` are no-ops inside the kernel, so this
 /// needs no special case for them. The kernel's shape asserts are guaranteed by

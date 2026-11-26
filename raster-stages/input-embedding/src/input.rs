@@ -9,11 +9,11 @@ use raster::{Bytes, BytesPage, List};
 use serde::{Deserialize, Serialize};
 
 /// Replay-unit page size for the embedding table: whole `Q8_0` rows of
-/// `hidden_size / 32 · 34` bytes for every width this chain is imported with
+/// `hidden_size / 32 · 34` bytes for every width this pipeline is imported with
 /// (128 → 136, 1536 → 1632). MUST match the importer's `Q8_PAGE_SIZE`.
 pub const PAGE_SIZE: u64 = 195_840;
 
-/// The stage's committed first input, bound by the chain to `prompt_prepare`'s
+/// The stage's committed first input, bound by the pipeline to `prompt_prepare`'s
 /// authorized output. The stage reads only its `token_ids`.
 pub use crate::prompt::{PromptState, PromptTokenization};
 
@@ -59,7 +59,7 @@ pub struct ErrorSummary {
 /// One prompt position: the token that produced it and its activation row.
 ///
 /// MUST match `ActivationRow` in every stage that passes activations on —
-/// the chain links by structural commitment, not by Rust type name.
+/// the pipeline links by structural commitment, not by Rust type name.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
 pub struct ActivationRow {
     pub token_id: u32,
@@ -70,7 +70,7 @@ pub struct ActivationRow {
 ///
 /// MUST match `KeyRow` in every stage that carries activations: Gemma 3n's last
 /// 20 layers attend over an earlier layer's cache, so the cache has to survive a
-/// stage boundary, and a chain binds by structural commitment.
+/// stage boundary, and a pipeline binds by structural commitment.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
 pub struct KeyRow {
     pub position: u32,

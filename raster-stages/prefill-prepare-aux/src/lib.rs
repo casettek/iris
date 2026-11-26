@@ -2,7 +2,7 @@
 //!
 //! Gemma's per-layer-embedding (PLE) prefill inputs, for **one** layer.
 //! The PLE table is addressed by token id; the projection is streamed as
-//! pages. The layer loop lives in the chain manifest.
+//! pages. The layer loop lives in the pipeline manifest.
 //!
 //! `#![no_std]` so the same tiles compile into RISC0 replay guests.
 

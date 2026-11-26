@@ -238,7 +238,7 @@ impl DirectInferenceModel {
 
     /// The prompt's part of the run's stage schedule: its range count, as run
     /// preparation counts it. `None` when the prompt cannot be cut into ranges,
-    /// which only a chain needs.
+    /// which only a pipeline needs.
     pub fn prompt_ranges(&self, pieces: &[PreparedPiece]) -> Option<u32> {
         let ranges = prompt_prep::marked_ranges(
             pieces,

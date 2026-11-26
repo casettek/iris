@@ -140,7 +140,7 @@ fn main(
     let previous_rows = select!(List<ActivationRow>, previous.rows);
     let tail_seed = call!(begin_previous_tail);
     // 64 rows a call: a row is `hidden_size · 4` bytes, and reading 256 of
-    // them at width 2560 was the heaviest tile call in the chain.
+    // them at width 2560 was the heaviest tile call in the pipeline.
     let tail = call_recur!(
         tile = keep_last_row,
         input = previous_rows,

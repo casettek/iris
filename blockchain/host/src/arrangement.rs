@@ -1,9 +1,9 @@
-//! The chain as a claim arranges it: every stage bound to the inputs the
+//! The pipeline as a claim arranges it: every stage bound to the inputs the
 //! claim's checkpoint says it was given.
 //!
 //! A dispute is settled against the inputs a checkpoint names, so a
 //! challenger runs each stage on those and on nothing else. For a claim that
-//! gives its stages what the chain template gives them this is the template's
+//! gives its stages what the pipeline template gives them this is the template's
 //! own expansion. A claim can give a stage another value it is allowed to
 //! name, such as another layer's weights, the marks of another range or the
 //! output of another earlier stage: the stage's own checks say so in its
@@ -18,16 +18,16 @@ use anyhow::{bail, ensure, Context, Result};
 use blockchain_rules::checks::read_input_manifest;
 use procedure_definition::CheckpointList;
 use sha2::{Digest, Sha256};
-use staged_infer::chain_runner::{expanded_stages, ExpandedInput, ExpandedStage};
+use staged_infer::pipeline_runner::{expanded_stages, ExpandedInput, ExpandedStage};
 
-/// The arranged chain's file name, beside the run's own manifest.
+/// The arranged pipeline's file name, beside the run's own manifest.
 pub const ARRANGED_MANIFEST: &str = "claim_arranged.toml";
 
-/// A chain manifest that binds every stage as a claim's checkpoints do.
+/// A pipeline manifest that binds every stage as a claim's checkpoints do.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Arranged {
     pub manifest: String,
-    /// The inputs the claim gives a stage otherwise than the chain does.
+    /// The inputs the claim gives a stage otherwise than the pipeline does.
     pub rearranged: Vec<Rearranged>,
 }
 
@@ -46,14 +46,14 @@ const AUDIT: &str = "Audit the claim (`iris claim audit`): a program outside the
 
 /// Bind every stage of `claimed` to what its checkpoint names.
 ///
-/// `run_manifest` is the chain prepared from the claim's posted inputs: it
+/// `run_manifest` is the pipeline prepared from the claim's posted inputs: it
 /// says which project each stage runs and holds every file a stage may be
 /// given, the model's and the run's. `claim_dir` holds each stage's input
 /// list as the claim posted it.
 ///
 /// An input is bound to the stage the checkpoint points at when that stage's
 /// stated output is the commitment the list loads, and otherwise to the file
-/// the chain holds under that commitment. A pointer that does not lead to
+/// the pipeline holds under that commitment. A pointer that does not lead to
 /// what the stage loads is not followed: where the procedure takes the
 /// input from an earlier stage the link comparison voids such a claim, and
 /// elsewhere the pointer says nothing of what the stage ran on.
@@ -67,7 +67,7 @@ pub fn arrange(
         .iter()
         .map(|stage| (stage.name.as_str(), stage))
         .collect();
-    // Every file the chain holds, by its commitment.
+    // Every file the pipeline holds, by its commitment.
     let mut held: BTreeMap<&str, &ExpandedInput> = BTreeMap::new();
     for stage in &template {
         for binding in stage.inputs.values() {
@@ -88,7 +88,7 @@ pub fn arrange(
         );
         let Some(expected) = by_name.get(stage) else {
             bail!(
-                "checkpoint {index} of the claim is for a stage `{stage}`, which the chain of \
+                "checkpoint {index} of the claim is for a stage `{stage}`, which the pipeline of \
                  this run does not have, so there is no program here to run it with"
             );
         };
@@ -134,7 +134,7 @@ pub fn arrange(
             } else {
                 bail!(
                     "checkpoint {index} (`{stage}`) gives `{input}` the value {loaded}, which is \
-                     not the output of the stage it points at and is no value the chain holds. \
+                     not the output of the stage it points at and is no value the pipeline holds. \
                      {AUDIT}"
                 );
             };
@@ -176,7 +176,7 @@ fn same_binding(left: &ExpandedInput, right: &ExpandedInput) -> bool {
     }
 }
 
-/// The stages as a chain manifest with nothing to expand.
+/// The stages as a pipeline manifest with nothing to expand.
 fn render(run_manifest: &Path, stages: &[ExpandedStage]) -> Result<String> {
     let document: toml::Value = toml::from_str(
         &fs::read_to_string(run_manifest)
@@ -186,20 +186,20 @@ fn render(run_manifest: &Path, stages: &[ExpandedStage]) -> Result<String> {
     let header = |key: &str| -> Result<String> {
         Ok(quoted(
             document
-                .get("chain")
-                .and_then(|chain| chain.get(key))
+                .get("pipeline")
+                .and_then(|pipeline| pipeline.get(key))
                 .and_then(toml::Value::as_str)
-                .with_context(|| format!("{} has no chain {key}", run_manifest.display()))?,
+                .with_context(|| format!("{} has no pipeline {key}", run_manifest.display()))?,
         ))
     };
     let mut out = format!(
-        "[chain]\nname = {}\nversion = {}\n",
+        "[pipeline]\nname = {}\nversion = {}\n",
         header("name")?,
         header("version")?
     );
     for stage in stages {
         out.push_str(&format!(
-            "\n[[chain.stage]]\nname = {}\nproject = {}\n",
+            "\n[[pipeline.stage]]\nname = {}\nproject = {}\n",
             quoted(&stage.name),
             quoted(&stage.project)
         ));
@@ -243,27 +243,27 @@ mod tests {
     use super::*;
     use procedure_definition::Checkpoint;
 
-    const RUN: &str = r#"[chain]
+    const RUN: &str = r#"[pipeline]
 name = "iris"
 version = "0.1.0"
 
-[chain.input.weights]
+[pipeline.input.weights]
 index = "l"
 path = "model/layer{l}.rastered"
 index_path = "model/layer{l}.rindex"
 commitments = ["aa", "bb"]
 
-[[chain.stage]]
+[[pipeline.stage]]
 name = "first"
 project = "stages/first"
 inputs.text = { external = { path = "run/text.rastered", index_path = "run/text.rindex", commitment = "11" } }
 
-[[chain.repeat]]
+[[pipeline.repeat]]
 name = "layers"
 index = "l"
 count = 2
 
-  [[chain.repeat.stage]]
+  [[pipeline.repeat.stage]]
 name = "layer_l{l}"
 project = "stages/layer"
 inputs.layer = { input = "weights_{l}" }
@@ -332,7 +332,7 @@ inputs.state = { from = "layer_l{l-1}", first = "first" }
     }
 
     #[test]
-    fn a_claim_arranged_as_the_chain_is_the_chain() {
+    fn a_claim_arranged_as_the_pipeline_is_the_pipeline() {
         let (run, list, claim) = fixture(
             "honest",
             &[
@@ -357,7 +357,7 @@ inputs.state = { from = "layer_l{l-1}", first = "first" }
     #[test]
     fn a_stage_is_bound_to_what_its_checkpoint_names() {
         // The second layer is given the first layer's weights and the first
-        // stage's output: both are values the chain holds.
+        // stage's output: both are values the pipeline holds.
         let (run, list, claim) = fixture(
             "rearranged",
             &[
@@ -431,6 +431,9 @@ inputs.state = { from = "layer_l{l-1}", first = "first" }
             ],
         );
         let refused = arrange(&run, &list, &claim).unwrap_err().to_string();
-        assert!(refused.contains("is no value the chain holds"), "{refused}");
+        assert!(
+            refused.contains("is no value the pipeline holds"),
+            "{refused}"
+        );
     }
 }

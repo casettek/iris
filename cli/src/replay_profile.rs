@@ -2,7 +2,7 @@
 use anyhow::{ensure, Result};
 use procedure_definition::write_json;
 use raster_analysis::replay_profile::ReplayProfile;
-use staged_infer::chain_runner::StagedExecutionBackend;
+use staged_infer::pipeline_runner::StagedExecutionBackend;
 use staged_infer::{CheckpointedInferenceConfig, CheckpointedInferenceExecutor, ParityPolicy};
 use std::{
     fs::{self, File},
@@ -40,7 +40,10 @@ pub fn run_replay_profile(options: ReplayProfileOptions) -> Result<PathBuf> {
         },
         &options.stage,
     )?;
-    let output = prefix.chain_dir.join("replay-profile").join(&prefix.stage);
+    let output = prefix
+        .pipeline_dir
+        .join("replay-profile")
+        .join(&prefix.stage);
     fs::create_dir_all(&output)?;
     let log = output.join("native.stdout.log");
     let status = Command::new("cargo")

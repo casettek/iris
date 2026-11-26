@@ -14,7 +14,7 @@ struct Cli {
     #[command(subcommand)]
     command: Option<Commands>,
 
-    /// Compare one already-completed no-auth stage without rerunning the chain.
+    /// Compare one already-completed no-auth stage without rerunning the pipeline.
     #[arg(long = "compare-stage", alias = "compare-prefill-range-stage")]
     compare_stage: Option<PathBuf>,
 
@@ -31,16 +31,16 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Commands {
-    /// Run staged-infer chain commands.
-    Chain {
+    /// Run staged-infer pipeline commands.
+    Pipeline {
         #[command(subcommand)]
-        command: ChainCommand,
+        command: PipelineCommand,
     },
 }
 
 #[derive(Debug, Subcommand)]
-enum ChainCommand {
-    /// Run the staged-infer chain, optionally leaving one stage on Raster as the reference.
+enum PipelineCommand {
+    /// Run the staged-infer pipeline, optionally leaving one stage on Raster as the reference.
     Run {
         /// Stage to run on Raster while staged-infer owns supported stages around it.
         /// Omit this to run every stage staged-infer.
@@ -92,23 +92,23 @@ fn execute(cli: Cli) -> Result<ExitCode> {
     }
 
     match cli.command {
-        Some(Commands::Chain {
+        Some(Commands::Pipeline {
             command:
-                ChainCommand::Run {
+                PipelineCommand::Run {
                     raster_stage,
                     staged_subprocess,
                 },
         }) => {
             let exe = std::env::current_exe().context("failed to locate current executable")?;
             let staged_backend = if staged_subprocess {
-                staged_infer::chain_runner::StagedExecutionBackend::Subprocess
+                staged_infer::pipeline_runner::StagedExecutionBackend::Subprocess
             } else {
-                staged_infer::chain_runner::StagedExecutionBackend::InProcess
+                staged_infer::pipeline_runner::StagedExecutionBackend::InProcess
             };
             let manifest_path = std::env::current_dir()
                 .context("failed to read current directory")?
                 .join("Raster.toml");
-            let run = staged_infer::chain_runner::run(
+            let run = staged_infer::pipeline_runner::run(
                 &manifest_path,
                 raster_stage.as_deref(),
                 &exe,
@@ -118,13 +118,13 @@ fn execute(cli: Cli) -> Result<ExitCode> {
                 let report = staged_infer::parity::read_parity_report(selected_stage_dir)?;
                 print!(
                     "{}",
-                    render_timing_summary_or_warning(&run.chain_dir, &report)
+                    render_timing_summary_or_warning(&run.pipeline_dir, &report)
                 );
             }
             Ok(ExitCode::SUCCESS)
         }
         None => bail!(
-            "staged-infer requires `chain run`; \
+            "staged-infer requires `pipeline run`; \
              use the Raster CLI directly for Raster-only execution"
         ),
     }
@@ -133,10 +133,13 @@ fn execute(cli: Cli) -> Result<ExitCode> {
 fn finish_parity_run(status: ExitStatus, stage_dir: &Path) -> Result<ExitCode> {
     match staged_infer::parity::read_parity_report(stage_dir) {
         Ok(report) => {
-            let chain_dir = stage_dir
+            let pipeline_dir = stage_dir
                 .parent()
-                .ok_or_else(|| anyhow::anyhow!("selected stage has no chain run directory"))?;
-            print!("{}", render_timing_summary_or_warning(chain_dir, &report));
+                .ok_or_else(|| anyhow::anyhow!("selected stage has no pipeline run directory"))?;
+            print!(
+                "{}",
+                render_timing_summary_or_warning(pipeline_dir, &report)
+            );
         }
         Err(error) if status.success() => return Err(error),
         Err(_) => {}
@@ -152,10 +155,10 @@ fn require_input_args(cli: &Cli) -> Result<()> {
 }
 
 fn render_timing_summary_or_warning(
-    chain_dir: &Path,
+    pipeline_dir: &Path,
     report: &staged_infer::parity::ParityReport,
 ) -> String {
-    staged_infer::parity::read_chain_execution_times(chain_dir)
+    staged_infer::parity::read_pipeline_execution_times(pipeline_dir)
         .and_then(|timings| staged_infer::parity::render_timing_summary(&timings, report))
         .unwrap_or_else(|error| format!("\ntiming summary unavailable: {error:#}\n"))
 }
@@ -230,7 +233,7 @@ mod tests {
         })
         .unwrap_err();
 
-        assert!(error.to_string().contains("requires `chain run`"));
+        assert!(error.to_string().contains("requires `pipeline run`"));
     }
 
     #[test]
@@ -293,7 +296,7 @@ mod tests {
             direct_stage_duration_ns: 1,
         };
 
-        let summary = render_timing_summary_or_warning(Path::new("/missing/chain/run"), &report);
+        let summary = render_timing_summary_or_warning(Path::new("/missing/pipeline/run"), &report);
 
         assert!(summary.contains("timing summary unavailable"));
     }

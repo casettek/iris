@@ -24,12 +24,12 @@ pub const FRAC_BITS: u32 = 16;
 pub const ONE: i32 = 1 << FRAC_BITS;
 
 /// Replay-unit page size for the Q16.16 matrices: whole rows of `width · 4`
-/// bytes for every width this chain is imported with (128, 256, 1536, 2560).
+/// bytes for every width this pipeline is imported with (128, 256, 1536, 2560).
 /// MUST match the importer's `PAGE_SIZE`.
 pub const PAGE_SIZE: u64 = 184_320;
 
 /// Replay-unit page size for the `Q8_0` matrices: whole rows of
-/// `in / 32 · 34` bytes for every width this chain is imported with. MUST
+/// `in / 32 · 34` bytes for every width this pipeline is imported with. MUST
 /// match the importer's `Q8_PAGE_SIZE`.
 pub const Q8_PAGE_SIZE: u64 = 195_840;
 
@@ -84,7 +84,7 @@ pub struct PleRow {
 
 /// One layer's per-layer embeddings, one row per prompt token.
 ///
-/// MUST match `PleLayerInputs` in `prefill-prepare-aux` — the chain binds
+/// MUST match `PleLayerInputs` in `prefill-prepare-aux` — the pipeline binds
 /// `prefill_range_lN` to `prefill_prepare_aux_lN` by structural commitment.
 /// `rows` is in prompt order, so a token's row is a dynamic index on its
 /// position.

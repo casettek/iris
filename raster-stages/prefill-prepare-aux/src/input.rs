@@ -21,7 +21,7 @@ pub const FRAC_BITS: u32 = 16;
 pub const ONE: i32 = 1 << FRAC_BITS;
 
 /// Replay-unit page size for the projection matrix: whole rows of
-/// `hidden_size · 4` bytes for every width this chain is imported with
+/// `hidden_size · 4` bytes for every width this pipeline is imported with
 /// (128, 1536, 2560). MUST match the importer's `PAGE_SIZE`.
 pub const PAGE_SIZE: u64 = 184_320;
 
@@ -126,7 +126,7 @@ pub struct ErrorSummary {
 ///
 /// MUST match `KeyRow` in every stage that carries activations: Gemma 3n's last
 /// 20 layers attend over an earlier layer's cache, so the cache has to survive a
-/// stage boundary, and a chain binds by structural commitment.
+/// stage boundary, and a pipeline binds by structural commitment.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
 pub struct KeyRow {
     pub position: u32,

@@ -21,7 +21,7 @@ A contract is given a **procedure**, registered under its id
 ([availability](availability.md#the-procedure-registry)). A claim names
 one, and is judged by it.
 
-- **The chain**: the kinds of stage a run is made of, each a program with
+- **The pipeline**: the kinds of stage a run is made of, each a program with
   an identity.
 - **For each program, where each of its inputs comes from**: an earlier
   stage's output and which programs may produce it, a pinned commitment such
@@ -37,11 +37,11 @@ programs and RISC Zero's verifier.
 
 ## What a claim is
 
-A run is a chain of stages ([the chain](raster-chain.md)): the prompt is
+A run is a pipeline of stages ([the pipeline](raster-pipeline.md)): the prompt is
 bound and tokenized, each layer runs over each range of tokens, the output is
 checked token by token against the model's own choice, and a last stage states
 the result. A claim commits to one **checkpoint** per stage: which program
-ran, the list of inputs it loaded, which earlier stage each chained input came
+ran, the list of inputs it loaded, which earlier stage each piped input came
 from, and its output.
 
 | Where | What |

@@ -113,7 +113,7 @@ risc0-zkvm={{path={:?}}}
     run.current_dir(&project)
         .args(["raster", "run", "--save-trace", "--commit"])
         .arg(&original)
-        .args(["--fraud-proof-window-size", "2", "--input"])
+        .args(["--fault-proof-window-size", "2", "--input"])
         .arg(&input)
         .arg("--input-manifest")
         .arg(&inputs);
@@ -138,7 +138,7 @@ risc0-zkvm={{path={:?}}}
     fs::write(
         &manifest,
         format!(
-            "[chain]\nname=\"fixture\"\n[[chain.stage]]\nname=\"{stage}\"\nproject={:?}\n",
+            "[pipeline]\nname=\"fixture\"\n[[pipeline.stage]]\nname=\"{stage}\"\nproject={:?}\n",
             project
         ),
     )
@@ -211,7 +211,7 @@ risc0-zkvm={{path={:?}}}
             .current_dir(&project)
             .args(["raster", "run", "--commit"])
             .arg(dir.join(format!("negative-{name}.commit.bin")))
-            .args(["--fraud-proof-window-size", "2", "--capture-profile-calls"])
+            .args(["--fault-proof-window-size", "2", "--capture-profile-calls"])
             .arg(path)
             .arg("--sample-max-bytes")
             .arg(budget.to_string())

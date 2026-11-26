@@ -15,7 +15,7 @@ fn a_checkpoint_is_the_boundary_a_raster_run_commits() {
             .map(|(input, index)| {
                 (
                     input.clone(),
-                    InputBindingSource::Chained {
+                    InputBindingSource::Piped {
                         stage: *index as usize,
                     },
                 )
@@ -25,14 +25,14 @@ fn a_checkpoint_is_the_boundary_a_raster_run_commits() {
         output_payload_commitment: hex::decode(&checkpoint.output_sha256).unwrap(),
         output_structural_commitment: hex::decode(&checkpoint.output_commitment).unwrap(),
     };
-    let chain = |stages: Vec<StageCheckpoint>| ChainCommitment {
+    let pipeline = |stages: Vec<StageCheckpoint>| PipelineCommitment {
         stages,
-        shape: ChainShape {
+        shape: PipelineShape {
             spec_digest: vec![9; 32],
             repeats: Vec::new(),
         },
     };
-    let raster = chain(list.checkpoints.iter().map(stage).collect());
+    let raster = pipeline(list.checkpoints.iter().map(stage).collect());
     assert_eq!(raster_boundary_mismatch(&list, &raster), None);
 
     let mut other_program = raster.clone();
@@ -50,13 +50,13 @@ fn a_checkpoint_is_the_boundary_a_raster_run_commits() {
     let mut other_producer = raster.clone();
     other_producer.stages[2].input_bindings.insert(
         String::from("activations"),
-        InputBindingSource::Chained { stage: 0 },
+        InputBindingSource::Piped { stage: 0 },
     );
     assert!(raster_boundary_mismatch(&list, &other_producer)
         .unwrap()
         .contains("producers"));
 
-    let shorter = chain(vec![stage(&list.checkpoints[0])]);
+    let shorter = pipeline(vec![stage(&list.checkpoints[0])]);
     assert!(raster_boundary_mismatch(&list, &shorter)
         .unwrap()
         .contains("4 checkpoints"));
@@ -139,12 +139,12 @@ fn a_dispute_commitment_is_the_checkpoint_and_nothing_else() {
         Sha256::digest(&expected).as_slice()
     );
 
-    // It is a Raster chain commitment of one stage, so Raster's own
+    // It is a Raster pipeline commitment of one stage, so Raster's own
     // dispute code reads it.
-    let chain: ChainCommitment = postcard::from_bytes(&bytes).unwrap();
-    assert_eq!(chain.stages.len(), 1);
+    let pipeline: PipelineCommitment = postcard::from_bytes(&bytes).unwrap();
+    assert_eq!(pipeline.stages.len(), 1);
     assert_eq!(
-        hex::encode(&chain.stages[0].program_commitment),
+        hex::encode(&pipeline.stages[0].program_commitment),
         checkpoint.program_commitment
     );
 
@@ -183,7 +183,7 @@ fn a_proof_dismisses_a_challenge_only_when_it_is_about_the_checkpoint() {
     let refuted = defence(&journal(&checkpoint, TransitionState::Finished, &[])).unwrap();
     assert_eq!(refuted.reason, DefenceReason::Refuted);
     assert_eq!(
-        refuted.chain_commitment_digest,
+        refuted.pipeline_commitment_digest,
         dispute_digest(&checkpoint).unwrap()
     );
     assert_eq!(refuted.challenged_stage, 0);

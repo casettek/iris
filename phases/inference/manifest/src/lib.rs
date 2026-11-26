@@ -1,5 +1,5 @@
 //! A model as an import leaves it: the model manifest and its families, the
-//! descriptor a stage reads, and the chain template's paths.
+//! descriptor a stage reads, and the pipeline template's paths.
 
 pub mod direct;
 pub mod io;

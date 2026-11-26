@@ -209,7 +209,7 @@ impl StageSchedule {
             .then(|| Step::layer(step.claimed, step.range, donor_layer))
     }
 
-    /// Every step in the order the chain runs them.
+    /// Every step in the order the pipeline runs them.
     pub fn steps(&self, layers: u32) -> impl Iterator<Item = Step> {
         let schedule = *self;
         let prompt = (0..schedule.prompt_ranges).flat_map(|range| {
@@ -357,7 +357,7 @@ mod tests {
     }
 
     #[test]
-    fn inputs_follow_the_chain_wiring() {
+    fn inputs_follow_the_pipeline_wiring() {
         let s = schedule();
         let before = |step, input| s.before(&step, input, LAYERS);
         let at = |step| Some(Source::Step(step));

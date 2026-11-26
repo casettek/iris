@@ -5,9 +5,9 @@
 use std::collections::BTreeMap;
 
 use ::model_identity::context::parse_id;
-use raster_core::chain::{
-    defend, ChainCommitment, ChainShape, DefenceInput, DefenceJournal, DefenceRefusal,
-    InputBindingSource, StageChallenge, StageCheckpoint,
+use raster_core::pipeline::{
+    defend, DefenceInput, DefenceJournal, DefenceRefusal, InputBindingSource, PipelineCommitment,
+    PipelineShape, StageChallenge, StageCheckpoint,
 };
 use raster_core::transition::{TraceCommitmentHeader, TransitionJournal, TransitionState};
 use serde::{Deserialize, Serialize};
@@ -16,24 +16,27 @@ use sha2::{Digest, Sha256};
 use crate::availability::PostedBlob;
 use procedure_definition::checkpoint::{Checkpoint, CheckpointList};
 
-/// Where a claim's checkpoints are not the boundaries a Raster chain run of
+/// Where a claim's checkpoints are not the boundaries a Raster pipeline run of
 /// the same claim committed, or `None` when every one is: the same stages in
 /// the same order, each with Raster's program id, input manifest commitment,
 /// producers and output commitments.
-pub fn raster_boundary_mismatch(list: &CheckpointList, chain: &ChainCommitment) -> Option<String> {
-    if list.checkpoints.len() != chain.stages.len() {
+pub fn raster_boundary_mismatch(
+    list: &CheckpointList,
+    pipeline: &PipelineCommitment,
+) -> Option<String> {
+    if list.checkpoints.len() != pipeline.stages.len() {
         return Some(format!(
             "the claim has {} checkpoints, the Raster run {} stages",
             list.checkpoints.len(),
-            chain.stages.len()
+            pipeline.stages.len()
         ));
     }
-    for (index, (checkpoint, stage)) in list.checkpoints.iter().zip(&chain.stages).enumerate() {
+    for (index, (checkpoint, stage)) in list.checkpoints.iter().zip(&pipeline.stages).enumerate() {
         let raster_sources = stage
             .input_bindings
             .iter()
             .filter_map(|(input, source)| match source {
-                InputBindingSource::Chained { stage } => Some(format!("{input}={stage}")),
+                InputBindingSource::Piped { stage } => Some(format!("{input}={stage}")),
                 InputBindingSource::External => None,
             })
             .collect::<Vec<_>>()
@@ -80,12 +83,12 @@ pub fn raster_boundary_mismatch(list: &CheckpointList, chain: &ChainCommitment) 
     None
 }
 
-/// The Raster chain commitment that stands for one checkpoint in a dispute.
+/// The Raster pipeline commitment that stands for one checkpoint in a dispute.
 ///
-/// Raster's challenge and defence name a chain commitment and a stage of it,
+/// Raster's challenge and defence name a pipeline commitment and a stage of it,
 /// and read three things of that stage: its program, its input manifest and
 /// the hash of its output. A checkpoint holds exactly those. So a dispute
-/// about a checkpoint is a dispute about a chain of one stage built from it,
+/// about a checkpoint is a dispute about a pipeline of one stage built from it,
 /// with nothing else in it: no bindings, no manifest digest and no repeats.
 ///
 /// A contract recomputes these bytes from the checkpoint it opened, so the
@@ -108,7 +111,7 @@ pub fn raster_boundary_mismatch(list: &CheckpointList, chain: &ChainCommitment) 
 /// checkpoint is and no contract accepts.
 pub fn dispute_commitment(checkpoint: &Checkpoint) -> Option<Vec<u8>> {
     let hash = |text: &str| parse_id(text).map(|bytes| bytes.to_vec());
-    let chain = ChainCommitment {
+    let pipeline = PipelineCommitment {
         stages: vec![StageCheckpoint {
             name: checkpoint.stage.clone(),
             program_commitment: hash(&checkpoint.program_commitment)?,
@@ -117,12 +120,12 @@ pub fn dispute_commitment(checkpoint: &Checkpoint) -> Option<Vec<u8>> {
             output_payload_commitment: hash(&checkpoint.output_sha256)?,
             output_structural_commitment: hash(&checkpoint.output_commitment)?,
         }],
-        shape: ChainShape {
+        shape: PipelineShape {
             spec_digest: Vec::new(),
             repeats: Vec::new(),
         },
     };
-    postcard::to_allocvec(&chain).ok()
+    postcard::to_allocvec(&pipeline).ok()
 }
 
 /// The digest a Raster challenge or defence about this checkpoint names.
@@ -140,7 +143,7 @@ pub fn stage_challenge(
     claimed_output_sha256: &str,
 ) -> Option<StageChallenge> {
     Some(StageChallenge {
-        chain_commitment_bytes: dispute_commitment(checkpoint)?,
+        pipeline_commitment_bytes: dispute_commitment(checkpoint)?,
         challenged_stage: 0,
         trace_commitment_header: trace_commitment,
         claimed_output: parse_id(claimed_output_sha256)?.to_vec(),
@@ -165,7 +168,7 @@ pub struct ChallengeSubmission {
     pub checkpoints_root: String,
     /// The position of the disputed checkpoint in that list.
     pub stage: u32,
-    /// The one-stage chain commitment built from the claimer's checkpoint,
+    /// The one-stage pipeline commitment built from the claimer's checkpoint,
     /// the header of the challenger's own trace commitment of the stage, and
     /// the output its run ends in ([`stage_challenge`]).
     pub challenge: StageChallenge,
@@ -182,12 +185,12 @@ impl ChallengeSubmission {
     }
 }
 
-/// Whether a stage challenge is about this checkpoint: the one-stage chain
+/// Whether a stage challenge is about this checkpoint: the one-stage pipeline
 /// commitment it carries is the checkpoint's own.
 pub fn challenge_is_about(checkpoint: &Checkpoint, challenge: &StageChallenge) -> bool {
     challenge.challenged_stage == 0
         && dispute_commitment(checkpoint)
-            .is_some_and(|commitment| commitment == challenge.chain_commitment_bytes)
+            .is_some_and(|commitment| commitment == challenge.pipeline_commitment_bytes)
 }
 
 /// Why a proven window does not dismiss a challenge to a checkpoint.
@@ -224,7 +227,7 @@ impl std::fmt::Display for DefenceRejection {
 /// be a proof about this stage. Otherwise a window proven over another
 /// program, or over other inputs, would dismiss an honest challenge, since
 /// the challenger's trace always diverges from a run it is not a trace of.
-/// The rule is Raster's own (`raster_core::chain::defend`), applied to the
+/// The rule is Raster's own (`raster_core::pipeline::defend`), applied to the
 /// one-stage commitment built from the checkpoint: the window was proven
 /// against the challenger's trace commitment, runs the checkpoint's program
 /// on the checkpoint's inputs, and ends either in a divergence or, on an
@@ -232,7 +235,7 @@ impl std::fmt::Display for DefenceRejection {
 ///
 /// `journal` is the journal of a receipt the caller has already verified
 /// against `transition_image_id`. The returned journal is what a defence
-/// receipt would commit to; its chain commitment digest is this checkpoint's
+/// receipt would commit to; its pipeline commitment digest is this checkpoint's
 /// [`dispute_digest`].
 pub fn check_defence(
     checkpoint: &Checkpoint,
@@ -241,7 +244,7 @@ pub fn check_defence(
     transition_image_id: &[u8],
 ) -> std::result::Result<DefenceJournal, DefenceRejection> {
     let commitment = dispute_commitment(checkpoint).ok_or(DefenceRejection::MalformedCheckpoint)?;
-    if challenge.chain_commitment_bytes != commitment || challenge.challenged_stage != 0 {
+    if challenge.pipeline_commitment_bytes != commitment || challenge.challenged_stage != 0 {
         return Err(DefenceRejection::AnotherCheckpoint);
     }
     let challenge_bytes =
@@ -319,7 +322,7 @@ impl std::fmt::Display for FaultProofRejection {
 /// journal names the programs its earlier steps and its inputs were checked
 /// by, and a proof that names others was checked by nothing known.
 ///
-/// These are the checks of `raster_core::chain::defend` for a refutation, on
+/// These are the checks of `raster_core::pipeline::defend` for a refutation, on
 /// what a contract holds of the challenge: the digest of the trace it posted
 /// and the disputed checkpoint's program and inputs. A window that ends by
 /// matching the trace (`TerminalMatch`), which Raster takes as a defence when
@@ -331,11 +334,11 @@ pub fn check_fault_proof(
     transition_image_id: &[u8],
     authorization_image_id: &[u8],
 ) -> std::result::Result<(), FaultProofRejection> {
-    let chain: ChainCommitment = postcard::from_bytes(&challenge.chain_commitment_bytes)
+    let pipeline: PipelineCommitment = postcard::from_bytes(&challenge.pipeline_commitment_bytes)
         .map_err(|_| FaultProofRejection::MalformedChallenge)?;
     let stage = usize::try_from(challenge.challenged_stage)
         .ok()
-        .and_then(|index| chain.stages.get(index))
+        .and_then(|index| pipeline.stages.get(index))
         .ok_or(FaultProofRejection::MalformedChallenge)?;
     if !matches!(journal.current_state, TransitionState::Finished) {
         return Err(FaultProofRejection::NotAFaultVerdict);

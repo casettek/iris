@@ -1,5 +1,5 @@
 //! Preparing a staged run: from a specification and a case, or from what a
-//! claim fixed or posted, to the files each stage loads and the chain the
+//! claim fixed or posted, to the files each stage loads and the pipeline the
 //! stages are run from.
 
 use std::fs;
@@ -15,14 +15,14 @@ use procedure_definition::{
 use sha2::{Digest, Sha256};
 
 /// A prepared staged run: the frozen record of what it runs on, and the
-/// chain its stages are run from.
+/// pipeline its stages are run from.
 pub struct PreparedClaimRun {
     pub prepared_run: PreparedRun,
     pub manifest_path: PathBuf,
     /// The ids written into the run's `claimed_ids` externals: the first
     /// inference's, which are all of them in a procedure kind of one. Kept for the
     /// claimer's own tooling only: the claim posts no copy of them, because its
-    /// output is the chain's final record.
+    /// output is the pipeline's final record.
     pub claimed_token_ids: Vec<u32>,
 }
 
@@ -50,7 +50,7 @@ struct RunModel {
     manifest_path: PathBuf,
     manifest: ModelManifest,
     template_path: PathBuf,
-    /// The model's segment of a chain, as its import wrote it.
+    /// The model's segment of a pipeline, as its import wrote it.
     segment: String,
     tokenizer: serde_json::Value,
     prompt: procedure_definition::PreparedPrompt,
@@ -278,10 +278,10 @@ pub fn prepare_run(run: StagedRun<'_>) -> Result<PreparedClaimRun> {
         _ => None,
     };
     let postable = given.is_some() || source_values.is_some() == source_inputs.is_some();
-    // The imports wrote each model's segment of a chain. The procedure kind makes the
-    // chain's template from them.
+    // The imports wrote each model's segment of a pipeline. The procedure kind makes the
+    // pipeline's template from them.
     let segments: Vec<&str> = models.iter().map(|model| model.segment.as_str()).collect();
-    let template = procedure_kind.chain_template(&segments)?;
+    let template = procedure_kind.pipeline_template(&segments)?;
     let template_dir = first
         .template_path
         .parent()
@@ -363,7 +363,7 @@ pub fn prepare_run(run: StagedRun<'_>) -> Result<PreparedClaimRun> {
             (Some(frozen), _) => frozen.ids[inference].clone(),
             (None, Some(ids)) => ids.clone(),
             // Discovery is the only autoregression left: the claim posts what
-            // direct decode produced and the chain checks it.
+            // direct decode produced and the pipeline checks it.
             (None, None) => model
                 .discovered
                 .as_ref()
@@ -439,7 +439,7 @@ pub fn prepare_run(run: StagedRun<'_>) -> Result<PreparedClaimRun> {
             claimed: &written.files.claimed,
         })
         .collect();
-    let run_manifest = render_chain(
+    let run_manifest = render_pipeline(
         &template,
         template_dir,
         &inferences,
@@ -515,7 +515,7 @@ const LAST_PROMPT_RANGE: &str = "@LAST_PROMPT_RANGE@";
 /// Marks where the template names the last claimed range.
 const LAST_CLAIMED_RANGE: &str = "@LAST_CLAIMED_RANGE@";
 
-/// The chain of a run whose text is taken as given: the template without its
+/// The pipeline of a run whose text is taken as given: the template without its
 /// source stage, and each inference's first bind given the constant its later
 /// binds are.
 pub fn without_source_stage(template: &str) -> Result<String> {
@@ -526,7 +526,7 @@ pub fn without_source_stage(template: &str) -> Result<String> {
     let mut index = 0;
     while index < lines.len() {
         let line = lines[index];
-        let is_source_stage = line.trim() == "[[chain.stage]]"
+        let is_source_stage = line.trim() == "[[pipeline.stage]]"
             && lines
                 .get(index + 1)
                 .is_some_and(|next| next.trim() == "name = \"source\"");
@@ -548,7 +548,7 @@ pub fn without_source_stage(template: &str) -> Result<String> {
                 .iter()
                 .map(|line| line.trim_start())
                 .find(|line| line.starts_with("inputs.source = { external"))
-                .context("chain template gives no later bind a constant source")?;
+                .context("pipeline template gives no later bind a constant source")?;
             out.push(constant.to_string());
             rebound += 1;
         } else {
@@ -558,14 +558,14 @@ pub fn without_source_stage(template: &str) -> Result<String> {
     }
     anyhow::ensure!(
         dropped == 1 && rebound >= 1,
-        "incompatible chain template: expected one source stage and a first bind that takes its record; found {dropped} and {rebound}"
+        "incompatible pipeline template: expected one source stage and a first bind that takes its record; found {dropped} and {rebound}"
     );
     out.push(String::new());
     Ok(out.join("\n"))
 }
 
 /// The run files of one inference, and the label its names carry in the
-/// template: empty in a chain of one inference.
+/// template: empty in a pipeline of one inference.
 pub struct InferenceFiles<'a> {
     pub label: &'a str,
     /// One slice of the text per prompt range.
@@ -579,8 +579,8 @@ pub struct InferenceFiles<'a> {
     pub claimed: &'a [crate::RunFile],
 }
 
-/// The inference a stage, a repeat or a chain input belongs to, and its name
-/// without the label. In a chain of one inference every name is that one's.
+/// The inference a stage, a repeat or a pipeline input belongs to, and its name
+/// without the label. In a pipeline of one inference every name is that one's.
 fn inference_name<'n>(
     name: &'n str,
     inferences: &[InferenceFiles<'_>],
@@ -597,8 +597,8 @@ fn inference_name<'n>(
     })
 }
 
-/// Fills the template of a chain of one inference for one run. See
-/// [`render_chain`].
+/// Fills the template of a pipeline of one inference for one run. See
+/// [`render_pipeline`].
 #[allow(clippy::too_many_arguments)]
 pub fn render_ranged_manifest(
     template: &str,
@@ -612,7 +612,7 @@ pub fn render_ranged_manifest(
     prompt: &[crate::RunFile],
     claimed: &[crate::RunFile],
 ) -> Result<String> {
-    render_chain(
+    render_pipeline(
         template,
         template_dir,
         &[InferenceFiles {
@@ -630,14 +630,14 @@ pub fn render_ranged_manifest(
     )
 }
 
-/// Fills a chain template for one run. For each inference: the procedure,
+/// Fills a pipeline template for one run. For each inference: the procedure,
 /// the stage schedule and the text digest, the range counts, the last prompt
 /// and claimed ranges' indexes, and each range's committed text, marks or
 /// claimed ids. For the run: the source stage's inputs and the result stage's
-/// forms. A run without a source gets a chain without the source stage.
+/// forms. A run without a source gets a pipeline without the source stage.
 /// `run_files` are the run's other files, each by the name the template asks
 /// for it by: every one is used once.
-pub fn render_chain(
+pub fn render_pipeline(
     template: &str,
     template_dir: &Path,
     inferences: &[InferenceFiles<'_>],
@@ -713,8 +713,8 @@ pub fn render_chain(
         if let Some((inference, base)) = named {
             if matches!(
                 (table.as_str(), base),
-                ("[[chain.stage]]", "prompt_bind_p0")
-                    | ("[[chain.repeat.stage]]", "prompt_bind_p{j}")
+                ("[[pipeline.stage]]", "prompt_bind_p0")
+                    | ("[[pipeline.repeat.stage]]", "prompt_bind_p{j}")
             ) {
                 let files = &inferences[inference];
                 let binding = if trimmed.starts_with("inputs.config =") {
@@ -736,7 +736,7 @@ pub fn render_chain(
                 }
             }
         }
-        if let (("[[chain.stage]]", "source"), Some(source)) =
+        if let (("[[pipeline.stage]]", "source"), Some(source)) =
             ((table.as_str(), name.as_str()), source)
         {
             let binding = [
@@ -754,7 +754,7 @@ pub fn render_chain(
                 continue;
             }
         }
-        if (table.as_str(), name.as_str()) == ("[[chain.stage]]", "result")
+        if (table.as_str(), name.as_str()) == ("[[pipeline.stage]]", "result")
             && trimmed.starts_with("inputs.forms =")
         {
             result_forms += 1;
@@ -771,7 +771,7 @@ pub fn render_chain(
                 .position(|(file, _)| *file == wanted)
                 .with_context(|| {
                     format!(
-                        "the chain template asks stage `{name}` for the run's `{wanted}`, which \
+                        "the pipeline template asks stage `{name}` for the run's `{wanted}`, which \
                          this run did not write"
                     )
                 })?;
@@ -782,9 +782,9 @@ pub fn render_chain(
             );
             continue;
         }
-        // A chain input's table is named for the inference it belongs to.
+        // A pipeline input's table is named for the inference it belongs to.
         let input = table
-            .strip_prefix("[chain.input.")
+            .strip_prefix("[pipeline.input.")
             .and_then(|input| input.strip_suffix(']'))
             .and_then(|input| inference_name(input, inferences));
         let files = input.and_then(|(inference, base)| {
@@ -832,16 +832,16 @@ pub fn render_chain(
                 continue;
             }
         }
-        if table == "[[chain.repeat]]" && trimmed.starts_with("count =") {
-            let (inference, base) =
-                named.with_context(|| format!("unexpected repeat `{name}` in chain template"))?;
+        if table == "[[pipeline.repeat]]" && trimmed.starts_with("count =") {
+            let (inference, base) = named
+                .with_context(|| format!("unexpected repeat `{name}` in pipeline template"))?;
             let files = &inferences[inference];
             let range_count = match base {
                 "prompt" => Some((0, files.marks.len())),
                 "claimed_embed" | "claimed" => Some((1, files.claimed.len())),
                 // Layer blocks keep their model-fixed counts.
                 "layers" | "shared_layers" => None,
-                _ => anyhow::bail!("unexpected repeat `{name}` in chain template"),
+                _ => anyhow::bail!("unexpected repeat `{name}` in pipeline template"),
             };
             if let Some((slot, count)) = range_count {
                 replaced[inference][slot] += 1;
@@ -850,7 +850,7 @@ pub fn render_chain(
             }
         }
         // A layer block's inner fans run once per prompt or claimed range.
-        if table == "[[chain.repeat.stage]]" && trimmed.starts_with("count =") {
+        if table == "[[pipeline.repeat.stage]]" && trimmed.starts_with("count =") {
             if let Some((inference, _)) = named {
                 let files = &inferences[inference];
                 let range_count = match fan_index.as_str() {
@@ -890,12 +890,12 @@ pub fn render_chain(
     });
     anyhow::ensure!(
         other_inputs.iter().all(|filled| *filled == 1),
-        "incompatible chain template: it asks for each of the run's files {:?} {other_inputs:?} \
+        "incompatible pipeline template: it asks for each of the run's files {:?} {other_inputs:?} \
          times, not once",
         run_files.iter().map(|(name, _)| *name).collect::<Vec<_>>()
     );
     if !filled || source_inputs != if source.is_some() { 3 } else { 0 } || result_forms != 1 {
-        anyhow::bail!("incompatible chain template: expected of each inference [prompt repeats, claimed repeats, prompt commitments, claimed commitments] = [1, 2, 1, 1], matching per-layer range fans, one set of text commitments, and a procedure, a schedule and a text digest binding for range 0's bind and for the later ranges'; and of the run three inputs for the source stage when it has a source, and the result stage's forms; found {replaced:?}, {source_inputs} and {result_forms}");
+        anyhow::bail!("incompatible pipeline template: expected of each inference [prompt repeats, claimed repeats, prompt commitments, claimed commitments] = [1, 2, 1, 1], matching per-layer range fans, one set of text commitments, and a procedure, a schedule and a text digest binding for range 0's bind and for the later ranges'; and of the run three inputs for the source stage when it has a source, and the result stage's forms; found {replaced:?}, {source_inputs} and {result_forms}");
     }
     out.push(String::new());
     Ok(out.join("\n"))

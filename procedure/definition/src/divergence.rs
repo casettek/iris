@@ -1,4 +1,4 @@
-//! Where two runs of one chain first differ: the stage, and what differs in
+//! Where two runs of one pipeline first differ: the stage, and what differs in
 //! its checkpoint.
 
 use std::path::{Path, PathBuf};
@@ -46,7 +46,7 @@ pub enum DivergenceReason {
     MissingRecomputedCheckpoint,
 }
 
-/// Where two runs of one chain first differ, comparing their checkpoints in
+/// Where two runs of one pipeline first differ, comparing their checkpoints in
 /// order: the stage's name, its program, its inputs, then its output.
 pub fn locate_divergence(
     claimed_list_path: &Path,

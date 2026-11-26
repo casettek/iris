@@ -1,12 +1,12 @@
 use std::path::Path;
 
 use staged_infer::parity::{
-    render_timing_summary, ChainExecutionTimes, ParityAuthority, ParityReport, RasterSourceMode,
+    render_timing_summary, ParityAuthority, ParityReport, PipelineExecutionTimes, RasterSourceMode,
 };
 
 #[test]
 fn parity_artifacts_live_under_stage_directory() {
-    let stage = Path::new("target/raster/chains/run/range_p0_l3");
+    let stage = Path::new("target/raster/pipelines/run/range_p0_l3");
     assert_eq!(
         staged_infer::parity::parity_dir(stage),
         stage.join("staged-infer-parity")
@@ -15,7 +15,7 @@ fn parity_artifacts_live_under_stage_directory() {
 
 #[test]
 fn timing_summary_annotates_selected_stage() {
-    let timings: ChainExecutionTimes = serde_json::from_str(
+    let timings: PipelineExecutionTimes = serde_json::from_str(
         r#"{
             "version": 1,
             "stages": [{
@@ -51,12 +51,12 @@ fn timing_summary_annotates_selected_stage() {
     assert!(summary.contains("8.00x"));
     assert!(summary.contains("MATCH"));
     assert!(summary.contains("NON-AUTHORITATIVE"));
-    assert!(summary.contains("chain runner: --no-auth"));
+    assert!(summary.contains("pipeline runner: --no-auth"));
 }
 
 #[test]
 fn timing_summary_reports_wall_time_and_aux_wave_speedup() {
-    let timings: ChainExecutionTimes = serde_json::from_str(
+    let timings: PipelineExecutionTimes = serde_json::from_str(
         r#"{
             "version": 2,
             "stages": [{

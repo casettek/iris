@@ -252,7 +252,7 @@ fn finalization_commits_the_exact_text_it_emits() {
 }
 
 #[test]
-fn finalization_reports_what_the_chain_consumed() {
+fn finalization_reports_what_the_pipeline_consumed() {
     let output = finalize(&[0], 1);
     assert_eq!(output.input_text_sha256, "11".repeat(32));
     assert_eq!(output.model_id.len(), 64);

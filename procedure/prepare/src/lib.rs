@@ -318,7 +318,7 @@ pub fn write_run_config(config: &RunConfig, dir: &Path) -> Result<RunFile> {
     write_run_file(config, dir, "config")
 }
 
-/// Writes the run's stage schedule as `schedule`, from the counts the chain
+/// Writes the run's stage schedule as `schedule`, from the counts the pipeline
 /// manifest is filled in with.
 pub fn write_run_schedule(
     prompt_ranges: usize,
@@ -592,7 +592,7 @@ mod tests {
     #[test]
     fn the_source_record_is_one_value_under_both_of_its_types() {
         // The source step states `source_core::SourceRecord` and the bind
-        // reads `SourceRecord` of the shared prompt source. A chain links
+        // reads `SourceRecord` of the shared prompt source. A pipeline links
         // them by structure, so the two must commit alike.
         let record = source::SourceRecord {
             present: true,
@@ -648,7 +648,7 @@ mod tests {
         ("<<|<|turn>|<", true),
     ];
 
-    /// The chain's prompt stages, run natively over what `bound_ranges` cut.
+    /// The pipeline's prompt stages, run natively over what `bound_ranges` cut.
     fn run_prompt_stages(
         tokenizer: &PromptTokenizer,
         bound: &BoundPrompt,

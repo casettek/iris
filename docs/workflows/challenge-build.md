@@ -20,7 +20,7 @@ Flow:
 3. After each recomputed checkpoint, hash the verifier's local checkpoint record and compare it to the claimed hash at the same index.
 4. If no divergence exists, report the claimed and recomputed traces.
 5. If a divergence exists, seed a replay directory with all prior recomputed stages.
-6. Run `cargo raster chain run --stage <stage>` for the divergent stage.
+6. Run `cargo raster pipeline run --stage <stage>` for the divergent stage.
 7. Compare the Raster replay checkpoint with the native recomputed checkpoint. The stage name, input commitment, output structural commitment, and output SHA-256 must all match, yielding the same checkpoint hash.
 8. Write the challenge artifacts only after that parity check passes. A mismatch fails challenge construction with a native/Raster parity error identifying the stage, differing field, and both values. The replay files remain available for debugging.
 
@@ -50,7 +50,7 @@ copy of its output. It is rejected, without a replay, when:
 - **The output breaks the token budget.** `output_fault` is non-zero: the output
   must fill `max_new_tokens` unless it reaches EOS, and must not continue past EOS.
 
-The chain establishes all of these. The challenge reads them from the final record
+The pipeline establishes all of these. The challenge reads them from the final record
 and computes none of them itself.
 
 The challenge then reports `claimed output rejected` with the reason.
@@ -74,7 +74,7 @@ Challenge outputs live under the recomputed run's `challenge/<stage>/` directory
 and two measured wall-clock durations in milliseconds. `checkpoint_list_duration_ms`
 covers input/context validation, checkpoint recomputation through divergence, and
 trace publication. `raster_replay_duration_ms` covers the selected stage's
-`cargo raster chain run` command, including any compilation. Replay-directory
+`cargo raster pipeline run` command, including any compilation. Replay-directory
 seeding and final parity/artifact checks are outside these phase timers and remain
 part of the caller's overall challenge duration.
 
@@ -86,7 +86,7 @@ null while not yet complete). Consumers can persist these records as they arrive
 to display live elapsed times and freeze each phase independently. Ordinary
 console output and the final timing artifact are retained alongside these updates.
 
-For manual fraud tests, corrupt a copy of the claimed hash list and challenge that copy:
+For manual fault tests, corrupt a copy of the claimed hash list and challenge that copy:
 
 ```bash
 just corrupt target/staged-infer/runs/.../checkpoints.txt
@@ -114,23 +114,23 @@ reads the case from beside the submission.
 checkpoint names for it, each of which the claim posted, the procedure
 pins or an earlier stage made. It tokenizes nothing and runs no direct
 inference: the stages check the marks and the claimed ids they are given,
-and `--direct-output-ids` is not used. It writes the chain the checkpoints
+and `--direct-output-ids` is not used. It writes the pipeline the checkpoints
 describe as `claim_arranged.toml` beside the run's manifest and prints a
-line for each input the claim gives a stage otherwise than the chain does
-(`checkpoint 61 (range_p1_l2) gives layer another value than the chain
+line for each input the claim gives a stage otherwise than the pipeline does
+(`checkpoint 61 (range_p1_l2) gives layer another value than the pipeline
 does`). It compares the run with the posted list hash by hash, prints `stage
 to replay: <stage>` for the first that differs, and replays that stage on the
 same inputs. From there the flow and the outputs are the ones above. It
 stops when a checkpoint names a value nobody holds or another program than
-the chain's, which is a claim for `iris claim audit`.
+the pipeline's, which is a claim for `iris claim audit`.
 
 See [Fault proving](fault-prove.md) for `test corrupt-challenge` and `fault prove`.
 
 A stage whose trace is 128 steps or fewer cannot be replayed at this window, so a
 challenge that lands on one fails at the replay. See
-[short-stage-fraud-window](../issues/short-stage-fraud-window.md).
+[short-stage-fault-window](../issues/short-stage-fault-window.md).
 
-The authenticated challenge-stage replay explicitly uses `--fraud-proof-window-size 128`.
+The authenticated challenge-stage replay explicitly uses `--fault-proof-window-size 128`.
 It builds `commit.bin` during execution with RAM working storage and no raw trace.
 Checkpoint output validation and challenge artifacts are unchanged. Fault proving
 runs the known stage's program directly with `run --audit`, using the disputed

@@ -8,10 +8,10 @@ the part to review first.
 
 ## Goal
 
-**Give the chain the prompt's tokenization as an input and have one stage per range
+**Give the pipeline the prompt's tokenization as an input and have one stage per range
 check it, in place of the stages that recompute it by replaying every merge.**
 
-The chain already treats the output this way: the claimed output ids are an input, and
+The pipeline already treats the output this way: the claimed output ids are an input, and
 `sequence-check` verifies them. This proposal does the same for the prompt. What the claim
 supplies is where each token starts; the stage looks the ids up itself.
 
@@ -30,11 +30,11 @@ time-to-claim; the native tokenizer fix of the same day covers that without a st
 
 ## Today
 
-For each prompt range the chain runs `prompt_seed`, then `B` merge batches of 64 rounds,
+For each prompt range the pipeline runs `prompt_seed`, then `B` merge batches of 64 rounds,
 then `prompt_prepare`. A merge round scans every adjacent pair in the range, looks each one
 up in the merge table, and applies the pair with the lowest rank.
 
-On the 1,209-token test prompt that is 3 ranges of 32 stages each: 96 of the chain's 385
+On the 1,209-token test prompt that is 3 ranges of 32 stages each: 96 of the pipeline's 385
 stages. A range starts at about 1,900 pieces, so a round is about 1,900 authenticated
 lookups, and a range needs about 1,500 rounds.
 
@@ -108,7 +108,7 @@ It does not assume that a merged piece's text is the two texts joined.
 
 Fix one segment and the claimed tokens in it. Each token's pieces are its **group**. A
 merge is **internal** if both pieces are in one group and **crossing** otherwise. The
-**full run** is the ranked merge over the whole segment, which is what the chain computes
+**full run** is the ranked merge over the whole segment, which is what the pipeline computes
 today. A group's **solo run** is the ranked merge over that group's pieces alone. The
 **pair run** for two neighbouring groups is the ranked merge over their pieces alone.
 
@@ -301,7 +301,7 @@ step. Its cost in the guest is not measured.
 - `test-parity` gains a case whose marks cut the prompt into vocabulary tokens that are not
   the merge's result, and the cut-fault cases are replaced.
 - Import rejects a vocabulary with an entry longer than the rounds can check.
-- `raster-chain.md`, `claim-build.md` and `test-parity.md`.
+- `raster-pipeline.md`, `claim-build.md` and `test-parity.md`.
 
 ## What was built
 
@@ -312,7 +312,7 @@ cases are in place. These points differ from the plan above:
   shipped recording a seed, one merge step and a prepare step under the old three-count
   schedule, with the three old programs still in the repository. Later the same day the
   merge-batch count and the step's batch coordinate were removed (`Execution` version 3),
-  the three programs and their fixture chain were deleted, every remaining program was
+  the three programs and their fixture pipeline were deleted, every remaining program was
   re-locked, and import and prepared-run formats moved to version 9. Direct inference
   keeps its own whole-prompt tokenization in `inference-kernels`.
 - **The previous range's last token is always kept as a neighbour**, including when the

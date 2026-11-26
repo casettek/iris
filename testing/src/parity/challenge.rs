@@ -3,7 +3,7 @@
 //! authenticated Raster. Runs the `challenge build` command a challenger runs.
 //!
 //! A stage too short for the replay window cannot be challenged yet (see
-//! `docs/issues/short-stage-fraud-window.md`), so the scenario only checks that
+//! `docs/issues/short-stage-fault-window.md`), so the scenario only checks that
 //! recomputation finds it.
 
 use std::fs;
@@ -20,7 +20,7 @@ use procedure_definition::{
 use prompt_prep::RunConfig;
 use raster_prover::commitment_file::CommitmentFile;
 use serde_json::{json, Value};
-use staged_infer::chain_runner::StagedExecutionBackend;
+use staged_infer::pipeline_runner::StagedExecutionBackend;
 use staged_infer::{CheckpointedInferenceConfig, CheckpointedInferenceExecutor, ParityPolicy};
 
 use super::{
@@ -507,12 +507,16 @@ pub(super) fn run_challenge_scenario(scenario: &Scenario) -> Result<Value> {
         ("other-decoder", "check_c0", take("check_c{k}", "decoder")?),
     ];
     if auxiliary {
-        substituted.push(("other-ple", "aux_p0_l0", table("[chain.input.aux_layer]")?));
+        substituted.push((
+            "other-ple",
+            "aux_p0_l0",
+            table("[pipeline.input.aux_layer]")?,
+        ));
     }
     substituted.push((
         "other-weights",
         "range_p0_l0",
-        table("[chain.input.transformer_layer]")?,
+        table("[pipeline.input.transformer_layer]")?,
     ));
     // Transformer layers have no such case: their caches differ by attention
     // type and donor, so a stage given another layer's weights stops, and
@@ -589,7 +593,7 @@ pub(super) fn run_challenge_scenario(scenario: &Scenario) -> Result<Value> {
     )?);
 
     // Execute the dishonest wiring itself in both engines. Agreement must end
-    // in a committed invalid verdict, even when the altered chain runs honestly.
+    // in a committed invalid verdict, even when the altered pipeline runs honestly.
     let mut rewired = vec![
         (
             "restarted-positions",
@@ -873,7 +877,7 @@ fn dispute_tie(
     let admitted = raster_prover::challenge::verify_challenge(&challenge)
         .map_err(|refusal| anyhow::anyhow!("`{name}`: Raster refuses the challenge: {refusal}"))?;
     ensure!(
-        Some(admitted.chain_digest) == dispute_digest(&claimed)
+        Some(admitted.pipeline_digest) == dispute_digest(&claimed)
             && hex::encode(&admitted.stage.program_commitment) == claimed.program_commitment
             && hex::encode(&admitted.stage.input_manifest_commitment) == claimed.input_commitment,
         "`{name}`: the admitted challenge is not about the claimed checkpoint"
@@ -933,7 +937,7 @@ fn contract_challenge(
 
     // What the liar posts: the honest claim's data, with the lying hashes and
     // checkpoints in place of the honest ones.
-    let posting = blockchain_host::posting::PreparedPosting::read(&honest.chain_dir)?
+    let posting = blockchain_host::posting::PreparedPosting::read(&honest.pipeline_dir)?
         .with_checkpoints(
             &claim.claimer,
             &fs::read(&list_path)?,
@@ -1038,7 +1042,8 @@ fn contract_challenge(
     for checkpoint in &lying.checkpoints {
         let manifest = Path::new(&checkpoint.stage).join("input_manifest.json");
         ensure!(
-            fs::read(fetched_dir.join(&manifest))? == fs::read(honest.chain_dir.join(&manifest))?,
+            fs::read(fetched_dir.join(&manifest))?
+                == fs::read(honest.pipeline_dir.join(&manifest))?,
             "`{name}`: the input manifest of `{}` read back from the layer is not the claim's",
             checkpoint.stage
         );
@@ -1114,11 +1119,11 @@ fn contract_challenge(
 }
 
 /// The lying claims that no comparison voids and that a challenger's run of
-/// the chain as the template arranges it would not dispute: each is settled
+/// the pipeline as the template arranges it would not dispute: each is settled
 /// by a replay of one stage on the inputs the claim's own checkpoint names.
 ///
 /// Four give a stage a value the claim is allowed to name, in a place the
-/// chain does not give it: another layer's weights, another range's marks,
+/// pipeline does not give it: another layer's weights, another range's marks,
 /// another stage's output, and the empty value where an earlier stage's
 /// output belongs. Each states the output of a run that was given the right
 /// value. A contract takes the claim and an audit finds nothing, since every
@@ -1194,7 +1199,7 @@ fn posted_lies(
             arranged("marks"),
         ),
         (
-            "arranged-chained",
+            "arranged-piped",
             &honest_submission,
             "prompt_check_p1",
             arranged("bound"),
@@ -1343,7 +1348,7 @@ fn posted_lies(
                 anyhow::anyhow!("`{name}`: Raster refuses the challenge: {refusal}")
             })?;
         ensure!(
-            Some(admitted.chain_digest) == dispute_digest(claimed)
+            Some(admitted.pipeline_digest) == dispute_digest(claimed)
                 && hex::encode(&admitted.stage.program_commitment) == claimed.program_commitment
                 && hex::encode(&admitted.stage.input_manifest_commitment)
                     == claimed.input_commitment,
@@ -1417,10 +1422,10 @@ fn not_greedy_ids(scenario: &Scenario) -> Result<Vec<u32>> {
     Ok(ids)
 }
 
-/// This model's chain over these inputs.
+/// This model's pipeline over these inputs.
 fn render(model_path: &Path, model: &ModelManifest, run: &RunInputs, dir: &Path) -> Result<String> {
     let (template_path, segment) = model.verified_raster_template(model_path)?;
-    let template = procedure_definition::ProcedureKind::single().chain_template(&[&segment])?;
+    let template = procedure_definition::ProcedureKind::single().pipeline_template(&[&segment])?;
     let range_size = run.config.range_size as usize;
     let mark_files = run_prep::write_marks(&run.marks, dir)?;
     let claimed_files = run_prep::write_claimed_ranges(&run.ids, range_size, dir)?;
@@ -1479,7 +1484,7 @@ fn claimed_run(
             parity_policy: ParityPolicy::Skip,
         })
         .with_context(|| format!("substituted claim `{name}`"))?;
-    let list = build_checkpoint_list(&run.chain_dir, &manifest_path)?;
+    let list = build_checkpoint_list(&run.pipeline_dir, &manifest_path)?;
     let hashes = dir.join("checkpoints.txt");
     write_checkpoint_hashes(&hashes, &checkpoint_hashes(&list)?)?;
     Ok((hashes, list))
@@ -1618,7 +1623,7 @@ fn take_binding(manifest: &str, other: &str, stage: &str, key: &str) -> Result<S
     replace_binding_line(manifest, stage, key, line)
 }
 
-/// The manifest with this `[chain.input]` table taken from another run.
+/// The manifest with this `[pipeline.input]` table taken from another run.
 fn take_table(manifest: &str, other: &str, header: &str) -> Result<String> {
     let blocks = manifest_blocks(other);
     let table = blocks
@@ -1665,7 +1670,7 @@ fn swapped_ple(scenario: &Scenario, manifest: &str) -> Result<String> {
     );
     let mut out = Vec::new();
     for block in manifest_blocks(manifest) {
-        if block[0].trim() != "[chain.input.aux_layer]" {
+        if block[0].trim() != "[pipeline.input.aux_layer]" {
             out.extend(block.iter().map(|line| line.to_string()));
             continue;
         }
@@ -1695,7 +1700,7 @@ fn swapped_ple(scenario: &Scenario, manifest: &str) -> Result<String> {
 fn tokenizer_substitution_binding(manifest: &str, dir: &Path) -> Result<String> {
     use sequence_check::prompt::{BpeMerge, PromptTokenizer, TokenEntry};
     let parsed: toml::Value = toml::from_str(manifest)?;
-    let stage = parsed["chain"]["repeat"]
+    let stage = parsed["pipeline"]["repeat"]
         .as_array()
         .context("missing repeats")?
         .iter()
@@ -1756,7 +1761,7 @@ fn tokenizer_substitution_binding(manifest: &str, dir: &Path) -> Result<String> 
 /// membership. Changes confined to unread entries need not alter execution.
 fn decoder_substitution_manifests(manifest: &str, dir: &Path) -> Result<(String, String)> {
     let parsed: toml::Value = toml::from_str(manifest)?;
-    let stage = parsed["chain"]["stage"]
+    let stage = parsed["pipeline"]["stage"]
         .as_array()
         .context("missing stages")?
         .iter()
@@ -1858,7 +1863,7 @@ fn replay_semantic_rejection(
     let raster_dir = dir.join("raster");
     fs::create_dir(&raster_dir)?;
     let mut run = command(raster, root);
-    run.args(["raster", "chain", "run"])
+    run.args(["raster", "pipeline", "run"])
         .arg(&manifest_path)
         .args(["--no-auth", "--run"])
         .arg(&raster_dir);
@@ -1866,7 +1871,7 @@ fn replay_semantic_rejection(
     let order =
         procedure_definition::read_stage_order(&raster_dir)?.context("missing stage inventory")?;
     let raster_outputs = super::read_boundaries(&raster_dir, &order, false)?;
-    let native_outputs = super::read_boundaries(&native.chain_dir, &order, false)?;
+    let native_outputs = super::read_boundaries(&native.pipeline_dir, &order, false)?;
     for stage in &order {
         super::compare(stage, &raster_outputs[stage], &native_outputs[stage])?;
     }
@@ -1938,8 +1943,8 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "replays retained chain attacks through native and Raster; set IRIS_PARITY_RUN"]
-    fn chain_wiring_self_replays_reject_matching_execution() {
+    #[ignore = "replays retained pipeline attacks through native and Raster; set IRIS_PARITY_RUN"]
+    fn pipeline_wiring_self_replays_reject_matching_execution() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("..")
             .canonicalize()
@@ -2023,7 +2028,7 @@ mod tests {
         }
     }
 
-    const MANIFEST: &str = "[chain]\nname = \"iris\"\n\n[chain.input.layers]\nindex = \"l\"\npath = \"a/layer{l}.rastered\"\ncommitments = [\n  \"one\", # l0\n  \"two\", # l1\n]\n\n[[chain.stage]]\nname = \"first\"\ninputs.value = { from = \"source\" }\n\n[[chain.repeat]]\nname = \"more\"\n\n  [[chain.repeat.stage]]\nname = \"later_{j}\"\ninputs.value = { from = \"first\" }\ninputs.other = { from = \"first\" }\n";
+    const MANIFEST: &str = "[pipeline]\nname = \"iris\"\n\n[pipeline.input.layers]\nindex = \"l\"\npath = \"a/layer{l}.rastered\"\ncommitments = [\n  \"one\", # l0\n  \"two\", # l1\n]\n\n[[pipeline.stage]]\nname = \"first\"\ninputs.value = { from = \"source\" }\n\n[[pipeline.repeat]]\nname = \"more\"\n\n  [[pipeline.repeat.stage]]\nname = \"later_{j}\"\ninputs.value = { from = \"first\" }\ninputs.other = { from = \"first\" }\n";
 
     #[test]
     fn a_binding_changes_in_the_named_stage_only() {
@@ -2045,7 +2050,7 @@ mod tests {
         let other = MANIFEST
             .replace("a/layer", "b/layer")
             .replace("{ from = \"source\" }", "{ from = \"elsewhere\" }");
-        let table = take_table(MANIFEST, &other, "[chain.input.layers]").unwrap();
+        let table = take_table(MANIFEST, &other, "[pipeline.input.layers]").unwrap();
         assert_eq!(table, MANIFEST.replace("a/layer", "b/layer"));
         let binding = take_binding(MANIFEST, &other, "first", "value").unwrap();
         assert_eq!(

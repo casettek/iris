@@ -1,6 +1,6 @@
 //! What a contract is configured with before any claim arrives: the programs
 //! of a procedure kind and where each of their inputs comes from, the models, and
-//! the parameters a claim must have run under. Read from a chain template
+//! the parameters a claim must have run under. Read from a pipeline template
 //! and the stage projects' locks.
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -58,7 +58,7 @@ pub struct StageProgram {
     pub program_commitment: String,
     /// The inputs this program takes from earlier stages. Every other input
     /// is model data or a run input, which the program checks itself.
-    pub chained_inputs: Vec<ChainedInput>,
+    pub piped_inputs: Vec<PipedInput>,
     /// The inputs a run gives this program: the prompt, the claimed tokens,
     /// the run's configuration and schedule, the source and the forms. Each
     /// is made from the run's new information, the procedure and the
@@ -80,7 +80,7 @@ pub struct StageProgram {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PinnedInput {
     pub name: String,
-    /// Every commitment the chain template binds the input to: one for an
+    /// Every commitment the pipeline template binds the input to: one for an
     /// input every stage of the program takes the same way, and one per
     /// layer for an input that differs by layer.
     pub values: Vec<String>,
@@ -88,14 +88,14 @@ pub struct PinnedInput {
 
 /// One input a stage program takes from an earlier stage.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct ChainedInput {
+pub struct PipedInput {
     pub name: String,
     /// The stage programs whose output this input may be, by `stage` name.
     /// It keeps an output of the wrong shape out of a stage, which the stage
     /// could not decode and so could not record a fault about.
     pub producers: Vec<String>,
     /// The commitments of the empty values this input may hold in place of an
-    /// earlier output, where the chain starts. The stages accept them only
+    /// earlier output, where the pipeline starts. The stages accept them only
     /// there.
     pub empty_values: Vec<String>,
 }
@@ -120,18 +120,18 @@ pub struct RequiredParameters {
 }
 
 impl ContractPins {
-    /// The pins of an import: its model, and the procedure kind its chain template
+    /// The pins of an import: its model, and the procedure kind its pipeline template
     /// describes, with the program id each stage project has locked.
     pub fn from_import(manifest: &ModelManifest, segment: &str) -> Result<Self> {
         Self::of(ProcedureKind::single(), &[(manifest, segment)])
     }
 
     /// The pins of a procedure kind over imported models: each model as its import
-    /// identifies it, and the stage programs of the procedure kind's chain over the
+    /// identifies it, and the stage programs of the procedure kind's pipeline over the
     /// imports' segments, with the program id each stage project has locked now.
     pub fn of(procedure_kind: ProcedureKind, imports: &[(&ModelManifest, &str)]) -> Result<Self> {
         let segments: Vec<&str> = imports.iter().map(|(_, segment)| *segment).collect();
-        let template = procedure_kind.chain_template(&segments)?;
+        let template = procedure_kind.pipeline_template(&segments)?;
         let mut families: Vec<&str> = Vec::new();
         for (manifest, _) in imports {
             if !families.contains(&manifest.family.as_str()) {
@@ -195,21 +195,21 @@ impl ModelPins {
 }
 
 impl ProgramPins {
-    /// The stage programs a chain template names, with the program id each
+    /// The stage programs a pipeline template names, with the program id each
     /// stage project has locked and the inputs each takes from earlier
     /// stages. `family` names the model families whose programs these are.
     pub fn from_template(family: String, template: &str) -> Result<Self> {
-        let mut run_inputs = chain_run_inputs(template)?;
-        let mut pinned_inputs = chain_pinned_inputs(template)?;
-        let stage_programs = chain_wiring(template)?
+        let mut run_inputs = pipeline_run_inputs(template)?;
+        let mut pinned_inputs = pipeline_pinned_inputs(template)?;
+        let stage_programs = pipeline_wiring(template)?
             .into_iter()
-            .map(|(project, chained_inputs)| {
-                // A chained input's fixed values are its empty values.
+            .map(|(project, piped_inputs)| {
+                // A piped input's fixed values are its empty values.
                 let pinned_inputs = pinned_inputs
                     .remove(&project)
                     .unwrap_or_default()
                     .into_iter()
-                    .filter(|(name, _)| !chained_inputs.iter().any(|input| input.name == *name))
+                    .filter(|(name, _)| !piped_inputs.iter().any(|input| input.name == *name))
                     .map(|(name, values)| PinnedInput {
                         name,
                         values: values.into_iter().collect(),
@@ -218,7 +218,7 @@ impl ProgramPins {
                 Ok(StageProgram {
                     stage: project_name(&project)?,
                     program_commitment: locked_program_commitment(&project)?,
-                    chained_inputs,
+                    piped_inputs,
                     run_inputs: run_inputs
                         .remove(&project)
                         .unwrap_or_default()
@@ -254,8 +254,8 @@ impl ProgramPins {
 }
 
 impl StageProgram {
-    pub fn chained_input(&self, name: &str) -> Option<&ChainedInput> {
-        self.chained_inputs.iter().find(|input| input.name == name)
+    pub fn piped_input(&self, name: &str) -> Option<&PipedInput> {
+        self.piped_inputs.iter().find(|input| input.name == name)
     }
 
     pub fn pinned_input(&self, name: &str) -> Option<&PinnedInput> {
@@ -273,7 +273,7 @@ fn project_name(project: &Path) -> Result<String> {
 
 /// A stage name with its indexes blanked, so `range_p3_l{l-1}` and
 /// `range_p{j}_l{l}` name the same kind of stage. The label of the inference
-/// a stage belongs to is kept as it is: two inferences of one chain may run
+/// a stage belongs to is kept as it is: two inferences of one pipeline may run
 /// different programs for stages of one name.
 fn stage_shape(name: &str) -> String {
     let (mut shape, name) = match procedure_definition::procedure_kind::labelled_name(name) {
@@ -309,20 +309,20 @@ fn stage_shape(name: &str) -> String {
     shape
 }
 
-/// Each stage project a chain template names, with the inputs it takes from
+/// Each stage project a pipeline template names, with the inputs it takes from
 /// earlier stages: for each, the projects that may produce it and the empty
-/// values it holds where the chain starts. Projects are in the order the
+/// values it holds where the pipeline starts. Projects are in the order the
 /// template first names them.
 ///
-/// An input is chained when any stage of the project binds it `from` another
+/// An input is piped when any stage of the project binds it `from` another
 /// stage. Where another stage of the same project binds it to a fixed
 /// external instead, that external is the input's empty value.
-pub fn chain_wiring(template: &str) -> Result<Vec<(PathBuf, Vec<ChainedInput>)>> {
+pub fn pipeline_wiring(template: &str) -> Result<Vec<(PathBuf, Vec<PipedInput>)>> {
     let document: toml::Value =
-        toml::from_str(template).context("the chain template is not valid TOML")?;
-    let chain = document
-        .get("chain")
-        .context("the chain template has no [chain] table")?;
+        toml::from_str(template).context("the pipeline template is not valid TOML")?;
+    let pipeline = document
+        .get("pipeline")
+        .context("the pipeline template has no [pipeline] table")?;
     let stages_of = |table: &toml::Value| -> Vec<toml::Value> {
         ["stage", "stages"]
             .iter()
@@ -331,8 +331,8 @@ pub fn chain_wiring(template: &str) -> Result<Vec<(PathBuf, Vec<ChainedInput>)>>
             .cloned()
             .collect()
     };
-    let mut stages = stages_of(chain);
-    for repeat in chain
+    let mut stages = stages_of(pipeline);
+    for repeat in pipeline
         .get("repeat")
         .and_then(toml::Value::as_array)
         .into_iter()
@@ -345,7 +345,7 @@ pub fn chain_wiring(template: &str) -> Result<Vec<(PathBuf, Vec<ChainedInput>)>>
         Ok(stage
             .get(key)
             .and_then(toml::Value::as_str)
-            .with_context(|| format!("a chain stage has no `{key}`"))?
+            .with_context(|| format!("a pipeline stage has no `{key}`"))?
             .to_string())
     };
     // Which project runs each kind of stage.
@@ -374,7 +374,7 @@ pub fn chain_wiring(template: &str) -> Result<Vec<(PathBuf, Vec<ChainedInput>)>>
                     project_of_shape
                         .get(&stage_shape(producer))
                         .with_context(|| {
-                            format!("the chain template binds `{param}` from `{producer}`, which is no stage of it")
+                            format!("the pipeline template binds `{param}` from `{producer}`, which is no stage of it")
                         })?;
                 producers
                     .entry(key.clone())
@@ -397,10 +397,10 @@ pub fn chain_wiring(template: &str) -> Result<Vec<(PathBuf, Vec<ChainedInput>)>>
     Ok(projects
         .into_iter()
         .map(|project| {
-            let chained_inputs = producers
+            let piped_inputs = producers
                 .iter()
                 .filter(|((of, _), _)| *of == project)
-                .map(|(key, producers)| ChainedInput {
+                .map(|(key, producers)| PipedInput {
                     name: key.1.clone(),
                     producers: producers.iter().cloned().collect(),
                     empty_values: externals
@@ -409,32 +409,32 @@ pub fn chain_wiring(template: &str) -> Result<Vec<(PathBuf, Vec<ChainedInput>)>>
                         .unwrap_or_default(),
                 })
                 .collect();
-            (project, chained_inputs)
+            (project, piped_inputs)
         })
         .collect())
 }
 
-/// Where a model import's chain template points the files a run writes:
-/// a run's chain points them at the run's own.
+/// Where a model import's pipeline template points the files a run writes:
+/// a run's pipeline points them at the run's own.
 pub const RUN_PLACEHOLDER_DIR: &str = "run-prompt-placeholder/";
 
-/// The inputs a run gives each stage project a chain template names: those
-/// bound `{ run = ... }`, and those bound to an external or a chain input whose
+/// The inputs a run gives each stage project a pipeline template names: those
+/// bound `{ run = ... }`, and those bound to an external or a pipeline input whose
 /// file is a run's placeholder (see [`RUN_PLACEHOLDER_DIR`]). Everything else
 /// a stage loads is an earlier output or model data.
-pub fn chain_run_inputs(template: &str) -> Result<BTreeMap<PathBuf, BTreeSet<String>>> {
+pub fn pipeline_run_inputs(template: &str) -> Result<BTreeMap<PathBuf, BTreeSet<String>>> {
     let document: toml::Value =
-        toml::from_str(template).context("the chain template is not valid TOML")?;
-    let chain = document
-        .get("chain")
-        .context("the chain template has no [chain] table")?;
+        toml::from_str(template).context("the pipeline template is not valid TOML")?;
+    let pipeline = document
+        .get("pipeline")
+        .context("the pipeline template has no [pipeline] table")?;
     let placeholder = |value: Option<&toml::Value>| {
         value
             .and_then(toml::Value::as_str)
             .is_some_and(|path| path.contains(RUN_PLACEHOLDER_DIR))
     };
-    // The chain inputs whose files a run writes, by name.
-    let run_chain_inputs: Vec<&String> = chain
+    // The pipeline inputs whose files a run writes, by name.
+    let run_pipeline_inputs: Vec<&String> = pipeline
         .get("input")
         .and_then(toml::Value::as_table)
         .into_iter()
@@ -450,8 +450,8 @@ pub fn chain_run_inputs(template: &str) -> Result<BTreeMap<PathBuf, BTreeSet<Str
             .cloned()
             .collect()
     };
-    let mut stages = stages_of(chain);
-    for repeat in chain
+    let mut stages = stages_of(pipeline);
+    for repeat in pipeline
         .get("repeat")
         .and_then(toml::Value::as_array)
         .into_iter()
@@ -465,7 +465,7 @@ pub fn chain_run_inputs(template: &str) -> Result<BTreeMap<PathBuf, BTreeSet<Str
             stage
                 .get("project")
                 .and_then(toml::Value::as_str)
-                .context("a chain stage has no `project`")?,
+                .context("a pipeline stage has no `project`")?,
         );
         let inputs = stage.get("inputs").and_then(toml::Value::as_table);
         for (param, binding) in inputs.into_iter().flatten() {
@@ -479,7 +479,7 @@ pub fn chain_run_inputs(template: &str) -> Result<BTreeMap<PathBuf, BTreeSet<Str
                     .get("input")
                     .and_then(toml::Value::as_str)
                     .is_some_and(|name| {
-                        run_chain_inputs.iter().any(|input| {
+                        run_pipeline_inputs.iter().any(|input| {
                             name.strip_prefix(input.as_str())
                                 .is_some_and(|rest| rest.is_empty() || rest.starts_with('_'))
                         })
@@ -495,26 +495,26 @@ pub fn chain_run_inputs(template: &str) -> Result<BTreeMap<PathBuf, BTreeSet<Str
     Ok(run_inputs)
 }
 
-/// The inputs each stage project a chain template names is given from fixed
+/// The inputs each stage project a pipeline template names is given from fixed
 /// data, with every commitment the template binds each to: an external whose
-/// file is not a run's, or a chain input whose files are not a run's, which
+/// file is not a run's, or a pipeline input whose files are not a run's, which
 /// lists a commitment per layer. These are the model's data and whatever
 /// else an import writes once.
-pub fn chain_pinned_inputs(
+pub fn pipeline_pinned_inputs(
     template: &str,
 ) -> Result<BTreeMap<PathBuf, BTreeMap<String, BTreeSet<String>>>> {
     let document: toml::Value =
-        toml::from_str(template).context("the chain template is not valid TOML")?;
-    let chain = document
-        .get("chain")
-        .context("the chain template has no [chain] table")?;
+        toml::from_str(template).context("the pipeline template is not valid TOML")?;
+    let pipeline = document
+        .get("pipeline")
+        .context("the pipeline template has no [pipeline] table")?;
     let from_run = |value: Option<&toml::Value>| {
         value
             .and_then(toml::Value::as_str)
             .is_some_and(|path| path.contains(RUN_PLACEHOLDER_DIR))
     };
-    // The chain inputs whose files are fixed, each with its commitments.
-    let fixed_chain_inputs: Vec<(&String, Vec<String>)> = chain
+    // The pipeline inputs whose files are fixed, each with its commitments.
+    let fixed_pipeline_inputs: Vec<(&String, Vec<String>)> = pipeline
         .get("input")
         .and_then(toml::Value::as_table)
         .into_iter()
@@ -540,8 +540,8 @@ pub fn chain_pinned_inputs(
             .cloned()
             .collect()
     };
-    let mut stages = stages_of(chain);
-    for repeat in chain
+    let mut stages = stages_of(pipeline);
+    for repeat in pipeline
         .get("repeat")
         .and_then(toml::Value::as_array)
         .into_iter()
@@ -555,7 +555,7 @@ pub fn chain_pinned_inputs(
             stage
                 .get("project")
                 .and_then(toml::Value::as_str)
-                .context("a chain stage has no `project`")?,
+                .context("a pipeline stage has no `project`")?,
         );
         let inputs = stage.get("inputs").and_then(toml::Value::as_table);
         for (param, binding) in inputs.into_iter().flatten() {
@@ -571,7 +571,7 @@ pub fn chain_pinned_inputs(
                 }
             }
             if let Some(name) = binding.get("input").and_then(toml::Value::as_str) {
-                for (input, commitments) in &fixed_chain_inputs {
+                for (input, commitments) in &fixed_pipeline_inputs {
                     let named = name
                         .strip_prefix(input.as_str())
                         .is_some_and(|rest| rest.is_empty() || rest.starts_with('_'));

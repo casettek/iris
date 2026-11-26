@@ -1,6 +1,6 @@
 //! What a claimer, a challenger and a defender do on the host for a claim
 //! that is settled on blockchains: build a claim and post it, fetch and audit
-//! one, build a challenge, prove a fault, and the calls to the chains.
+//! one, build a challenge, prove a fault, and the calls to the pipelines.
 
 pub mod arrangement;
 pub mod audit;

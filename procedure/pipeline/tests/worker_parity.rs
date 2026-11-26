@@ -262,10 +262,10 @@ impl Fixture {
             "empty_edge",
             &staged_infer::kernels::origin::empty_decode_edge(),
         );
-        let mut text = String::from("[chain]\nname = \"worker-parity\"\nversion = \"0.1.0\"\n");
+        let mut text = String::from("[pipeline]\nname = \"worker-parity\"\nversion = \"0.1.0\"\n");
         let mut add = |name: String, project: &str, inputs: Vec<(&str, String)>| {
             text.push_str(&format!(
-                "\n[[chain.stage]]\nname = {}\nproject = {}\n",
+                "\n[[pipeline.stage]]\nname = {}\nproject = {}\n",
                 toml::Value::String(name.clone()),
                 toml::Value::String(project.into())
             ));
@@ -397,7 +397,7 @@ impl Fixture {
                     ("prompt", prompt.clone()),
                     ("head", head.clone()),
                     // Every check states the output record so far; the last
-                    // one's is the chain's result.
+                    // one's is the pipeline's result.
                     ("decoder", decoder.clone()),
                     ("descriptor", descriptor.clone()),
                     ("witness", witness.clone()),
@@ -412,7 +412,7 @@ impl Fixture {
     fn run_mode(&self, budget: usize, workers: usize, subprocess: bool, mode: &str) -> PathBuf {
         let mut cmd = Command::new(env!("CARGO_BIN_EXE_staged-infer"));
         cmd.current_dir(&self.base)
-            .args(["chain", "run"])
+            .args(["pipeline", "run"])
             .env("STAGED_INFER_WEIGHT_CACHE_BYTES", budget.to_string())
             .env("STAGED_INFER_PLE_LOADING", mode)
             .env("STAGED_INFER_AUX_PARALLELISM", workers.to_string());
@@ -508,11 +508,11 @@ fn repeated_ranges_have_identical_checkpoints_with_worker_and_cache_reuse() {
     }
 }
 
-/// Inference without checkpoints runs the same chain and reads its result
+/// Inference without checkpoints runs the same pipeline and reads its result
 /// from the last check's record, as a checkpointed run does.
 #[test]
 fn uncheckpointed_inference_gives_the_checkpointed_result() {
-    use staged_infer::chain_runner::StagedExecutionBackend;
+    use staged_infer::pipeline_runner::StagedExecutionBackend;
     use staged_infer::{
         CheckpointedInferenceConfig, CheckpointedInferenceExecutor, UncheckpointedInferenceConfig,
         UncheckpointedInferenceExecutor,
@@ -544,7 +544,7 @@ fn uncheckpointed_inference_gives_the_checkpointed_result() {
         .results
         .into_iter()
         .next()
-        .expect("a checkpointed chain ends in a check with its output record");
+        .expect("a checkpointed pipeline ends in a check with its output record");
     assert_eq!(report.result, result);
     // Three claimed ranges of one token each, and the last check is the
     // last stage.
@@ -552,10 +552,13 @@ fn uncheckpointed_inference_gives_the_checkpointed_result() {
     assert_eq!(result.generated_token_ids.len(), 3);
     // This fixture's prompt context binds no statement or schedule, so its
     // record is not a clean one; a clean record is tested on its own
-    // (`native_stages.rs`) and on a whole chain by the parity gate.
+    // (`native_stages.rs`) and on a whole pipeline by the parity gate.
     assert_ne!(result.model_fault, 0);
     assert_eq!(f.stages.last().unwrap().0, "check_c2");
-    assert!(checkpointed.chain_dir.join("check_c2/output.bin").is_file());
+    assert!(checkpointed
+        .pipeline_dir
+        .join("check_c2/output.bin")
+        .is_file());
 }
 
 #[test]
@@ -616,7 +619,7 @@ fn selective_input_failure_does_not_publish_and_unknown_mode_fails_early() {
     f.manifest();
     let bad_mode = Command::new(env!("CARGO_BIN_EXE_staged-infer"))
         .current_dir(&f.base)
-        .args(["chain", "run"])
+        .args(["pipeline", "run"])
         .env("STAGED_INFER_PLE_LOADING", "typo")
         .output()
         .unwrap();
@@ -772,7 +775,7 @@ fn challenge_cleanup_child() {
             base_dir: base.clone(),
             manifest_path: base.join("Raster.toml"),
             current_exe: env!("CARGO_BIN_EXE_staged-infer").into(),
-            staged_backend: staged_infer::chain_runner::StagedExecutionBackend::InProcess,
+            staged_backend: staged_infer::pipeline_runner::StagedExecutionBackend::InProcess,
             claimed_hashes_path: path,
             claimed_hashes: hashes,
             claimed_sources: None,
@@ -780,7 +783,7 @@ fn challenge_cleanup_child() {
         .unwrap();
     assert_eq!(result.divergence.unwrap().checkpoint_index, stop);
     assert_eq!(result.recomputed_list.checkpoints.len(), stop + 1);
-    assert!(!result.chain_dir.join("range_c1_l0").exists());
+    assert!(!result.pipeline_dir.join("range_c1_l0").exists());
     let mut system = sysinfo::System::new();
     system.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
     let parent = sysinfo::Pid::from_u32(std::process::id());

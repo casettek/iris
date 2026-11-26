@@ -15,7 +15,7 @@ There are four segments. The third exists.
 | --- | --- |
 | Source | Checks a signed attestation that a document came from a named server |
 | Prompt | Builds the prompt from a base prompt and values taken out of that document |
-| Inference | Verifies the model's output on that prompt. Today's chain |
+| Inference | Verifies the model's output on that prompt. Today's pipeline |
 | Result | Turns the verified output text into a value for final use |
 
 After this, a claim's record says which document the prompt's data came from, who signed
@@ -206,7 +206,7 @@ message, no accelerator. The program is `target/spikes/sig-tile`, untracked.
 | ECDSA, P-256 | 11,912,645 |
 | Reading the input only | 20,921 |
 
-All three fit in one tile. The chain's heaviest tiles measured in the tens of millions of
+All three fit in one tile. The pipeline's heaviest tiles measured in the tens of millions of
 cycles in the November 11 baselines. I chose secp256k1 because it is what an Ethereum contract can check natively
 and, as far as I know, what TLSNotary notaries usually sign with. The `scheme` byte lets
 that change.
@@ -233,7 +233,7 @@ until the notary replaces it.
 ## Build order
 
 1. `source-core`, `iris attest sign`, the `[source]` table and the direct path. The
-   backend's earthquake case runs through it. No chain change.
+   backend's earthquake case runs through it. No pipeline change.
 2. The native `source` and `result` routines, the bind's new input, checkpoints, and a
    parity case for each row of the table above.
 3. The two Raster programs, authored against the Raster skill. Measure trace steps and
@@ -259,7 +259,7 @@ test tier's lock check passes.
 - `iris infer` and `iris claim build` on such a specification use the prompt the source gives. A
   source with a fault gives none, and the run stops there. `iris infer` also prints the
   source's facts and the result code. They are computed by the host from the same
-  functions, and no chain states them yet.
+  functions, and no pipeline states them yet.
 - In iris-backend, on its own `authenticated-data` branch: the impact claim (now version
   4) builds a recipe from the three documents it already fetches, has IRIS sign them and
   render the prompt at preparation, and gives IRIS the source files at execution. It
@@ -289,12 +289,12 @@ That left the record a run input. The source stage, below, now produces it.
 
 What it changed on disk: every stage program that reaches the statement or the prompt
 context, so every `Raster.lock`, and the model manifest, which is version 17 because the
-chain template gives the bind a source. The batch below re-locked and re-imported.
+pipeline template gives the bind a source. The batch below re-locked and re-imported.
 
 The source stage, the same day: `raster-stages/prompt-source`, with its lock.
 
-- **In the chain.** The import's template has a `source` stage whose three inputs a run
-  fills in, and the first bind takes its record. A run without a source gets a chain
+- **In the pipeline.** The import's template has a `source` stage whose three inputs a run
+  fills in, and the first bind takes its record. A run without a source gets a pipeline
   without the stage: claim build removes it and gives the first bind the constant
   `no_source`, which is what every later bind is given in any run. The contract's wiring
   already allows an input to be an earlier stage's output or a pinned empty value.
@@ -330,7 +330,7 @@ The batch, the same day:
 | --- | --- |
 | Re-lock of all eight stage programs | verified, 19 minutes |
 | Full test tier: unit tests, lock check, both parity gates with their challenge scenarios, the stage ladder | all pass, 41 minutes |
-| A claim with a source on the parity model: direct, native, and the whole chain through Raster | one statement; `claim check` holds every native checkpoint to the boundary the Raster run committed |
+| A claim with a source on the parity model: direct, native, and the whole pipeline through Raster | one statement; `claim check` holds every native checkpoint to the boundary the Raster run committed |
 | Re-import of Gemma 4 E2B, Gemma 4 E4B and Ministral 3B at version 17 | done; the version 16 imports are in `runtime/model-artifact-backups` |
 | Real-model check, with its references rewritten | E2B and E4B claims build with no fault; one stage of each program as Raster gives the native output |
 | The impact claim on the real documents, Gemma 4 E2B | 219 stages in 68 s, valid, `{"verdict":"confirmed"}`; `claim check` passes |
@@ -357,7 +357,7 @@ lock, at manifest version 18.
   record. Its logic is `phases/result/src/forms.rs`, which the stage compiles on its
   own, direct inference calls and the native routine calls. It reads the last check's
   output through its own copy of the edge type, and a test holds the copy to the check's
-  commitment. The forms are a run input, empty for a run that names none, so every chain
+  commitment. The forms are a run input, empty for a run that names none, so every pipeline
   ends in the stage.
 - **The claim.** A result carries `result_code` and `result_forms_sha256`. A challenger
   reruns the stage on the forms the claim's prepared run holds.
@@ -372,7 +372,7 @@ lock, at manifest version 18.
   must run the check, and the result is in the last, which must run the result stage.
   `iris claim check` takes the signer, the recipe and the forms from the specification.
 - **Challenges are unchanged.** `source` and `result` are stages with approved programs
-  and chained inputs. A challenger recomputes, finds the first checkpoint that differs
+  and piped inputs. A challenger recomputes, finds the first checkpoint that differs
   and replays that stage.
 
 Checked:

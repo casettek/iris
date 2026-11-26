@@ -96,7 +96,7 @@ pub(crate) fn run(command: ModelCommand) -> Result<ExitCode> {
 /// Writes what a contract pins for this import beside its manifest, as two
 /// entries. The procedure kind: the program id each stage project has locked, and
 /// for each program the inputs it takes from earlier stages, read from the
-/// chain template of the `single` procedure kind over this import. The model: its
+/// pipeline template of the `single` procedure kind over this import. The model: its
 /// id with the commitments it hashes, and the range size.
 ///
 /// An import made where the stage projects are not locked gets no pins and

@@ -7,7 +7,7 @@ use crate::artifact_io::{with_main_sequence_scope, with_stage_sequence_scope};
 use crate::cache::{CachedInputs, MaterializationCache};
 
 /// The `prompt-source` stage's inputs. The types are `source-core`'s: the
-/// stage program compiles the same source file, and a chain links by
+/// stage program compiles the same source file, and a pipeline links by
 /// structure.
 pub struct Inputs {
     /// The key attestations are checked against.

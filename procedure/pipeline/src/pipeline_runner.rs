@@ -24,21 +24,21 @@ use crate::worker::{WorkerJob, WorkerPool};
 
 #[derive(Debug)]
 pub struct HybridRun {
-    pub chain_dir: PathBuf,
+    pub pipeline_dir: PathBuf,
     pub selected_stage_dir: Option<PathBuf>,
     pub final_output: Option<CachedStageValue>,
     /// The output of the last check the run reached of each inference, in
-    /// the order the chain runs them. The result stage follows them.
+    /// the order the pipeline runs them. The result stage follows them.
     pub final_checks: Vec<CachedStageValue>,
     /// For each input the run's last stage took from an earlier stage, the
     /// inference that stage is of: which check a result stage read.
     pub final_reads: BTreeMap<String, usize>,
 }
 
-/// A native prefix ending at one exact expanded chain stage.
+/// A native prefix ending at one exact expanded pipeline stage.
 #[derive(Debug, Clone)]
 pub struct StagePrefixRun {
-    pub chain_dir: PathBuf,
+    pub pipeline_dir: PathBuf,
     pub stage: String,
     pub project_dir: PathBuf,
     pub stage_dir: PathBuf,
@@ -54,7 +54,7 @@ pub struct CheckpointHashVerifier {
     pub claimed_hashes_path: PathBuf,
     pub claimed_hashes: Vec<String>,
     /// For each checkpoint of the claim, the producers it points at. A run
-    /// of the chain as a claim arranges it states these as the claim does:
+    /// of the pipeline as a claim arranges it states these as the claim does:
     /// a pointer is the claim's own statement, which the link comparison
     /// judges, and a run reproduces only what a stage loads and makes. With
     /// none, each checkpoint's pointers are the ones its bindings give.
@@ -86,7 +86,7 @@ pub enum ExpandedInput {
 /// to. This is the expansion a run executes.
 pub fn expanded_stages(manifest_path: &Path) -> Result<Vec<ExpandedStage>> {
     Ok(read_manifest(manifest_path)?
-        .chain
+        .pipeline
         .stage
         .into_iter()
         .map(|stage| ExpandedStage {
@@ -118,7 +118,7 @@ pub struct CheckpointVerifiedRun {
     pub divergence: Option<Divergence>,
 }
 
-struct ChainRunOutput {
+struct PipelineRunOutput {
     run: HybridRun,
     recomputed_list: Option<CheckpointList>,
     divergence: Option<Divergence>,
@@ -126,11 +126,11 @@ struct ChainRunOutput {
 
 #[derive(Debug)]
 pub(crate) struct Manifest {
-    pub(crate) chain: ChainSpec,
+    pub(crate) pipeline: PipelineSpec,
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct ChainSpec {
+pub(crate) struct PipelineSpec {
     pub(crate) stage: Vec<StageSpec>,
 }
 
@@ -159,11 +159,11 @@ pub(crate) struct ExternalRef {
 
 #[derive(Debug, Deserialize)]
 struct RasterTomlDoc {
-    chain: ChainTable,
+    pipeline: PipelineTable,
 }
 
 #[derive(Debug, Deserialize)]
-struct ChainTable {
+struct PipelineTable {
     #[serde(default, rename = "input")]
     inputs: BTreeMap<String, InputDecl>,
     #[serde(default, rename = "stage")]
@@ -172,8 +172,8 @@ struct ChainTable {
     repeats: Vec<toml::Spanned<RepeatSpec>>,
 }
 
-/// A `[[chain.stage]]` as the manifest writes it. Its bindings are a repeat
-/// stage's, read with no index in scope: a stage, an external, or a chain
+/// A `[[pipeline.stage]]` as the manifest writes it. Its bindings are a repeat
+/// stage's, read with no index in scope: a stage, an external, or a pipeline
 /// input by name.
 #[derive(Debug, Deserialize)]
 struct PlainStageSpec {
@@ -184,7 +184,7 @@ struct PlainStageSpec {
 }
 
 #[derive(Debug)]
-enum ChainItem {
+enum PipelineItem {
     Stage(PlainStageSpec),
     Repeat(RepeatSpec),
 }
@@ -298,7 +298,7 @@ struct StagePerformance {
     cache: inference_kernels::weight_budget::WeightCacheStats,
 }
 
-struct ChainRunState {
+struct PipelineRunState {
     auxiliary_process_starts: usize,
     memory: crate::segments::inference::weights::MemorySampler,
     weights: RunWeights,
@@ -313,7 +313,7 @@ struct ChainRunState {
     last_output: Option<CachedStageValue>,
     /// The last check reached of each inference, by the inference's index.
     last_checks: std::collections::BTreeMap<usize, CachedStageValue>,
-    /// The inference each chained input of the last stage run is of.
+    /// The inference each piped input of the last stage run is of.
     last_reads: BTreeMap<String, usize>,
     checkpoint_verifier: Option<CheckpointVerifierState>,
 }
@@ -342,7 +342,7 @@ struct AuxStageBatch {
     parallelism: usize,
 }
 
-impl ChainRunState {
+impl PipelineRunState {
     fn has_divergence(&self) -> bool {
         self.checkpoint_verifier
             .as_ref()
@@ -532,9 +532,9 @@ pub fn run_through_stage(
     staged_backend: StagedExecutionBackend,
 ) -> Result<StagePrefixRun> {
     let manifest = read_manifest(manifest_path)?;
-    validate_reference_stage(&manifest.chain.stage, stage)?;
+    validate_reference_stage(&manifest.pipeline.stage, stage)?;
     let selected = manifest
-        .chain
+        .pipeline
         .stage
         .iter()
         .find(|s| s.name == stage)
@@ -549,9 +549,9 @@ pub fn run_through_stage(
         Some(stage),
     )?
     .run;
-    let stage_dir = run.chain_dir.join(stage);
+    let stage_dir = run.pipeline_dir.join(stage);
     Ok(StagePrefixRun {
-        chain_dir: run.chain_dir,
+        pipeline_dir: run.pipeline_dir,
         stage: stage.to_string(),
         project_dir,
         input_path: stage_dir.join("input.json"),
@@ -577,40 +577,42 @@ fn run_inner(
     staged_backend: StagedExecutionBackend,
     checkpoint_verifier: Option<CheckpointHashVerifier>,
     through_stage: Option<&str>,
-) -> Result<ChainRunOutput> {
+) -> Result<PipelineRunOutput> {
     let ple_loading = crate::segments::inference::ple::Loading::from_env()?;
     let base_dir = std::env::current_dir().context("failed to read current directory")?;
     let mut manifest = read_manifest(manifest_path)?;
-    validate_supported_stages(&manifest.chain.stage)?;
-    // Slice the expanded chain before scheduling. This also bounds aux waves,
+    validate_supported_stages(&manifest.pipeline.stage)?;
+    // Slice the expanded pipeline before scheduling. This also bounds aux waves,
     // output slots and timing records without scheduling any later stages.
-    build_stage_index(&manifest.chain.stage)?;
+    build_stage_index(&manifest.pipeline.stage)?;
     if let Some(stage) = through_stage {
-        truncate_through_stage(&mut manifest.chain.stage, stage)?;
+        truncate_through_stage(&mut manifest.pipeline.stage, stage)?;
     }
     if let Some(raster_stage) = raster_stage {
-        validate_reference_stage(&manifest.chain.stage, raster_stage)?;
+        validate_reference_stage(&manifest.pipeline.stage, raster_stage)?;
     }
 
-    let chain_dir = create_chain_dir(&base_dir)?;
+    let pipeline_dir = create_pipeline_dir(&base_dir)?;
     println!(
-        "staged-infer chain run  {}  ({} stages)",
-        chain_run_id_label(&chain_dir),
-        manifest.chain.stage.len()
+        "staged-infer pipeline run  {}  ({} stages)",
+        pipeline_run_id_label(&pipeline_dir),
+        manifest.pipeline.stage.len()
     );
-    println!("  dir: {}", chain_dir.display());
+    println!("  dir: {}", pipeline_dir.display());
     match raster_stage {
         Some(stage) => {
-            println!("  mode: unauthenticated chain runner (--no-auth; Raster reference: {stage})");
+            println!(
+                "  mode: unauthenticated pipeline runner (--no-auth; Raster reference: {stage})"
+            );
         }
         None => println!("  mode: unauthenticated staged-infer (--no-auth)"),
     }
     println!();
 
-    let chain_started = Instant::now();
-    let stage_index = build_stage_index(&manifest.chain.stage)?;
-    let largest_wave = (0..manifest.chain.stage.len())
-        .filter_map(|i| aux_wave_range(&manifest.chain.stage, i).map(|r| r.len()))
+    let pipeline_started = Instant::now();
+    let stage_index = build_stage_index(&manifest.pipeline.stage)?;
+    let largest_wave = (0..manifest.pipeline.stage.len())
+        .filter_map(|i| aux_wave_range(&manifest.pipeline.stage, i).map(|r| r.len()))
         .max()
         .unwrap_or(0);
     let allocation = if staged_backend == StagedExecutionBackend::InProcess {
@@ -626,15 +628,15 @@ fn run_inner(
         allocation.worker_count,
         allocation.worker_bytes
     );
-    let mut state = ChainRunState {
+    let mut state = PipelineRunState {
         auxiliary_process_starts: 0,
         memory: crate::segments::inference::weights::MemorySampler::start(),
         weights: RunWeights::new(allocation.main_bytes),
         allocation,
         workers: None,
         performance: Vec::new(),
-        output_commitments: vec![None; manifest.chain.stage.len()],
-        execution_times: vec![None; manifest.chain.stage.len()],
+        output_commitments: vec![None; manifest.pipeline.stage.len()],
+        execution_times: vec![None; manifest.pipeline.stage.len()],
         aux_waves: Vec::new(),
         output_cache: StageOutputCache::default(),
         selected_stage_dir: None,
@@ -643,16 +645,16 @@ fn run_inner(
         last_reads: BTreeMap::new(),
         checkpoint_verifier: checkpoint_verifier.map(CheckpointVerifierState::new),
     };
-    let recomputed_list_path = chain_dir.join(CHECKPOINT_LIST_JSON);
+    let recomputed_list_path = pipeline_dir.join(CHECKPOINT_LIST_JSON);
 
     let mut idx = 0;
-    while idx < manifest.chain.stage.len() {
-        if let Some(aux_range) = aux_wave_range(&manifest.chain.stage, idx) {
+    while idx < manifest.pipeline.stage.len() {
+        if let Some(aux_range) = aux_wave_range(&manifest.pipeline.stage, idx) {
             run_aux_wave(
                 aux_range.clone(),
-                &manifest.chain.stage,
+                &manifest.pipeline.stage,
                 &base_dir,
-                &chain_dir,
+                &pipeline_dir,
                 &stage_index,
                 current_exe,
                 staged_backend,
@@ -669,9 +671,9 @@ fn run_inner(
 
         run_one_stage(
             idx,
-            &manifest.chain.stage,
+            &manifest.pipeline.stage,
             &base_dir,
-            &chain_dir,
+            &pipeline_dir,
             &stage_index,
             current_exe,
             staged_backend,
@@ -689,7 +691,7 @@ fn run_inner(
         pool.shutdown()?;
     }
     fs::write(
-        chain_dir.join("staged-performance.json"),
+        pipeline_dir.join("staged-performance.json"),
         serde_json::to_vec_pretty(&serde_json::json!({
             "version": 1,
             "ple_loading": ple_loading.as_str(),
@@ -697,13 +699,13 @@ fn run_inner(
             "head_loading": "paged",
             "allocation": state.allocation,
             "auxiliary_process_starts": state.auxiliary_process_starts,
-            "wall_duration_ns": chain_started.elapsed().as_nanos(),
+            "wall_duration_ns": pipeline_started.elapsed().as_nanos(),
             "main_cache": state.weights.stats(),
             "sampled_peak_rss_bytes": state.memory.peak(),
             "stages": state.performance,
         }))?,
     )?;
-    let chain_wall_duration = chain_started.elapsed();
+    let pipeline_wall_duration = pipeline_started.elapsed();
     if let Some(verifier) = state.checkpoint_verifier.as_mut() {
         verifier.finish(&recomputed_list_path);
     }
@@ -713,22 +715,22 @@ fn run_inner(
                 "staged-infer stopped at checkpoint index {} / stage {}/{} ({})",
                 divergence.checkpoint_index,
                 divergence.checkpoint_index + 1,
-                manifest.chain.stage.len(),
+                manifest.pipeline.stage.len(),
                 divergence.stage
             );
         }
     } else {
         write_execution_times(
-            &chain_dir,
-            &manifest.chain.stage,
+            &pipeline_dir,
+            &manifest.pipeline.stage,
             &state.execution_times,
-            chain_wall_duration,
+            pipeline_wall_duration,
             &state.aux_waves,
         )?;
         print_direct_timing_summary(
-            &manifest.chain.stage,
+            &manifest.pipeline.stage,
             &state.execution_times,
-            chain_wall_duration,
+            pipeline_wall_duration,
             &state.aux_waves,
         )?;
     }
@@ -745,9 +747,9 @@ fn run_inner(
         .as_ref()
         .and_then(|verifier| verifier.divergence.clone());
 
-    Ok(ChainRunOutput {
+    Ok(PipelineRunOutput {
         run: HybridRun {
-            chain_dir,
+            pipeline_dir,
             selected_stage_dir: state.selected_stage_dir,
             final_output: state.last_output,
             final_checks: state.last_checks.into_values().collect(),
@@ -763,20 +765,21 @@ pub(crate) fn read_manifest(path: &Path) -> Result<Manifest> {
         fs::read_to_string(path).with_context(|| format!("failed to read {}", path.display()))?;
     text.parse::<toml::Value>()
         .context("failed to parse Raster.toml as TOML")?;
-    let doc: RasterTomlDoc = toml::from_str(&text).context("failed to decode Raster.toml chain")?;
+    let doc: RasterTomlDoc =
+        toml::from_str(&text).context("failed to decode Raster.toml pipeline")?;
     Ok(Manifest {
-        chain: expand_chain_table(doc.chain)?,
+        pipeline: expand_pipeline_table(doc.pipeline)?,
     })
 }
 
-fn expand_chain_table(table: ChainTable) -> Result<ChainSpec> {
+fn expand_pipeline_table(table: PipelineTable) -> Result<PipelineSpec> {
     let inputs = flatten_input_decls(table.inputs)?;
     let mut stages = Vec::new();
     let mut exports = BTreeMap::new();
 
-    for item in merge_chain_items(table.stages, table.repeats) {
+    for item in merge_pipeline_items(table.stages, table.repeats) {
         match item {
-            ChainItem::Stage(stage) => {
+            PipelineItem::Stage(stage) => {
                 let mut bound = BTreeMap::new();
                 for (param, binding) in &stage.inputs {
                     bound.insert(
@@ -791,28 +794,29 @@ fn expand_chain_table(table: ChainTable) -> Result<ChainSpec> {
                     inputs: bound,
                 });
             }
-            ChainItem::Repeat(repeat) => {
+            PipelineItem::Repeat(repeat) => {
                 expand_repeat(&repeat, &inputs, &mut stages, &mut exports)?
             }
         }
     }
 
     resolve_export_sources(&mut stages, &exports);
-    Ok(ChainSpec { stage: stages })
+    Ok(PipelineSpec { stage: stages })
 }
 
-fn merge_chain_items(
+fn merge_pipeline_items(
     stages: Vec<toml::Spanned<PlainStageSpec>>,
     repeats: Vec<toml::Spanned<RepeatSpec>>,
-) -> Vec<ChainItem> {
-    let mut items: Vec<(usize, ChainItem)> = stages
+) -> Vec<PipelineItem> {
+    let mut items: Vec<(usize, PipelineItem)> = stages
         .into_iter()
-        .map(|stage| (stage.span().start, ChainItem::Stage(stage.into_inner())))
-        .chain(
-            repeats
-                .into_iter()
-                .map(|repeat| (repeat.span().start, ChainItem::Repeat(repeat.into_inner()))),
-        )
+        .map(|stage| (stage.span().start, PipelineItem::Stage(stage.into_inner())))
+        .chain(repeats.into_iter().map(|repeat| {
+            (
+                repeat.span().start,
+                PipelineItem::Repeat(repeat.into_inner()),
+            )
+        }))
         .collect();
     items.sort_by_key(|(offset, _)| *offset);
     items.into_iter().map(|(_, item)| item).collect()
@@ -826,13 +830,13 @@ fn flatten_input_decls(
         match decl {
             InputDecl::Single(external) => {
                 if inputs.insert(name.clone(), external).is_some() {
-                    bail!("chain input `{name}` is declared more than once");
+                    bail!("pipeline input `{name}` is declared more than once");
                 }
             }
             InputDecl::Indexed(indexed) => {
                 for (member, external) in indexed.flatten(&name)? {
                     if inputs.insert(member.clone(), external).is_some() {
-                        bail!("chain input `{member}` is declared more than once");
+                        bail!("pipeline input `{member}` is declared more than once");
                     }
                 }
             }
@@ -846,7 +850,7 @@ impl IndexedInputDecl {
         let placeholder = format!("{{{}}}", self.index);
         if !self.path.contains(&placeholder) {
             bail!(
-                "[chain.input.{family}]: path '{}' does not mention '{placeholder}'",
+                "[pipeline.input.{family}]: path '{}' does not mention '{placeholder}'",
                 self.path
             );
         }
@@ -957,7 +961,7 @@ fn expand_repeat_binding(
         RepeatBinding::Input { input } => {
             let name = render_text(input, indexes)?;
             let external = named_inputs.get(&name).ok_or_else(|| {
-                anyhow::anyhow!("repeat binding names unknown chain input `{name}`")
+                anyhow::anyhow!("repeat binding names unknown pipeline input `{name}`")
             })?;
             Ok(InputBinding::External(external.clone()))
         }
@@ -1032,7 +1036,7 @@ pub(crate) fn build_stage_index(stages: &[StageSpec]) -> Result<BTreeMap<String,
     let mut stage_index = BTreeMap::new();
     for (idx, stage) in stages.iter().enumerate() {
         if stage_index.insert(stage.name.clone(), idx).is_some() {
-            bail!("chain contains duplicate stage name `{}`", stage.name);
+            bail!("pipeline contains duplicate stage name `{}`", stage.name);
         }
     }
     Ok(stage_index)
@@ -1067,13 +1071,13 @@ fn run_one_stage(
     idx: usize,
     stages: &[StageSpec],
     base_dir: &Path,
-    chain_dir: &Path,
+    pipeline_dir: &Path,
     stage_index: &BTreeMap<String, usize>,
     current_exe: &Path,
     staged_backend: StagedExecutionBackend,
     raster_stage: Option<&str>,
     recomputed_list_path: &Path,
-    state: &mut ChainRunState,
+    state: &mut PipelineRunState,
 ) -> Result<()> {
     let stage = &stages[idx];
     println!(
@@ -1084,7 +1088,7 @@ fn run_one_stage(
         stage.project
     );
 
-    let stage_dir = chain_dir.join(&stage.name);
+    let stage_dir = pipeline_dir.join(&stage.name);
     fs::create_dir_all(&stage_dir)
         .with_context(|| format!("failed to create {}", stage_dir.display()))?;
 
@@ -1092,7 +1096,7 @@ fn run_one_stage(
         stage,
         &stage_dir,
         base_dir,
-        chain_dir,
+        pipeline_dir,
         &state.output_commitments,
         stage_index,
     )?;
@@ -1131,7 +1135,7 @@ fn run_prepared_stage(
     input_manifest_path: &Path,
     stage_dir: &Path,
     stage_index: &BTreeMap<String, usize>,
-    state: &mut ChainRunState,
+    state: &mut PipelineRunState,
 ) -> Result<DirectStageRun> {
     let dispatch = dispatch_for_stage(stage, raster_stage)?;
     match dispatch {
@@ -1185,7 +1189,7 @@ fn finish_stage(
     stage_run: DirectStageRun,
     stage_dir: PathBuf,
     recomputed_list_path: &Path,
-    state: &mut ChainRunState,
+    state: &mut PipelineRunState,
 ) -> Result<()> {
     if let Some(timings) = stage_run.timings {
         state.performance.push(StagePerformance {
@@ -1200,13 +1204,13 @@ fn finish_stage(
     let output = collect_output(&stage_dir)?;
     if let Some(value) = stage_run.output {
         if matches!(value, CachedStageValue::DecodeEdge(_)) {
-            // A check of a chain of several inferences is named for its own.
+            // A check of a pipeline of several inferences is named for its own.
             let inference = procedure_definition::procedure_kind::labelled_name(&stage.name)
                 .map_or(0, |(inference, _)| inference);
             state.last_checks.insert(inference, value.clone());
         }
         state.last_output = Some(value.clone());
-        // A stage of a chain of several inferences is named for its own.
+        // A stage of a pipeline of several inferences is named for its own.
         state.last_reads = stage
             .inputs
             .iter()
@@ -1236,11 +1240,11 @@ fn finish_stage(
 }
 
 /// Names in the stage directory the program this stage stands for, and where
-/// each of its chained inputs came from. The checkpoint commits to both.
+/// each of its piped inputs came from. The checkpoint commits to both.
 ///
 /// The program is the one the stage's project has locked, which is what a
 /// Raster replay of the stage runs; a project with no lock leaves the
-/// checkpoint naming no program. A chained input's producer is named by its
+/// checkpoint naming no program. A piped input's producer is named by its
 /// position in the run, which is its position in the claim's checkpoint list.
 fn record_stage_program(
     stage: &StageSpec,
@@ -1255,7 +1259,7 @@ fn record_stage_program(
         if let InputBinding::From(producer) = binding {
             let index = stage_index.get(producer).with_context(|| {
                 format!(
-                    "stage `{}` takes `{param}` from `{producer}`, which the chain does not run",
+                    "stage `{}` takes `{param}` from `{producer}`, which the pipeline does not run",
                     stage.name
                 )
             })?;
@@ -1270,7 +1274,7 @@ fn observe_checkpoint(
     stage_name: &str,
     stage_dir: &Path,
     recomputed_list_path: &Path,
-    state: &mut ChainRunState,
+    state: &mut PipelineRunState,
 ) -> Result<()> {
     if let Some(verifier) = state.checkpoint_verifier.as_mut() {
         verifier.observe_stage(idx, stage_name, stage_dir, recomputed_list_path)?;
@@ -1309,13 +1313,13 @@ fn run_aux_wave(
     range: Range<usize>,
     stages: &[StageSpec],
     base_dir: &Path,
-    chain_dir: &Path,
+    pipeline_dir: &Path,
     stage_index: &BTreeMap<String, usize>,
     current_exe: &Path,
     staged_backend: StagedExecutionBackend,
     raster_stage: Option<&str>,
     recomputed_list_path: &Path,
-    state: &mut ChainRunState,
+    state: &mut PipelineRunState,
 ) -> Result<()> {
     println!(
         "▸ stages {}-{}  prefill_prepare_aux   ({} parallel stages)",
@@ -1339,7 +1343,7 @@ fn run_aux_wave(
                 idx,
                 stages,
                 base_dir,
-                chain_dir,
+                pipeline_dir,
                 stage_index,
                 state,
             )?),
@@ -1351,7 +1355,7 @@ fn run_aux_wave(
             idx,
             stages,
             base_dir,
-            chain_dir,
+            pipeline_dir,
             stage_index,
             current_exe,
             staged_backend,
@@ -1432,9 +1436,9 @@ fn prepare_aux_stage_job(
     idx: usize,
     stages: &[StageSpec],
     base_dir: &Path,
-    chain_dir: &Path,
+    pipeline_dir: &Path,
     stage_index: &BTreeMap<String, usize>,
-    state: &ChainRunState,
+    state: &PipelineRunState,
 ) -> Result<AuxStageJob> {
     let stage = &stages[idx];
     println!(
@@ -1444,14 +1448,14 @@ fn prepare_aux_stage_job(
         stage.name,
         stage.project
     );
-    let stage_dir = chain_dir.join(&stage.name);
+    let stage_dir = pipeline_dir.join(&stage.name);
     fs::create_dir_all(&stage_dir)
         .with_context(|| format!("failed to create {}", stage_dir.display()))?;
     let (input_json_path, input_manifest_path) = synthesize_inputs(
         stage,
         &stage_dir,
         base_dir,
-        chain_dir,
+        pipeline_dir,
         &state.output_commitments,
         stage_index,
     )?;
@@ -1667,7 +1671,7 @@ pub(crate) fn synthesize_inputs(
     stage: &StageSpec,
     stage_dir: &Path,
     base_dir: &Path,
-    chain_dir: &Path,
+    pipeline_dir: &Path,
     outputs: &[Option<Vec<u8>>],
     stage_index: &BTreeMap<String, usize>,
 ) -> Result<(PathBuf, PathBuf)> {
@@ -1704,7 +1708,7 @@ pub(crate) fn synthesize_inputs(
                         stage.name
                     );
                 }
-                let producer_dir = chain_dir.join(producer);
+                let producer_dir = pipeline_dir.join(producer);
                 (
                     producer_dir.join("output.bin"),
                     producer_dir.join("output.rindex"),
@@ -1982,13 +1986,13 @@ fn read_output_manifest_commitment(stage_dir: &Path) -> Result<String> {
 }
 
 fn write_execution_times(
-    chain_dir: &Path,
+    pipeline_dir: &Path,
     stages: &[StageSpec],
     execution_times: &[Option<Duration>],
     total_wall_duration: Duration,
     aux_waves: &[AuxWaveExecutionTime],
 ) -> Result<()> {
-    let path = chain_dir.join(EXECUTION_TIMES_JSON);
+    let path = pipeline_dir.join(EXECUTION_TIMES_JSON);
     if execution_times.len() != stages.len() {
         bail!(
             "execution timing slot count {} does not match stage count {}",
@@ -2060,16 +2064,16 @@ fn print_direct_timing_summary(
     Ok(())
 }
 
-fn create_chain_dir(base_dir: &Path) -> Result<PathBuf> {
+fn create_pipeline_dir(base_dir: &Path) -> Result<PathBuf> {
     let root = base_dir.join("target").join("staged-infer").join("runs");
     fs::create_dir_all(&root).with_context(|| format!("failed to create {}", root.display()))?;
-    let chain_dir = root.join(chain_run_id());
-    fs::create_dir_all(&chain_dir)
-        .with_context(|| format!("failed to create {}", chain_dir.display()))?;
-    Ok(chain_dir)
+    let pipeline_dir = root.join(pipeline_run_id());
+    fs::create_dir_all(&pipeline_dir)
+        .with_context(|| format!("failed to create {}", pipeline_dir.display()))?;
+    Ok(pipeline_dir)
 }
 
-fn chain_run_id() -> String {
+fn pipeline_run_id() -> String {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
@@ -2077,8 +2081,8 @@ fn chain_run_id() -> String {
     format!("{nanos:020}-pid{}", std::process::id())
 }
 
-fn chain_run_id_label(chain_dir: &Path) -> String {
-    chain_dir
+fn pipeline_run_id_label(pipeline_dir: &Path) -> String {
+    pipeline_dir
         .file_name()
         .and_then(|name| name.to_str())
         .unwrap_or("?")
@@ -2204,7 +2208,7 @@ mod tests {
     fn test_base_dir() -> PathBuf {
         let id = NEXT_TEMP_DIR.fetch_add(1, Ordering::Relaxed);
         std::env::temp_dir().join(format!(
-            "staged-infer-chain-runner-test-{}-{id}",
+            "staged-infer-pipeline-runner-test-{}-{id}",
             std::process::id()
         ))
     }
@@ -2218,7 +2222,7 @@ mod tests {
     }
 
     fn fixture_manifest() -> Manifest {
-        read_manifest(&repo_root().join("procedure/pipeline/testdata/chain.toml")).unwrap()
+        read_manifest(&repo_root().join("procedure/pipeline/testdata/pipeline.toml")).unwrap()
     }
 
     #[test]
@@ -2227,14 +2231,14 @@ mod tests {
         let mut direct = 0usize;
         let mut reference = 0usize;
 
-        for stage in &manifest.chain.stage {
+        for stage in &manifest.pipeline.stage {
             match dispatch_for_stage(stage, Some("range_p1_l2")).unwrap() {
                 StageDispatch::StagedNative => direct += 1,
                 StageDispatch::RasterReference => reference += 1,
             }
         }
 
-        assert_eq!(manifest.chain.stage.len(), 42);
+        assert_eq!(manifest.pipeline.stage.len(), 42);
         assert_eq!(direct, 41);
         assert_eq!(reference, 1);
     }
@@ -2243,7 +2247,7 @@ mod tests {
     fn stage_prefix_resolves_exact_expanded_instance_and_bounds_aux_waves() {
         let manifest = fixture_manifest();
         for name in ["prompt_check_p1", "range_p1_l2", "aux_c0_l0"] {
-            let mut stages = manifest.chain.stage.clone();
+            let mut stages = manifest.pipeline.stage.clone();
             let selected = stages.iter().position(|s| s.name == name).unwrap();
             truncate_through_stage(&mut stages, name).unwrap();
             assert_eq!(stages.len(), selected + 1);
@@ -2256,7 +2260,7 @@ mod tests {
                 assert_eq!(aux_wave_range(&stages, first), Some(first..selected + 1));
             }
         }
-        let mut stages = manifest.chain.stage;
+        let mut stages = manifest.pipeline.stage;
         assert!(truncate_through_stage(&mut stages, "prefill-range").is_err());
         assert!(truncate_through_stage(&mut stages, "prompt_check_p9").is_err());
         stages.push(stages[0].clone());
@@ -2266,13 +2270,13 @@ mod tests {
     #[test]
     fn prefix_timing_report_contains_only_executed_stages() {
         let mut manifest = fixture_manifest();
-        truncate_through_stage(&mut manifest.chain.stage, "embed_p0").unwrap();
+        truncate_through_stage(&mut manifest.pipeline.stage, "embed_p0").unwrap();
         let base = test_base_dir();
         fs::create_dir_all(&base).unwrap();
-        let times = vec![Some(Duration::from_nanos(7)); manifest.chain.stage.len()];
+        let times = vec![Some(Duration::from_nanos(7)); manifest.pipeline.stage.len()];
         write_execution_times(
             &base,
-            &manifest.chain.stage,
+            &manifest.pipeline.stage,
             &times,
             Duration::from_nanos(30),
             &[],
@@ -2294,7 +2298,7 @@ mod tests {
     #[test]
     fn fixture_dispatches_every_stage_native_without_reference() {
         let manifest = fixture_manifest();
-        for stage in &manifest.chain.stage {
+        for stage in &manifest.pipeline.stage {
             assert!(matches!(
                 dispatch_for_stage(stage, None).unwrap(),
                 StageDispatch::StagedNative
@@ -2305,16 +2309,17 @@ mod tests {
     #[test]
     fn fixture_expands_ranges_and_the_claimed_export() {
         let manifest = fixture_manifest();
-        let index = build_stage_index(&manifest.chain.stage).unwrap();
+        let index = build_stage_index(&manifest.pipeline.stage).unwrap();
 
         assert!(index.contains_key("prompt_check_p1"));
         assert!(!index.contains_key("prompt_check_p2"));
-        // The chain starts at the first range's bind: no stage comes before
+        // The pipeline starts at the first range's bind: no stage comes before
         // it. That range's bind and check are given the empty prompt state,
         // a committed constant, where each later one is given the range
         // before; a check is always given its own bind.
-        assert_eq!(manifest.chain.stage[0].name, "prompt_bind_p0");
-        let previous = |stage: &str| manifest.chain.stage[index[stage]].inputs["previous"].clone();
+        assert_eq!(manifest.pipeline.stage[0].name, "prompt_bind_p0");
+        let previous =
+            |stage: &str| manifest.pipeline.stage[index[stage]].inputs["previous"].clone();
         let empty_prompt = previous("prompt_bind_p0");
         assert!(matches!(&empty_prompt, InputBinding::External(file)
             if file.path.ends_with("empty_prompt.rastered")));
@@ -2328,7 +2333,7 @@ mod tests {
             InputBinding::From("prompt_check_p0".into())
         );
         for range in 0..2 {
-            let checked = &manifest.chain.stage[index[&format!("prompt_check_p{range}")]];
+            let checked = &manifest.pipeline.stage[index[&format!("prompt_check_p{range}")]];
             assert_eq!(
                 checked.inputs["bound"],
                 InputBinding::From(format!("prompt_bind_p{range}"))
@@ -2341,15 +2346,15 @@ mod tests {
             if file.path.ends_with("empty_sequence.rastered")));
         assert_eq!(previous("embed_p1"), InputBinding::From("embed_p0".into()));
         for layer in 0..4 {
-            let first = &manifest.chain.stage[index[&format!("range_p0_l{layer}")]];
+            let first = &manifest.pipeline.stage[index[&format!("range_p0_l{layer}")]];
             assert_eq!(first.inputs["prior_kv"], empty_sequence);
-            let second = &manifest.chain.stage[index[&format!("range_p1_l{layer}")]];
+            let second = &manifest.pipeline.stage[index[&format!("range_p1_l{layer}")]];
             assert_eq!(
                 second.inputs["prior_kv"],
                 InputBinding::From(format!("range_p0_l{layer}"))
             );
         }
-        let check = |range: usize| &manifest.chain.stage[index[&format!("check_c{range}")]];
+        let check = |range: usize| &manifest.pipeline.stage[index[&format!("check_c{range}")]];
         assert!(
             matches!(&check(0).inputs["prior"], InputBinding::External(file)
             if file.path.ends_with("empty_edge.rastered"))
@@ -2370,20 +2375,20 @@ mod tests {
         assert!(index.contains_key("embed_c1"));
         assert!(index.contains_key("aux_c1_l3"));
         assert!(index.contains_key("range_c1_l3"));
-        let range = &manifest.chain.stage[index["range_c1_l0"]];
+        let range = &manifest.pipeline.stage[index["range_c1_l0"]];
         assert_eq!(
             range.inputs["prior_kv"],
             InputBinding::From("range_c0_l0".into())
         );
-        let first = &manifest.chain.stage[index["range_c0_l0"]];
+        let first = &manifest.pipeline.stage[index["range_c0_l0"]];
         assert_eq!(
             first.inputs["prior_kv"],
             InputBinding::From("range_p1_l0".into())
         );
 
-        // The chain ends at the last claimed range's check. Every check is
+        // The pipeline ends at the last claimed range's check. Every check is
         // given the decoder inputs its output record is stated from.
-        assert_eq!(manifest.chain.stage.last().unwrap().name, "check_c1");
+        assert_eq!(manifest.pipeline.stage.last().unwrap().name, "check_c1");
         for range in 0..2 {
             for input in ["decoder", "descriptor", "witness"] {
                 assert!(
@@ -2401,28 +2406,28 @@ mod tests {
         let path = base.join("Raster.toml");
         fs::write(
             &path,
-            r#"[chain]
+            r#"[pipeline]
 name = "empty-repeat"
 
-[[chain.stage]]
+[[pipeline.stage]]
 name = "check_c0"
 project = "sequence-check"
 
-[[chain.repeat]]
+[[pipeline.repeat]]
 name = "claimed"
 index = "k"
 start = 1
 count = 0
 
-  [chain.repeat.exports.edge]
+  [pipeline.repeat.exports.edge]
 stage = "check_c{k}"
 entry = "check_c0"
 
-  [[chain.repeat.stage]]
+  [[pipeline.repeat.stage]]
 name = "check_c{k}"
 project = "sequence-check"
 
-[[chain.stage]]
+[[pipeline.stage]]
 name = "embed_c9"
 project = "input-embedding"
 inputs.edge = { from = "claimed.edge" }
@@ -2430,13 +2435,13 @@ inputs.edge = { from = "claimed.edge" }
         )
         .unwrap();
         let manifest = read_manifest(&path).unwrap();
-        let index = build_stage_index(&manifest.chain.stage).unwrap();
+        let index = build_stage_index(&manifest.pipeline.stage).unwrap();
 
         // A repeat that does not run exports its entry: a stage bound to the
-        // export reads the stage before the repeat. The iris chain has no
+        // export reads the stage before the repeat. The iris pipeline has no
         // such binding now; the mechanism is the manifest format's.
         assert!(!index.contains_key("check_c1"));
-        let output = manifest.chain.stage.last().unwrap();
+        let output = manifest.pipeline.stage.last().unwrap();
         assert_eq!(
             output.inputs.get("edge"),
             Some(&InputBinding::From(String::from("check_c0")))
@@ -2445,11 +2450,11 @@ inputs.edge = { from = "claimed.edge" }
     }
 
     #[test]
-    fn synthesized_inputs_cover_external_and_chained_bindings() {
+    fn synthesized_inputs_cover_external_and_piped_bindings() {
         let base = test_base_dir();
-        let chain_dir = base.join("run");
-        let producer_dir = chain_dir.join("producer");
-        let stage_dir = chain_dir.join("consumer");
+        let pipeline_dir = base.join("run");
+        let producer_dir = pipeline_dir.join("producer");
+        let stage_dir = pipeline_dir.join("consumer");
         fs::create_dir_all(&producer_dir).unwrap();
         fs::create_dir_all(&stage_dir).unwrap();
 
@@ -2465,7 +2470,7 @@ inputs.edge = { from = "claimed.edge" }
                         commitment: "abc123".into(),
                     }),
                 ),
-                ("chained_arg".into(), InputBinding::From("producer".into())),
+                ("piped_arg".into(), InputBinding::From("producer".into())),
             ]),
         };
         let stage_index = BTreeMap::from([("producer".into(), 0usize)]);
@@ -2475,7 +2480,7 @@ inputs.edge = { from = "claimed.edge" }
             &stage,
             &stage_dir,
             &base,
-            &chain_dir,
+            &pipeline_dir,
             &outputs,
             &stage_index,
         )
@@ -2502,13 +2507,13 @@ inputs.edge = { from = "claimed.edge" }
             )
         );
         assert_eq!(
-            input["chained_arg"]["path"].as_str(),
+            input["piped_arg"]["path"].as_str(),
             Some(producer_dir.join("output.bin").to_string_lossy().as_ref())
         );
         assert_eq!(input["external_arg"]["load_preference"], "mmap");
-        assert_eq!(input["chained_arg"]["load_preference"], "read");
+        assert_eq!(input["piped_arg"]["load_preference"], "read");
         assert_eq!(manifest["external_arg"]["commitment"], "abc123");
-        assert_eq!(manifest["chained_arg"]["commitment"], "deadbeef");
+        assert_eq!(manifest["piped_arg"]["commitment"], "deadbeef");
 
         fs::remove_dir_all(base).unwrap();
     }
@@ -2542,23 +2547,23 @@ inputs.edge = { from = "claimed.edge" }
     fn fixture_identifies_prefill_prepare_aux_wave() {
         let manifest = fixture_manifest();
         let first = manifest
-            .chain
+            .pipeline
             .stage
             .iter()
             .position(is_prefill_prepare_aux_stage)
             .unwrap();
 
-        let range = aux_wave_range(&manifest.chain.stage, first).unwrap();
+        let range = aux_wave_range(&manifest.pipeline.stage, first).unwrap();
 
         // Each layer's PLE runs over every range, then its transformer does.
         assert_eq!(range, first..first + 4);
-        assert!(aux_wave_range(&manifest.chain.stage, 0).is_none());
-        assert!(aux_wave_range(&manifest.chain.stage, first + 4).is_none());
-        for stage in &manifest.chain.stage[range] {
+        assert!(aux_wave_range(&manifest.pipeline.stage, 0).is_none());
+        assert!(aux_wave_range(&manifest.pipeline.stage, first + 4).is_none());
+        for stage in &manifest.pipeline.stage[range] {
             assert!(is_prefill_prepare_aux_stage(stage));
         }
         assert_eq!(
-            manifest.chain.stage[first].inputs.get("embedded"),
+            manifest.pipeline.stage[first].inputs.get("embedded"),
             Some(&InputBinding::From(String::from("embed_p0")))
         );
     }
@@ -2567,16 +2572,16 @@ inputs.edge = { from = "claimed.edge" }
     fn raster_reference_inside_aux_wave_dispatches_once() {
         let manifest = fixture_manifest();
         let first = manifest
-            .chain
+            .pipeline
             .stage
             .iter()
             .position(is_prefill_prepare_aux_stage)
             .unwrap();
-        let range = aux_wave_range(&manifest.chain.stage, first).unwrap();
+        let range = aux_wave_range(&manifest.pipeline.stage, first).unwrap();
         let mut direct = 0usize;
         let mut reference = Vec::new();
 
-        for stage in &manifest.chain.stage[range] {
+        for stage in &manifest.pipeline.stage[range] {
             match dispatch_for_stage(stage, Some("aux_p1_l0")).unwrap() {
                 StageDispatch::StagedNative => direct += 1,
                 StageDispatch::RasterReference => reference.push(stage.name.as_str()),
@@ -2674,8 +2679,8 @@ inputs.edge = { from = "claimed.edge" }
     #[test]
     fn synthesized_inputs_require_manifest_indexed_producer_output() {
         let base = test_base_dir();
-        let chain_dir = base.join("run");
-        let stage_dir = chain_dir.join("consumer");
+        let pipeline_dir = base.join("run");
+        let stage_dir = pipeline_dir.join("consumer");
         fs::create_dir_all(&stage_dir).unwrap();
 
         let stage = StageSpec {
@@ -2690,7 +2695,7 @@ inputs.edge = { from = "claimed.edge" }
             &stage,
             &stage_dir,
             &base,
-            &chain_dir,
+            &pipeline_dir,
             &outputs,
             &stage_index,
         )
@@ -2706,8 +2711,8 @@ inputs.edge = { from = "claimed.edge" }
     #[test]
     fn synthesized_inputs_reject_missing_producer_output() {
         let base = test_base_dir();
-        let chain_dir = base.join("run");
-        let stage_dir = chain_dir.join("consumer");
+        let pipeline_dir = base.join("run");
+        let stage_dir = pipeline_dir.join("consumer");
         fs::create_dir_all(&stage_dir).unwrap();
 
         let stage = StageSpec {
@@ -2722,7 +2727,7 @@ inputs.edge = { from = "claimed.edge" }
             &stage,
             &stage_dir,
             &base,
-            &chain_dir,
+            &pipeline_dir,
             &outputs,
             &stage_index,
         )
@@ -2775,7 +2780,7 @@ inputs.edge = { from = "claimed.edge" }
 pub fn stage_project(manifest_path: &Path, stage: &str) -> Result<PathBuf> {
     let manifest = read_manifest(manifest_path)?;
     let selected = manifest
-        .chain
+        .pipeline
         .stage
         .iter()
         .find(|s| s.name == stage)

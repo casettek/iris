@@ -1,7 +1,7 @@
 //! The `layer-mistral` stage, natively: what the stage program computes, from
 //! the same committed inputs.
 //!
-//! The stage's activations are the chain's activation type, which every
+//! The stage's activations are the pipeline's activation type, which every
 //! stage defines field for field. `prefill-range`'s definition is used here,
 //! as the native paths of the stages around this one use it.
 

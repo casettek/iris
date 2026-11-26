@@ -155,7 +155,7 @@ To have such a claim, make the lie with `iris test corrupt-claim --submission ..
 
 Two more lies are ones a replay shows, and an audit finds nothing in them.
 `--fault arrangement [--input <name>]` gives a stage a value the claim may
-name in a place the chain does not give it, such as another layer's weights.
+name in a place the pipeline does not give it, such as another layer's weights.
 `--fault verdict --stage <the last check>`, on a claim built with claimed
 ids that are not the model's (`claim build --direct-output-ids`), states its
 record valid. Post and submit each as above, fetch it, and `challenge build
@@ -182,7 +182,7 @@ a built iris, and a deployment made before a Raster update refuses proofs
 made after it. Deploy again.
 
 `just contracts-test` runs the contract's own test of this on a real proof
-kept in `blockchain/contracts/test/fault_proof.json`. It needs Docker and no chain.
+kept in `blockchain/contracts/test/fault_proof.json`. It needs Docker and no pipeline.
 
 ## Check the contracts against iris
 

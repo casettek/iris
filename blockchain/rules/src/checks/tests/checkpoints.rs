@@ -15,7 +15,7 @@ fn a_challenged_stage_is_disputed_or_void_by_its_own_program_id() {
     );
     assert_eq!(first_unapproved_stage(&pins().programs, &claim.list), None);
 
-    // A claimer that swapped a program in the middle of its chain, or
+    // A claimer that swapped a program in the middle of its pipeline, or
     // named none, and committed to that.
     for program in [hex::encode([3; 32]), String::new()] {
         let mut checkpoints = claim.list.checkpoints.clone();
@@ -122,7 +122,7 @@ fn a_challenge_must_present_the_list_and_the_checkpoint_the_claim_committed() {
 }
 
 #[test]
-fn every_chained_input_of_an_honest_claim_is_linked() {
+fn every_piped_input_of_an_honest_claim_is_linked() {
     let claim = Claim::honest();
     assert_eq!(claim.link(1, "activations"), Ok(LinkCheck::Linked));
     assert_eq!(claim.link(2, "activations"), Ok(LinkCheck::Linked));

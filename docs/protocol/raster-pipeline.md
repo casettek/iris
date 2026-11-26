@@ -1,6 +1,6 @@
-# Raster Chain Internals
+# Raster Pipeline Internals
 
-A chain manifest has a `[chain]` table and no `[program]` table. `model import` writes the model's segment of a chain, the run's [procedure kind](procedure-kinds.md) makes a chain template from it, and `claim build` fills that in for one run. The member directories under `raster-stages/` are ordinary Raster programs with their own `Cargo.toml`, `Raster.lock`, no-std tile library, and sequence entry point.
+A pipeline manifest has a `[pipeline]` table and no `[program]` table. `model import` writes the model's segment of a pipeline, the run's [procedure kind](procedure-kinds.md) makes a pipeline template from it, and `claim build` fills that in for one run. The member directories under `raster-stages/` are ordinary Raster programs with their own `Cargo.toml`, `Raster.lock`, no-std tile library, and sequence entry point.
 
 ```text
 model import
@@ -9,10 +9,10 @@ model import
   -> PLE layer externals
   -> transformer layer externals
   -> output head
-  -> Raster.toml: the model's segment of a chain
+  -> Raster.toml: the model's segment of a pipeline
 
 claim build
-  -> the procedure kind's chain template: source stage, the model's segment, result stage
+  -> the procedure kind's pipeline template: source stage, the model's segment, result stage
   -> the run's Raster.toml
 ```
 
@@ -29,7 +29,7 @@ ActivationSequence {
 }
 ```
 
-The chain verifies a *known* output with one pass over `prompt ‖ claimed_output`, cut into ranges of at most `--range-size` positions (default 512). Its programs:
+The pipeline verifies a *known* output with one pass over `prompt ‖ claimed_output`, cut into ranges of at most `--range-size` positions (default 512). Its programs:
 
 | Program | Stages | Work |
 | --- | --- | --- |
@@ -41,9 +41,9 @@ The chain verifies a *known* output with one pass over `prompt ‖ claimed_outpu
 | `prefill-range` | `range_p{j}_l{l}`, `range_c{k}_l{l}` | Run one transformer layer over one range |
 | `sequence-check` | `check_c{k}` | Re-derive the greedy selections and compare them with the claimed ids |
 | `claim-result` | `result` | Compare the output text with the run's forms and state the first one's code beside the claim record |
-| `consensus-result` | `result` | In a [consensus](procedure-kinds.md) chain: read both inferences' outputs by the run's forms and state whether they agree |
+| `consensus-result` | `result` | In a [consensus](procedure-kinds.md) pipeline: read both inferences' outputs by the run's forms and state whether they agree |
 
-Autoregressive generation is not a chain. It lives in `direct-infer`, which discovers the output a claim then verifies.
+Autoregressive generation is not a pipeline. It lives in `direct-infer`, which discovers the output a claim then verifies.
 
 ## Ranges
 
@@ -88,7 +88,7 @@ prompt.
 
 Run preparation tokenizes the pieces natively and cuts the tokens into ranges of
 at most `range_size`. For each range it commits *marks*: one number per piece,
-1 where a token starts. The chain does not replay the merge to produce the ids.
+1 where a token starts. The pipeline does not replay the merge to produce the ids.
 It checks that the marks are the merge's own result, and looks the ids up. A
 range may end between any two tokens. The claimed ids are cut into ranges of the
 same size.
@@ -153,7 +153,7 @@ than there are marks.
 Each claimed range `c{k}` runs `embed_c{k}` (an empty prompt, this range's
 claimed ids), `aux_c{k}_l{l}`, `range_c{k}_l{l}`, and `check_c{k}`.
 
-The chain runs every tokenizer and embedding stage first, then each layer across
+The pipeline runs every tokenizer and embedding stage first, then each layer across
 all ranges in order (`aux_p*_l{l}`, `aux_c*_l{l}`, `range_p*_l{l}`,
 `range_c*_l{l}`) before the next layer, then the checks. Range `j` of layer `l`
 needs only layer `l − 1`'s range `j` and layer `l`'s range `j − 1`, so this
@@ -181,7 +181,7 @@ committed decoder table, and states the record beside its edge: the ids' hash, t
 `output_text_sha256` (the SHA-256 of the text's exact UTF-8 bytes), the verdict and
 check fault, `output_fault` (no tokens, over the budget, short of the budget without
 EOS, past EOS, or an edge that disagrees with its transcript), and the context the
-chain ran under (`input_text_sha256`, `source_sha256`, `model_id`, `raw_prompt`, `max_new_tokens`,
+pipeline ran under (`input_text_sha256`, `source_sha256`, `model_id`, `raw_prompt`, `max_new_tokens`,
 `range_size`, `prompt_tokens`, `prompt_complete`, `prompt_fault`,
 `prompt_fault_position`). The host copies this record into `InferenceResult` and
 computes none of it.
@@ -212,7 +212,7 @@ one checks that it is empty. No stage produces them.
 A repeat's `first` fallback can only name a stage. So the template writes range 0's
 stages out as plain stages bound to the constants, and each repeat over ranges starts
 at 1 with the range 0 stage as its `first`: `prompt_bind_p0`, `prompt_check_p0`,
-`embed_p0`, `range_p0_l{l}` in every layer block, and `check_c0`. The chain's first
+`embed_p0`, `range_p0_l{l}` in every layer block, and `check_c0`. The pipeline's first
 stage is `prompt_bind_p0`, or `source` in a run that has one.
 
 ## Soundness
@@ -232,7 +232,7 @@ leave a value to whoever writes the trace, so no stage uses them:
   a selected seed a trace could have started a later range's hash from the state
   of a text the earlier ranges never bound.
 
-Through version 12 the chain had both: those three seeds, and four literal
+Through version 12 the pipeline had both: those three seeds, and four literal
 arguments in `prefill-range`. The parity gate and `cargo test` now refuse a stage
 with either (`testing/src/stage_bindings.rs`).
 
@@ -241,15 +241,15 @@ step at position `i` saw. For an honest claim every row and K/V entry equals
 direct generation's, and the last check's `DecodeEdge`, with its record, is byte
 for byte direct generation's final edge.
 
-The claimed ids are an input to this chain, so a claim must not be able to post
-an output other than the one the chain consumed. It cannot: a claim posts no
+The claimed ids are an input to this pipeline, so a claim must not be able to post
+an output other than the one the pipeline consumed. It cannot: a claim posts no
 output ids of its own. Its output is the last check's edge and record,
 and it stands only if that record's prompt fault, check fault, `claim_mismatches`
 and `output_fault` are zero and `prompt_complete` is set.
 
 A claim chooses its own ids, and indexing past a table would abort a stage with no
 output. So `input-embedding` and `prefill-prepare-aux` read the first row for an id
-outside their tables, and keep the id on the row. The chain finishes, and the
+outside their tables, and keep the id on the row. The pipeline finishes, and the
 verdict rejects the claim: such an id can never be the greedy selection.
 
 `sequence-check` has no independent claimed-token input: it checks the token IDs
@@ -268,7 +268,7 @@ caught one of three ways:
   non-zero verdict, so the claim refutes itself in its own final record.
   `challenge build` reports this as a rejected claimed output.
 
-The prompt side is inside the chain. The text is the committed input of the bind
+The prompt side is inside the pipeline. The text is the committed input of the bind
 stages, range by range, and the configuration, the model id and the text digest are
 committed inputs of the first. The last range's `prompt_check`
 context says what happened to them: the text's SHA-256, the model id, and whether
@@ -280,7 +280,7 @@ stages. Each stage holds the model data it consumes to the descriptor's entry fo
 its role, by recomputing that component's root or by checking a membership path,
 and holds the descriptor to the model id in the statement. A mismatch is a sticky
 model fault that reaches the final record's `model_fault` and clears its `valid`
-flag. So a chain run honestly on other weights refutes itself, as one run on
+flag. So a pipeline run honestly on other weights refutes itself, as one run on
 non-greedy ids does. A claimer that ran other weights and still published a clean
 record has doctored a stage, and that stage is the divergence to replay. To
 challenge a claim, `challenge build` prepares the claim's prompt, token budget and
@@ -303,7 +303,7 @@ inside the same program, and a stage's input is not one. Sliding-window layers
 copy at most the window; global layers copy all earlier positions, so their
 total K/V data grows quadratically with the number of ranges.
 
-The layer loop lives in the chain manifest rather than in one Raster program. A generated model expands one program over many stage instances, preserving bounded replay units and per-stage auditability.
+The layer loop lives in the pipeline manifest rather than in one Raster program. A generated model expands one program over many stage instances, preserving bounded replay units and per-stage auditability.
 
 Weight-matrix and logit sweeps use one page per tile: each `call_recur!`
 walks the existing `List<BytesPage>` without a `chunk`. The auxiliary
@@ -368,7 +368,7 @@ layer count `L` they fix every stage:
    stage of every range
 5. for each claimed range `k`: `check_c{k}`, the last of which states the
    claim's record
-6. `result`, the chain's last stage
+6. `result`, the pipeline's last stage
 
 The first range's `prompt_bind` checks that each count is at least one and within its limit, and
 that `C` fits the token budget at this range size. It stores the schedule in the
@@ -408,7 +408,7 @@ restated as invalid, with whatever code its text has. A claim that wired it to
 another check would restate that check's record, which is not the one a contract
 holds to the last check (see [the contract](checks.md)). The stage is three steps
 and one per form, so it is under the replay window at every size
-([short stages](../issues/short-stage-fraud-window.md)); the claim's record and
+([short stages](../issues/short-stage-fault-window.md)); the claim's record and
 verdict stay with the last check for that reason.
 
 A failed requirement sets the execution fault, which is sticky and reaches

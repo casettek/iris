@@ -105,7 +105,7 @@ pub(crate) enum ClaimFaultArg {
     Program,
     /// An input that is not what its producer made.
     Input,
-    /// An input the claim may name, in a place the chain does not give it:
+    /// An input the claim may name, in a place the pipeline does not give it:
     /// the value an earlier stage of the same program is given.
     Arrangement,
     /// The check's record stated valid where the check does not find it so,

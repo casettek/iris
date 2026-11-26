@@ -31,13 +31,13 @@ def run(label, binary, specification, case, cwd, output):
     trace = Path(trace_paths[0])
     if not trace.is_absolute():
         trace = cwd / trace
-    chain = trace.parent
-    performance = chain / "staged-performance.json"
+    pipeline = trace.parent
+    performance = pipeline / "staged-performance.json"
     return {
-        "binary": str(binary), "wall_seconds": elapsed, "chain_dir": str(chain),
+        "binary": str(binary), "wall_seconds": elapsed, "pipeline_dir": str(pipeline),
         "trace": json.loads(trace.read_text()),
-        "checkpoint_hashes": (chain / "checkpoints.txt").read_text().splitlines(),
-        "execution_times": json.loads((chain / "execution-times.json").read_text()),
+        "checkpoint_hashes": (pipeline / "checkpoints.txt").read_text().splitlines(),
+        "execution_times": json.loads((pipeline / "execution-times.json").read_text()),
         "performance": json.loads(performance.read_text()) if performance.exists() else None,
     }
 

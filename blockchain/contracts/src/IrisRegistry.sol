@@ -83,7 +83,7 @@ contract IrisRegistry {
         if (at != programs.length) revert MalformedProcedure();
     }
 
-    /// A program's inputs as its entry lists them: the chained ones, each
+    /// A program's inputs as its entry lists them: the piped ones, each
     /// with its producers and empty values; the run's; and the pinned ones,
     /// each with its values.
     function _skipInputs(bytes memory programs, uint256 at) private pure returns (uint256) {
@@ -148,7 +148,7 @@ contract IrisRegistry {
                 (emptyValues[j], at) = IrisEncoding.readHash(entry, at);
             }
             if (here) {
-                rule.chained = true;
+                rule.piped = true;
                 rule.producers = producers;
                 rule.emptyValues = emptyValues;
             }

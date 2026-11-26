@@ -9,7 +9,7 @@
 //!            | zero padding to a 64-byte file offset | payload
 //! ```
 //!
-//! The values are the reason this chain can consume the artifact at all: the
+//! The values are the reason this pipeline can consume the artifact at all: the
 //! canonical value of every weight is its **sign-extended Q16.16 bit pattern
 //! in i32**, which is exactly the representation the stages' kernels use. A
 //! tensor stored as i16 is widened on read; the format guarantees that changes

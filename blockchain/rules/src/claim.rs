@@ -32,21 +32,21 @@ pub struct ClaimEndpoint {
 }
 
 pub fn write_claim_artifacts(
-    chain_dir: &Path,
+    pipeline_dir: &Path,
     manifest_path: &Path,
 ) -> Result<(PathBuf, PathBuf, PathBuf)> {
-    write_claim_artifacts_with_prepared_run(chain_dir, manifest_path, None)
+    write_claim_artifacts_with_prepared_run(pipeline_dir, manifest_path, None)
 }
 
 pub fn write_claim_artifacts_with_prepared_run(
-    chain_dir: &Path,
+    pipeline_dir: &Path,
     manifest_path: &Path,
     prepared_run_path: Option<&Path>,
 ) -> Result<(PathBuf, PathBuf, PathBuf)> {
-    let list = build_checkpoint_list(chain_dir, manifest_path)?;
-    let list_path = chain_dir.join(CHECKPOINT_LIST_JSON);
+    let list = build_checkpoint_list(pipeline_dir, manifest_path)?;
+    let list_path = pipeline_dir.join(CHECKPOINT_LIST_JSON);
     write_json(&list_path, &list)?;
-    let hashes_path = write_checkpoint_hashes_artifact(chain_dir, &list)?;
+    let hashes_path = write_checkpoint_hashes_artifact(pipeline_dir, &list)?;
 
     let first = list.checkpoints.first().ok_or_else(|| {
         anyhow::anyhow!("cannot build a claim bundle from an empty checkpoint list")
@@ -67,7 +67,7 @@ pub fn write_claim_artifacts_with_prepared_run(
         },
         prepared_run_path: prepared_run_path.map(Path::to_path_buf),
     };
-    let bundle_path = chain_dir.join(CLAIM_BUNDLE_JSON);
+    let bundle_path = pipeline_dir.join(CLAIM_BUNDLE_JSON);
     write_json(&bundle_path, &bundle)?;
     Ok((list_path, hashes_path, bundle_path))
 }

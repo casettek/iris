@@ -576,7 +576,7 @@ contract IrisClaims {
     /// So a stage's inputs are always ones a challenger also holds, and two
     /// parties that disagree about a stage ran it on the same inputs. What a
     /// posted input says is not judged, nor whether a held value is the one
-    /// the chain gives that stage: the stage checks both as it runs, and a
+    /// the pipeline gives that stage: the stage checks both as it runs, and a
     /// replay on the same inputs shows a stage that said otherwise.
     ///
     /// Nothing here is the challenger's word. The stage's checkpoint says
@@ -606,14 +606,14 @@ contract IrisClaims {
     function _inputFault(Accepted memory claim, CheckpointFault memory fault) private view returns (ClaimFault) {
         InputRule memory rule = registry.inputOf(claim.procedure, fault.checkpoint.program, fault.input);
         // A name the program's entry does not list is not an input of it.
-        if (!rule.chained && !rule.pinned && !rule.run) revert NotAnInput();
+        if (!rule.piped && !rule.pinned && !rule.run) revert NotAnInput();
 
         // A commitment is 32 bytes, written in the list as 64 lowercase hex
         // digits. Text that is not that is no commitment, and equals none.
         (bool readable, bool found, bool is32, bytes32 loaded) =
             InputManifest.valueOf(fault.manifest, bytes(fault.input));
         if (!readable || !found) return ClaimFault.UnreadableInputs;
-        if (!rule.chained) {
+        if (!rule.piped) {
             // Bound to fixed data: the model's, or another pinned identity.
             // The stage checks what it loads against that identity as it
             // runs, and that holds only for an input a challenger also has,
@@ -660,7 +660,7 @@ contract IrisClaims {
     /// dismissed when the proof is one of Raster's transition program, has
     /// reached that verdict, and is about this challenge: the trace it posted,
     /// the checkpoint's program and the checkpoint's inputs. These are the
-    /// checks of `raster_core::chain::defend` for a refutation, made here.
+    /// checks of `raster_core::pipeline::defend` for a refutation, made here.
     ///
     /// Anyone may send it: the proof says the same whoever holds it. No clock
     /// is read, and nothing follows from a dismissal yet.

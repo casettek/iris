@@ -11,7 +11,7 @@ Iris makes four promises, and every check here is about one of them.
    claim and the Raster stage programs that judge it give the same bytes at every
    checkpoint.
 2. **A dishonest claim is caught, at the right stage.** A challenger recomputing
-   the chain finds the first wrong checkpoint and can run that stage again
+   the pipeline finds the first wrong checkpoint and can run that stage again
    through authenticated Raster.
 3. **The catch can be proven.** The stage runs in the zkVM guest as it does
    natively, and a fault proof of it verifies.
@@ -48,11 +48,11 @@ without it a tier rebuilds that binary for the CPU. Variables such as
 | full | Stage ladder | Each stage program a family runs compiles with and without `std`, gives the native output when run as Raster, and its authenticated trace commits and audits. Run after each family's gate, on that run's inputs. | 1, 2 |
 | release | Ignored tests | Native loaders match authenticated Raster stage binaries on multi-page weights; the real tokenizer's references hold; tiles run in the zkVM guest as they do natively; a fault proof of a small fixture is produced and verifies. | 1, 3 |
 | release | Real-model check | On an imported Gemma model: an honest claim builds with no fault, every checkpoint matches the reference in `tests/real-model/`, and one stage of each program gives the native output when run as Raster. | 1 |
-| chain | Contracts' own tests | The Solidity tests pass, among them a real fault proof against `submitFaultProof`. | 3, 4 |
-| chain | Honest claim | The contract takes it, agrees with `iris claim check` on changed copies of it, and refuses every on-the-spot question as `iris claim audit` does. | 4 |
-| chain | Four voided lies | A claim whose checkpoint names an unapproved program, or an input that is not its producer's output, a pinned commitment or a posted value, is taken, and voided with that fault when the contract is pointed at the checkpoint. | 2, 4 |
-| chain | Four rearranged lies | A claim that gives a stage a value from the wrong place (another layer's weights, another range's marks, another stage's output, the empty value) is taken and survives every on-the-spot question. The challenger's replay of that stage on the inputs its checkpoint names is a challenge the contract admits. | 2, 4 |
-| chain | Forged verdict | A claim of ids that are not the model's, with its check's record stated valid, arrives with a valid record and survives every question, and the challenger goes to replay the last check. | 2, 4 |
+| pipeline | Contracts' own tests | The Solidity tests pass, among them a real fault proof against `submitFaultProof`. | 3, 4 |
+| pipeline | Honest claim | The contract takes it, agrees with `iris claim check` on changed copies of it, and refuses every on-the-spot question as `iris claim audit` does. | 4 |
+| pipeline | Four voided lies | A claim whose checkpoint names an unapproved program, or an input that is not its producer's output, a pinned commitment or a posted value, is taken, and voided with that fault when the contract is pointed at the checkpoint. | 2, 4 |
+| pipeline | Four rearranged lies | A claim that gives a stage a value from the wrong place (another layer's weights, another range's marks, another stage's output, the empty value) is taken and survives every on-the-spot question. The challenger's replay of that stage on the inputs its checkpoint names is a challenge the contract admits. | 2, 4 |
+| pipeline | Forged verdict | A claim of ids that are not the model's, with its check's record stated valid, arrives with a valid record and survives every question, and the challenger goes to replay the last check. | 2, 4 |
 
 The gate replays a falsified stage through authenticated Raster only when the
 stage is longer than its replay window. On the synthetic model that is
@@ -199,7 +199,7 @@ Both are Python because each drives something outside this repository.
 ## When to run what
 
 - Any change: `just test-fast`.
-- A change to a stage program, to code a tile reaches, to the chain or to the
+- A change to a stage program, to code a tile reaches, to the pipeline or to the
   native kernels: `just test-full`.
 - A change to the contracts, to what a claim or a challenge posts, to the rules
   a claim or a challenge is checked by, or to how a challenge is built:

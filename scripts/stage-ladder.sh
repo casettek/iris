@@ -50,7 +50,7 @@ inputs_of() {
     *) echo "$run/over-window/raster" ;;
     esac
 }
-# Trace steps per fraud-proof window. The shortest stages here are about 110,
+# Trace steps per fault-proof window. The shortest stages here are about 110,
 # but for the result stage, which is a step per form and three more.
 window_of() {
     case $1 in
@@ -92,7 +92,7 @@ ladder() (
     RASTER_OUTPUT_DIR="$dir/commit" cargo raster run \
         --input "$inputs/$first/input.json" \
         --input-manifest "$inputs/$first/input_manifest.json" \
-        --commit "$dir/trace.commit" --fraud-proof-window-size "$window" \
+        --commit "$dir/trace.commit" --fault-proof-window-size "$window" \
         > "$dir/commit.log" 2>&1 || { cat "$dir/commit.log"; return 1; }
     produced="$(sed -n 's/^ *Run artifacts dir: //p' "$dir/commit.log" | head -1)/output.bin"
     if ! cmp -s "$produced" "$inputs/$first/output.bin"; then

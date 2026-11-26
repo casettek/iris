@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 # Not a Raster program: a host-side tool that turns a model bundle into this
-# chain's committed externals. It has no tiles and no `#[sequence] main`.
+# pipeline's committed externals. It has no tiles and no `#[sequence] main`.
 [[bin]]
 name = "model-import"
 path = "src/main.rs"

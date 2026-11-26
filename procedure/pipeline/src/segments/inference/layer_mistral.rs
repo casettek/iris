@@ -8,7 +8,7 @@ use anyhow::Result;
 use inference_kernels::mistral::stage::{run_layer_stage, LayerKeys, LayerStageInputs};
 use inference_kernels::weight_budget::RetainedWeightBytes;
 use layer_mistral::input::TransformerLayer;
-// The chain's activation type, which this stage defines as every stage does.
+// The pipeline's activation type, which this stage defines as every stage does.
 use prefill_range::input::ActivationSequence;
 
 use crate::artifact_io::{with_main_sequence_scope, with_stage_sequence_scope};

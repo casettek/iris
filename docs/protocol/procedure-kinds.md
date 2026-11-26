@@ -25,22 +25,22 @@ the kind's name on and holds no list of them.
 | `consensus` | 2, one after the other | `consensus-result` | Each output's code, and whether the two agree |
 | `relay` | 2, the second on the first one's output | `claim-result` | The code of the first form the second output is, or zero |
 
-See [Raster chain](raster-chain.md) for the stages and
+See [Raster pipeline](raster-pipeline.md) for the stages and
 [the contract](checks.md) for what is checked.
 
-## How a chain is put together
+## How a pipeline is put together
 
 A model import knows nothing of procedure kinds. It writes one inference's segment of a
-chain to its `Raster.toml`: the chain inputs and the stages from the first bind
+pipeline to its `Raster.toml`: the pipeline inputs and the stages from the first bind
 to the last check. The first bind is given the constant source record, as every
-later bind is, so the segment on its own is a chain for a text taken as given, with
+later bind is, so the segment on its own is a pipeline for a text taken as given, with
 no result.
 
-A procedure kind makes the chain template from one segment per model
-(`ProcedureKind::chain_template`). It follows the kind's shape, the steps its
+A procedure kind makes the pipeline template from one segment per model
+(`ProcedureKind::pipeline_template`). It follows the kind's shape, the steps its
 file in `procedures/` lists:
 
-1. the `[chain]` table and each segment's chain inputs;
+1. the `[pipeline]` table and each segment's pipeline inputs;
 2. then each step in order. A source step is one stage, named as the step
    is: `source`, or `relay`, which takes the last check of the inference its
    `check` input names. An inference step is its model's stages, with its
@@ -52,7 +52,7 @@ file in `procedures/` lists:
 text is taken as given removes the `source` stage again and gives the first bind
 back its constant. The inputs of the `source` and result stages are written in
 the template as `{ run = "..." }`, which is no binding Raster reads: a template a
-run has not filled in is not a chain. The `relay` stage's recipe is written
+run has not filled in is not a pipeline. The `relay` stage's recipe is written
 the same way.
 
 The stage projects are found beside the model's own: the template names the
@@ -64,7 +64,7 @@ neighbours.
 In a procedure kind of one inference the stages keep the names an import gives them:
 `prompt_bind_p0`, `check_c1`. In a procedure kind of several, each inference's names
 carry its label in front, `m0_` for the first model and `m1_` for the second:
-its stages, its repeats, its chain inputs, what its stages take from each other,
+its stages, its repeats, its pipeline inputs, what its stages take from each other,
 and the marks a run replaces with its range counts. `source` and the result
 stage have no label. The native runner reads a stage's kind through the label
 (`unlabelled`).
@@ -120,17 +120,17 @@ there is naming it for all of them:
 | Command | What it does with the name |
 | --- | --- |
 | `iris infer` | Runs the procedure kind directly: each inference in turn, then the result |
-| `iris claim build` | Builds the procedure kind's chain and records the name in the frozen run and the submission |
+| `iris claim build` | Builds the procedure kind's pipeline and records the name in the frozen run and the submission |
 | `iris claim pins` | Writes what a contract of the specification's procedure kind over its models pins |
 | `iris claim check` | Requires the submission to be of the specification's procedure kind and to hold what a claim of it does, each inference to be of the model the specification names for it, and the claim's last stage to run that procedure kind's result program |
 | `iris challenge build` | Refuses a specification that names another procedure kind than the claim's, then rebuilds the claim's arrangement from what the claim froze: the text, the source inputs, the forms and each inference's claimed ids |
 
 ## The consensus procedure kind
 
-The chain is `source`, the first model's stages (`m0_...`), the second model's
+The pipeline is `source`, the first model's stages (`m0_...`), the second model's
 (`m1_...`), then `result`. One checkpoint list covers all of it, so a challenger
 recomputes it, finds the first checkpoint that differs and replays that stage,
-as for any chain. Each inference is a whole claim of its own model: it has its
+as for any pipeline. Each inference is a whole claim of its own model: it has its
 own statement and its last check states its own claim record.
 
 `result` runs `consensus-result`. It reads both last checks and the run's forms
@@ -173,11 +173,11 @@ inference: 1
 
 Like the single result stage, `consensus-result` is a few steps and one per
 form, so its checkpoint cannot be replayed at the challenge window
-([short stages](../issues/short-stage-fraud-window.md)).
+([short stages](../issues/short-stage-fault-window.md)).
 
 ## The relay procedure kind
 
-The chain is `source`, the first model's stages (`m0_...`), `relay`, the
+The pipeline is `source`, the first model's stages (`m0_...`), `relay`, the
 second model's (`m1_...`), then `result`.
 
 ```text
@@ -249,7 +249,7 @@ Yes
 
 Like `source` and `result`, `relay` is a few steps and one per chunk of the
 recipe, so on a short recipe its checkpoint cannot be replayed at the
-challenge window ([short stages](../issues/short-stage-fraud-window.md)).
+challenge window ([short stages](../issues/short-stage-fault-window.md)).
 
 ## What holds a claim to its procedure kind
 

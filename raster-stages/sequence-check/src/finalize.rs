@@ -1,5 +1,5 @@
 //! Finalization: the transcript so far as token ids, decoded text and the
-//! commitments to both, with what it breaks and the context the chain ran
+//! commitments to both, with what it breaks and the context the pipeline ran
 //! under. Every check publishes this record with its edge; the last range's
 //! is the claim's.
 //!
@@ -104,7 +104,7 @@ pub fn advance_finalize_state(
     state.json.push_str(&token_id.to_string());
     state.count = state.count.saturating_add(1);
 
-    // Past the end of the answer. The repeat count in the chain manifest is a
+    // Past the end of the answer. The repeat count in the pipeline manifest is a
     // static unroll, so decoding runs to it whatever the model emitted; those
     // ids stay in the transcript and its commitment, but the decoded text ends
     // where the model ended.
@@ -176,7 +176,7 @@ pub fn sha256_hex(bytes: &[u8]) -> String {
 }
 
 /// The record of a finished transcript: its commitments, what it breaks, and
-/// the context the chain ran under.
+/// the context the pipeline ran under.
 pub fn output_record(
     state: FinalizeState,
     has_selected: bool,
@@ -228,12 +228,12 @@ fn hash_page(hash: Option<[u8; 32]>) -> BytesPage {
 }
 
 /// What a contract reads of an edge: the statement its record names, the
-/// commitment to its text, and whether the chain found anything wrong with
+/// commitment to its text, and whether the pipeline found anything wrong with
 /// its own run.
 ///
 /// `claim_mismatches` and `check_fault` are the edge's, accumulated over every
 /// range so far; the rest is the record's. The verdict is the whole of what
-/// rejects a claim, so nothing outside the chain has to combine these fields.
+/// rejects a claim, so nothing outside the pipeline has to combine these fields.
 pub fn claim_record(record: &OutputRecord, claim_mismatches: u32, check_fault: u32) -> ClaimRecord {
     let statement = statement_digest(record);
     let output_text = parse_id(&record.output_text_sha256);

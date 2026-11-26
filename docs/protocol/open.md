@@ -26,7 +26,7 @@ decided. The last is what Raster would have to change.
   Raster's trace header. A receipt needs that code in a crate a guest can
   build. The source step already is one, in `source-core`.
 - **Short stages.** A stage whose trace is shorter than a replay window
-  cannot be disputed ([the issue](../issues/short-stage-fraud-window.md)).
+  cannot be disputed ([the issue](../issues/short-stage-fault-window.md)).
   The claimer chooses the input, so it can make one occur. Three cases are
   short whatever the claimer does: the result stage, which is three steps and
   one per form; a source of a few hundred bytes; and, on small prompts, the
@@ -86,9 +86,9 @@ decided. The last is what Raster would have to change.
 
 ## Open in the tools
 
-- **A claim whose list of stages is not the chain's.** `challenge build`
-  runs a claim whose every stage is one the chain of its run has, each named
-  once. It refuses a claim that repeats a stage name or names one the chain
+- **A claim whose list of stages is not the pipeline's.** `challenge build`
+  runs a claim whose every stage is one the pipeline of its run has, each named
+  once. It refuses a claim that repeats a stage name or names one the pipeline
   lacks. The stages' schedule checks refuse such a run, so its final record
   is not valid, but no command shows that.
 - **No fault proof of a full-size stage.** The proofs made so far are of a

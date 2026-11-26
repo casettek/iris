@@ -1,7 +1,7 @@
 //! The rules a contract holds a claim to, in Rust.
 //!
 //! The contracts in `blockchain/contracts/src` make these same checks on
-//! chain. This module is what they are written from and held to: the chain
+//! pipeline. This module is what they are written from and held to: the pipeline
 //! tier (`just test-blockchain`) asks both about the same claims and challenges
 //! and fails when they differ. A rule changes here and in the contract, and
 //! nowhere else.
@@ -9,7 +9,7 @@
 //! By part:
 //!
 //! - `pins`: what a contract is configured with before any claim arrives
-//!   ([`ContractPins`], [`RequiredParameters`]), read from a chain template
+//!   ([`ContractPins`], [`RequiredParameters`]), read from a pipeline template
 //!   and the stage projects' locks.
 //! - `submission`: what a claimer submits ([`ClaimSubmission`]) and the
 //!   checks made when it arrives ([`check_submission`], [`check_origin`],
@@ -26,9 +26,9 @@
 //! A claim commits to one checkpoint per stage. A checkpoint is the boundary a
 //! Raster run of that stage is bound to: the program, the input manifest and
 //! the output. So a dispute is about one stage, started at the claimer's own
-//! boundary, and no chain-wide Raster commitment is needed.
+//! boundary, and no pipeline-wide Raster commitment is needed.
 //! [`raster_boundary_mismatch`] checks that correspondence against a Raster
-//! chain run of the same claim, and [`dispute_commitment`] is the one-stage
+//! pipeline run of the same claim, and [`dispute_commitment`] is the one-stage
 //! Raster commitment a checkpoint stands as in such a dispute.
 //!
 //! Stages keep their own store, so nothing inside a stage can tell where an

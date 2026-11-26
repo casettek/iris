@@ -1,7 +1,7 @@
 //! The `claim-result` stage's input: the last check's output.
 //!
 //! `DecodeEdge`, `ClaimRecord` and `OutputRecord` are `sequence-check`'s,
-//! duplicated field for field, because a chain binds by structural
+//! duplicated field for field, because a pipeline binds by structural
 //! commitment and not by Rust type name. A test in `staged-infer` holds the
 //! two to the same commitment. This stage reads two things of the edge: the
 //! generated text, and the claim record.
@@ -55,7 +55,7 @@ pub struct ClaimRecord {
     pub statement: BytesPage,
     /// SHA-256 of the exact UTF-8 bytes of the generated text: 32 bytes.
     pub output_text_sha256: BytesPage,
-    /// The chain found nothing wrong with its own run: the prompt is complete
+    /// The pipeline found nothing wrong with its own run: the prompt is complete
     /// and without a fault, consumed model data authenticated, every claimed
     /// token is the greedy selection, and the check and the transcript broke
     /// no rule. See [`crate::claim_record`].
@@ -76,7 +76,7 @@ impl Default for ClaimRecord {
 }
 
 /// The transcript so far, finalized: its commitments, its decoded text, what
-/// it breaks, and the context the chain ran under.
+/// it breaks, and the context the pipeline ran under.
 ///
 /// Every check states it. Only the last claimed range's is a claim's output:
 /// an earlier range's has `model_fault` set, because the schedule puts the
@@ -94,12 +94,12 @@ pub struct OutputRecord {
     pub output_text_sha256: String,
     /// What the transcript breaks, or zero: one of the `OUTPUT_FAULT_*` codes.
     pub output_fault: u32,
-    /// SHA-256 of the exact text the chain consumed, before chat formatting.
+    /// SHA-256 of the exact text the pipeline consumed, before chat formatting.
     pub input_text_sha256: String,
     /// The source the text was built from: see `source_id` in the shared prompt
     /// source. 64 zeros for a text taken as given.
     pub source_sha256: String,
-    /// The identifier of the committed model the chain was configured with.
+    /// The identifier of the committed model the pipeline was configured with.
     pub model_id: String,
     pub raw_prompt: bool,
     pub max_new_tokens: u32,

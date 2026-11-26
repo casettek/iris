@@ -150,7 +150,7 @@ pub fn audit_claim(options: AuditClaimOptions) -> Result<ClaimAudit> {
         // Every input of the program: the ones taken from an earlier stage,
         // the ones bound to fixed data, and the ones the run gives.
         let held: std::collections::BTreeSet<&str> = program
-            .chained_inputs
+            .piped_inputs
             .iter()
             .map(|input| input.name.as_str())
             .chain(

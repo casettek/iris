@@ -112,7 +112,7 @@ pub(crate) struct ClaimCheckArgs {
     #[arg(long)]
     submission: PathBuf,
 
-    /// A Raster chain run directory of the same claim. With it, every
+    /// A Raster pipeline run directory of the same claim. With it, every
     /// checkpoint of the claim is held to the boundary that run committed:
     /// the same program, input manifest and output at every stage.
     #[arg(long = "raster-run")]
@@ -153,7 +153,7 @@ pub(crate) struct ClaimBuildArgs {
 
     /// The comma-separated output ids `iris infer` printed for this same
     /// specification and case. The claim is built from them without running direct inference
-    /// again; the chain still re-derives every token and rejects any other ids.
+    /// again; the pipeline still re-derives every token and rejects any other ids.
     #[arg(long = "direct-output-ids", value_delimiter = ',')]
     direct_output_ids: Option<Vec<u32>>,
 
@@ -172,9 +172,9 @@ impl ClaimBuildArgs {
     pub(crate) fn into_options(self) -> Result<ClaimBuildOptions> {
         let current_exe = std::env::current_exe().context("failed to locate current executable")?;
         let staged_backend = if self.staged_subprocess {
-            staged_infer::chain_runner::StagedExecutionBackend::Subprocess
+            staged_infer::pipeline_runner::StagedExecutionBackend::Subprocess
         } else {
-            staged_infer::chain_runner::StagedExecutionBackend::InProcess
+            staged_infer::pipeline_runner::StagedExecutionBackend::InProcess
         };
         let mut options = ClaimBuildOptions::from_current_dir(
             current_exe,

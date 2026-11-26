@@ -58,7 +58,7 @@ def main():
     inputs = ["--input", fixture / "input.json", "--input-manifest", fixture / "input_manifest.json"]
     commit = output / "disputed.bin"
     recorded = run("record", "run", *inputs, "--commit", commit,
-                   "--fraud-proof-window-size", args.window, "--fraud-step", f"tile:{site}")
+                   "--fault-proof-window-size", args.window, "--fault-step", f"tile:{site}")
     # Fault injection changes the trace, never the actual computed result.
     artifacts = re.findall(r"Run artifacts dir: (.+)", recorded)
     require(len(artifacts) == 1, "missing recorded run directory")

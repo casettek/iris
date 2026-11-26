@@ -55,7 +55,7 @@ one. The signer's key, the recipe and the forms are the procedure's as
 well, which a contract holds the claim's records to when it arrives.
 
 **A value in the wrong place.** A checkpoint may name any value a challenger
-holds, and the comparison does not ask whether it is the one the chain gives
+holds, and the comparison does not ask whether it is the one the pipeline gives
 that stage. So a claimer can give a stage another layer's weights, the marks
 of another range, the procedure posted for another inference, or the
 output of another earlier stage of the right kind. Nothing voids such a
@@ -65,7 +65,7 @@ states a clean output for that stage is shown false as any other lie about a
 stage is, by a replay of the stage on the inputs its checkpoint names.
 `challenge build` runs every stage on exactly those: it binds each input to
 the earlier stage the checkpoint points at when that stage's output is what
-the input list loads, and otherwise to the file the chain holds under that
+the input list loads, and otherwise to the file the pipeline holds under that
 commitment, a pinned one or a posted one.
 
 A run input is posted as its value and not as the Raster file a stage loads,
@@ -80,7 +80,7 @@ and a challenge is built from the claimer's checkpoint at that position. That
 checkpoint fixes which step the position is: its stage, program, producers and
 the hash of its input manifest. Without it, a challenger could dispute a
 position with an honest run of another step. `aux_c0_l3` and `aux_c0_l5`, for
-instance, run one program on one chained input and differ only in which
+instance, run one program on one piped input and differ only in which
 layer's weights they load, so a challenger's honest `aux_c0_l5` would differ
 from the claimer's honest `aux_c0_l3` with nothing for the claimer to refute.
 

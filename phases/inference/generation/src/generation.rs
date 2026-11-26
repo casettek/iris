@@ -1,5 +1,5 @@
 //! What only autoregressive generation needs: the whole vocabulary's logits and
-//! the greedy selection over them. The chain's `sequence-check` stage folds the
+//! the greedy selection over them. The pipeline's `sequence-check` stage folds the
 //! same scores into a running argmax instead of building this list.
 use anyhow::{bail, Result};
 use raster::List;

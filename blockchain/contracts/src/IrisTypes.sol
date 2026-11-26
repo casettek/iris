@@ -27,7 +27,7 @@ struct Procedure {
     string procedureKind;
     string family;
     // The part of the id's encoding that lists the approved programs: a
-    // count, then each program's stage, id, chained inputs, run inputs and
+    // count, then each program's stage, id, piped inputs, run inputs and
     // pinned inputs. The registry walks it for each program's stage.
     bytes programs;
     Model[] models;
@@ -62,7 +62,7 @@ struct Procedure {
 struct InputRule {
     // Taken from an earlier stage: the stages that may produce it, each as
     // the hash of its name, and the empty values it may hold in place of one.
-    bool chained;
+    bool piped;
     bytes32[] producers;
     bytes32[] emptyValues;
     // Bound to fixed data, such as the model's: the commitments it may hold.

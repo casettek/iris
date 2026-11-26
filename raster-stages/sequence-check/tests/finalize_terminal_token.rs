@@ -1,8 +1,8 @@
 //! The terminal-token path.
 //!
-//! The chain's decode loop is a static unroll, so this branch is the only thing
+//! The pipeline's decode loop is a static unroll, so this branch is the only thing
 //! that distinguishes "the model finished its turn" from "the repeat count ran
-//! out" — and a chain run long enough to make a real model emit `<turn|>` costs
+//! out" — and a pipeline run long enough to make a real model emit `<turn|>` costs
 //! hours of stage execution.
 
 use sequence_check::input::DecoderToken;

@@ -13,7 +13,7 @@ use rayon::prelude::*;
 use sequence_check::input::GeneratedOutput;
 
 use crate::cache::{CachedInputs, CachedStageValue, MaterializationCache, StageOutputCache};
-use crate::chain_runner::{self, InputBinding, StageSpec};
+use crate::pipeline_runner::{self, InputBinding, StageSpec};
 use crate::segments::{self, StageKind};
 
 #[derive(Debug, Clone)]
@@ -84,25 +84,25 @@ impl UncheckpointedInferenceExecutor {
     ) -> Result<InferenceRunReport> {
         ensure_manifest_exists(&config.manifest_path)?;
         let infer_started = Instant::now();
-        let manifest = chain_runner::read_manifest(&config.manifest_path)?;
-        chain_runner::validate_supported_stages(&manifest.chain.stage)?;
-        let stage_index = chain_runner::build_stage_index(&manifest.chain.stage)?;
+        let manifest = pipeline_runner::read_manifest(&config.manifest_path)?;
+        pipeline_runner::validate_supported_stages(&manifest.pipeline.stage)?;
+        let stage_index = pipeline_runner::build_stage_index(&manifest.pipeline.stage)?;
         let temp_dir = InferenceTempDir::create()?;
 
         let mut state = InferRunState {
-            output_commitments: vec![None; manifest.chain.stage.len()],
+            output_commitments: vec![None; manifest.pipeline.stage.len()],
             cache: InferRunCache::default(),
             last_output: None,
-            stages: Vec::with_capacity(manifest.chain.stage.len()),
+            stages: Vec::with_capacity(manifest.pipeline.stage.len()),
             aux_waves: Vec::new(),
         };
 
         let mut idx = 0;
-        while idx < manifest.chain.stage.len() {
-            if let Some(aux_range) = aux_wave_range(&manifest.chain.stage, idx) {
+        while idx < manifest.pipeline.stage.len() {
+            if let Some(aux_range) = aux_wave_range(&manifest.pipeline.stage, idx) {
                 run_aux_wave(
                     aux_range.clone(),
-                    &manifest.chain.stage,
+                    &manifest.pipeline.stage,
                     &config.base_dir,
                     temp_dir.path(),
                     &stage_index,
@@ -111,7 +111,7 @@ impl UncheckpointedInferenceExecutor {
                 idx = aux_range.end;
                 continue;
             }
-            let stage = &manifest.chain.stage[idx];
+            let stage = &manifest.pipeline.stage[idx];
             run_stage(
                 idx,
                 stage,
@@ -124,7 +124,7 @@ impl UncheckpointedInferenceExecutor {
         }
 
         let result = match state.last_output.as_deref() {
-            // The last stage of a chain is the last claimed range's check,
+            // The last stage of a pipeline is the last claimed range's check,
             // and its record is the output.
             Some(CachedStageValue::DecodeEdge(edge)) => {
                 inference_result_from_generated(sequence_check::input::generated_output(edge))
@@ -133,7 +133,7 @@ impl UncheckpointedInferenceExecutor {
                 "infer expected final stage to be a check with its output record, got {:?}",
                 other
             ),
-            None => bail!("infer cannot run an empty chain"),
+            None => bail!("infer cannot run an empty pipeline"),
         };
         Ok(InferenceRunReport {
             input_token_count: None,
@@ -197,7 +197,7 @@ fn run_stage(
     stage_index: &std::collections::BTreeMap<String, usize>,
     state: &mut InferRunState,
 ) -> Result<()> {
-    let cached_inputs = chain_runner::cached_inputs_for_stage(
+    let cached_inputs = pipeline_runner::cached_inputs_for_stage(
         stage,
         stage_index,
         &state.output_commitments,
@@ -239,7 +239,7 @@ fn run_cached_stage(
 
     let stage_started = Instant::now();
     let input_synthesis_started = Instant::now();
-    let (input_json_path, input_manifest_path) = chain_runner::synthesize_inputs(
+    let (input_json_path, input_manifest_path) = pipeline_runner::synthesize_inputs(
         stage,
         stage_dir,
         base_dir,
@@ -353,7 +353,7 @@ fn prepare_aux_stage_job<'a>(
     stage_index: &BTreeMap<String, usize>,
     state: &'a InferRunState,
 ) -> Result<InferAuxStageJob<'a>> {
-    let cached_inputs = chain_runner::cached_inputs_for_stage(
+    let cached_inputs = pipeline_runner::cached_inputs_for_stage(
         stage,
         stage_index,
         &state.output_commitments,
@@ -365,7 +365,7 @@ fn prepare_aux_stage_job<'a>(
         .with_context(|| format!("failed to create {}", stage_dir.display()))?;
 
     let input_synthesis_started = Instant::now();
-    let (input_json_path, input_manifest_path) = chain_runner::synthesize_inputs(
+    let (input_json_path, input_manifest_path) = pipeline_runner::synthesize_inputs(
         stage,
         &stage_dir,
         base_dir,

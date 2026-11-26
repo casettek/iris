@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
-/// What this chain knows of Celestia's blocks: for a height, the root of the
+/// What this pipeline knows of Celestia's blocks: for a height, the root of the
 /// block's data and the block's time.
 ///
 /// A trusted relayer posts them. That stands in for a light client of
-/// Celestia on this chain (Blobstream was one): a contract that takes the same
+/// Celestia on this pipeline (Blobstream was one): a contract that takes the same
 /// facts with a proof replaces this one behind `blockOf`, and nothing that
 /// reads it changes.
 contract DataRootOracle {

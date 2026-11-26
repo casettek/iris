@@ -10,7 +10,7 @@ CORE="celestia-validator"
 STORE="/home/celestia/.celestia-bridge-${CHAIN_ID}"
 
 # The validator keeps only its recent blocks, so the first block is there to
-# ask for only while the chain is young. Its hash is kept beside the store
+# ask for only while the pipeline is young. Its hash is kept beside the store
 # for every later start.
 GENESIS_FILE="/home/celestia/genesis-hash-${CHAIN_ID}"
 GENESIS_BLOCK_HASH=""

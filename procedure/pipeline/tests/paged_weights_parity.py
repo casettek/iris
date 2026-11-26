@@ -54,7 +54,7 @@ def main():
         case_file = directory / "case.toml"
         case_file.write_text(f"prompt = {json.dumps(case['prompt'], ensure_ascii=False)}\n", encoding="utf-8")
         record = {"name": case["name"], "runs": {}}
-        chains = {}
+        pipelines = {}
         for label, binaries, budget, workers, parallel in [
             ("baseline", baseline, 64 << 20, 2, "on"),
             ("embedding-only", embedding, 64 << 20, 2, "on"),
@@ -67,32 +67,32 @@ def main():
                                "STAGED_INFER_AUX_PARALLELISM": str(workers), "RASTER_PARALLELISM": parallel}
             seconds = invoke([binaries / f"iris{suffix}", "parity-worker", "--specification", spec, "--case", case_file,
                               "--output", directory / label], root, child_env, directory / f"{label}.log")
-            chain = Path(read(directory / label / "result.json")["chain_dir"])
-            chains[label] = chain
-            perf = read(chain / "staged-performance.json")
-            record["runs"][label] = {"seconds": seconds, "chain_dir": str(chain),
+            pipeline = Path(read(directory / label / "result.json")["pipeline_dir"])
+            pipelines[label] = pipeline
+            perf = read(pipeline / "staged-performance.json")
+            record["runs"][label] = {"seconds": seconds, "pipeline_dir": str(pipeline),
                                      "sampled_peak_rss_bytes": perf["sampled_peak_rss_bytes"],
                                      "budget_bytes": budget, "workers": workers, "parallel": parallel}
-        source_chain = chains["baseline"]
-        trace = read(source_chain / "checkpoint_list.json")
+        source_pipeline = pipelines["baseline"]
+        trace = read(source_pipeline / "checkpoint_list.json")
         names = [entry["stage"] for entry in trace]
         expected_names(names)
-        for chain in chains.values():
-            assert read(chain / "checkpoint_list.json") == trace
-            hashes = compare(source_chain, chain, names)
-            assert (chain / "checkpoints.txt").read_text().splitlines() == hashes
+        for pipeline in pipelines.values():
+            assert read(pipeline / "checkpoint_list.json") == trace
+            hashes = compare(source_pipeline, pipeline, names)
+            assert (pipeline / "checkpoints.txt").read_text().splitlines() == hashes
         replay = directory / "authenticated-raster"
         replay.mkdir()
         start = time.perf_counter()
         for name in names:
-            source, destination = source_chain / name, replay / name
+            source, destination = source_pipeline / name, replay / name
             destination.mkdir()
             inputs = read(source / "input.json")
             for entry in inputs.values():
                 for field in ("path", "index_path"):
                     if field in entry:
                         try:
-                            relative = Path(entry[field]).relative_to(source_chain)
+                            relative = Path(entry[field]).relative_to(source_pipeline)
                         except ValueError:
                             continue
                         entry[field] = str(replay / relative)
@@ -102,9 +102,9 @@ def main():
                                 "RASTER_TRACE_PATH": str(destination / "trace.json"), "RASTER_TRACE_FORMAT": "json"}
             invoke([current / f"{project(name)}{suffix}", "--input", destination / "input.json",
                     "--input-manifest", destination / "input_manifest.json"], root, replay_env, destination / "run.log")
-            compare(source_chain, replay, [name])
+            compare(source_pipeline, replay, [name])
         record["authenticated_raster_seconds"] = time.perf_counter() - start
-        record["checkpoint_hashes"] = compare(source_chain, replay, names)
+        record["checkpoint_hashes"] = compare(source_pipeline, replay, names)
         record["checkpoints_compared"] = len(names)
         record["passed"] = True
         report["cases"].append(record)

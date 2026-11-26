@@ -148,7 +148,7 @@ contract InputManifestTest {
 }
 
 /// The shape the protocol fixes for a trace: `protocol_window_size` and
-/// `FraudProofConfig::from_window_size` in Raster.
+/// `FaultProofConfig::from_window_size` in Raster.
 contract TraceShapeTest {
     function test_the_window_is_128_or_the_largest_power_of_two_below_the_length() public pure {
         require(IrisEncoding.protocolWindow(0) == 0 && IrisEncoding.protocolWindow(2) == 0, "too short");

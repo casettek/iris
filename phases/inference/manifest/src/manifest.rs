@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 
-/// Resolve generated chain paths before saving a template or frozen run elsewhere.
+/// Resolve generated pipeline paths before saving a template or frozen run elsewhere.
 pub fn resolve_raster_manifest_paths(template: &str, base: &Path) -> Result<String> {
     let mut lines = template
         .lines()
@@ -26,7 +26,7 @@ fn rewrite_project_line(line: &str, template_dir: &Path) -> Result<String> {
     let indent = &line[..line.len() - trimmed.len()];
     let project: String = serde_json::from_str(value.trim()).with_context(|| {
         format!(
-            "failed to parse chain stage project path from manifest line `{}`",
+            "failed to parse pipeline stage project path from manifest line `{}`",
             line
         )
     })?;

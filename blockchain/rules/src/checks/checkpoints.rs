@@ -424,11 +424,11 @@ impl CheckpointHashes {
         let program = pins
             .program(&checkpoint.program_commitment)
             .ok_or(ChallengeRefusal::UnapprovedStage { stage })?;
-        let chained = program.chained_input(input);
+        let piped = program.piped_input(input);
         let pinned = program.pinned_input(input);
         let from_run = program.run_inputs.iter().any(|run| run == input);
         // A name the program's entry does not list is not an input of it.
-        if chained.is_none() && pinned.is_none() && !from_run {
+        if piped.is_none() && pinned.is_none() && !from_run {
             return Err(ChallengeRefusal::NotAnInput {
                 stage,
                 input: input.to_string(),
@@ -442,7 +442,7 @@ impl CheckpointHashes {
         let Some(loaded) = inputs.get(input) else {
             return void(LinkFault::InputMissing);
         };
-        let Some(chained) = chained else {
+        let Some(piped) = piped else {
             // Bound to fixed data: the model's, or another pinned identity.
             // The stage checks what it loads against that identity as it
             // runs, and a challenger can show a lie about that check only by
@@ -467,7 +467,7 @@ impl CheckpointHashes {
                 loaded: loaded.clone(),
             });
         };
-        if chained.empty_values.contains(loaded) {
+        if piped.empty_values.contains(loaded) {
             return Ok(LinkCheck::Linked);
         }
         let Some(&index) = checkpoint.input_sources.get(input) else {
@@ -487,7 +487,7 @@ impl CheckpointHashes {
         )?;
         let of_right_kind = pins
             .program(&producer.program_commitment)
-            .is_some_and(|program| chained.producers.contains(&program.stage));
+            .is_some_and(|program| piped.producers.contains(&program.stage));
         if !of_right_kind {
             return void(LinkFault::ProducerOfWrongKind {
                 producer: index,

@@ -265,7 +265,7 @@ pub fn run(args: ProfileArgs) -> Result<PathBuf> {
     let original = CommitmentFile::read_memory(&original_path)?;
     original.validate()?;
     let original_hash = file_sha256(&original_path)?;
-    let project = staged_infer::chain_runner::stage_project(manifest, &bundle.stage)?;
+    let project = staged_infer::pipeline_runner::stage_project(manifest, &bundle.stage)?;
     fs::create_dir_all(&args.output)?;
     let output = fs::canonicalize(args.output)?;
     let summary_path = output.join("challenge-profile.json");
@@ -304,7 +304,7 @@ pub fn run(args: ProfileArgs) -> Result<PathBuf> {
         let mut native = Command::new("cargo");
         native
             .current_dir(&project)
-            .args(["raster", "run", "--fraud-proof-window-size"])
+            .args(["raster", "run", "--fault-proof-window-size"])
             .arg(original.window_size().to_string())
             .arg("--commit")
             .arg(&commit)

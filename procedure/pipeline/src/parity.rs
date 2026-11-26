@@ -45,7 +45,7 @@ pub struct ParityReport {
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
-pub struct ChainExecutionTimes {
+pub struct PipelineExecutionTimes {
     pub version: u32,
     pub stages: Vec<StageExecutionTime>,
     pub total_exec_duration_ns: u128,
@@ -196,7 +196,7 @@ fn validate_stage_input_artifacts(stage_dir: &Path) -> Result<()> {
         .any(|expected_root| canonical_run.starts_with(expected_root))
     {
         bail!(
-            "selected stage run {} is not under an unauthenticated chain root ({})",
+            "selected stage run {} is not under an unauthenticated pipeline root ({})",
             canonical_run.display(),
             expected_roots
                 .iter()
@@ -206,7 +206,7 @@ fn validate_stage_input_artifacts(stage_dir: &Path) -> Result<()> {
         );
     }
     let authenticated_artifacts = [
-        run_dir.join("chain-commitment"),
+        run_dir.join("pipeline-commitment"),
         stage_dir.join("trace.bin"),
         stage_dir.join("commit.bin"),
     ];
@@ -225,7 +225,7 @@ fn allowed_no_auth_roots() -> Result<Vec<PathBuf>> {
         current_dir
             .join("target")
             .join("raster")
-            .join("chains-no-auth"),
+            .join("pipelines-no-auth"),
         current_dir.join("target").join("staged-infer").join("runs"),
     ];
     Ok(roots
@@ -372,15 +372,15 @@ pub fn read_parity_report(stage_dir: &Path) -> Result<ParityReport> {
     Ok(report)
 }
 
-pub fn read_chain_execution_times(chain_dir: &Path) -> Result<ChainExecutionTimes> {
-    let path = chain_dir.join(EXECUTION_TIMES_JSON);
-    let timings: ChainExecutionTimes = serde_json::from_slice(
+pub fn read_pipeline_execution_times(pipeline_dir: &Path) -> Result<PipelineExecutionTimes> {
+    let path = pipeline_dir.join(EXECUTION_TIMES_JSON);
+    let timings: PipelineExecutionTimes = serde_json::from_slice(
         &fs::read(&path).with_context(|| format!("failed to read {}", path.display()))?,
     )
     .with_context(|| format!("failed to decode {}", path.display()))?;
     if !matches!(timings.version, 1 | 2) {
         bail!(
-            "unsupported chain execution-times version {} in {}",
+            "unsupported pipeline execution-times version {} in {}",
             timings.version,
             path.display()
         );
@@ -389,7 +389,7 @@ pub fn read_chain_execution_times(chain_dir: &Path) -> Result<ChainExecutionTime
 }
 
 pub fn render_timing_summary(
-    timings: &ChainExecutionTimes,
+    timings: &PipelineExecutionTimes,
     parity: &ParityReport,
 ) -> Result<String> {
     let stage_width = timings
@@ -402,12 +402,12 @@ pub fn render_timing_summary(
     let mut output = String::new();
     writeln!(
         output,
-        "\nNON-AUTHORITATIVE timing comparison (chain runner: --no-auth; stage execution only)"
+        "\nNON-AUTHORITATIVE timing comparison (pipeline runner: --no-auth; stage execution only)"
     )?;
     writeln!(
         output,
         "{:<stage_width$}  {:>12}  {:>12}  {:>12}  {:>12}  {:>8}  {:>8}",
-        "stage", "chain exec", "direct stage", "kernel", "saved", "speedup", "parity"
+        "stage", "pipeline exec", "direct stage", "kernel", "saved", "speedup", "parity"
     )?;
 
     let mut selected_count = 0usize;
@@ -540,7 +540,7 @@ mod tests {
                 .unwrap()
                 .join("target")
                 .join("raster")
-                .join("chains-no-auth")
+                .join("pipelines-no-auth")
                 .join(format!("parity-test-{}-{id}", std::process::id()));
             let stage_dir = run_dir.join(stage_name);
             fs::create_dir_all(&stage_dir).unwrap();
@@ -564,7 +564,7 @@ mod tests {
     }
 
     #[test]
-    fn accepts_complete_no_auth_stage_without_chain_commitment() {
+    fn accepts_complete_no_auth_stage_without_pipeline_commitment() {
         let stage = TestStage::no_auth("range_p0_l3");
 
         validate_stage_artifacts(&stage.stage_dir).unwrap();
@@ -573,7 +573,7 @@ mod tests {
     #[test]
     fn rejects_authenticated_artifacts_in_no_auth_stage() {
         let stage = TestStage::no_auth("range_p0_l3");
-        fs::write(stage.run_dir.join("chain-commitment"), []).unwrap();
+        fs::write(stage.run_dir.join("pipeline-commitment"), []).unwrap();
         fs::write(stage.stage_dir.join("trace.bin"), []).unwrap();
         fs::write(stage.stage_dir.join("commit.bin"), []).unwrap();
 

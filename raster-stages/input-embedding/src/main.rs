@@ -44,7 +44,7 @@ fn embed_prompt_token(
 
 /// Phase 2 entrypoint, for one range of the sequence.
 ///
-/// `prompt` is this range's chain-tokenized prompt ids (empty for a range of
+/// `prompt` is this range's pipeline-tokenized prompt ids (empty for a range of
 /// claimed output); `claimed` is this range's claimed output ids (empty for a
 /// prompt range); `previous` is the previous range's embedding, or
 /// the empty sequence for the first; `embedding` is a committed external.

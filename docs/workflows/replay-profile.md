@@ -96,8 +96,8 @@ measured in the guest. These are the selected calls, not a guaranteed maximum.
 | `check_c0` | 131,245 | `score_head_page` | 2,537,947 |
 | `output_finalize` | 58 | `copy_output_token_ids` | 220,701 |
 
-The whole chain ran through authenticated Raster with 549 s of stage time, and
-`chain audit --execution` reproduced every committed output. `embed_c0` and
+The whole pipeline ran through authenticated Raster with 549 s of stage time, and
+`pipeline audit --execution` reproduced every committed output. `embed_c0` and
 `output_finalize` used a window of 2 for this measurement, because they are too short
 for the challenge's 128.
 
@@ -105,7 +105,7 @@ The `prompt_seed`, `prompt_merge` and `prompt_prepare` rows in this section were
 before `prompt_check_p{j}` replaced those stages on November 10, 2026.
 
 Tokenizing dominated long prompts then. At 666 prompt tokens, one 512-token range size and
-8 claimed tokens the chain had 268 stages, and replays took:
+8 claimed tokens the pipeline had 268 stages, and replays took:
 
 | stage | trace steps | replay |
 | --- | --- | --- |

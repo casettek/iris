@@ -1,13 +1,13 @@
 pub mod artifact_io;
 pub mod cache;
-pub mod chain_runner;
 pub mod executor;
 pub mod parity;
+pub mod pipeline_runner;
 pub mod segments;
 pub mod uncheckpointed;
 pub mod worker;
 
-pub use chain_runner::StagePrefixRun;
+pub use pipeline_runner::StagePrefixRun;
 pub use segments::inference::weights;
 
 pub use executor::{

@@ -716,7 +716,7 @@ fn execution_fixture() -> (
 
 #[test]
 #[ignore = "builds and executes production sequence-check guests, finalization among them"]
-fn chain_history_and_transcript_substitutions_match_native_in_guest() {
+fn pipeline_history_and_transcript_substitutions_match_native_in_guest() {
     use model_identity::ModelContext;
     let (prompt, previous, current) = execution_fixture();
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))

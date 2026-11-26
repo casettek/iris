@@ -134,7 +134,7 @@ just fmt            # format; never `cargo fmt --all`
 ## Documentation
 
 [docs/README.md](docs/README.md) is the index: how each workflow runs, how
-the chain and the contracts work, and what is open.
+the pipeline and the contracts work, and what is open.
 
 ## Layout
 
@@ -158,7 +158,7 @@ procedures/                 # the procedure kinds: one file per kind, its steps 
 procedure/                  # a procedure and the ways to run it
   definition/               # what a procedure is, and the record of a run: specification, checkpoints,
                             # the segment kinds, and a kind's shape as its file states it
-  prepare/                  # a run's inputs and files, and the chain a pipeline run is made from
+  prepare/                  # a run's inputs and files, and the pipeline a pipeline run is made from
   native/                   # the native run: a procedure's result as fast as possible
   pipeline/                 # the pipeline run, stage by stage, that a claim and a challenge make:
                             # the runner, and each native stage under segments/{source,inference,result}

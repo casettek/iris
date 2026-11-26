@@ -154,24 +154,24 @@ pub(crate) fn print_challenge_result(result: &ChallengeBuildResult) {
         ChallengeBuildOutcome::NoDivergence {
             claimed_reference_path,
             recomputed_list_path,
-            recomputed_chain_dir,
+            recomputed_pipeline_dir,
         } => {
             println!("no divergence found");
             println!("claimed reference: {}", claimed_reference_path.display());
             println!("recomputed list: {}", recomputed_list_path.display());
-            println!("recomputed chain: {}", recomputed_chain_dir.display());
+            println!("recomputed pipeline: {}", recomputed_pipeline_dir.display());
         }
         ChallengeBuildOutcome::ClaimedOutputRejected {
             reason,
             claimed_reference_path,
             recomputed_list_path,
-            recomputed_chain_dir,
+            recomputed_pipeline_dir,
         } => {
             println!("no divergence found; claimed output rejected");
             println!("reason: {reason}");
             println!("claimed reference: {}", claimed_reference_path.display());
             println!("recomputed list: {}", recomputed_list_path.display());
-            println!("recomputed chain: {}", recomputed_chain_dir.display());
+            println!("recomputed pipeline: {}", recomputed_pipeline_dir.display());
         }
         ChallengeBuildOutcome::DivergenceBuilt {
             divergence,
@@ -234,9 +234,9 @@ impl ChallengeBuildArgs {
         };
         let current_exe = std::env::current_exe().context("failed to locate current executable")?;
         let staged_backend = if self.staged_subprocess {
-            staged_infer::chain_runner::StagedExecutionBackend::Subprocess
+            staged_infer::pipeline_runner::StagedExecutionBackend::Subprocess
         } else {
-            staged_infer::chain_runner::StagedExecutionBackend::InProcess
+            staged_infer::pipeline_runner::StagedExecutionBackend::InProcess
         };
         let mut options = ChallengeBuildOptions::from_current_dir(
             current_exe,

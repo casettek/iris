@@ -41,7 +41,7 @@ pub enum CorruptFault {
     /// claim posted, by the kind of input. The named input, or the first the
     /// checkpoint names a producer for.
     Input(Option<String>),
-    /// An input the claim is allowed to name, in a place the chain does not
+    /// An input the claim is allowed to name, in a place the pipeline does not
     /// give it: the value an earlier stage of the same program is given for
     /// that input, such as another layer's weights, another range's marks or
     /// another stage's output. Every such value is one a challenger holds,

@@ -131,8 +131,8 @@ impl Procedure {
             encoder
                 .text(&program.stage)
                 .hash(&program.program_commitment)
-                .count(program.chained_inputs.len());
-            for input in &program.chained_inputs {
+                .count(program.piped_inputs.len());
+            for input in &program.piped_inputs {
                 encoder.text(&input.name).count(input.producers.len());
                 for producer in &input.producers {
                     encoder.text(producer);

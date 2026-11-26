@@ -5,7 +5,7 @@
 //! guest), from the native kernels, and from run preparation. There is one
 //! copy of the logic, so the three cannot disagree.
 //!
-//! The chain establishes this relationship over the prompt:
+//! The pipeline establishes this relationship over the prompt:
 //!
 //! ```text
 //!   original text ─ sha256 ─▶ input_text_sha256
@@ -21,7 +21,7 @@
 //! `src/`, so a stage cannot import them from another crate. Each prompt stage
 //! compiles this one file as its own module through a symlink in its `src/`.
 //! Their types are distinct Rust types with identical structure, which is what
-//! the chain links stages by.
+//! the pipeline links stages by.
 
 use alloc::format;
 use alloc::string::{String, ToString};
@@ -253,7 +253,7 @@ pub fn merge_bucket_of(left: &str, right: &str, bucket_count: u32) -> u32 {
 /// The original UTF-8 prompt, in chunks cut at character boundaries.
 ///
 /// The chunks concatenate to the text the commitment identifies. Where they
-/// are cut changes nothing the chain computes.
+/// are cut changes nothing the pipeline computes.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
 pub struct PromptText {
     pub chunks: List<String>,
@@ -379,7 +379,7 @@ pub struct PromptContext {
     pub model_id: String,
     pub raw_prompt: bool,
     pub max_new_tokens: u32,
-    /// Zero outside the ranged chain, where no range limit applies.
+    /// Zero outside the ranged pipeline, where no range limit applies.
     pub range_size: u32,
     /// The piece the next range starts at.
     pub next_piece: u64,

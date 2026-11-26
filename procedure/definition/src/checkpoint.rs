@@ -3,7 +3,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
-use raster_core::chain::ChainCommitment;
+use raster_core::pipeline::PipelineCommitment;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -55,7 +55,7 @@ impl Checkpoint {
     ///
     /// These are what a stage directory states whoever wrote it. A directory
     /// Raster wrote records no program id and no producers, since a Raster run
-    /// names both in its chain commitment, so a native checkpoint and a Raster
+    /// names both in its pipeline commitment, so a native checkpoint and a Raster
     /// replay of the same stage are compared on this and not as wholes.
     pub fn same_boundary(&self, other: &Self) -> bool {
         self.stage == other.stage
@@ -99,17 +99,20 @@ pub fn read_checkpoint_hashes(path: &Path) -> Result<Vec<String>> {
         .collect()
 }
 
-pub fn write_checkpoint_list_artifact(chain_dir: &Path, list: &CheckpointList) -> Result<PathBuf> {
-    let list_path = chain_dir.join(CHECKPOINT_LIST_JSON);
+pub fn write_checkpoint_list_artifact(
+    pipeline_dir: &Path,
+    list: &CheckpointList,
+) -> Result<PathBuf> {
+    let list_path = pipeline_dir.join(CHECKPOINT_LIST_JSON);
     write_json(&list_path, list)?;
     Ok(list_path)
 }
 
 pub fn write_checkpoint_hashes_artifact(
-    chain_dir: &Path,
+    pipeline_dir: &Path,
     list: &CheckpointList,
 ) -> Result<PathBuf> {
-    let hashes_path = chain_dir.join(CHECKPOINTS_TXT);
+    let hashes_path = pipeline_dir.join(CHECKPOINTS_TXT);
     let mut output = checkpoint_hashes(list)?.join("\n");
     if !output.is_empty() {
         output.push('\n');
@@ -218,15 +221,18 @@ fn validate_checkpoint_hash(hash: &str, line_number: usize) -> Result<String> {
     Ok(hash.to_ascii_lowercase())
 }
 
-pub fn build_checkpoint_list(chain_dir: &Path, _manifest_path: &Path) -> Result<CheckpointList> {
-    let stage_order = read_stage_order(chain_dir)?.map(StageOrderIndex::from);
+pub fn build_checkpoint_list(pipeline_dir: &Path, _manifest_path: &Path) -> Result<CheckpointList> {
+    let stage_order = read_stage_order(pipeline_dir)?.map(StageOrderIndex::from);
 
     let mut checkpoints = Vec::new();
-    for entry in fs::read_dir(chain_dir)
-        .with_context(|| format!("failed to read chain directory {}", chain_dir.display()))?
-    {
+    for entry in fs::read_dir(pipeline_dir).with_context(|| {
+        format!(
+            "failed to read pipeline directory {}",
+            pipeline_dir.display()
+        )
+    })? {
         let entry =
-            entry.with_context(|| format!("failed to read entry in {}", chain_dir.display()))?;
+            entry.with_context(|| format!("failed to read entry in {}", pipeline_dir.display()))?;
         let stage_dir = entry.path();
         if !stage_dir.is_dir() {
             continue;
@@ -299,7 +305,7 @@ pub fn write_stage_program(
 }
 
 /// What a stage directory records of its program and producers, or nothing
-/// when it has no record: a Raster run directory names both in its chain
+/// when it has no record: a Raster run directory names both in its pipeline
 /// commitment.
 fn read_stage_program(stage_dir: &Path) -> Result<StageProgramDocument> {
     let path = stage_dir.join(STAGE_PROGRAM_JSON);
@@ -310,21 +316,25 @@ fn read_stage_program(stage_dir: &Path) -> Result<StageProgramDocument> {
 }
 
 /// Read the run's recorded order independently of optional timing reports.
-/// Current Raster writes an ordered chain commitment even in no-auth mode;
+/// Current Raster writes an ordered pipeline commitment even in no-auth mode;
 /// staged-native and older Raster runs record their order in execution times.
 /// A malformed commitment is an error, never a reason to use another inventory.
-pub fn read_stage_order(chain_dir: &Path) -> Result<Option<Vec<String>>> {
-    let commitment_path = chain_dir.join("chain-commitment");
+pub fn read_stage_order(pipeline_dir: &Path) -> Result<Option<Vec<String>>> {
+    let commitment_path = pipeline_dir.join("pipeline-commitment");
     if commitment_path.exists() {
         let bytes = fs::read(&commitment_path)
             .with_context(|| format!("failed to read {}", commitment_path.display()))?;
-        let chain: ChainCommitment = postcard::from_bytes(&bytes)
+        let pipeline: PipelineCommitment = postcard::from_bytes(&bytes)
             .with_context(|| format!("failed to parse {}", commitment_path.display()))?;
         return Ok(Some(
-            chain.stages.into_iter().map(|stage| stage.name).collect(),
+            pipeline
+                .stages
+                .into_iter()
+                .map(|stage| stage.name)
+                .collect(),
         ));
     }
-    let times_path = chain_dir.join(EXECUTION_TIMES_JSON);
+    let times_path = pipeline_dir.join(EXECUTION_TIMES_JSON);
     if times_path.exists() {
         let document: ExecutionTimesDocument = read_json(&times_path)?;
         return Ok(Some(

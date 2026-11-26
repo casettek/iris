@@ -27,10 +27,13 @@ pub(crate) fn require_input_args(cli: &Cli) -> Result<()> {
 pub(crate) fn finish_parity_run(status: ExitStatus, stage_dir: &Path) -> Result<ExitCode> {
     match staged_infer::parity::read_parity_report(stage_dir) {
         Ok(report) => {
-            let chain_dir = stage_dir
+            let pipeline_dir = stage_dir
                 .parent()
-                .ok_or_else(|| anyhow::anyhow!("selected stage has no chain run directory"))?;
-            print!("{}", render_timing_summary_or_warning(chain_dir, &report));
+                .ok_or_else(|| anyhow::anyhow!("selected stage has no pipeline run directory"))?;
+            print!(
+                "{}",
+                render_timing_summary_or_warning(pipeline_dir, &report)
+            );
         }
         Err(error) if status.success() => return Err(error),
         Err(_) => {}
@@ -39,10 +42,10 @@ pub(crate) fn finish_parity_run(status: ExitStatus, stage_dir: &Path) -> Result<
 }
 
 pub(crate) fn render_timing_summary_or_warning(
-    chain_dir: &Path,
+    pipeline_dir: &Path,
     report: &staged_infer::parity::ParityReport,
 ) -> String {
-    staged_infer::parity::read_chain_execution_times(chain_dir)
+    staged_infer::parity::read_pipeline_execution_times(pipeline_dir)
         .and_then(|timings| staged_infer::parity::render_timing_summary(&timings, report))
         .unwrap_or_else(|error| format!("\ntiming summary unavailable: {error:#}\n"))
 }

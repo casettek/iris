@@ -5,7 +5,7 @@
 //! full attention with two RoPE bases, K/V sharing, a gated-GELU feed-forward
 //! block, per-layer embedding inputs and a soft-capped head). The parent module
 //! is the part every family shares: the command line, the artifact layout,
-//! paging, commitments, the chain template and the manifest.
+//! paging, commitments, the pipeline template and the manifest.
 //!
 //! A second family gets its own module beside this one, and a variant of
 //! `model_manifest::ModelFamily`.
@@ -228,7 +228,7 @@ pub(super) fn write_embedding(
 
     stages.push(format!(
         concat!(
-            "[[chain.stage]]\n",
+            "[[pipeline.stage]]\n",
             "name = \"input_embedding\"\n",
             "project = \"raster-stages/input-embedding\"\n",
             "inputs.prompt = {{ from = \"prompt_check\" }}\n",
@@ -323,7 +323,7 @@ pub(super) fn write_ple_layers(
         )?;
         stages.push(format!(
             concat!(
-                "[[chain.stage]]\n",
+                "[[pipeline.stage]]\n",
                 "name = \"prefill_prepare_aux_l{idx}\"\n",
                 "project = \"raster-stages/prefill-prepare-aux\"\n",
                 "inputs.embedded = {{ from = \"input_embedding\" }}\n",
@@ -404,7 +404,7 @@ pub(super) fn write_transformer_layers(
     }
     if by_donor.len() > 2 {
         return Err(format!(
-            "this chain supports at most two KV donor candidates, model declares {}",
+            "this pipeline supports at most two KV donor candidates, model declares {}",
             by_donor.len()
         )
         .into());
@@ -516,7 +516,7 @@ pub(super) fn write_transformer_layers(
         };
         stages.push(format!(
             concat!(
-                "[[chain.stage]]\n",
+                "[[pipeline.stage]]\n",
                 "name = \"prefill_range_l{idx}\"\n",
                 "project = \"raster-stages/prefill-range\"\n",
                 "inputs.activations = {{ from = \"{upstream}\" }}\n",
@@ -603,7 +603,7 @@ pub(super) fn write_head(
     )?;
 
     stages.push(format!(
-        "[[chain.stage]]\nname = \"final_head\"\nproject = \"raster-stages/sequence-check\"\n{}",
+        "[[pipeline.stage]]\nname = \"final_head\"\nproject = \"raster-stages/sequence-check\"\n{}",
         external_line(
             "head",
             layout,
@@ -655,7 +655,7 @@ const LAYER_TENSORS: &[&str] = &[
 /// Whether this family's import reads the tensor, or has no business with it.
 ///
 /// Tensors outside the language model (vision and audio towers) are not this
-/// chain's, and are passed over as they always were.
+/// pipeline's, and are passed over as they always were.
 fn is_known_tensor(name: &str, layers: usize) -> bool {
     let Some(rest) = name.strip_prefix(LANGUAGE_MODEL) else {
         return true;
@@ -703,15 +703,15 @@ pub(super) fn require_known_tensors<'a>(
 }
 
 impl Shape {
-    /// What the chain template needs of this model's layers.
-    pub(super) fn chain_layers(&self) -> ChainLayers {
+    /// What the pipeline template needs of this model's layers.
+    pub(super) fn pipeline_layers(&self) -> PipelineLayers {
         let mut donors = (0..self.layers)
             .map(|layer| self.kv_donor_layer(layer))
             .filter(|donor| *donor >= 0)
             .collect::<Vec<_>>();
         donors.sort_unstable();
         donors.dedup();
-        ChainLayers {
+        PipelineLayers {
             layers: self.layers,
             project: "raster-stages/prefill-range",
             stage: "prefill_range",
@@ -770,7 +770,7 @@ mod tests {
         for index in 0..2 {
             names.extend(LAYER_TENSORS.iter().map(|suffix| layer(index, suffix)));
         }
-        // Another tower's weights are not this chain's.
+        // Another tower's weights are not this pipeline's.
         names.push(String::from("model.vision_tower.patch_embedding.weight"));
         let check = |names: &[String]| require_known_tensors(names.iter().map(String::as_str), 2);
         assert!(check(&names).is_ok());

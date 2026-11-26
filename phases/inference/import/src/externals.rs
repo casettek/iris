@@ -1,10 +1,10 @@
 //! Mirrors of every stage's committed external type.
 //!
 //! Each of these must match the stage's own definition **field-for-field**:
-//! the chain authorizes an external by the structural commitment of its bytes,
+//! the pipeline authorizes an external by the structural commitment of its bytes,
 //! so a renamed field or a reordered struct here produces an artifact the stage
 //! will not accept. They are duplicated rather than shared for the same reason
-//! the stages duplicate their boundary types — a chain member is a standalone
+//! the stages duplicate their boundary types — a pipeline member is a standalone
 //! program, and its guest cannot depend on a host-side crate.
 
 use raster::{Bytes, BytesPage, List};
@@ -14,12 +14,12 @@ use serde::{Deserialize, Serialize};
 pub const PAGE_SIZE: u64 = 184_320;
 
 /// Page size of every `Q8_0` region: a whole number of rows for each row
-/// width `in / 32 · 34` this chain is imported with. MUST match the stages'
+/// width `in / 32 · 34` this pipeline is imported with. MUST match the stages'
 /// `Q8_PAGE_SIZE` / embedding and head `PAGE_SIZE`.
 pub const Q8_PAGE_SIZE: u64 = 195_840;
 
 /// Page size of the head projection: whole rows for every hidden width this
-/// chain is imported with (360 rows at 128, 30 at 1536, 18 at 2560).
+/// pipeline is imported with (360 rows at 128, 30 at 1536, 18 at 2560).
 /// MUST match `sequence-check`.
 pub const Q8_HEAD_PAGE_SIZE: u64 = 48_960;
 

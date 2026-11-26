@@ -98,7 +98,7 @@ fn an_id_that_is_not_a_hash_leaves_a_zero_statement_and_no_verdict() {
         (|r| r.model_id = String::from("gemma")) as fn(&mut OutputRecord),
         |r| r.input_text_sha256 = String::new(),
         |r| r.source_sha256 = String::new(),
-        // Uppercase is not the canonical spelling the chain binds.
+        // Uppercase is not the canonical spelling the pipeline binds.
         |r| r.model_id = "AB".repeat(32),
     ] {
         let mut record = clean();

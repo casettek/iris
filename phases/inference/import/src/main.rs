@@ -1,7 +1,7 @@
-//! Import a model bundle into this chain's committed externals.
+//! Import a model bundle into this pipeline's committed externals.
 //!
 //! This file is what every model family shares: the command line, the artifact
-//! layout, the tokenizer externals, commitments, the chain template and the
+//! layout, the tokenizer externals, commitments, the pipeline template and the
 //! manifest. What is particular to a family (its config, its tensors and how
 //! they become stage externals) is in that family's module: [`gemma`], and
 //! [`mistral`], which so far builds a direct manifest only. [`bundle_family`]
@@ -15,7 +15,7 @@
 //! Reads `model.detwgt` (deterministic Q16.16 weights), `config.json` (shapes,
 //! attention types, softcap) and `tokenizer.json` (vocabulary and merges), and
 //! writes one `.rastered`/`.rindex` pair per stage external and saves a
-//! model-specific `[chain]` template, stages expanded per layer.
+//! model-specific `[pipeline]` template, stages expanded per layer.
 //!
 //! Every value crosses over unchanged: detwgt stores canonical Q16.16 bit
 //! patterns, which is the representation the stages compute in. Nothing here
@@ -45,10 +45,10 @@ const INITIAL_PIECES_PLACEHOLDER_COMMITMENT: &str =
 /// run's own prompt pieces and, for teacher-forced runs, claimed output.
 const RUN_PLACEHOLDER_DIR: &str = "target/iris/run-prompt-placeholder";
 
-/// What the chain template needs to know of a model's layers: how many, which
+/// What the pipeline template needs to know of a model's layers: how many, which
 /// program runs one, and what a layer takes besides the layer below and its
 /// own cache.
-pub(crate) struct ChainLayers {
+pub(crate) struct PipelineLayers {
     pub layers: usize,
     /// The layer program's project. Its externals are kept under the same name.
     pub project: &'static str,
@@ -75,7 +75,7 @@ fn main() {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ImportConfig {
     pub model_dir: PathBuf,
-    /// Also write a copy of the complete chain template here.
+    /// Also write a copy of the complete pipeline template here.
     pub manifest: Option<PathBuf>,
     /// Root directory for reusable imported model artifacts.
     pub artifact_root: PathBuf,
@@ -104,7 +104,7 @@ pub struct ImportConfig {
     /// directory and this kept them; it writes nothing there now.
     pub no_stage_fixtures: bool,
     /// Largest teacher-forced range, in prompt tokens or claimed ids. Every
-    /// per-position stage of the teacher-forced chain covers at most this many
+    /// per-position stage of the teacher-forced pipeline covers at most this many
     /// positions, which bounds the cost of replaying any one of them.
     pub range_size: u32,
 }
@@ -117,7 +117,7 @@ pub const DEFAULT_RANGE_SIZE: u32 = 512;
 pub struct ImportResult {
     pub manifest_path: Option<PathBuf>,
     pub manifest_text: Option<String>,
-    /// The model manifest the import wrote, and the chain template as it
+    /// The model manifest the import wrote, and the pipeline template as it
     /// was saved: what the pins of this import are read from.
     pub model_manifest_path: Option<PathBuf>,
     pub template: Option<String>,
@@ -278,7 +278,7 @@ fn stage_artifact_dir_name(stage_dir: &str) -> String {
 /// The family a bundle's `config.json` declares.
 ///
 /// A config says what it is in `model_type`, on the text model or on the whole
-/// model. Bundles made for this chain before families existed say nothing, and
+/// model. Bundles made for this pipeline before families existed say nothing, and
 /// are Gemma's. Two families can share a `model_type` (a dense and a
 /// mixture-of-experts Gemma both say `gemma4`), so this is the first check and
 /// the family's own tensor inventory is the second.
@@ -431,13 +431,13 @@ pub fn import_model(args: ImportConfig) -> Result<ImportResult, Box<dyn Error>> 
                 &layout,
                 &mut stages,
             )?;
-            let chain = mistral::chain_layers(&shape);
+            let pipeline = mistral::pipeline_layers(&shape);
             return finish_import(
                 &args,
                 &layout,
                 family,
                 shape.into(),
-                &chain,
+                &pipeline,
                 &eos_ids,
                 &decoder_commitment,
                 &witness_commitment,
@@ -549,7 +549,7 @@ pub fn import_model(args: ImportConfig) -> Result<ImportResult, Box<dyn Error>> 
         &layout,
         family,
         shape.manifest_shape(text).into(),
-        &shape.chain_layers(),
+        &shape.pipeline_layers(),
         &eos_ids,
         &decoder_commitment,
         &witness_commitment,
@@ -558,22 +558,22 @@ pub fn import_model(args: ImportConfig) -> Result<ImportResult, Box<dyn Error>> 
 }
 
 /// What every family's full import ends with: the model's descriptor, the
-/// chain template, the manifest and the contract pins.
+/// pipeline template, the manifest and the contract pins.
 #[allow(clippy::too_many_arguments)]
 fn finish_import(
     args: &ImportConfig,
     layout: &ArtifactLayout,
     family: ModelFamily,
     manifest_shape: model_manifest::FamilyShape,
-    chain: &ChainLayers,
+    pipeline: &PipelineLayers,
     eos_ids: &std::collections::BTreeSet<u32>,
     decoder_commitment: &str,
     witness_commitment: &str,
     stages: &[String],
 ) -> Result<ImportResult, Box<dyn Error>> {
-    let commitments = model_commitments(chain, decoder_commitment, stages)?;
+    let commitments = model_commitments(pipeline, decoder_commitment, stages)?;
     let descriptor =
-        model_manifest::model_identity::descriptor_from_commitments(&commitments, chain.layers)?;
+        model_manifest::model_identity::descriptor_from_commitments(&commitments, pipeline.layers)?;
     let descriptor =
         raster::BytesPage::__from_parts(0, 0, descriptor.encode().map_err(|f| format!("{f:?}"))?);
     let descriptor_commitment = write_external(
@@ -602,7 +602,13 @@ fn finish_import(
     let stage_count = stages.len();
     let (template_path, template) = save_model_template(
         args,
-        &chain_template(chain, layout, decoder_commitment, &identity_inputs, stages)?,
+        &pipeline_template(
+            pipeline,
+            layout,
+            decoder_commitment,
+            &identity_inputs,
+            stages,
+        )?,
     )?;
     let model_manifest_path = direct_manifest::write_model_manifest(
         args,
@@ -652,7 +658,7 @@ fn save_model_template(
 /// These are the commitments a stage's `input_manifest.json` binds, so a claim
 /// that ran other weights can be held to the model it names by comparing them.
 fn model_commitments(
-    chain: &ChainLayers,
+    pipeline: &PipelineLayers,
     decoder_commitment: &str,
     stages: &[String],
 ) -> Result<Vec<model_manifest::ModelCommitment>, Box<dyn Error>> {
@@ -673,22 +679,26 @@ fn model_commitments(
             stage_external_commitment(stages, "final_head", "head")?,
         ),
     ];
-    for layer in 0..if chain.auxiliary { chain.layers } else { 0 } {
+    for layer in 0..if pipeline.auxiliary {
+        pipeline.layers
+    } else {
+        0
+    } {
         entries.push(entry(
             format!("aux_layer_{layer}"),
             stage_external_commitment(stages, &format!("prefill_prepare_aux_l{layer}"), "layer")?,
         ));
     }
-    for layer in 0..chain.layers {
+    for layer in 0..pipeline.layers {
         entries.push(entry(
             format!("transformer_layer_{layer}"),
-            stage_external_commitment(stages, &format!("{}_l{layer}", chain.stage), "layer")?,
+            stage_external_commitment(stages, &format!("{}_l{layer}", pipeline.stage), "layer")?,
         ));
     }
     Ok(entries)
 }
 
-/// The chain template: one pass over `prompt ‖ claimed output`, cut into ranges of at most `range_size`
+/// The pipeline template: one pass over `prompt ‖ claimed output`, cut into ranges of at most `range_size`
 /// positions so no stage's cost grows with the prompt.
 ///
 /// Run preparation tokenizes the prompt and cuts the tokens into ranges of at
@@ -713,8 +723,8 @@ fn model_commitments(
 /// per-range externals are filled in by run preparation. Wrong marks do not
 /// stop a stage: the fault is recorded in the prompt context, which the last
 /// range's `prompt_check` publishes for the whole prompt.
-fn chain_template(
-    chain: &ChainLayers,
+fn pipeline_template(
+    pipeline: &PipelineLayers,
     layout: &ArtifactLayout,
     decoder_commitment: &str,
     identity_inputs: &str,
@@ -765,15 +775,17 @@ fn chain_template(
             )
         };
         format!(
-            "\n[chain.input.{name}]\nindex = \"{index}\"\npath = {:?}\nindex_path = {:?}\ncommitments = []\n",
+            "\n[pipeline.input.{name}]\nindex = \"{index}\"\npath = {:?}\nindex_path = {:?}\ncommitments = []\n",
             path("rastered"),
             path("rindex"),
         )
     };
-    let last_layer = chain.layers - 1;
-    let first_shared = chain.layers.saturating_sub(chain.num_kv_shared_layers);
-    let donors = &chain.donors;
-    let project = chain.project;
+    let last_layer = pipeline.layers - 1;
+    let first_shared = pipeline
+        .layers
+        .saturating_sub(pipeline.num_kv_shared_layers);
+    let donors = &pipeline.donors;
+    let project = pipeline.project;
     if donors.len() > 2 {
         return Err(format!(
             "ranges support at most two donor candidates, model declares {}",
@@ -782,8 +794,8 @@ fn chain_template(
         .into());
     }
 
-    let mut out = String::from("[chain]\nname = \"iris\"\nversion = \"0.1.0\"\n");
-    out.push_str(&indexed_model_inputs(chain, layout, prefill_stages)?);
+    let mut out = String::from("[pipeline]\nname = \"iris\"\nversion = \"0.1.0\"\n");
+    out.push_str(&indexed_model_inputs(pipeline, layout, prefill_stages)?);
     out.push_str(&range_input("prompt_text", "text", "j"));
     out.push_str(&range_input("prompt_marks", "marks", "j"));
     out.push_str(&range_input("claimed_ids", "claimed", "k"));
@@ -902,7 +914,7 @@ fn chain_template(
         &no_source,
     );
     out.push_str(&prompt_stages(
-        "[[chain.stage]]",
+        "[[pipeline.stage]]",
         "0",
         &no_source_line,
         [
@@ -911,18 +923,18 @@ fn chain_template(
             no_sequence("previous"),
         ],
     ));
-    out.push_str("\n[[chain.repeat]]\nname = \"prompt\"\nindex = \"j\"\nstart = 1\ncount = 0\n");
+    out.push_str("\n[[pipeline.repeat]]\nname = \"prompt\"\nindex = \"j\"\nstart = 1\ncount = 0\n");
     out.push_str(&prompt_stages(
-        "  [[chain.repeat.stage]]",
+        "  [[pipeline.repeat.stage]]",
         "{j}",
         &no_source_line,
         ["prompt_bind", "prompt_check", "embed"].map(|stage| {
             format!("inputs.previous = {{ from = \"{stage}_p{{j-1}}\", first = \"{stage}_p0\" }}\n")
         }),
     ));
-    out.push_str("\n[[chain.repeat]]\nname = \"claimed_embed\"\nindex = \"k\"\ncount = 0\n");
+    out.push_str("\n[[pipeline.repeat]]\nname = \"claimed_embed\"\nindex = \"k\"\ncount = 0\n");
     out.push_str(&format!(
-        "\n  [[chain.repeat.stage]]\n\
+        "\n  [[pipeline.repeat.stage]]\n\
          name = \"embed_c{{k}}\"\n\
          project = \"raster-stages/input-embedding\"\n\
          {}\
@@ -947,16 +959,16 @@ fn chain_template(
                        donor: &dyn Fn(&str, Option<&i32>, &str, &str) -> String|
      -> String {
         let mut text = format!(
-            "\n[[chain.repeat]]\nname = \"{name}\"\nindex = \"l\"\nstart = {start}\ncount = {count}\n"
+            "\n[[pipeline.repeat]]\nname = \"{name}\"\nindex = \"l\"\nstart = {start}\ncount = {count}\n"
         );
-        let ranges: &[(&str, &str)] = if chain.auxiliary {
+        let ranges: &[(&str, &str)] = if pipeline.auxiliary {
             &[("p", "j"), ("c", "k")]
         } else {
             &[]
         };
         for (p, r) in ranges {
             text.push_str(&format!(
-                "\n  [[chain.repeat.stage]]\n\
+                "\n  [[pipeline.repeat.stage]]\n\
                  name = \"aux_{p}{{{r}}}_l{{l}}\"\n\
                  index = \"{r}\"\n\
                  count = 0\n\
@@ -987,19 +999,19 @@ fn chain_template(
                 prior_of_claimed_ranges,
             ),
         ] {
-            let donor_lines = if chain.donor_inputs {
+            let donor_lines = if pipeline.donor_inputs {
                 donor("donor_a_kv", donors.first(), p, range)
                     + &donor("donor_b_kv", donors.get(1), p, range)
             } else {
                 String::new()
             };
-            let ple_line = if chain.auxiliary {
+            let ple_line = if pipeline.auxiliary {
                 format!("inputs.ple = {{ from = \"aux_{p}{range}_l{{l}}\" }}\n")
             } else {
                 String::new()
             };
             text.push_str(&format!(
-                "\n  [[chain.repeat.stage]]\n\
+                "\n  [[pipeline.repeat.stage]]\n\
                  name = \"range_{p}{range}_l{{l}}\"\n\
                  {fan}\
                  project = \"{project}\"\n\
@@ -1022,12 +1034,12 @@ fn chain_template(
             &|param, _, _, _| no_sequence(param),
         ));
     }
-    if chain.num_kv_shared_layers > 0 {
+    if pipeline.num_kv_shared_layers > 0 {
         let last_own = first_shared.saturating_sub(1);
         out.push_str(&layer_block(
             "shared_layers",
             first_shared,
-            chain.num_kv_shared_layers,
+            pipeline.num_kv_shared_layers,
             &|p, range| format!("range_{p}{range}_l{last_own}"),
             &|param, donor, p, range| match donor {
                 Some(layer) => {
@@ -1049,7 +1061,7 @@ fn chain_template(
     );
     // A check also states the output record of the transcript so far, from
     // the decoder table, its membership paths and the model descriptor. The
-    // last range's check is the chain's last stage, and its record the claim's.
+    // last range's check is the pipeline's last stage, and its record the claim's.
     let decoder_line = external_line(
         "decoder",
         layout,
@@ -1072,7 +1084,7 @@ fn chain_template(
         )
     };
     out.push_str(&check_stage(
-        "[[chain.stage]]",
+        "[[pipeline.stage]]",
         "0",
         format!("inputs.previous = {{ from = \"range_p{LAST_PROMPT_RANGE}_l{last_layer}\" }}\n"),
         external_line(
@@ -1083,9 +1095,11 @@ fn chain_template(
             &empty_edge,
         ),
     ));
-    out.push_str("\n[[chain.repeat]]\nname = \"claimed\"\nindex = \"k\"\nstart = 1\ncount = 0\n");
+    out.push_str(
+        "\n[[pipeline.repeat]]\nname = \"claimed\"\nindex = \"k\"\nstart = 1\ncount = 0\n",
+    );
     out.push_str(&check_stage(
-        "  [[chain.repeat.stage]]",
+        "  [[pipeline.repeat.stage]]",
         "{k}",
         format!(
             "inputs.previous = {{ from = \"range_c{{k-1}}_l{last_layer}\", first = \"range_c0_l{last_layer}\" }}\n"
@@ -1137,11 +1151,15 @@ fn stage_external_commitment(
 /// Declares model weights once so every decode iteration can bind them by its
 /// static layer index without copying commitments into the repeat block.
 fn indexed_model_inputs(
-    chain: &ChainLayers,
+    pipeline: &PipelineLayers,
     layout: &ArtifactLayout,
     stages: &[String],
 ) -> Result<String, Box<dyn Error>> {
-    let aux_layers = 0..if chain.auxiliary { chain.layers } else { 0 };
+    let aux_layers = 0..if pipeline.auxiliary {
+        pipeline.layers
+    } else {
+        0
+    };
     let aux = aux_layers
         .clone()
         .map(|layer| {
@@ -1153,9 +1171,9 @@ fn indexed_model_inputs(
             stage_external_commitment(stages, &format!("prefill_prepare_aux_l{layer}"), "witness")
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let transformer = (0..chain.layers)
+    let transformer = (0..pipeline.layers)
         .map(|layer| {
-            stage_external_commitment(stages, &format!("{}_l{layer}", chain.stage), "layer")
+            stage_external_commitment(stages, &format!("{}_l{layer}", pipeline.stage), "layer")
         })
         .collect::<Result<Vec<_>, _>>()?;
     let render = |name: &str, dir: &str, commitments: &[String]| {
@@ -1168,14 +1186,14 @@ fn indexed_model_inputs(
         let path = path_string(&layout.external_path(dir, "layer{l}", "rastered"));
         let index_path = path_string(&layout.external_path(dir, "layer{l}", "rindex"));
         format!(
-            "\n[chain.input.{name}]\n\
+            "\n[pipeline.input.{name}]\n\
              index = \"l\"\n\
              path = \"{path}\"\n\
              index_path = \"{index_path}\"\n\
              commitments = [\n{entries}\n]\n"
         )
     };
-    let auxiliary = if chain.auxiliary {
+    let auxiliary = if pipeline.auxiliary {
         render(
             "aux_witness",
             "raster-stages/prefill-prepare-aux",
@@ -1186,7 +1204,7 @@ fn indexed_model_inputs(
     } else {
         String::new()
     };
-    Ok(auxiliary + &render("transformer_layer", chain.project, &transformer))
+    Ok(auxiliary + &render("transformer_layer", pipeline.project, &transformer))
 }
 
 /// Q16.16 bits of an `f32`, through the local deterministic conversion so the
@@ -1330,7 +1348,7 @@ fn write_tokenizer(
     // The stages that take the tokenizer also take run-specific inputs, which
     // run preparation supplies.
     stages.push(format!(
-        "[[chain.stage]]\nname = \"prompt_bind\"\nproject = \"raster-stages/prompt-bind\"\n{tokenizer_line}"
+        "[[pipeline.stage]]\nname = \"prompt_bind\"\nproject = \"raster-stages/prompt-bind\"\n{tokenizer_line}"
     ));
     Ok((decoder_commitment, witness_commitment))
 }
@@ -1418,7 +1436,7 @@ mod tests {
             )
             .unwrap();
             fs::write(args.model_dir.join("tokenizer.json"), "{}").unwrap();
-            let manifest = format!("[chain]\nname = \"{name}\"\n[[chain.stage]]\nname = \"prompt_bind\"\nproject = \"raster-stages/prompt-bind\"\ninputs.tokenizer = {{ external = {{ path = \"data/{name}.rastered\", index_path = \"data/{name}.rindex\", commitment = \"abc\" }} }}\n");
+            let manifest = format!("[pipeline]\nname = \"{name}\"\n[[pipeline.stage]]\nname = \"prompt_bind\"\nproject = \"raster-stages/prompt-bind\"\ninputs.tokenizer = {{ external = {{ path = \"data/{name}.rastered\", index_path = \"data/{name}.rindex\", commitment = \"abc\" }} }}\n");
             let (path, template) = save_model_template(&args, &manifest).unwrap();
             assert!(path.is_file()); // No --manifest is necessary.
             assert!(template.contains(&format!(
@@ -1535,7 +1553,7 @@ mod tests {
     #[test]
     fn a_bundle_is_imported_only_as_a_family_this_build_has() {
         let family = |config: serde_json::Value| bundle_family(&config);
-        // Gemma's own configs, and the bundles made for this chain that say nothing.
+        // Gemma's own configs, and the bundles made for this pipeline that say nothing.
         for config in [
             serde_json::json!({"model_type": "gemma4", "text_config": {"model_type": "gemma4_text"}}),
             serde_json::json!({"model_type": "gemma3n", "text_config": {}}),

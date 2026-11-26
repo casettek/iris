@@ -77,17 +77,17 @@ EOF
 }
 
 raster_stage() {
-    local program=$1 stage=$2 out=$3 chain produced
-    chain=$(sed -n 's/^ *dir: //p' "$out/claim.log" | head -1)
-    [ -f "$chain/$stage/input.json" ] || { echo "$chain has no stage $stage"; return 1; }
+    local program=$1 stage=$2 out=$3 pipeline produced
+    pipeline=$(sed -n 's/^ *dir: //p' "$out/claim.log" | head -1)
+    [ -f "$pipeline/$stage/input.json" ] || { echo "$pipeline has no stage $stage"; return 1; }
     mkdir -p "$out/raster/$stage"
     find "$out/raster/$stage" -name output.bin -delete
     (cd "$repo_root/raster-stages/$program" &&
         RASTER_AUTH=0 RASTER_OUTPUT_DIR="$out/raster/$stage" cargo run --release -- \
-            --input "$chain/$stage/input.json" \
-            --input-manifest "$chain/$stage/input_manifest.json") || return 1
+            --input "$pipeline/$stage/input.json" \
+            --input-manifest "$pipeline/$stage/input_manifest.json") || return 1
     produced=$(find "$out/raster/$stage" -name output.bin | head -1)
-    if [ -z "$produced" ] || ! cmp -s "$produced" "$chain/$stage/output.bin"; then
+    if [ -z "$produced" ] || ! cmp -s "$produced" "$pipeline/$stage/output.bin"; then
         echo "$stage: the Raster output differs from the native one"
         return 1
     fi

@@ -1,4 +1,4 @@
-//! The empty values a chain starts from.
+//! The empty values a pipeline starts from.
 //!
 //! The first range of a run has nothing before it: no sequence, no decode edge
 //! and no prompt state. Each stage that would continue one is given the empty

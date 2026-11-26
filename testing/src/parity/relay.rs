@@ -1,10 +1,10 @@
 //! The gate's relay scenario: two models, the second on a prompt that holds
 //! the first one's output.
 //!
-//! The second model is the other family's bundle, so the chain holds both
+//! The second model is the other family's bundle, so the pipeline holds both
 //! families' stage programs under their labels, with the relay stage between
 //! them. The first prompt is built from the source scenario's signed
-//! documents, so the chain has both source programs.
+//! documents, so the pipeline has both source programs.
 //!
 //! The claim is run directly, natively and through Raster. Every stage must
 //! give the same bytes both ways, the claim must state what direct inference
@@ -21,7 +21,7 @@ use model_manifest::ModelManifest;
 use procedure_definition::{PreparedRun, ProcedureKind, SpecificationRelay};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-use staged_infer::chain_runner::StagedExecutionBackend;
+use staged_infer::pipeline_runner::StagedExecutionBackend;
 
 use super::compare::{compare, read_boundaries};
 use super::{case_beside, command, logged, source};
@@ -124,7 +124,7 @@ pub(super) fn run_relay_scenario(
         exe,
         &claim_dir.join("procedure-run"),
         &specification,
-        &built.chain_dir,
+        &built.pipeline_dir,
     )?;
     let bundle = blockchain_rules::read_claim_bundle(&built.claim_bundle_path)?;
     let prepared: PreparedRun = procedure_definition::read_json(
@@ -136,20 +136,20 @@ pub(super) fn run_relay_scenario(
     let manifest = prepared
         .run_manifest_path
         .as_ref()
-        .context("the prepared run names no chain manifest")?;
+        .context("the prepared run names no pipeline manifest")?;
 
     // Through Raster, and every boundary against the native run's.
     let raster_dir = dir.join("raster");
     fs::create_dir(&raster_dir)?;
     let mut raster_run = command(raster, root);
     raster_run
-        .args(["raster", "chain", "run"])
+        .args(["raster", "pipeline", "run"])
         .arg(manifest)
         .args(["--no-auth", "--run"])
         .arg(&raster_dir);
     logged(raster_run, &dir.join("raster.log")).context("Raster-staged execution")?;
-    let order = procedure_definition::read_stage_order(&built.chain_dir)?
-        .context("native chain recorded no stage inventory")?;
+    let order = procedure_definition::read_stage_order(&built.pipeline_dir)?
+        .context("native pipeline recorded no stage inventory")?;
     let of = |label: &str| {
         order
             .iter()
@@ -157,7 +157,7 @@ pub(super) fn run_relay_scenario(
             .count()
     };
     let at = |name: &str| order.iter().position(|stage| stage == name);
-    let relay_at = at("relay").context("the chain ran no relay stage")?;
+    let relay_at = at("relay").context("the pipeline ran no relay stage")?;
     ensure!(
         at("source") == Some(0)
             && at("result") == Some(order.len() - 1)
@@ -170,11 +170,11 @@ pub(super) fn run_relay_scenario(
             && order[relay_at + 1..order.len() - 1]
                 .iter()
                 .all(|stage| stage.starts_with("m1_")),
-        "a relay chain is the source, the first inference, the relay, the second inference \
+        "a relay pipeline is the source, the first inference, the relay, the second inference \
          and the result; ran {order:?}"
     );
     let raster_outputs = read_boundaries(&raster_dir, &order, false).context("Raster-staged")?;
-    let native = read_boundaries(&built.chain_dir, &order, false).context("native-staged")?;
+    let native = read_boundaries(&built.pipeline_dir, &order, false).context("native-staged")?;
     for stage in &order {
         compare(stage, &raster_outputs[stage], &native[stage])
             .context("Raster-staged ↔ native-staged")?;
@@ -268,7 +268,7 @@ pub(super) fn run_relay_scenario(
     swapped["inferences"][0]["record"]["output_text_sha256"] =
         json!(hex::encode(Sha256::digest(other.as_bytes())));
     let swapped_path = built
-        .chain_dir
+        .pipeline_dir
         .join(format!("swapped.{CLAIM_SUBMISSION_JSON}"));
     procedure_definition::write_json(&swapped_path, &swapped)?;
     let refused = check(&swapped_path, None)?;
@@ -343,7 +343,7 @@ pub(super) fn run_relay_scenario(
             .checkpoints
             .iter_mut()
             .find(|checkpoint| checkpoint.stage == stage)
-            .with_context(|| format!("the relay chain ran no `{stage}`"))?
+            .with_context(|| format!("the relay pipeline ran no `{stage}`"))?
             .output_sha256 = "5a".repeat(32);
         let found = locate_divergence(
             &built.checkpoint_list_path,

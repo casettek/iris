@@ -10,7 +10,7 @@
 //! Every layer attends to the whole prefix, takes no per-layer input and
 //! borrows no other layer's cache. Weight matrices are paged byte regions and
 //! each matvec is a recur over `.pages`. Attention is two passes: pass 1 drafts
-//! K/V, pass 2 attends. The layer loop lives in the chain manifest.
+//! K/V, pass 2 attends. The layer loop lives in the pipeline manifest.
 //!
 //! The steps have the shape of `prefill-range`'s, which is Gemma's layer. The
 //! arithmetic that is this family's own is `det-num`'s `mistral` module.
@@ -834,7 +834,7 @@ pub fn assert_layer_complete(
 }
 
 // ---------------------------------------------------------------------------
-// The stage's place in the chain
+// The stage's place in the pipeline
 // ---------------------------------------------------------------------------
 
 #[tile(kind = iter, description = "Check model and producer context of a transformer layer")]

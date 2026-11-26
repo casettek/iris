@@ -8,7 +8,7 @@
 #     an earlier stage's output, a pinned commitment or a posted value: the
 #     contract takes the claim, and voids it on the spot when pointed at the
 #     checkpoint;
-#   - a stage given a value the claim may name in a place the chain does not
+#   - a stage given a value the claim may name in a place the pipeline does not
 #     give it, and a verdict stated valid that the check did not reach: the
 #     contract takes the claim and refuses every on-the-spot question, and a
 #     challenger's replay of the stage on the inputs its checkpoint names is a
@@ -252,7 +252,7 @@ replayed_lie() (
     if [ $built -ne 0 ]; then
         # The one reason a replay may not be built here: the stage is under
         # the replay window on the small model
-        # (docs/issues/short-stage-fraud-window.md).
+        # (docs/issues/short-stage-fault-window.md).
         if [ "$must_replay" = yes ]; then
             echo "no replay of $stage was built" >&2
             exit 1
@@ -298,8 +298,8 @@ step blockchain-honest "honest claim: taken, and every question refused" \
 stage=prompt_check_p1
 step blockchain-void-program "unapproved program: voided on the spot" \
     voided_lie void-program honest "$small_specification" UnapprovedProgram --stage $stage --fault program
-step blockchain-void-chained "input not its producer's output: voided on the spot" \
-    voided_lie void-chained honest "$small_specification" NotAnEarlierOutput --stage $stage --fault input
+step blockchain-void-piped "input not its producer's output: voided on the spot" \
+    voided_lie void-piped honest "$small_specification" NotAnEarlierOutput --stage $stage --fault input
 step blockchain-void-pinned "input not a pinned commitment: voided on the spot" \
     voided_lie void-pinned honest "$small_specification" NotAPinnedValue --stage $stage --fault input --input tokenizer
 step blockchain-void-posted "input not a posted value: voided on the spot" \
@@ -309,8 +309,8 @@ step blockchain-arranged-pinned "another layer's weights: challenged by a replay
     replayed_lie arranged-pinned honest "$small_specification" range_p1_l2 yes yes --fault arrangement --input layer
 step blockchain-arranged-posted "another range's marks: challenged by a replay" \
     replayed_lie arranged-posted honest "$small_specification" $stage yes no --fault arrangement --input marks
-step blockchain-arranged-chained "another stage's output: challenged by a replay" \
-    replayed_lie arranged-chained honest "$small_specification" $stage yes no --fault arrangement --input bound
+step blockchain-arranged-piped "another stage's output: challenged by a replay" \
+    replayed_lie arranged-piped honest "$small_specification" $stage yes no --fault arrangement --input bound
 step blockchain-arranged-empty "empty value for an earlier output: challenged by a replay" \
     replayed_lie arranged-empty honest "$small_specification" $stage yes no --fault arrangement --input previous
 

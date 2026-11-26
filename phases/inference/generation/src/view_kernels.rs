@@ -184,7 +184,7 @@ pub fn run_mistral_range_view(
     )?;
     let (rows, own_keys) = computed.unwrap_or_default();
     Ok(ActivationSequence {
-        // The family has no stage programs, so there is no chain step to
+        // The family has no stage programs, so there is no pipeline step to
         // record here: the context passes through as it came.
         model: activations.model.clone(),
         rows: List::from(rows),

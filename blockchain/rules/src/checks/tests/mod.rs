@@ -5,8 +5,8 @@ use super::*;
 
 use std::path::{Path, PathBuf};
 
-use raster_core::chain::{
-    ChainCommitment, ChainShape, DefenceRefusal, InputBindingSource, StageCheckpoint,
+use raster_core::pipeline::{
+    DefenceRefusal, InputBindingSource, PipelineCommitment, PipelineShape, StageCheckpoint,
 };
 use raster_core::transition::{TraceCommitmentHeader, TransitionJournal};
 
@@ -17,8 +17,8 @@ use model_manifest::direct::{model_id_of, ModelCommitment, ModelManifest};
 use procedure_definition::checkpoint::{checkpoints_root, Checkpoint, CheckpointList};
 
 use procedure_definition::procedure_kind::ProcedureKind;
-use raster_core::chain::DefenceReason;
 use raster_core::fingerprint::{BitPacker, Fingerprint};
+use raster_core::pipeline::DefenceReason;
 use raster_core::transition::{
     EntrypointAuthorization, InitTransition, OutputAuthorization, SerializableFrontier,
     TransitionState,
@@ -46,7 +46,7 @@ fn empty_edge() -> String {
     hex::encode([0xee; 32])
 }
 
-/// Four programs: the first takes nothing from the chain, a layer takes
+/// Four programs: the first takes nothing from the pipeline, a layer takes
 /// `activations` from a bind or another layer, the check takes
 /// `activations` from a layer and `prior` from a check or the empty edge,
 /// and the result takes `check` from a check.
@@ -55,17 +55,17 @@ fn pins() -> ContractPins {
         role: String::from("tokenizer"),
         commitment: hex::encode([7; 32]),
     }];
-    let program = |stage: &str, id: [u8; 32], chained_inputs| StageProgram {
+    let program = |stage: &str, id: [u8; 32], piped_inputs| StageProgram {
         stage: stage.to_string(),
         program_commitment: hex::encode(id),
-        chained_inputs,
+        piped_inputs,
         run_inputs: vec![String::from("text")],
         pinned_inputs: vec![PinnedInput {
             name: String::from("layer"),
             values: vec![hex::encode([8; 32]), hex::encode([0x1b; 32])],
         }],
     };
-    let input = |name: &str, producers: &[&str], empty_values: Vec<String>| ChainedInput {
+    let input = |name: &str, producers: &[&str], empty_values: Vec<String>| PipedInput {
         name: name.to_string(),
         producers: producers.iter().map(|p| p.to_string()).collect(),
         empty_values,
@@ -125,7 +125,7 @@ fn inference(model: &ModelPins, input: &str, output: &str) -> SubmittedInference
     }
 }
 
-/// A stage's input list as the chain writes it.
+/// A stage's input list as the pipeline writes it.
 fn manifest(inputs: &[(&str, &str)]) -> Vec<u8> {
     let entries = inputs
             .iter()
@@ -344,7 +344,7 @@ fn consensus_pins() -> (ProgramPins, [ModelPins; 2]) {
     programs
         .stage_programs
         .retain(|program| program.stage != "claim-result");
-    let check = |name: &str| ChainedInput {
+    let check = |name: &str| PipedInput {
         name: name.to_string(),
         producers: vec![String::from("sequence-check")],
         empty_values: Vec::new(),
@@ -352,7 +352,7 @@ fn consensus_pins() -> (ProgramPins, [ModelPins; 2]) {
     programs.stage_programs.push(StageProgram {
         stage: String::from("consensus-result"),
         program_commitment: hex::encode(CONSENSUS),
-        chained_inputs: vec![check("first"), check("second")],
+        piped_inputs: vec![check("first"), check("second")],
         run_inputs: vec![String::from("forms")],
         pinned_inputs: Vec::new(),
     });

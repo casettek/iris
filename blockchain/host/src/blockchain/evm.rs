@@ -138,7 +138,7 @@ impl OpenedChallenge {
 /// program a fault proof's inputs were checked by.
 pub fn proof_programs() -> Value {
     json!({
-        "transition_image_id": hex0x(&raster_prover::chain_fraud::transition_guest_image_id()),
+        "transition_image_id": hex0x(&raster_prover::pipeline_fault::transition_guest_image_id()),
         "authorization_image_id":
             hex0x(&raster_prover::authorization::authorization_guest_image_id()),
     })
@@ -242,7 +242,7 @@ pub fn fault_proof_call(
     let rejection = blockchain_rules::checks::check_fault_proof(
         &opened.challenge.challenge,
         &proof.decoded,
-        &raster_prover::chain_fraud::transition_guest_image_id(),
+        &raster_prover::pipeline_fault::transition_guest_image_id(),
         &raster_prover::authorization::authorization_guest_image_id(),
     )
     .err();

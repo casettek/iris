@@ -80,7 +80,7 @@ pub fn count_row_chunk(
 ///
 /// The previous range is the empty sequence (start 0, no rows) for the first
 /// range, so positions are never chosen by run preparation: they follow from
-/// how many ids the in-chain tokenizer produced for every earlier range.
+/// how many ids the in-pipeline tokenizer produced for every earlier range.
 #[tile(kind = iter, description = "Start position after the previous range")]
 pub fn range_start(previous_start: u32, previous_rows: RowCount) -> Result<u32> {
     previous_start

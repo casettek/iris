@@ -80,7 +80,7 @@ impl VerifiedSelections {
         )?;
         // The selected bytes are compared with the proven ones directly, not
         // through the hash the selection records: Raster leaves that hash zero
-        // in an unauthenticated run, which is how the staged chain runs.
+        // in an unauthenticated run, which is how the staged pipeline runs.
         ensure!(
             selected.selection.path == path
                 && selected.selection.source_root_hash.as_slice() == self.reference.commitment

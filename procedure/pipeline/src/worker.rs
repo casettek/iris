@@ -1,6 +1,6 @@
 //! Private line protocol for serial jobs in long-lived auxiliary processes.
 use crate::cache::CachedInputs;
-use crate::chain_runner::StageEnvGuard;
+use crate::pipeline_runner::StageEnvGuard;
 use crate::segments::inference::weights::RunWeights;
 use crate::segments::{self, DirectTimings, StageKind};
 use anyhow::{bail, Context, Result};

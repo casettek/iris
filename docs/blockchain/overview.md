@@ -10,7 +10,7 @@ admitted or refused, and a fault proof dismisses a challenge whose trace is
 wrong. What follows from any of those (clocks, bonds, finality) is not built
 ([what is open](../protocol/open.md)).
 
-Both chains run locally from [`blockchain/devstack/`](../../blockchain/devstack/README.md).
+Both pipelines run locally from [`blockchain/devstack/`](../../blockchain/devstack/README.md).
 
 ## Who does what
 
@@ -241,11 +241,11 @@ so nothing is escaped. `InputManifest.sol` reads the list byte by byte in
 that form, and `read_input_manifest` in Rust holds the same rule.
 
 **The pinned inputs.** The procedure lists, for each program, every
-input the chain template binds to a file the import wrote, with every
+input the pipeline template binds to a file the import wrote, with every
 commitment it is bound to: the tokenizer, the embedding, the model's
 descriptor, the witness each stage checks its data with, the decoder and the
 head, and one commitment per layer for the weights. They are read from the
-template as the chained inputs are, so nothing about them is particular to a
+template as the piped inputs are, so nothing about them is particular to a
 model. An input bound per layer may hold any of its commitments: which layer
 belongs at which stage is the schedule's, checked inside the stages, and a
 challenger has every layer.
@@ -296,7 +296,7 @@ on its inputs gives another output, and posts the trace of that execution. A
 Raster fault proof answers it: a window of that trace re-executed in RISC
 Zero, ending at a step the trace gets wrong. `iris fault prove` writes it as
 a Groth16 proof of Raster's transition program, and that proof, as it is, is
-what the contract takes. Nothing else is proven for the chain.
+what the contract takes. Nothing else is proven for the pipeline.
 
 1. The challenge is one the contract admitted and has not dismissed.
 2. The proof's journal says the window reached the fault verdict.
@@ -311,7 +311,7 @@ what the contract takes. Nothing else is proven for the chain.
 6. The Groth16 seal verifies over the whole journal, as a proof of the
    transition program.
 
-Steps 2 to 5 are the checks `raster_core::chain::defend` makes for a
+Steps 2 to 5 are the checks `raster_core::pipeline::defend` makes for a
 refutation. Step 4 is there because a real proof that some other trace is
 false would otherwise dismiss an honest challenge. Step 5 is there because a
 real proof that the trace is not a run of some other program, or on other
@@ -377,15 +377,15 @@ builds the challenge from that directory and the challenger's own
 specification. The case is the `case.toml` beside the submission. Every stage is run on the
 inputs the claim's checkpoint names for it: nothing is tokenized and no
 output is found by direct inference, since the stages check what they are
-given. The command writes the chain the checkpoints describe
+given. The command writes the pipeline the checkpoints describe
 (`claim_arranged.toml`, beside the run's own manifest) and prints each input
-the claim gives a stage otherwise than the chain does. For a claim arranged
-as the chain it is the chain. The run is compared with the posted list hash
+the claim gives a stage otherwise than the pipeline does. For a claim arranged
+as the pipeline it is the pipeline. The run is compared with the posted list hash
 by hash, and the first stage whose output differs is replayed on those same
 inputs; the command checks that the replay ran on the input list the
 checkpoint commits to and ended in another output. It stops when a
-checkpoint names a value that is no earlier stage's output and none the chain
-holds, or another program than the chain runs that stage with: such a claim
+checkpoint names a value that is no earlier stage's output and none the pipeline
+holds, or another program than the pipeline runs that stage with: such a claim
 is one `iris claim audit` rules on. `iris challenge post` and `iris evm
 challenge` then take the same directory as the claim's.
 
@@ -413,7 +413,7 @@ honest party runs.
   which one input is not its producer's output. The second posts its own
   input list beside the honest ones.
 - `--fault arrangement [--input <name>]` writes a lie a replay shows on other
-  inputs than the chain's: the stage is given, for one input, the value an
+  inputs than the pipeline's: the stage is given, for one input, the value an
   earlier stage of the same program is given (another layer's weights,
   another range's marks, another stage's output), and its checkpoint still
   states the output of a run that was given the right one. An audit finds
@@ -481,7 +481,7 @@ Raster's current programs are.
 `iris test devstack replay faults` holds the two on-the-spot calls to iris. It takes a claim
 in the directory `iris claim fetch` wrote, asks the contract every question
 `iris claim audit` asks (of each checkpoint whether its program is approved,
-of each chained input whether it is its producer's output), and fails unless
+of each piped input whether it is its producer's output), and fails unless
 the contract answers each as iris does: it refuses to void an honest stage
 with the same error, and takes a fault iris found. A fault found is then
 sent, and the claim must read as void of that fault. An honest claim is the

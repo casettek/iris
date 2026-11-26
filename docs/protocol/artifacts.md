@@ -12,16 +12,16 @@ The stable format types and filenames live in `procedure/definition` and `blockc
 - Model, config, and tokenizer paths plus SHA-256 hashes.
 - Model shape and fixed-point scaling parameters.
 - EOS token ids.
-- Optional provenance pointing back to the model's prompt-free segment of a chain, written during import. A [procedure kind](procedure-kinds.md) makes a chain template from it.
+- Optional provenance pointing back to the model's prompt-free segment of a pipeline, written during import. A [procedure kind](procedure-kinds.md) makes a pipeline template from it.
 
 The same model-scoped directory owns the imported Raster externals under
 `runtime/model-artifacts/<model-id>/raster/`. Stage program directories remain
-under `raster-stages/*`; chain manifests bind those programs to explicit
+under `raster-stages/*`; pipeline manifests bind those programs to explicit
 external `path` / `index_path` entries in the model artifact directory.
 
 Run-specific inputs are not model artifacts. The original text, the configuration,
 each range's cut and each claimed range are written under
-`target/iris/runs/<run-id>/prompt/`, and prompt-free chain templates use a
+`target/iris/runs/<run-id>/prompt/`, and prompt-free pipeline templates use a
 `target/iris/run-prompt-placeholder/` binding that run preparation replaces.
 
 A run is described by two files. `specification.toml` defines the procedure:

@@ -1,5 +1,5 @@
 //! One model's generation: from a prompt's pieces to the output and the
-//! final record a chain publishes for the same run, byte for byte.
+//! final record a pipeline publishes for the same run, byte for byte.
 //!
 //! This is the fast path that finds an output. It reads no specification and
 //! no case: whoever runs a procedure prepares the prompt and gives it here.
@@ -91,7 +91,7 @@ fn generate_traced(
             input.max_new_tokens,
             model.manifest().range_size,
         );
-        // The schedule the chain runs this output under, so the two final
+        // The schedule the pipeline runs this output under, so the two final
         // records agree byte for byte.
         if let Some(prompt_ranges) = prompt_ranges {
             let claimed_ranges = claimed_tokens.div_ceil(model.manifest().range_size as usize);
@@ -106,7 +106,7 @@ fn generate_traced(
             }
             e.prompt = Some(e.end);
             e.phase = model_identity::statement_core::PREPARED;
-            // The steps the chain's last prompt range and last check record.
+            // The steps the pipeline's last prompt range and last check record.
             e.step = model_identity::statement_core::Step::tokens(
                 e.schedule.prompt_ranges.saturating_sub(1),
             );
@@ -203,7 +203,7 @@ fn generate_traced(
         decoder: &decoder,
         descriptor: &descriptor,
         witness: &witness,
-        // The record the chain publishes for this run: a direct result
+        // The record the pipeline publishes for this run: a direct result
         // and an honest claim's final record are the same bytes.
         context: &sequence_check::prompt::PromptContext {
             model: execution_context(None, output_edge.generated_token_ids.len()),

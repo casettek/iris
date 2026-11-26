@@ -1,7 +1,7 @@
 //! The gate's source scenario: a prompt built from signed documents.
 //!
 //! One honest claim with a source is run three ways, as every case is: direct,
-//! native stages, and the whole chain through Raster. Its recipe names the
+//! native stages, and the whole pipeline through Raster. Its recipe names the
 //! output as one of its forms, so the result stage states that form's code.
 //! Then sources that are
 //! wrong are run through the `source` stage and the binds, in Raster and
@@ -25,7 +25,7 @@ use source_core::{
     FAULT_FIELD_MISSING, FAULT_FIELD_NOT_SCALAR, FAULT_NONE, FAULT_SERVER, FAULT_SIGNATURE,
     SCHEME_SECP256K1,
 };
-use staged_infer::chain_runner::StagedExecutionBackend;
+use staged_infer::pipeline_runner::StagedExecutionBackend;
 
 use super::compare::{compare, read_boundaries};
 use super::{case_beside, command, logged, prompt_only_manifest};
@@ -243,7 +243,7 @@ fn run_honest(
     let raster_dir = dir.join("raster");
     fs::create_dir(&raster_dir)?;
     let mut run = command(raster, root);
-    run.args(["raster", "chain", "run"])
+    run.args(["raster", "pipeline", "run"])
         .arg(&prepared.manifest_path)
         .args(["--no-auth", "--run"])
         .arg(&raster_dir);
@@ -264,12 +264,12 @@ fn run_honest(
     let staged: Value = procedure_definition::read_json(&dir.join("native-staged/result.json"))?;
     let direct: Value = procedure_definition::read_json(&dir.join("native-direct/result.json"))?;
     let native_dir = std::path::PathBuf::from(
-        staged["chain_dir"]
+        staged["pipeline_dir"]
             .as_str()
-            .context("native-staged recorded no chain directory")?,
+            .context("native-staged recorded no pipeline directory")?,
     );
     let order = procedure_definition::read_stage_order(&native_dir)?
-        .context("native chain recorded no stage inventory")?;
+        .context("native pipeline recorded no stage inventory")?;
     ensure!(
         order.first().map(String::as_str) == Some("source"),
         "a claim with a source does not start at the source stage"
@@ -281,7 +281,7 @@ fn run_honest(
             .context("Raster-staged ↔ native-staged")?;
     }
 
-    // Direct inference states the record the chain's last check does.
+    // Direct inference states the record the pipeline's last check does.
     let record = &staged["result"];
     ensure!(
         record == &direct,
@@ -297,7 +297,7 @@ fn run_honest(
         record["valid"] == json!(true),
         "an honest claim with a source is not valid: {record}"
     );
-    // The result stage: last in the chain, the same bytes through Raster and
+    // The result stage: last in the pipeline, the same bytes through Raster and
     // natively (compared above), and the code of the form the output is.
     let stated = &raster_outputs[order.last().expect("the order is not empty")].value;
     ensure!(
@@ -413,7 +413,7 @@ fn run_fault(
     let raster_dir = dir.join("raster");
     fs::create_dir(&raster_dir)?;
     let mut run = command(raster, root);
-    run.args(["raster", "chain", "run"])
+    run.args(["raster", "pipeline", "run"])
         .arg(&manifest)
         .args(["--no-auth", "--run"])
         .arg(&raster_dir);
@@ -428,7 +428,7 @@ fn run_fault(
             parity_policy: staged_infer::ParityPolicy::Skip,
         })
         .with_context(|| format!("source fault `{name}`: a native stage did not finish"))?
-        .chain_dir;
+        .pipeline_dir;
 
     let order = procedure_definition::read_stage_order(&raster_dir)?
         .with_context(|| format!("source fault `{name}`: no stage inventory"))?;
@@ -486,7 +486,7 @@ pub(super) fn run_source_scenario(
     let (claim, prepared) = run_honest(root, &dir.join("honest"), exe, raster, model_path, &honest)
         .context("the honest claim with a source")?;
 
-    // The honest run's own chain, cut down to the source stage and the binds.
+    // The honest run's own pipeline, cut down to the source stage and the binds.
     let template = fs::read_to_string(&prepared.manifest_path)?;
     let prompt = &prepared.prepared_run.first()?.prompt;
     let raw_prompt = prepared.prepared_run.raw_prompt;

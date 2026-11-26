@@ -1,4 +1,4 @@
-# Issue: `short-stage-fraud-window` — a stage whose trace fits in one fraud window cannot be disputed
+# Issue: `short-stage-fault-window` — a stage whose trace fits in one fault window cannot be disputed
 
 Status: open, deferred to its own project on 2026-11-05. Until then a stage too short
 for the window is not used for challenges.
@@ -6,7 +6,7 @@ for the window is not used for challenges.
 ## The gap
 
 `challenge build` replays the disputed stage with
-`cargo raster chain run --fraud-proof-window-size 128`
+`cargo raster pipeline run --fault-proof-window-size 128`
 ([`challenge.rs`](../../blockchain/host/src/challenge.rs), `run_raster_replay`).
 Raster's commitment writer refuses any trace whose length does not exceed the
 window. `CommitmentFile::finish` returns
@@ -17,7 +17,7 @@ claimer can lie about such a stage without being caught.
 
 ## Scope
 
-Measured on Gemma 4 E2B Q8 on 2026-11-05, in the teacher-forced chain:
+Measured on Gemma 4 E2B Q8 on 2026-11-05, in the teacher-forced pipeline:
 
 | stage | trace steps | at or under 128 |
 | --- | --- | --- |
@@ -35,7 +35,7 @@ tokens. On the 512-token `parity-gemma` vocabulary and its 6-token ranges, the
 `embed_*`, `aux_*`, `check_*` and `output_finalize` stages are all short, and so is
 each `prompt_bind_p{j}` (107 to 112 steps).
 
-### On the version 11 chain
+### On the version 11 pipeline
 
 Measured on Gemma 4 E4B Q8 on 2026-11-11, on one claim of about 1,200 prompt tokens
 in three ranges and 8 output tokens. E4B's rows are wider than E2B's, so its stages
@@ -53,19 +53,19 @@ at 512), `check_c{k}` (131,209 at 8 tokens) and `prompt_check_p{j}` (2,730,134 a
 512 tokens; it replays at the pinned model's six-token ranges, and was not measured
 on fewer).
 
-The chain has no origin stages and no `output_finalize` stage (see below), so
+The pipeline has no origin stages and no `output_finalize` stage (see below), so
 through version 17 no stage was short at every size, and none is short because the
 output is.
 
 Since version 18 (2026-11-16) one stage is short at every size again: `result`,
-the chain's last, which compares the output text with the run's forms. It is three
+the pipeline's last, which compares the output text with the run's forms. It is three
 steps and one per form. It was made a stage of its own knowingly, as the place a
 larger result step will grow from, and the claim is arranged so that nothing rests
 on its checkpoint: the claim's record and verdict are the last check's, and a
 contract takes the comparison with the forms on the submitted text itself
 (`check_origin`, see [the contract](../protocol/checks.md)). A false `result`
 checkpoint is found by a challenger's recomputation and cannot be replayed. The
-result stage of a consensus chain, `consensus-result`, is short the same way, and
+result stage of a consensus pipeline, `consensus-result`, is short the same way, and
 a contract takes its comparison on the two submitted texts as well. The
 `source` stage of a run with small documents is short too: 63 steps on the parity
 gate's two documents, 158 on the three documents of a real impact claim.
@@ -81,10 +81,10 @@ was not measured.
 
 Until 2026-11-11 three one-tile stages, `range_origin`, `decode_init` and from
 version 11 `prompt_origin`, produced the empty values the first range starts from.
-They were short at any size and came first in the chain, so a claim whose first
+They were short at any size and came first in the pipeline, so a claim whose first
 false checkpoint was one of them could not be challenged. They are gone: the empty
 values are committed constants written by the import, and range 0's stages bind
-them directly (see [raster-chain.md](../protocol/raster-chain.md)). A claim that
+them directly (see [raster-pipeline.md](../protocol/raster-pipeline.md)). A claim that
 binds another constant differs from honest execution at the stage that reads it.
 
 `output_finalize` held the output commitment and was three steps a token and ten
@@ -96,15 +96,15 @@ token.
 ## A direction that was tried
 
 Raster derives `bits_per_item = ceil(128 / window_size)`, and its closed
-`fraud-window-trace-ends` issue treats sizing the window as a proof-size choice, so a
+`fault-window-trace-ends` issue treats sizing the window as a proof-size choice, so a
 smaller window should not weaken detection. Retrying a too-short replay at
-`--fraud-proof-window-size 2` needed no Raster or stage change: every stage above then
+`--fault-proof-window-size 2` needed no Raster or stage change: every stage above then
 replayed and matched its native checkpoint on the real model, and `test profile`
 accepted the result. It was not carried through a fault proof, and was removed so that
 this can be designed as a whole.
 
 The rule is that a stage too short to dispute is not a stage: its work belongs inside
 a bigger one, or is data. That is how `sequence_join` was folded into
-`input-embedding`, and how the origin stages became constants. A `[[chain.repeat]]`
+`input-embedding`, and how the origin stages became constants. A `[[pipeline.repeat]]`
 `first =` fallback must name a stage, which is why range 0 is written out as plain
 stages and the repeats start at 1.

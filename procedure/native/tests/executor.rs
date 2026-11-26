@@ -252,7 +252,7 @@ fn direct_executor_keeps_a_maximum_budget_when_no_eos_is_selected() {
     assert_eq!(report.input_token_count, Some(4));
     assert_eq!(report.result.generated_token_count, 3);
     assert_eq!(report.result.stop_reason, "max_new_tokens");
-    // The record names the run, as the chain's final record does.
+    // The record names the run, as the pipeline's final record does.
     assert_eq!(
         report.result.input_text_sha256,
         format!("{:x}", Sha256::digest(b"hhhh"))

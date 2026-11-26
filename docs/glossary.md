@@ -17,7 +17,7 @@ follows, so this page says which is which until they agree.
 | Claimer, challenger, defender | Who posts a claim, who disputes one of its stages, and who answers that dispute | |
 | Phase | A part of a procedure with one purpose: the source, an inference, the result. A phase's logic is written once, under `phases/`, and every way of running the procedure uses it | |
 | Segment | The stages that share one purpose: what a phase becomes in a pipeline. A procedure's pipeline has a source segment, one inference segment per model, and a result segment. Raster's word | |
-| Stage | One program's place in a chain | |
+| Stage | One program's place in a pipeline | |
 | Native stage | A stage's code as an ordinary host program runs it. It must give, byte for byte, what the stage's Raster program gives. The native stages are under `procedure/pipeline/src/segments/` | |
 | Native run | A procedure run the ordinary way, with nothing shaped for stages: every phase in turn, with inference generating its output. It gives the result as fast as possible, and it is the only run that generates | Direct run: `procedure-direct`, `direct-infer`, `iris infer` |
 | Pipeline run | A procedure run as its Raster pipeline: stage by stage, each verifying its part of an output that was stated beforehand, with a checkpoint per stage. Its stages run as native stages or as Raster programs. A claim, a challenge and `iris run` each make one | Staged run: `staged-infer`, `native-staged` for one on native stages |
@@ -35,9 +35,11 @@ Each of these had two meanings. It now has the one given here.
 
 | Word | Means | Does not mean |
 | --- | --- | --- |
-| Chain | A Raster chain: programs run in order, each output linked to the next input | Celestia or an EVM network. Those are blockchains. "On chain" stays, for where a contract runs |
+| Pipeline | A procedure's stage programs in order, each output linked to the next input. Raster's word. `procedure/pipeline/` holds the run of one | A procedure kind |
+| Piped input | An input a stage takes from an earlier stage's output. Raster's word | |
+| Chain | A hash chain: each hash taken over the one before it and one more item | A pipeline, which Raster and iris used to call a chain. Nor Celestia or an EVM network: those are blockchains. "On chain" stays, for where a contract runs |
 | Blockchain | Celestia, or the EVM network the contracts are on | |
-| Pipeline | A procedure's stage programs in order, each output linked to the next input: what Raster calls a chain today and will call a pipeline. `procedure/pipeline/` holds the run of one | A procedure kind |
+| Fault | What a claim has when a stage of it is wrong, and what a fault proof proves. Raster's word, which used to be fraud | |
 | Segment | Stages that share one purpose | A piece of a prompt's text. The tokenizer's code says segment for that, and keeps it |
 | Native | Ordinary compiled code, as opposed to a Raster program: the native run, a native stage | Without a blockchain. A native run and a pipeline run are each made with one or without |
 | Contract | Code on a blockchain | A file format |

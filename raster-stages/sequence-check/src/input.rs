@@ -3,7 +3,7 @@
 //!
 //! Boundary types are duplicated field-for-field from the stages they link
 //! to — `ActivationSequence` from `prefill-range`, `PromptState` from the
-//! shared prompt source — because the chain binds by structural commitment,
+//! shared prompt source — because the pipeline binds by structural commitment,
 //! not by Rust type name. `DecodeEdge` is this stage's own: a check reads the
 //! edge of the check before it.
 //! The scoring numerics delegate to `det_num`, so a score is bit-identical to
@@ -20,7 +20,7 @@ use raster::{Bytes, BytesPage, List};
 use serde::{Deserialize, Serialize};
 
 /// Replay-unit page size for the logits projection: whole `Q8_0` rows of
-/// `hidden_size / 32 · 34` bytes for every width this chain is imported with
+/// `hidden_size / 32 · 34` bytes for every width this pipeline is imported with
 /// (128 → 136, 1536 → 1632, 2560 → 2720). MUST match the page size the
 /// importer writes the head external with.
 pub const PAGE_SIZE: u64 = 48_960;
@@ -131,7 +131,7 @@ pub struct ClaimRecord {
     pub statement: BytesPage,
     /// SHA-256 of the exact UTF-8 bytes of the generated text: 32 bytes.
     pub output_text_sha256: BytesPage,
-    /// The chain found nothing wrong with its own run: the prompt is complete
+    /// The pipeline found nothing wrong with its own run: the prompt is complete
     /// and without a fault, consumed model data authenticated, every claimed
     /// token is the greedy selection, and the check and the transcript broke
     /// no rule. See [`crate::claim_record`].
@@ -152,7 +152,7 @@ impl Default for ClaimRecord {
 }
 
 /// The transcript so far, finalized: its commitments, its decoded text, what
-/// it breaks, and the context the chain ran under.
+/// it breaks, and the context the pipeline ran under.
 ///
 /// Every check states it. Only the last claimed range's is a claim's output:
 /// an earlier range's has `model_fault` set, because the schedule puts the
@@ -170,12 +170,12 @@ pub struct OutputRecord {
     pub output_text_sha256: String,
     /// What the transcript breaks, or zero: one of the `OUTPUT_FAULT_*` codes.
     pub output_fault: u32,
-    /// SHA-256 of the exact text the chain consumed, before chat formatting.
+    /// SHA-256 of the exact text the pipeline consumed, before chat formatting.
     pub input_text_sha256: String,
     /// The source the text was built from: see `source_id` in the shared prompt
     /// source. 64 zeros for a text taken as given.
     pub source_sha256: String,
-    /// The identifier of the committed model the chain was configured with.
+    /// The identifier of the committed model the pipeline was configured with.
     pub model_id: String,
     pub raw_prompt: bool,
     pub max_new_tokens: u32,
@@ -442,7 +442,7 @@ pub fn softcap(value: i32, cap: i32) -> i32 {
 pub struct DecoderToken {
     pub token: String,
     pub special: bool,
-    /// In the model's `eos_token_id` set. The chain's decode loop is statically
+    /// In the model's `eos_token_id` set. The pipeline's decode loop is statically
     /// expanded to a fixed repeat count, so it cannot stop early; this is what
     /// lets the finalized output report where the answer actually ended.
     pub terminal: bool,
@@ -458,7 +458,7 @@ pub struct DecoderTable {
 }
 
 /// Bounded loop state. `pending_bytes` only holds one byte-fallback run. The
-/// text and JSON fields grow with the requested generation bound; the chain's
+/// text and JSON fields grow with the requested generation bound; the pipeline's
 /// static repeat count pins that bound.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
 pub struct FinalizeState {
@@ -502,12 +502,12 @@ pub struct GeneratedOutput {
     pub output_text_sha256: String,
     /// What the transcript breaks, or zero: one of the `OUTPUT_FAULT_*` codes.
     pub output_fault: u32,
-    /// SHA-256 of the exact text the chain consumed, before chat formatting.
+    /// SHA-256 of the exact text the pipeline consumed, before chat formatting.
     pub input_text_sha256: String,
     /// The source the text was built from: see `source_id` in the shared prompt
     /// source. 64 zeros for a text taken as given.
     pub source_sha256: String,
-    /// The identifier of the committed model the chain was configured with.
+    /// The identifier of the committed model the pipeline was configured with.
     pub model_id: String,
     pub raw_prompt: bool,
     pub max_new_tokens: u32,

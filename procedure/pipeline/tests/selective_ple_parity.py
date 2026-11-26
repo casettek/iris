@@ -122,7 +122,7 @@ def main():
         case_file = directory / "case.toml"
         case_file.write_text(f"prompt = {json.dumps(case['prompt'], ensure_ascii=False)}\n", encoding="utf-8")
         record = {"name": case["name"], "runs": {}}
-        chains = {}
+        pipelines = {}
         for label, mode, budget, workers in [
             ("eager", "eager", 64 << 20, 2),
             ("selective", "selective", 64 << 20, 2),
@@ -131,19 +131,19 @@ def main():
         ]:
             child_env = env | {"STAGED_INFER_PLE_LOADING": mode, "STAGED_INFER_WEIGHT_CACHE_BYTES": str(budget), "STAGED_INFER_AUX_PARALLELISM": str(workers)}
             seconds = invoke([iris, "parity-worker", "--specification", spec, "--case", case_file, "--output", directory / label], root, child_env, directory / f"{label}.log")
-            chain = Path(read(directory / label / "result.json")["chain_dir"])
-            chains[label] = chain
-            perf = read(chain / "staged-performance.json")
+            pipeline = Path(read(directory / label / "result.json")["pipeline_dir"])
+            pipelines[label] = pipeline
+            perf = read(pipeline / "staged-performance.json")
             assert perf["ple_loading"] == mode
-            record["runs"][label] = {"seconds": seconds, "chain_dir": str(chain), "sampled_peak_rss_bytes": perf["sampled_peak_rss_bytes"], "mode": mode, "budget_bytes": budget, "workers": workers}
-        baseline = chains["eager"]
+            record["runs"][label] = {"seconds": seconds, "pipeline_dir": str(pipeline), "sampled_peak_rss_bytes": perf["sampled_peak_rss_bytes"], "mode": mode, "budget_bytes": budget, "workers": workers}
+        baseline = pipelines["eager"]
         trace = read(baseline / "checkpoint_list.json")
         names = [entry["stage"] for entry in trace]
         expected_names(names)
-        for chain in chains.values():
-            assert read(chain / "checkpoint_list.json") == trace
-            hashes = compare(baseline, chain, names)
-            assert (chain / "checkpoints.txt").read_text().splitlines() == hashes
+        for pipeline in pipelines.values():
+            assert read(pipeline / "checkpoint_list.json") == trace
+            hashes = compare(baseline, pipeline, names)
+            assert (pipeline / "checkpoints.txt").read_text().splitlines() == hashes
         replay = directory / "authenticated-raster"
         replay.mkdir()
         start = time.perf_counter()

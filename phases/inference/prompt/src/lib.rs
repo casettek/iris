@@ -303,7 +303,7 @@ pub struct BoundPrompt {
 /// range marks. The scan holds text back that could still start a special
 /// token, so that is usually a few characters past the range's own text, and
 /// the pieces those characters produce early are left for the next range.
-/// Where the cuts fall changes nothing the chain computes: any cut gives the
+/// Where the cuts fall changes nothing the pipeline computes: any cut gives the
 /// same pieces.
 pub fn bound_ranges(
     prompt: &str,
@@ -458,7 +458,7 @@ pub fn claimed_ranges(token_ids: &[u32], range_size: usize) -> Result<Vec<Claime
 }
 
 /// A claim's output must fill its token budget unless it ends at EOS: the
-/// chain never stops early, so a shorter claim would be a truncated answer.
+/// pipeline never stops early, so a shorter claim would be a truncated answer.
 pub fn validate_claimed_length(token_ids: &[u32], tokens: u32, eos_ids: &[u32]) -> Result<()> {
     let ends_at_eos = token_ids.last().is_some_and(|id| eos_ids.contains(id));
     ensure!(
@@ -958,7 +958,7 @@ mod tests {
         ("<<|<|turn>|<", true),
     ];
 
-    /// The chain's prompt stages, run natively over what `bound_ranges` cut.
+    /// The pipeline's prompt stages, run natively over what `bound_ranges` cut.
     fn run_prompt_stages(
         tokenizer: &PromptTokenizer,
         bound: &BoundPrompt,

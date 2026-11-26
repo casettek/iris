@@ -1,11 +1,11 @@
 # Model families
 
-A model family is everything about a model that the chain cannot read from a number in its
+A model family is everything about a model that the pipeline cannot read from a number in its
 config: how a layer computes, how its tokenizer scans text, what its bundle contains, and
 which stage programs run it. Two Gemma 4 sizes are one family. A mixture-of-experts Gemma
 or a Qwen model would each be another.
 
-The chain itself is not per family. The schedule, the ranges, the commitments, the
+The pipeline itself is not per family. The schedule, the ranges, the commitments, the
 challenge flow, the exact integer numerics and the backend are shared, and a new family
 must not change what an existing one runs.
 
@@ -67,7 +67,7 @@ model that computes something else.
 | `prompt-bind`, `prompt-check` | the stages and the merge check; the chat template, the scanner and the longest token are data in the tokenizer profile | two scanners in `prompt-core`: one atom a character with Gemma's space rules (`prompt.rs`), and one atom a word for a byte-level tokenizer (`tekken.rs`) |
 | The layer program | the steps' shape: project Q/K/V, score and softmax over the keys, the feed-forward matvecs, and the weight-page tile | `prefill-range` with `prefill-prepare-aux` is Gemma's; `layer-mistral` is Ministral's. The tiles both need are copied between them, not shared |
 | Native kernels (`inference-kernels`, `direct-infer`, `staged-infer`) | batched products, the GPU path, caching | `prefill_range.rs` is Gemma's layer |
-| `model-import` | command line, layout, paging, tokenizer externals, commitments, chain template, manifest | `gemma.rs`: config, tensors, layer and head externals, manifest shape |
+| `model-import` | command line, layout, paging, tokenizer externals, commitments, pipeline template, manifest | `gemma.rs`: config, tensors, layer and head externals, manifest shape |
 | Manifest `shape` | | the family's own: `DirectInferShape` is `gemma-dense`'s, `MistralShape` is `mistral-dense`'s |
 | Backend | yes; `IRIS_MODEL_MANIFEST` chooses the model, and its one-shot commands take `--model <import-name>` for another import beside it | |
 
@@ -88,13 +88,13 @@ In this order, because each step can be checked before the next:
 5. **Stage programs.** Author its layer program from the shared tiles. If its tokenizer
    cuts text by rules the prompt stages do not have, add a scanner to `prompt-core` and a
    value for it in the profile; a tokenizer whose steps differ gets its own program.
-   Follow the Raster skill and its check ladder. The import's chain template names the
+   Follow the Raster skill and its check ladder. The import's pipeline template names the
    family's programs.
 6. **A parity bundle.** `model-bundles/parity-gemma` is a four-layer model small enough
    for `test-parity` to run all three paths and the challenge scenario. A family needs its own,
    with its own falsified-stage cases, or its programs are not under the gate.
 7. **Measure the three numbers** on a real model before tuning: claim time, the trace of
-   the heaviest stage (`cargo raster run --commit … --fraud-step list` counts steps by
+   the heaviest stage (`cargo raster run --commit … --fault-step list` counts steps by
    tile), and the cycles of its heaviest tile.
 
 ## `mistral-dense` so far
@@ -108,7 +108,7 @@ What exists:
 | Part | Where |
 | --- | --- |
 | Conversion from GGUF | `iris model convert`, unchanged: every tensor name was already mapped |
-| Import | `model-import`'s `mistral.rs`: the shape, the tensors a bundle may hold and the layer externals. The tokenizer, the embedding table, the head and the chain template are the shared code's, told by `ChainLayers` that this family has no auxiliary stage and no donor caches |
+| Import | `model-import`'s `mistral.rs`: the shape, the tensors a bundle may hold and the layer externals. The tokenizer, the embedding table, the head and the pipeline template are the shared code's, told by `PipelineLayers` that this family has no auxiliary stage and no donor caches |
 | Layer stage program | `raster-stages/layer-mistral`: three inputs, the activations, the layer and its own cache from the range before |
 | Native stage | `inference-kernels`' `mistral::stage`, run by `staged-infer`'s `layer_mistral` native stage. It reads the committed weight pages in place, and a `gpu-kernels` build sends its larger matrix products to the GPU from those pages |
 | Parity bundle | `model-bundles/parity-mistral`: four layers, a tekken-style vocabulary of 512 with a forty-byte token, three cases. `iris test parity --bundle parity-mistral` runs the gate on it |

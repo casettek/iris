@@ -7,7 +7,7 @@ use sequence_check::prompt::PromptContext;
 /// What finalization reads besides the edge.
 pub struct FinalizeInputs<'a> {
     pub decoder: &'a DecoderTable,
-    /// The last prompt range's context: what the chain consumed, and how.
+    /// The last prompt range's context: what the pipeline consumed, and how.
     pub context: &'a PromptContext,
     pub descriptor: &'a raster::BytesPage,
     pub witness: &'a DecoderWitness,

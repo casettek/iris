@@ -3,7 +3,7 @@
 This page is the rules a contract holds a claim to: what it pins, what a
 claimer submits, and each check it makes, as `blockchain_rules::checks`
 states them in Rust. The contracts in `blockchain/contracts/src` make the same checks on
-chain ([the blockchains](../blockchain/overview.md)), and `iris claim check` runs them on the host.
+pipeline ([the blockchains](../blockchain/overview.md)), and `iris claim check` runs them on the host.
 [How iris works](overview.md) is the short version.
 
 The contract verifies no proof and runs no stage. It makes one statement about a
@@ -45,11 +45,11 @@ of one family under one procedure kind differ in those alone.
 | Value | Where it comes from |
 | --- | --- |
 | The approved stage programs | The `program_commitment` each stage's `Raster.lock` holds at import time |
-| Each program's chained inputs | The chain template: an input is chained when any stage of the program takes it `from` another stage |
-| For each chained input, the programs that may produce it | The chain template |
-| For each chained input, the empty values it may hold | The fixed externals the chain's first stages are given in its place |
-| Each program's run inputs | The chain template: an input bound `{ run = ... }`, or to a file under the run placeholder directory. A checkpoint may name for such an input only a value the claim posted ([availability](availability.md#what-is-posted-and-what-is-not)) |
-| Each program's pinned inputs, with the commitments each may hold | The chain template: an input bound to a file the import wrote, or to a chain input of such files, which lists one commitment per layer. A checkpoint may name nothing else for such an input ([the blockchains](../blockchain/overview.md#the-ways-to-challenge-a-claim)) |
+| Each program's piped inputs | The pipeline template: an input is piped when any stage of the program takes it `from` another stage |
+| For each piped input, the programs that may produce it | The pipeline template |
+| For each piped input, the empty values it may hold | The fixed externals the pipeline's first stages are given in its place |
+| Each program's run inputs | The pipeline template: an input bound `{ run = ... }`, or to a file under the run placeholder directory. A checkpoint may name for such an input only a value the claim posted ([availability](availability.md#what-is-posted-and-what-is-not)) |
+| Each program's pinned inputs, with the commitments each may hold | The pipeline template: an input bound to a file the import wrote, or to a pipeline input of such files, which lists one commitment per layer. A checkpoint may name nothing else for such an input ([the blockchains](../blockchain/overview.md#the-ways-to-challenge-a-claim)) |
 
 **A model entry** is true of one model.
 
@@ -76,10 +76,10 @@ Re-locking a stage changes its program id, so import again afterwards. An import
 made where the stage projects are not locked writes no pins and says so.
 
 A contract of a procedure kind over several models pins the stage programs of that
-procedure kind's chain over those models: both models' own programs, `prompt-source`,
+procedure kind's pipeline over those models: both models' own programs, `prompt-source`,
 and the procedure kind's result program in place of `claim-result`. Each model entry
 is read from its import's manifest, and the program entry from the procedure kind's
-chain template over the imports.
+pipeline template over the imports.
 
 `iris claim check --pins <file>` checks a claim against a pins file, and refuses
 one that is of another procedure kind, of other models or of the same models in another
@@ -108,7 +108,7 @@ boundary a Raster run of that stage is bound to:
 `claim build` runs the stages natively and does not run Raster. It still commits
 to what the boundary would be if every stage had run as Raster, so a challenger
 can replay any one stage in Raster from the claimer's own boundary and show
-where it leaves what the claimer committed for the next. No chain-wide Raster
+where it leaves what the claimer committed for the next. No pipeline-wide Raster
 commitment is involved.
 
 `checkpoint_list.json` holds the checkpoints. `checkpoints.txt` holds one
@@ -133,7 +133,7 @@ tree over those hashes, with their count: `checkpoints_root`. See
 | `output_text` | The inference's plaintext: what the contract acts on |
 | `record.statement_sha256` | `Statement::digest()` over the input text hash, the source digest, model id, raw prompt flag, token budget and range size |
 | `record.output_text_sha256` | SHA-256 of the plaintext's exact UTF-8 bytes |
-| `record.valid` | The chain found nothing wrong with the inference |
+| `record.valid` | The pipeline found nothing wrong with the inference |
 | `result.code` | The code of the first form the plaintext is, or zero. Zero, with an empty forms hash, for an inference the result stage does not read |
 | `result.forms_sha256` | A hash chained over the forms the plaintext was compared with |
 | `consensus` | For a `consensus` claim: `same_input`, `agree` and `code`, as its result stage states them. Absent for `single` |
@@ -148,14 +148,14 @@ model fault, the prompt fault and completeness, the check fault, the mismatch
 count and the output fault. Only the schedule's last claimed range can state a
 valid one.
 
-The two `result` values are what the chain's last stage, `result`
+The two `result` values are what the pipeline's last stage, `result`
 (`raster-stages/claim-result`), states. It reads the last check's output and the
 run's forms, and states the claim record it was given beside the code
 (`ResultRecord` in `phases/result/src/forms.rs`). The record stays the last
 check's: the verdict rests on the stage that scored the output, which is long
 enough to replay, and not on the few steps after it.
 
-The source record is what the chain's first stage, `source`, states. The first
+The source record is what the pipeline's first stage, `source`, states. The first
 bind takes it from that stage, holds the claimed text to it, and puts its digest
 in the prompt context, from where it reaches the statement.
 
@@ -237,7 +237,7 @@ claim committed: the list to `checkpoints_root`, a checkpoint to its place in
 the list. A challenger cannot state a program, a boundary or a producer of its
 own. Two comparisons follow, with no replay. They are the same for a claim
 with a source or forms: `source` and `result` are stages like the others, with
-approved programs and chained inputs, so a challenger disputes them the same
+approved programs and piped inputs, so a challenger disputes them the same
 way.
 
 - **The stage's program is approved.** If the program id the claimer's own
@@ -248,7 +248,7 @@ way.
   nothing inside it can tell where an input came from: a made-up input can carry
   the labels a real one does. Without this comparison a claimer could run every
   stage honestly on inputs no earlier stage produced, and no replay would show
-  it. For one chained input of the stage, the commitment the stage loaded it by
+  it. For one piped input of the stage, the commitment the stage loaded it by
   must be the output commitment of the checkpoint the stage's own checkpoint
   names as its producer, that checkpoint must be earlier in the list, and its
   program must be one that may produce the input. Or the input holds one of its
@@ -311,10 +311,10 @@ Raster's stage challenge: the challenger posts the trace commitment of its own
 authenticated run of the stage and the output it ends in, and a defender either
 proves a window that dismisses it or the claim is void when the window closes.
 
-Raster's challenge and defence name a chain commitment and a stage of it, and
+Raster's challenge and defence name a pipeline commitment and a stage of it, and
 read three things of that stage: its program, its input manifest and the hash of
 its output. A checkpoint holds exactly those. So **a dispute about a checkpoint
-is a dispute about a Raster chain of one stage built from it**
+is a dispute about a Raster pipeline of one stage built from it**
 (`dispute_commitment`), and the contract recomputes that commitment's digest from
 the checkpoint it opened. The encoding is a plain concatenation:
 
@@ -333,7 +333,7 @@ len name                the stage name, length as a varint
 Its SHA-256 is the digest a Raster challenge or defence about that checkpoint
 names. Two rules follow:
 
-- **A challenge is about a checkpoint** when the chain commitment it carries is
+- **A challenge is about a checkpoint** when the pipeline commitment it carries is
   that checkpoint's. Raster's own admission then applies: the output it states
   must differ from the checkpoint's, and its trace must be committed at the
   protocol's window.
@@ -372,7 +372,7 @@ data-availability layer: the stand-in directory (`--da-dir`, default
 `IRIS_DA_DIR` or `~/.cache/iris/stub-celestia`), or a Celestia node when
 `IRIS_CELESTIA_RPC` is set and no directory is given. It makes the procedure and procedure kind checks,
 the submission checks, the availability check and the challenge-time
-comparisons, the link comparison for every chained input of every stage. It
+comparisons, the link comparison for every piped input of every stage. It
 prints eight lines for a `single` claim and nine for a `consensus` one, which
 has a statement line per inference. `--registry <file>` judges the claim by the
 procedure it names in that registry; without it, by the one the specification
@@ -391,7 +391,7 @@ submission `iris challenge post` wrote.
 The contracts on a local EVM blockchain make these checks too, and are tested
 against these two commands case by case ([the blockchains](../blockchain/overview.md)).
 
-Add `--raster-run <dir>` with a Raster chain run of the same claim to hold every
+Add `--raster-run <dir>` with a Raster pipeline run of the same claim to hold every
 checkpoint to the boundary that run committed: the same stages in the same order,
 each with Raster's program id, input manifest commitment, producers and output
 commitments. The [parity gate](../workflows/test-parity.md) does this on every

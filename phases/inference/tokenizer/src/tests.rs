@@ -262,7 +262,7 @@ fn digest_of(text: &str, raw: bool, profile: &TokenizerProfile) -> TextDigest {
     text_digest_of(&fold_text(begin_text_fold_state(), text), raw, profile)
 }
 
-/// Binds `ranges` of chunks one after another, as the chain's bind stages do.
+/// Binds `ranges` of chunks one after another, as the pipeline's bind stages do.
 fn bind_in_ranges(
     digest: &TextDigest,
     raw: bool,

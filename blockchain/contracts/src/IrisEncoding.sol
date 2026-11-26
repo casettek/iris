@@ -289,7 +289,7 @@ library IrisEncoding {
     }
 
     /// The fingerprint bits an item has at a window size:
-    /// `FraudProofConfig::from_window_size`. A window reveals 128 bits.
+    /// `FaultProofConfig::from_window_size`. A window reveals 128 bits.
     function protocolBitsPerItem(uint64 window) internal pure returns (uint64) {
         return (128 + window - 1) / window;
     }

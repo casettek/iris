@@ -257,8 +257,8 @@ pub fn programs_encoding(procedure: &Procedure) -> Vec<u8> {
     for program in programs {
         text(&mut out, &program.stage);
         out.extend(hash_field(&program.program_commitment));
-        count(&mut out, program.chained_inputs.len());
-        for input in &program.chained_inputs {
+        count(&mut out, program.piped_inputs.len());
+        for input in &program.piped_inputs {
             text(&mut out, &input.name);
             count(&mut out, input.producers.len());
             for producer in &input.producers {

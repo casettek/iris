@@ -16,28 +16,28 @@ pub fn model_fixture(base: &Path, name: &str) -> PathBuf {
         r#"{"model":{"type":"BPE","vocab":{"h":0},"merges":[]}}"#,
     )
     .unwrap();
-    fs::write(dir.join("Raster.toml"), format!(r#"[chain]
+    fs::write(dir.join("Raster.toml"), format!(r#"[pipeline]
 name = "{name}"
 
-[chain.input.prompt_marks]
+[pipeline.input.prompt_marks]
 index = "j"
 path = "target/iris/run-prompt-placeholder/marks_{{j}}.rastered"
 index_path = "target/iris/run-prompt-placeholder/marks_{{j}}.rindex"
 commitments = []
 
-[chain.input.prompt_text]
+[pipeline.input.prompt_text]
 index = "j"
 path = "target/iris/run-prompt-placeholder/text_{{j}}.rastered"
 index_path = "target/iris/run-prompt-placeholder/text_{{j}}.rindex"
 commitments = []
 
-[chain.input.claimed_ids]
+[pipeline.input.claimed_ids]
 index = "k"
 path = "target/iris/run-prompt-placeholder/claimed_{{k}}.rastered"
 index_path = "target/iris/run-prompt-placeholder/claimed_{{k}}.rindex"
 commitments = []
 
-[[chain.stage]]
+[[pipeline.stage]]
 name = "prompt_bind_p0"
 project = "raster-stages/prompt-bind"
 inputs.text = {{ input = "prompt_text_0" }}
@@ -47,20 +47,20 @@ inputs.text_digest = {{ external = {{ path = "target/iris/run-prompt-placeholder
 inputs.source = {{ external = {{ path = "model/prompt-bind/no_source.rastered", index_path = "model/prompt-bind/no_source.rindex", commitment = "n0" }} }}
 inputs.previous = {{ external = {{ path = "empty_prompt.rastered", index_path = "empty_prompt.rindex", commitment = "0" }} }}
 
-[[chain.stage]]
+[[pipeline.stage]]
 name = "prompt_check_p0"
 project = "raster-stages/prompt-check"
 inputs.bound = {{ from = "prompt_bind_p0" }}
 inputs.previous = {{ external = {{ path = "empty_prompt.rastered", index_path = "empty_prompt.rindex", commitment = "0" }} }}
 inputs.marks = {{ input = "prompt_marks_0" }}
 
-[[chain.repeat]]
+[[pipeline.repeat]]
 name = "prompt"
 index = "j"
 start = 1
 count = 0
 
-  [[chain.repeat.stage]]
+  [[pipeline.repeat.stage]]
 name = "prompt_bind_p{{j}}"
 project = "raster-stages/prompt-bind"
 inputs.text = {{ input = "prompt_text_{{j}}" }}
@@ -70,46 +70,46 @@ inputs.text_digest = {{ external = {{ path = "target/iris/run-prompt-placeholder
 inputs.source = {{ external = {{ path = "model/prompt-bind/no_source.rastered", index_path = "model/prompt-bind/no_source.rindex", commitment = "n0" }} }}
 inputs.previous = {{ from = "prompt_bind_p{{j-1}}", first = "prompt_bind_p0" }}
 
-  [[chain.repeat.stage]]
+  [[pipeline.repeat.stage]]
 name = "prompt_check_p{{j}}"
 project = "raster-stages/prompt-check"
 inputs.bound = {{ from = "prompt_bind_p{{j}}" }}
 inputs.previous = {{ from = "prompt_check_p{{j-1}}", first = "prompt_check_p0" }}
 inputs.marks = {{ input = "prompt_marks_{{j}}" }}
 
-[[chain.repeat]]
+[[pipeline.repeat]]
 name = "claimed_embed"
 index = "k"
 count = 0
 
-[[chain.repeat]]
+[[pipeline.repeat]]
 name = "layers"
 index = "l"
 start = 0
 count = 1
 
-  [[chain.repeat.stage]]
+  [[pipeline.repeat.stage]]
 name = "range_p0_l{{l}}"
 project = "raster-stages/prefill-range"
 
-  [[chain.repeat.stage]]
+  [[pipeline.repeat.stage]]
 name = "range_p{{j}}_l{{l}}"
 index = "j"
 start = 1
 count = 0
 project = "raster-stages/prefill-range"
 
-  [[chain.repeat.stage]]
+  [[pipeline.repeat.stage]]
 name = "range_c{{k}}_l{{l}}"
 index = "k"
 count = 0
 project = "raster-stages/prefill-range"
 
-[[chain.stage]]
+[[pipeline.stage]]
 name = "check_c0"
 project = "raster-stages/sequence-check"
 
-[[chain.repeat]]
+[[pipeline.repeat]]
 name = "claimed"
 index = "k"
 start = 1

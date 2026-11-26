@@ -115,7 +115,7 @@ impl DirectInferenceExecutor {
             (generate(&model, &input)?, Vec::new())
         };
         let output = generation.output;
-        // What the chain's result stage states of this output, when it reads
+        // What the pipeline's result stage states of this output, when it reads
         // this inference's last check. An inference it does not read has no
         // code, and no forms it was compared with.
         let (result_code, result_forms_sha256) = if specification

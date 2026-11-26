@@ -264,7 +264,7 @@ pub fn prove(args: ProveArgs) -> Result<()> {
     );
     // Guest dependencies can change without changing the stage's tile source.
     // Check the locked identity before the expensive replay, without rewriting it.
-    let project = staged_infer::chain_runner::stage_project(manifest, &bundle.stage)?;
+    let project = staged_infer::pipeline_runner::stage_project(manifest, &bundle.stage)?;
     let status = Command::new("cargo")
         .args(["raster", "program", "--verify"])
         .current_dir(&project)
@@ -412,14 +412,14 @@ pub fn prove(args: ProveArgs) -> Result<()> {
     let journal: TransitionJournal = receipt.journal.decode()?;
     ensure!(
         matches!(journal.current_state, TransitionState::Finished),
-        "proof has not reached a fraud verdict"
+        "proof has not reached a fault verdict"
     );
     verify_refuted_commitment(&journal.refuted_trace_commitment, &disputed)?;
     defends(
         claimed_checkpoint,
         &challenge,
         &journal,
-        &raster_prover::chain_fraud::transition_guest_image_id(),
+        &raster_prover::pipeline_fault::transition_guest_image_id(),
     )?;
     if !selected_window.is_null() {
         ensure!(
@@ -492,7 +492,7 @@ fn validate_estimate_report(report: &serde_json::Value, disputed: &CommitmentFil
 /// Raster's own defence rule, applied to the checkpoint.
 fn defends(
     checkpoint: &procedure_definition::Checkpoint,
-    challenge: &raster_core::chain::StageChallenge,
+    challenge: &raster_core::pipeline::StageChallenge,
     journal: &TransitionJournal,
     transition_image_id: &[u8],
 ) -> Result<()> {
@@ -540,7 +540,9 @@ fn challenge_projects(
     value: &toml::Value,
     base: &Path,
 ) -> Result<std::collections::BTreeSet<PathBuf>> {
-    let chain = value.get("chain").context("Raster manifest has no chain")?;
+    let pipeline = value
+        .get("pipeline")
+        .context("Raster manifest has no pipeline")?;
     let stages_of = |table: &toml::Value| {
         table
             .get("stage")
@@ -548,13 +550,13 @@ fn challenge_projects(
             .cloned()
             .unwrap_or_default()
     };
-    // Most of the chain's stages are inside its repeats.
-    let repeats = chain
+    // Most of the pipeline's stages are inside its repeats.
+    let repeats = pipeline
         .get("repeat")
         .and_then(toml::Value::as_array)
         .cloned()
         .unwrap_or_default();
-    let stages = stages_of(chain)
+    let stages = stages_of(pipeline)
         .into_iter()
         .chain(repeats.iter().flat_map(stages_of));
     let mut projects = std::collections::BTreeSet::new();
@@ -611,27 +613,27 @@ mod tests {
     fn challenge_preflight_resolves_and_deduplicates_every_stage_project() {
         let manifest: toml::Value = toml::from_str(
             r#"
-[[chain.stage]]
+[[pipeline.stage]]
 name = "prompt_bind_p0"
 project = "bind"
-[[chain.repeat]]
+[[pipeline.repeat]]
 name = "layers"
 index = "l"
 count = 2
-[[chain.repeat.stage]]
+[[pipeline.repeat.stage]]
 name = "range_p{j}_l{l}"
 project = "range"
-[[chain.repeat.stage]]
+[[pipeline.repeat.stage]]
 name = "range_c{k}_l{l}"
 project = "range"
-[[chain.repeat]]
+[[pipeline.repeat]]
 name = "claimed"
 index = "k"
 count = 1
-[[chain.repeat.stage]]
+[[pipeline.repeat.stage]]
 name = "check_c{k}"
 project = "/opt/check"
-[[chain.stage]]
+[[pipeline.stage]]
 name = "check_c0"
 project = "first-check"
 "#,
@@ -650,7 +652,7 @@ project = "first-check"
         );
         let only_top_level: toml::Value = toml::from_str(
             r#"
-[[chain.stage]]
+[[pipeline.stage]]
 name = "check_c0"
 project = "first-check"
 "#,
@@ -662,7 +664,7 @@ project = "first-check"
                 .len(),
             1
         );
-        let empty: toml::Value = toml::from_str("[chain]\nname = \"empty\"\n").unwrap();
+        let empty: toml::Value = toml::from_str("[pipeline]\nname = \"empty\"\n").unwrap();
         assert!(challenge_projects(&empty, Path::new("/model")).is_err());
     }
 
@@ -694,7 +696,7 @@ project = "first-check"
         CommitmentFile::build(
             &trace,
             &EMPTY_LEAF,
-            raster_prover::trace::FraudProofConfig::from_window_size(2).unwrap(),
+            raster_prover::trace::FaultProofConfig::from_window_size(2).unwrap(),
         )
         .unwrap()
     }

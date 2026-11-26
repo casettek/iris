@@ -13,9 +13,9 @@ pub const MODEL_MANIFEST_VERSION: u32 = 20;
 
 /// Which layer mathematics, tokenizer rules and stage programs a model uses.
 ///
-/// The chain, its schedule and its numerics are shared by every model. A family
+/// The pipeline, its schedule and its numerics are shared by every model. A family
 /// is what differs: how a layer computes, what the importer reads from a bundle,
-/// and which stage programs the import's chain template names. The manifest's
+/// and which stage programs the import's pipeline template names. The manifest's
 /// `shape` is the family's own.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ModelFamily {
@@ -81,7 +81,7 @@ fn first_family() -> String {
     ModelFamily::GemmaDense.name().to_string()
 }
 
-/// One committed model input, named by the role it plays in the chain.
+/// One committed model input, named by the role it plays in the pipeline.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ModelCommitment {
     pub role: String,
@@ -114,7 +114,7 @@ pub struct ModelManifest {
     pub family: String,
     pub model_id: String,
     pub model_commitments: Vec<ModelCommitment>,
-    /// Largest range the chain cuts a prompt or an output into, in tokens.
+    /// Largest range the pipeline cuts a prompt or an output into, in tokens.
     pub range_size: u32,
     pub bundle: DirectInferBundle,
     pub shape: FamilyShape,

@@ -318,7 +318,7 @@ impl Shape {
             segments.len()
         );
         let stages_dir = stage_projects_dir(segments[0])?;
-        let mut chain: Option<String> = None;
+        let mut pipeline: Option<String> = None;
         let mut inputs = String::new();
         let mut stages = String::new();
         for (position, step) in self.steps.iter().enumerate() {
@@ -330,14 +330,14 @@ impl Shape {
             let segment = labelled(segments[inference], &label);
             // A segment is its tables up to the first stage or repeat, then those.
             let cut = segment
-                .find("\n[[chain.")
-                .context("the chain template of a model import has no stages")?;
+                .find("\n[[pipeline.")
+                .context("the pipeline template of a model import has no stages")?;
             let (head, body) = segment.split_at(cut);
-            let at = head.find("\n[chain.input.").unwrap_or(head.len());
+            let at = head.find("\n[pipeline.input.").unwrap_or(head.len());
             let (table, segment_inputs) = head.split_at(at);
             // The pipeline is named as the first import names it.
-            if chain.is_none() {
-                chain = Some(table.to_string());
+            if pipeline.is_none() {
+                pipeline = Some(table.to_string());
             }
             inputs.push_str(segment_inputs);
 
@@ -370,10 +370,10 @@ impl Shape {
             }
             ensure!(
                 rebound == 1,
-                "the chain template of a model import gives its first bind {rebound} sources"
+                "the pipeline template of a model import gives its first bind {rebound} sources"
             );
         }
-        Ok(format!("{}{inputs}{stages}", chain.unwrap_or_default()))
+        Ok(format!("{}{inputs}{stages}", pipeline.unwrap_or_default()))
     }
 
     /// The one stage of a step whose kind declares its programs: its project,
@@ -383,7 +383,7 @@ impl Shape {
             .program
             .expect("a step that is no inference has a program: it was held to that when read");
         let mut stage = format!(
-            "\n[[chain.stage]]\nname = \"{}\"\n{}",
+            "\n[[pipeline.stage]]\nname = \"{}\"\n{}",
             self.steps[position].name,
             project_line(stages_dir, program.name)
         );
@@ -413,8 +413,8 @@ fn last_check(label: &str) -> String {
     format!("{label}check_c@{label}LAST_CLAIMED_RANGE@")
 }
 
-/// An input a run fills in when it renders its chain. Not a binding Raster
-/// reads: a template that still holds one is not a chain yet.
+/// An input a run fills in when it renders its pipeline. Not a binding Raster
+/// reads: a template that still holds one is not a pipeline yet.
 fn run_input(param: &str, file: &str) -> String {
     format!("inputs.{param} = {{ run = \"{file}\" }}\n")
 }
@@ -435,16 +435,16 @@ fn stage_projects_dir(segment: &str) -> Result<String> {
         .lines()
         .map(str::trim)
         .find_map(|line| line.strip_prefix("project ="))
-        .context("the chain template of a model import names no stage project")?;
+        .context("the pipeline template of a model import names no stage project")?;
     let project: String = serde_json::from_str(line.trim())
-        .with_context(|| format!("invalid stage project in a chain template: {line}"))?;
+        .with_context(|| format!("invalid stage project in a pipeline template: {line}"))?;
     Ok(project
         .rsplit_once('/')
         .map(|(dir, _)| dir.to_string())
         .unwrap_or_default())
 }
 
-/// One segment with every name that is its own given the label: its chain
+/// One segment with every name that is its own given the label: its pipeline
 /// inputs, its stages and repeats, what its stages take from each other, and
 /// the marks a run replaces with its range counts.
 fn labelled(segment: &str, label: &str) -> String {
@@ -459,9 +459,9 @@ fn labelled(segment: &str, label: &str) -> String {
         if trimmed.starts_with('[') {
             table = trimmed.trim_end();
         }
-        let mut line = if let Some(name) = trimmed.strip_prefix("[chain.input.") {
-            format!("{indent}[chain.input.{label}{name}")
-        } else if table != "[chain]" && trimmed.starts_with("name = \"") {
+        let mut line = if let Some(name) = trimmed.strip_prefix("[pipeline.input.") {
+            format!("{indent}[pipeline.input.{label}{name}")
+        } else if table != "[pipeline]" && trimmed.starts_with("name = \"") {
             format!(
                 "{indent}{}",
                 trimmed.replacen("name = \"", &format!("name = \"{label}"), 1)
@@ -488,37 +488,37 @@ fn labelled(segment: &str, label: &str) -> String {
 pub(crate) mod tests {
     use super::*;
 
-    /// What an import writes, cut down: one chain input, range 0's bind and
+    /// What an import writes, cut down: one pipeline input, range 0's bind and
     /// check, the repeat over later ranges, and the checks.
-    pub(crate) const PART: &str = r#"[chain]
+    pub(crate) const PART: &str = r#"[pipeline]
 name = "iris"
 version = "0.1.0"
 
-[chain.input.prompt_text]
+[pipeline.input.prompt_text]
 index = "j"
 path = "target/iris/run-prompt-placeholder/text_{j}.rastered"
 commitments = []
 
-[[chain.stage]]
+[[pipeline.stage]]
 name = "prompt_bind_p0"
 project = "raster-stages/prompt-bind"
 inputs.text = { input = "prompt_text_0" }
 inputs.source = { external = { path = "model/no_source.rastered", index_path = "model/no_source.rindex", commitment = "n0" } }
 
-[[chain.repeat]]
+[[pipeline.repeat]]
 name = "prompt"
 index = "j"
 start = 1
 count = 0
 
-  [[chain.repeat.stage]]
+  [[pipeline.repeat.stage]]
 name = "prompt_bind_p{j}"
 project = "raster-stages/prompt-bind"
 inputs.text = { input = "prompt_text_{j}" }
 inputs.source = { external = { path = "model/no_source.rastered", index_path = "model/no_source.rindex", commitment = "n0" } }
 inputs.previous = { from = "prompt_bind_p{j-1}", first = "prompt_bind_p0" }
 
-[[chain.stage]]
+[[pipeline.stage]]
 name = "check_c0"
 project = "raster-stages/sequence-check"
 inputs.prompt = { from = "prompt_bind_p@LAST_PROMPT_RANGE@" }
@@ -569,7 +569,7 @@ inputs.prompt = { from = "prompt_bind_p@LAST_PROMPT_RANGE@" }
         let shape = Shape::parse("tried", &text).unwrap();
         let template = shape.pipeline_template(&[PART]).unwrap();
         let expected = PART.to_string()
-            + "\n[[chain.stage]]\nname = \"result\"\nproject = \"raster-stages/claim-result\"\n\
+            + "\n[[pipeline.stage]]\nname = \"result\"\nproject = \"raster-stages/claim-result\"\n\
                inputs.check = { from = \"check_c@LAST_CLAIMED_RANGE@\" }\n\
                inputs.forms = { run = \"result_forms\" }\n";
         assert_eq!(template, expected);
@@ -698,7 +698,7 @@ inputs.prompt = { from = "prompt_bind_p@LAST_PROMPT_RANGE@" }
     }
 
     #[test]
-    fn two_inferences_of_one_chain_keep_their_names_apart() {
+    fn two_inferences_of_one_pipeline_keep_their_names_apart() {
         let text = format!(
             "{SOURCE}{}{}{}",
             inference("first", true),
@@ -712,20 +712,20 @@ inputs.prompt = { from = "prompt_bind_p@LAST_PROMPT_RANGE@" }
         let labels = [shape.label(0), shape.label(1)];
         assert_eq!(labels, ["m0_", "m1_"]);
         let template = shape.pipeline_template(&[PART, PART]).unwrap();
-        let chain: toml::Value = toml::from_str(&template).unwrap();
-        // One `[chain]` table, and each inference's own inputs.
-        assert_eq!(template.matches("[chain]\n").count(), 1);
-        assert_eq!(chain["chain"]["name"].as_str(), Some("iris"));
-        let inputs = chain["chain"]["input"].as_table().unwrap();
+        let pipeline: toml::Value = toml::from_str(&template).unwrap();
+        // One `[pipeline]` table, and each inference's own inputs.
+        assert_eq!(template.matches("[pipeline]\n").count(), 1);
+        assert_eq!(pipeline["pipeline"]["name"].as_str(), Some("iris"));
+        let inputs = pipeline["pipeline"]["input"].as_table().unwrap();
         assert_eq!(
             inputs.keys().collect::<Vec<_>>(),
             ["m0_prompt_text", "m1_prompt_text"]
         );
 
         // Every stage and repeat has its own name, and whatever a stage takes
-        // from the chain is of its own inference, or the source.
-        let stages = chain["chain"]["stage"].as_array().unwrap();
-        let repeats = chain["chain"]["repeat"].as_array().unwrap();
+        // from the pipeline is of its own inference, or the source.
+        let stages = pipeline["pipeline"]["stage"].as_array().unwrap();
+        let repeats = pipeline["pipeline"]["repeat"].as_array().unwrap();
         let mut names: Vec<&str> = stages
             .iter()
             .chain(repeats)
@@ -796,8 +796,8 @@ inputs.prompt = { from = "prompt_bind_p@LAST_PROMPT_RANGE@" }
         assert_eq!(shape.result_reads(), [("check", 1)]);
 
         let template = shape.pipeline_template(&[PART, PART]).unwrap();
-        let chain: toml::Value = toml::from_str(&template).unwrap();
-        let stages = chain["chain"]["stage"].as_array().unwrap();
+        let pipeline: toml::Value = toml::from_str(&template).unwrap();
+        let stages = pipeline["pipeline"]["stage"].as_array().unwrap();
         let names: Vec<&str> = stages
             .iter()
             .map(|stage| stage["name"].as_str().unwrap())

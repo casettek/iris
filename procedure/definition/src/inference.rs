@@ -13,7 +13,7 @@ pub struct InferenceResult {
     pub stop_reason: String,
     /// The last check's claim verdict: how many generated positions were
     /// given a claimed token that is not the greedy selection there. Only a
-    /// teacher-forced chain is given claimed tokens; a teacher-forced claim
+    /// teacher-forced pipeline is given claimed tokens; a teacher-forced claim
     /// stands only if this is zero.
     #[serde(default)]
     pub claim_mismatches: u32,
@@ -28,12 +28,12 @@ pub struct InferenceResult {
     pub output_text_sha256: String,
     /// What the transcript breaks (token budget, EOS), or zero.
     pub output_fault: u32,
-    /// SHA-256 of the exact text the chain consumed.
+    /// SHA-256 of the exact text the pipeline consumed.
     pub input_text_sha256: String,
     /// The digest of the source record the text was built from, or 64 zeros.
     #[serde(default = "no_source_id")]
     pub source_sha256: String,
-    /// The committed model the chain was configured with.
+    /// The committed model the pipeline was configured with.
     pub model_id: String,
     pub raw_prompt: bool,
     pub max_new_tokens: u32,
@@ -45,10 +45,10 @@ pub struct InferenceResult {
     pub prompt_fault: u32,
     pub prompt_fault_position: u64,
     /// The last check's claim record, which is what a contract reads: the
-    /// digest of the statement the chain ran under, in lowercase hex.
+    /// digest of the statement the pipeline ran under, in lowercase hex.
     #[serde(default)]
     pub statement_sha256: String,
-    /// The chain's own verdict on its run. False when absent: a result
+    /// The pipeline's own verdict on its run. False when absent: a result
     /// without a verdict is not a valid one.
     #[serde(default)]
     pub valid: bool,
@@ -75,7 +75,7 @@ pub struct ConsensusOutcome {
 
 impl ConsensusOutcome {
     /// What the consensus result step states of two inferences' results, as
-    /// direct inference computes it: the same functions the chain's result
+    /// direct inference computes it: the same functions the pipeline's result
     /// stage runs, over the same values.
     pub fn of(
         forms: &[result_core::Form],

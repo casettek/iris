@@ -1,4 +1,4 @@
-//! The local three-path regression gate: the chain through Raster and natively,
+//! The local three-path regression gate: the pipeline through Raster and natively,
 //! checked against direct generation position by position. Every worker owns its
 //! runtime state.
 mod challenge;
@@ -20,7 +20,7 @@ use procedure_direct::{DirectInferenceConfig, DirectInferenceExecutor};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-use staged_infer::chain_runner::StagedExecutionBackend;
+use staged_infer::pipeline_runner::StagedExecutionBackend;
 
 use blockchain_host::claim::{build_posted_claim, prepare_claim_run, ClaimBuildOptions};
 use compare::{
@@ -81,7 +81,7 @@ pub fn run(skip_challenges: bool, bundle: &str) -> Result<()> {
     Ok(())
 }
 
-/// The Raster program that runs a chain stage, from the stage's name and the
+/// The Raster program that runs a pipeline stage, from the stage's name and the
 /// layer program of the model's family.
 fn stage_program<'a>(stage: &str, layer_program: &'a str) -> &'a str {
     [
@@ -160,7 +160,7 @@ fn outcomes(report: &Value) -> Value {
         },
         "faults_are_published": {
             "prompt_cases": listed("prompt_faults"),
-            "chain_cases": listed("chain_faults"),
+            "pipeline_cases": listed("pipeline_faults"),
         },
         "a_source_is_held": {
             "checkpoints": report["source"]["claim"]["checkpoints"],
@@ -204,8 +204,8 @@ fn outcome_lines(outcomes: &Value) -> Vec<String> {
             honest["cases"], honest["checkpoints"], honest["rows_compared"], honest["kv_entries_compared"]
         ),
         format!(
-            "faults are published: {} bad prompts and {} bad chains finish through both and record the fault",
-            faults["prompt_cases"], faults["chain_cases"]
+            "faults are published: {} bad prompts and {} bad pipelines finish through both and record the fault",
+            faults["prompt_cases"], faults["pipeline_cases"]
         ),
     ];
     let source = &outcomes["a_source_is_held"];
@@ -269,7 +269,7 @@ mod outcome_tests {
                 {"passed": true, "comparison": {"checkpoints": 21, "rows_compared": 45, "kv_entries_compared": 40}},
                 {"passed": true, "comparison": {
                     "checkpoints": 86, "rows_compared": 369, "kv_entries_compared": 678,
-                    "prompt_faults": [{}, {}], "chain_faults": [{}],
+                    "prompt_faults": [{}, {}], "pipeline_faults": [{}],
                     "challenges": [
                         {"case": "a", "stage": "range_p1_l2", "replayed": true},
                         {"case": "b", "stage": "prompt_check_p0", "replayed": true},
@@ -286,7 +286,7 @@ mod outcome_tests {
         assert_eq!(found["honest_runs_agree"]["checkpoints"], 107);
         assert_eq!(
             found["faults_are_published"],
-            json!({"prompt_cases": 2, "chain_cases": 1})
+            json!({"prompt_cases": 2, "pipeline_cases": 1})
         );
         let caught = &found["cheating_is_caught"];
         assert_eq!(caught["found_at_expected_stage"], 6);
@@ -551,7 +551,7 @@ fn run_case(
     let raster_dir = dir.join("raster");
     fs::create_dir(&raster_dir)?;
     let mut run = command(raster, root);
-    run.args(["raster", "chain", "run"])
+    run.args(["raster", "pipeline", "run"])
         .arg(&prepared.manifest_path)
         .args(["--no-auth", "--run"])
         .arg(&raster_dir);
@@ -575,9 +575,9 @@ fn run_case(
     }
     let native_info: Value = read_json(&dir.join("native-staged/result.json"))?;
     let native_dir = PathBuf::from(
-        native_info["chain_dir"]
+        native_info["pipeline_dir"]
             .as_str()
-            .context("missing native chain directory")?,
+            .context("missing native pipeline directory")?,
     );
     let direct_dir = dir.join("native-direct");
     report["procedure-run_seconds"] = json!(run_with_no_blockchain(
@@ -590,11 +590,11 @@ fn run_case(
 
     // Raster and native-staged, byte for byte, in the expected order.
     let order = procedure_definition::read_stage_order(&native_dir)?
-        .context("native chain recorded no stage inventory")?;
+        .context("native pipeline recorded no stage inventory")?;
     let shape = RangedShape::from_names(&order);
     ensure!(
         shape.layers == model.shape.num_hidden_layers(),
-        "the chain has {} layers per range, the model has {}",
+        "the pipeline has {} layers per range, the model has {}",
         shape.layers,
         model.shape.num_hidden_layers()
     );
@@ -612,7 +612,7 @@ fn run_case(
         validate_donor_bindings(&native_dir, &native, shape)?;
     }
 
-    // Direct generation: its own coverage, then the chain position by position.
+    // Direct generation: its own coverage, then the pipeline position by position.
     ensure!(
         claimed.len() == case.tokens as usize,
         "direct decode produced {} of {} tokens; the pinned corpus fills its budget",
@@ -641,7 +641,7 @@ fn run_case(
     );
     ensure!(
         comparison["generated_token_ids"] == json!(claimed),
-        "the chain's output differs from the claimed ids"
+        "the pipeline's output differs from the claimed ids"
     );
     let checkpoints = procedure_definition::read_checkpoint_hashes(
         &native_dir.join(procedure_definition::CHECKPOINT_HASHES_TXT),
@@ -649,11 +649,11 @@ fn run_case(
     comparison["checkpoints"] = json!(names.len());
     comparison["final_checkpoint_sha256"] = json!(checkpoints.last());
 
-    // The last prompt context is the chain's record of what it was given.
+    // The last prompt context is the pipeline's record of what it was given.
     let last = shape
         .prompt_ranges
         .checked_sub(1)
-        .context("the chain has no prompt ranges")?;
+        .context("the pipeline has no prompt ranges")?;
     let context = &native[&format!("prompt_check_p{last}")].value["context"];
     ensure!(
         context["fault"] == json!(0) && context["complete"] == json!(true),
@@ -730,7 +730,7 @@ fn run_case(
         "an honest claim published a fault: {record}"
     );
     // What a contract would check on the native claim, and that each of its
-    // checkpoints is the boundary the Raster run of the same chain committed:
+    // checkpoints is the boundary the Raster run of the same pipeline committed:
     // the program id, the input manifest and the output.
     let contract = blockchain_host::claim_check::check_claim(
         blockchain_host::claim_check::ClaimCheckOptions {
@@ -766,19 +766,19 @@ fn run_case(
     .context("availability cases")?;
     ensure!(
         native_info["result"] == *record,
-        "the result artifact is not the chain's final record"
+        "the result artifact is not the pipeline's final record"
     );
     let direct_result: Value = read_json(&direct_dir.join("result.json"))?;
     ensure!(
         direct_result == *record,
-        "direct generation's result is not the chain's final record"
+        "direct generation's result is not the pipeline's final record"
     );
 
     // Only the templated case has a safe first cut to build these from.
     if !case.raw_prompt {
         comparison["prompt_faults"] =
             run_prompt_fault_scenario(root, dir, exe, raster, model_path, model, &prepared)?;
-        comparison["chain_faults"] = run_chain_fault_scenario(
+        comparison["pipeline_faults"] = run_pipeline_fault_scenario(
             root, dir, exe, raster, model_path, model, case, &prepared, &claimed,
         )?;
     }
@@ -817,11 +817,11 @@ fn run_case(
     Ok(())
 }
 
-/// A false claim must reach the final record. Runs whole chains through Raster
+/// A false claim must reach the final record. Runs whole pipelines through Raster
 /// and native-staged over wrong preparations and wrong claims, and checks that
 /// every stage finishes, both agree byte for byte, and the record says which.
 #[allow(clippy::too_many_arguments)]
-fn run_chain_fault_scenario(
+fn run_pipeline_fault_scenario(
     root: &Path,
     case_dir: &Path,
     exe: &Path,
@@ -853,7 +853,7 @@ fn run_chain_fault_scenario(
         .map(|index| index + 1)
         .context("the pinned case's prompt is a single token")?;
     let (template_path, segment) = model.verified_raster_template(model_path)?;
-    let template = procedure_definition::ProcedureKind::single().chain_template(&[&segment])?;
+    let template = procedure_definition::ProcedureKind::single().pipeline_template(&[&segment])?;
     let template_dir = template_path
         .parent()
         .context("manifest template has no parent directory")?;
@@ -950,7 +950,7 @@ fn run_chain_fault_scenario(
 
     let mut report = Vec::new();
     for (name, marks, ids, budget, prompt_fault, check_fault, check_position, skew) in cases {
-        let dir = case_dir.join("chain-faults").join(name);
+        let dir = case_dir.join("pipeline-faults").join(name);
         let files = dir.join("prompt");
         let manifest = dir.join("Raster.toml");
         let mark_files = run_prep::write_marks(&marks, &files)?;
@@ -991,12 +991,12 @@ fn run_chain_fault_scenario(
         let raster_dir = dir.join("raster");
         fs::create_dir(&raster_dir)?;
         let mut run = command(raster, root);
-        run.args(["raster", "chain", "run"])
+        run.args(["raster", "pipeline", "run"])
             .arg(&manifest)
             .args(["--no-auth", "--run"])
             .arg(&raster_dir);
         logged(run, &dir.join("raster.log"))
-            .with_context(|| format!("chain fault `{name}`: a Raster stage did not finish"))?;
+            .with_context(|| format!("pipeline fault `{name}`: a Raster stage did not finish"))?;
         let native_run = staged_infer::CheckpointedInferenceExecutor
             .run(staged_infer::CheckpointedInferenceConfig {
                 base_dir: dir.clone(),
@@ -1005,22 +1005,24 @@ fn run_chain_fault_scenario(
                 staged_backend: StagedExecutionBackend::InProcess,
                 parity_policy: staged_infer::ParityPolicy::Skip,
             })
-            .with_context(|| format!("chain fault `{name}`: a native stage did not finish"))?;
+            .with_context(|| format!("pipeline fault `{name}`: a native stage did not finish"))?;
 
         let order = procedure_definition::read_stage_order(&raster_dir)?
-            .with_context(|| format!("chain fault `{name}`: no stage inventory"))?;
+            .with_context(|| format!("pipeline fault `{name}`: no stage inventory"))?;
         let raster_outputs = read_boundaries(&raster_dir, &order, false)?;
-        let native = read_boundaries(&native_run.chain_dir, &order, false)?;
+        let native = read_boundaries(&native_run.pipeline_dir, &order, false)?;
         for stage in &order {
             compare(stage, &raster_outputs[stage], &native[stage])
-                .with_context(|| format!("chain fault `{name}`"))?;
+                .with_context(|| format!("pipeline fault `{name}`"))?;
         }
 
         // The record is the last check's. The result stage after it restates
         // the claim record whatever that record says.
         let (last, result) = match order.as_slice() {
             [.., last, result] if result == "result" => (last, result),
-            _ => bail!("chain fault `{name}`: the chain does not end in a check and the result"),
+            _ => bail!(
+                "pipeline fault `{name}`: the pipeline does not end in a check and the result"
+            ),
         };
         let record = &with_result(
             final_record(&raster_outputs[last].value)?,
@@ -1028,48 +1030,48 @@ fn run_chain_fault_scenario(
         )?;
         ensure!(
             (record["prompt_fault"] != json!(0)) == prompt_fault,
-            "chain fault `{name}`: expected a prompt fault: {prompt_fault}; got {record}"
+            "pipeline fault `{name}`: expected a prompt fault: {prompt_fault}; got {record}"
         );
         if skew == [0, 0] {
             ensure!(
                 record["check_fault"] == json!(check_fault)
                     && record["check_fault_position"] == json!(check_position),
-                "chain fault `{name}`: expected check fault {check_fault} at {check_position}; got {record}"
+                "pipeline fault `{name}`: expected check fault {check_fault} at {check_position}; got {record}"
             );
         } else {
             ensure!(
                 record["model_fault"] != json!(0),
-                "chain fault `{name}`: a run that left its schedule kept a clean record: {record}"
+                "pipeline fault `{name}`: a run that left its schedule kept a clean record: {record}"
             );
         }
         if prompt_fault {
             ensure!(
                 record["model_fault"] != json!(0),
-                "chain fault `{name}` lost its execution fault"
+                "pipeline fault `{name}` lost its execution fault"
             );
         }
         match name {
             "not-greedy" => ensure!(
                 record["claim_mismatches"].as_u64().unwrap_or(0) > 0
                     && record["first_claim_mismatch_position"] == json!(positions),
-                "chain fault `{name}`: the verdict does not name the changed token: {record}"
+                "pipeline fault `{name}`: the verdict does not name the changed token: {record}"
             ),
             "unknown-ids" => ensure!(
                 record["claim_mismatches"] == json!(2)
                     && record["first_claim_mismatch_position"] == json!(positions),
-                "chain fault `{name}`: the verdict does not reject both ids: {record}"
+                "pipeline fault `{name}`: the verdict does not reject both ids: {record}"
             ),
             "short-of-budget" => ensure!(
                 record["claim_mismatches"] == json!(0)
                     && record["output_fault"] == json!(prompt_prep::OUTPUT_FAULT_SHORT_WITHOUT_EOS),
-                "chain fault `{name}`: the output fault is not published: {record}"
+                "pipeline fault `{name}`: the output fault is not published: {record}"
             ),
             _ => {}
         }
         let result: InferenceResult = serde_json::from_value(record.clone())?;
         ensure!(
             native_run.results.first() == Some(&result),
-            "chain fault `{name}`: the native result is not the final record"
+            "pipeline fault `{name}`: the native result is not the final record"
         );
         report.push(json!({
             "case": name,
@@ -1247,7 +1249,7 @@ fn run_prompt_fault_scenario(
         let raster_dir = dir.join("raster");
         fs::create_dir(&raster_dir)?;
         let mut run = command(raster, root);
-        run.args(["raster", "chain", "run"])
+        run.args(["raster", "pipeline", "run"])
             .arg(&manifest)
             .args(["--no-auth", "--run"])
             .arg(&raster_dir);
@@ -1262,7 +1264,7 @@ fn run_prompt_fault_scenario(
                 parity_policy: staged_infer::ParityPolicy::Skip,
             })
             .with_context(|| format!("prompt fault `{name}`: a native stage did not finish"))?
-            .chain_dir;
+            .pipeline_dir;
 
         let order = procedure_definition::read_stage_order(&raster_dir)?
             .with_context(|| format!("prompt fault `{name}`: no stage inventory"))?;
@@ -1321,7 +1323,7 @@ fn run_long_text_case(
     let raster_dir = dir.join("raster");
     fs::create_dir(&raster_dir)?;
     let mut run = command(raster, root);
-    run.args(["raster", "chain", "run"])
+    run.args(["raster", "pipeline", "run"])
         .arg(&manifest)
         .args(["--no-auth", "--run"])
         .arg(&raster_dir);
@@ -1335,7 +1337,7 @@ fn run_long_text_case(
             parity_policy: staged_infer::ParityPolicy::Skip,
         })
         .context("a long text did not finish natively")?
-        .chain_dir;
+        .pipeline_dir;
     let names = vec![String::from("prompt_bind_p0")];
     let bound = read_boundaries(&raster_dir, &names, false)?;
     let native = read_boundaries(&native_dir, &names, false)?;
@@ -1395,13 +1397,13 @@ fn prompt_only_manifest(
             .parent()
             .context("run file has no directory")?;
         Ok(format!(
-            "\n[chain.input.{name}]\nindex = \"j\"\npath = {:?}\nindex_path = {:?}\ncommitments = {:?}\n",
+            "\n[pipeline.input.{name}]\nindex = \"j\"\npath = {:?}\nindex_path = {:?}\ncommitments = {:?}\n",
             dir.join(format!("{family}_{{j}}.rastered")),
             dir.join(format!("{family}_{{j}}.rindex")),
             files.iter().map(|file| &file.commitment).collect::<Vec<_>>(),
         ))
     };
-    // These chains have no source stage: the first bind is given the constant.
+    // These pipelines have no source stage: the first bind is given the constant.
     let plain;
     let template = if source.is_none() && template.contains("name = \"source\"") {
         plain = blockchain_host::claim::without_source_stage(template)?;
@@ -1417,18 +1419,18 @@ fn prompt_only_manifest(
     // Range 0's stages are plain stages; the later ranges' are the prompt
     // repeat's.
     let prompt_stage =
-        |block: &[&str], in_prompt: bool| in_prompt || block[0].trim() == "[[chain.stage]]";
+        |block: &[&str], in_prompt: bool| in_prompt || block[0].trim() == "[[pipeline.stage]]";
     let mut out = String::new();
     let mut in_prompt = false;
     for block in &manifest_blocks(template) {
         let name = block_name(block);
         match block[0].trim() {
-            "[chain]" => out.push_str(&(block.join("\n") + "\n")),
-            "[chain.input.prompt_text]" => out.push_str(&input("prompt_text", "text", texts)?),
-            "[chain.input.prompt_marks]" if !cuts.is_empty() => {
+            "[pipeline]" => out.push_str(&(block.join("\n") + "\n")),
+            "[pipeline.input.prompt_text]" => out.push_str(&input("prompt_text", "text", texts)?),
+            "[pipeline.input.prompt_marks]" if !cuts.is_empty() => {
                 out.push_str(&input("prompt_marks", "marks", cuts)?)
             }
-            "[[chain.repeat]]" => {
+            "[[pipeline.repeat]]" => {
                 in_prompt = name == "prompt";
                 if in_prompt {
                     // Range 0 is the plain stages before this block.
@@ -1442,8 +1444,8 @@ fn prompt_only_manifest(
                     }
                 }
             }
-            "[[chain.stage]]" if name == "source" => {
-                let source = source.context("the chain has a source stage and no source")?;
+            "[[pipeline.stage]]" if name == "source" => {
+                let source = source.context("the pipeline has a source stage and no source")?;
                 for line in block {
                     let binding = [
                         ("signer", &source.signer),
@@ -1466,7 +1468,7 @@ fn prompt_only_manifest(
                     out.push('\n');
                 }
             }
-            "[[chain.stage]]" | "[[chain.repeat.stage]]"
+            "[[pipeline.stage]]" | "[[pipeline.repeat.stage]]"
                 if prompt_stage(block, in_prompt) && name.starts_with("prompt_bind_p") =>
             {
                 for line in block {
@@ -1486,7 +1488,7 @@ fn prompt_only_manifest(
                     out.push('\n');
                 }
             }
-            "[[chain.stage]]" | "[[chain.repeat.stage]]"
+            "[[pipeline.stage]]" | "[[pipeline.repeat.stage]]"
                 if prompt_stage(block, in_prompt)
                     && !cuts.is_empty()
                     && name.starts_with("prompt_check_p") =>
@@ -1499,7 +1501,7 @@ fn prompt_only_manifest(
     Ok(out)
 }
 
-/// Compares a chain with direct generation for the same prompt and output, bit
+/// Compares a pipeline with direct generation for the same prompt and output, bit
 /// for bit and position by position.
 ///
 /// The prompt ranges' token ids must concatenate to direct's tokenization.
@@ -1507,11 +1509,11 @@ fn prompt_only_manifest(
 /// layer stage must equal direct's prefill row `i` (`i < prompt_len`) or decode
 /// step `i - prompt_len`'s single row, and every K/V entry a range publishes,
 /// inherited or its own, direct's entry at the same position. Direct never runs a
-/// pass for its last token, so the chain's row for it has no reference; nothing
+/// pass for its last token, so the pipeline's row for it has no reference; nothing
 /// is scored from that row. The last range's check must be direct's final edge and record, and the
 /// last range's check the same edge as direct's last selection.
 ///
-/// Stages are read one layer at a time, so real-model chains with hundreds of
+/// Stages are read one layer at a time, so real-model pipelines with hundreds of
 /// rows fit in memory.
 pub fn compare_teacher_forced(tf_dir: &Path, direct_dir: &Path) -> Result<Value> {
     let load = |dir: &Path, stage: &str| -> Result<Boundary> {
@@ -1525,7 +1527,7 @@ pub fn compare_teacher_forced(tf_dir: &Path, direct_dir: &Path) -> Result<Value>
     let shape = RangedShape::from_names(&tf_names);
     ensure!(
         tf_names == teacher_forced_names(shape),
-        "{}: not a chain run",
+        "{}: not a pipeline run",
         tf_dir.display()
     );
     let direct_names: Vec<String> = read_json(&direct_dir.join("boundary-order.json"))?;
@@ -1558,7 +1560,7 @@ pub fn compare_teacher_forced(tf_dir: &Path, direct_dir: &Path) -> Result<Value>
         &load(tf_dir, &last_check)?,
         &load(direct_dir, "output_finalize")?,
     )
-    .with_context(|| format!("chain {last_check} ↔ direct final edge and record"))?;
+    .with_context(|| format!("pipeline {last_check} ↔ direct final edge and record"))?;
 
     // The same family of stages, ranged and direct.
     let ranges = (0..shape.prompt_ranges)
@@ -2160,7 +2162,7 @@ pub fn worker(specification: &Path, case: &Path, output: &Path, direct: bool) ->
         })?;
         write_json(
             &output.join("result.json"),
-            &json!({"chain_dir": result.chain_dir, "result": result.results.first().context("native-staged did not finalize")?}),
+            &json!({"pipeline_dir": result.pipeline_dir, "result": result.results.first().context("native-staged did not finalize")?}),
         )?;
     }
     Ok(())
@@ -2169,14 +2171,14 @@ pub fn worker(specification: &Path, case: &Path, output: &Path, direct: bool) ->
 /// `iris run` on a claim's specification and case, in a directory of its
 /// own: a procedure run with no blockchain. The command fails unless its
 /// staged run states the result its direct run did, and unless every one of
-/// its checkpoints is the one the claim's staged run left in `claim_chain`.
+/// its checkpoints is the one the claim's staged run left in `claim_pipeline`.
 /// So the run a claim is built on is the run anyone makes without one.
 fn run_with_no_blockchain(
     root: &Path,
     exe: &Path,
     dir: &Path,
     specification: &Path,
-    claim_chain: &Path,
+    claim_pipeline: &Path,
 ) -> Result<f64> {
     fs::create_dir(dir)?;
     let mut run = command(exe, root);
@@ -2186,7 +2188,7 @@ fn run_with_no_blockchain(
         .arg("--case")
         .arg(case_beside(specification))
         .arg("--compare")
-        .arg(claim_chain.join(procedure_definition::CHECKPOINT_LIST_JSON));
+        .arg(claim_pipeline.join(procedure_definition::CHECKPOINT_LIST_JSON));
     logged(run, &dir.join("run.log")).context("`iris run`, held to the claim's checkpoints")
 }
 

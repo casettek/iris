@@ -28,7 +28,7 @@ use procedure_definition::{
     read_checkpoint_list, read_json, read_specification, Checkpoint, CheckpointList, PreparedRun,
     ProcedureKind, Specification, CHECKPOINTS_TXT, CHECKPOINT_LIST_JSON,
 };
-use raster::core::chain::ChainCommitment;
+use raster::core::pipeline::PipelineCommitment;
 
 #[derive(Debug, Clone)]
 pub struct ClaimCheckOptions {
@@ -38,7 +38,7 @@ pub struct ClaimCheckOptions {
     /// The `claim_submission.json` a claim build wrote. The claim's checkpoint
     /// files and stage outputs are read from the directory it is in.
     pub submission_path: PathBuf,
-    /// A Raster chain run of the same claim. With it, every checkpoint is held
+    /// A Raster pipeline run of the same claim. With it, every checkpoint is held
     /// to the boundary that run committed.
     pub raster_run: Option<PathBuf>,
     /// The pins the contract holds, as `iris claim pins` wrote them. Without
@@ -119,7 +119,7 @@ fn load_pins(
 }
 
 /// The imports a specification names: each model's manifest path, the manifest
-/// and the model's segment of a chain.
+/// and the model's segment of a pipeline.
 fn run_imports(
     specification_path: &Path,
     specification: &Specification,
@@ -367,14 +367,14 @@ pub fn check_claim(options: ClaimCheckOptions) -> Result<ClaimCheckReport> {
     let mut report = check_claim_dir(&contract, unregistered, &submission_path, &availability)?;
 
     if let Some(raster_run) = options.raster_run {
-        let commitment_path = absolute(&options.base_dir, &raster_run).join("chain-commitment");
+        let commitment_path = absolute(&options.base_dir, &raster_run).join("pipeline-commitment");
         let commitment = fs::read(&commitment_path)
             .with_context(|| format!("failed to read {}", commitment_path.display()))?;
-        let chain: ChainCommitment = postcard::from_bytes(&commitment)
+        let pipeline: PipelineCommitment = postcard::from_bytes(&commitment)
             .with_context(|| format!("failed to parse {}", commitment_path.display()))?;
         report.lines.push(CheckLine {
             check: "every checkpoint is the boundary the Raster run committed",
-            rejection: raster_boundary_mismatch(&claim_list(&submission_path)?, &chain),
+            rejection: raster_boundary_mismatch(&claim_list(&submission_path)?, &pipeline),
         });
     }
     Ok(report)
@@ -544,7 +544,7 @@ fn check_claim_dir(
         let manifest_path = dir.join(&checkpoint.stage).join("input_manifest.json");
         let manifest = fs::read(&manifest_path)
             .with_context(|| format!("failed to read {}", manifest_path.display()))?;
-        for input in &program.chained_inputs {
+        for input in &program.piped_inputs {
             let producer = checkpoint
                 .input_sources
                 .get(&input.name)
@@ -580,7 +580,7 @@ fn check_claim_dir(
         }
     }
     lines.push(CheckLine {
-        check: "challenge admission: every chained input is an earlier checkpoint's output",
+        check: "challenge admission: every piped input is an earlier checkpoint's output",
         rejection,
     });
 
@@ -806,7 +806,7 @@ pub fn check_challenge(
         rejection: (!checkpoint.is_some_and(|checkpoint| {
             blockchain_rules::checks::challenge_is_about(checkpoint, &submission.challenge)
         }))
-        .then(|| String::from("the challenge's chain commitment is not this checkpoint's")),
+        .then(|| String::from("the challenge's pipeline commitment is not this checkpoint's")),
     });
     lines.push(CheckLine {
         check: "challenge: Raster admits it",

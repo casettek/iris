@@ -1,6 +1,6 @@
 //! `claim-result`: tiles.
 //!
-//! The chain's last stage. It compares the output text the last check stated
+//! The pipeline's last stage. It compares the output text the last check stated
 //! with the run's forms, and states the code of the first form the text is,
 //! beside the claim record the check stated. Today that is all it does: it is
 //! where an output is turned into what a claim is used for.

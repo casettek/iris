@@ -64,7 +64,7 @@ not model weights or inference outputs.
 
 The prover reuses the selected stage's frozen input and manifest from the
 challenge replay package. It verifies the frozen context and locked program
-identity before launching the program. It does not run the chain or regenerate
+identity before launching the program. It does not run the pipeline or regenerate
 stage inputs. Native execution stops at divergence, so there is no final replay
 checkpoint check. Earlier claim/challenge checkpoint checks remain in place.
 Receipt verification checks the guest identity, Finished verdict, and the
@@ -120,7 +120,7 @@ set. Linux rejects RAM-backed tmpfs and checks available disk space at startup
 and during writes, stopping with 4 GiB remaining. Scratch sessions clean up on
 normal exit; a killed process may leave its session directory behind.
 
-Commitment-only processing (`chain run`, ordinary `run --commit`, and
+Commitment-only processing (`pipeline run`, ordinary `run --commit`, and
 `trace commit`) decodes one event, derives its step using the existing recorder,
 updates the commitment accumulator, and releases the event and step. It retains
 only the revealed head/tail windows and one unfinished fingerprint batch in RAM;
@@ -144,7 +144,7 @@ cargo raster trace commit --project /path/to/stage-project \
   --trace /path/to/stage/trace.bin \
   --input /path/to/stage/input.json \
   --input-manifest /path/to/stage/input_manifest.json \
-  --fraud-proof-window-size 2 --output /path/to/recovered-commit.bin
+  --fault-proof-window-size 2 --output /path/to/recovered-commit.bin
 ```
 
 Use the original run's window size. This command does not execute the stage or
@@ -166,7 +166,7 @@ The transition guest image ID changed because its empty storage-index root
 uses the shared coordinate-index implementation whose storage access was
 refactored. No guest verification source or commitment encoding changed; all
 160 existing transition guest verification tests passed. Authorization and
-chain-fraud guest IDs stayed unchanged. Iris and Raster were rebuilt together
+pipeline-fault guest IDs stayed unchanged. Iris and Raster were rebuilt together
 with the existing CUDA script. Previously generated transition receipts still
 require their original verifier/image ID; this change does not migrate them.
 

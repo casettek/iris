@@ -67,7 +67,7 @@ struct Cli {
     #[arg(long = "run-stage", alias = "run-prefill-range-stage", hide = true)]
     run_stage: Option<PathBuf>,
 
-    /// Compare one already-completed no-auth stage without rerunning the chain.
+    /// Compare one already-completed no-auth stage without rerunning the pipeline.
     #[arg(long = "compare-stage", alias = "compare-prefill-range-stage")]
     compare_stage: Option<PathBuf>,
 
@@ -108,7 +108,7 @@ enum Commands {
     /// Measure the heaviest tile replays in one exact stage instance.
     #[cfg(feature = "replay-profile")]
     ReplayProfile(ReplayProfileArgs),
-    /// Compare a chain run with direct generation of the same prompt and
+    /// Compare a pipeline run with direct generation of the same prompt and
     /// output, position by position.
     #[command(hide = true)]
     CompareTeacherForced {

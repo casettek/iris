@@ -242,7 +242,7 @@ pub enum SubmissionRejection {
     StatementMismatch { expected: String, submitted: String },
     /// The plaintext does not hash to the record's output text hash.
     OutputMismatch { expected: String, submitted: String },
-    /// The chain found a fault in its own run.
+    /// The pipeline found a fault in its own run.
     NotValid,
     /// The source record submitted is not the one the claimed digest is over.
     AnotherSourceRecord { digest: String, submitted: String },
@@ -464,11 +464,11 @@ impl ClaimSubmission {
         consensus: Option<SubmittedConsensus>,
         source: Option<&source_core::SourceRecord>,
         relays: Vec<source_core::SourceRecord>,
-        chain_dir: &Path,
+        pipeline_dir: &Path,
     ) -> Result<Self> {
         let first = results.first().context("a claim holds an inference")?;
         let checkpoints = procedure_definition::checkpoint::read_checkpoint_hashes(
-            &chain_dir.join(procedure_definition::checkpoint::CHECKPOINTS_TXT),
+            &pipeline_dir.join(procedure_definition::checkpoint::CHECKPOINTS_TXT),
         )?;
         Ok(Self {
             version: CLAIM_SUBMISSION_VERSION,
