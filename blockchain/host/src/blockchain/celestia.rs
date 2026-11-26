@@ -9,7 +9,7 @@
 //!
 //! What is still the host's word here: that a block's data root is one
 //! Blobstream attested to, and the availability proof. `included_at` asks the
-//! node, which stands in for a contract's view of the pipeline, and `proves`
+//! node, which stands in for a contract's view of the blockchain, and `proves`
 //! reads the blob as the stand-in layer does.
 
 use std::io::{Read, Write};

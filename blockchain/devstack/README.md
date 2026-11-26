@@ -182,7 +182,7 @@ a built iris, and a deployment made before a Raster update refuses proofs
 made after it. Deploy again.
 
 `just contracts-test` runs the contract's own test of this on a real proof
-kept in `blockchain/contracts/test/fault_proof.json`. It needs Docker and no pipeline.
+kept in `blockchain/contracts/test/fault_proof.json`. It needs Docker and no blockchain.
 
 ## Check the contracts against iris
 

@@ -10,7 +10,7 @@ admitted or refused, and a fault proof dismisses a challenge whose trace is
 wrong. What follows from any of those (clocks, bonds, finality) is not built
 ([what is open](../protocol/open.md)).
 
-Both pipelines run locally from [`blockchain/devstack/`](../../blockchain/devstack/README.md).
+Both blockchains run locally from [`blockchain/devstack/`](../../blockchain/devstack/README.md).
 
 ## Who does what
 
@@ -296,7 +296,7 @@ on its inputs gives another output, and posts the trace of that execution. A
 Raster fault proof answers it: a window of that trace re-executed in RISC
 Zero, ending at a step the trace gets wrong. `iris fault prove` writes it as
 a Groth16 proof of Raster's transition program, and that proof, as it is, is
-what the contract takes. Nothing else is proven for the pipeline.
+what the contract takes. Nothing else is proven for the blockchain.
 
 1. The challenge is one the contract admitted and has not dismissed.
 2. The proof's journal says the window reached the fault verdict.
