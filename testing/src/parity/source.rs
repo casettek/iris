@@ -211,7 +211,7 @@ fn native_output(
         .arg(case_beside(&specification))
         .arg("--output")
         .arg(dir.join("native-run"))
-        .arg("--native");
+        .arg("--native-run");
     logged(run, &dir.join("native-run.log")).context("the native run")?;
     let result: Value = procedure_definition::read_json(&dir.join("native-run/result.json"))?;
     Ok(result["generated_text"]
@@ -257,7 +257,7 @@ fn run_honest(
             .arg("--output")
             .arg(dir.join(name));
         if native_run {
-            run.arg("--native");
+            run.arg("--native-run");
         }
         logged(run, &dir.join(format!("{name}.log"))).with_context(|| name.to_string())?;
     }

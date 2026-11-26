@@ -567,7 +567,7 @@ fn run_case(
             .arg("--output")
             .arg(dir.join(name));
         if native_run {
-            run.arg("--native");
+            run.arg("--native-run");
         }
         let duration = logged(run, &dir.join(format!("{name}.log")))
             .with_context(|| format!("{name} execution"))?;

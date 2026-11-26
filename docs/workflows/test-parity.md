@@ -170,7 +170,7 @@ is not required from the current Raster CLI. A malformed commitment fails instea
 of falling back to timing metadata, and the recorded stage order must still match
 the independently expected pipeline.
 
-`iwebs compare-teacher-forced --teacher-forced <pipeline-dir> --native <parity-worker --native output>`
+`iwebs compare-teacher-forced --teacher-forced <pipeline-dir> --native-run <parity-worker --native-run output>`
 (hidden) runs the same position-by-position comparison on any pipeline, reading one
 layer at a time.
 
