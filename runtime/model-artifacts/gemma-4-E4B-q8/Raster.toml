@@ -1,8 +1,8 @@
-[chain]
-name = "iris"
+[pipeline]
+name = "iwebs"
 version = "0.1.0"
 
-[chain.input.aux_witness]
+[pipeline.input.aux_witness]
 index = "l"
 path = "/home/amcas/Development/iris/runtime/model-artifacts/gemma-4-E4B-q8/raster/prefill-prepare-aux/witness{l}.rastered"
 index_path = "/home/amcas/Development/iris/runtime/model-artifacts/gemma-4-E4B-q8/raster/prefill-prepare-aux/witness{l}.rindex"
@@ -51,7 +51,7 @@ commitments = [
   "684262daef05d843414be8f6a42e8351869833d1288792d53877ca8c9711abfb", # l41
 ]
 
-[chain.input.aux_layer]
+[pipeline.input.aux_layer]
 index = "l"
 path = "/home/amcas/Development/iris/runtime/model-artifacts/gemma-4-E4B-q8/raster/prefill-prepare-aux/layer{l}.rastered"
 index_path = "/home/amcas/Development/iris/runtime/model-artifacts/gemma-4-E4B-q8/raster/prefill-prepare-aux/layer{l}.rindex"
@@ -100,7 +100,7 @@ commitments = [
   "8d0e2218860ec37d2cc5d4ab7038c47b0b5cedd9aae92f9c26310ef819a19312", # l41
 ]
 
-[chain.input.transformer_layer]
+[pipeline.input.transformer_layer]
 index = "l"
 path = "/home/amcas/Development/iris/runtime/model-artifacts/gemma-4-E4B-q8/raster/prefill-range/layer{l}.rastered"
 index_path = "/home/amcas/Development/iris/runtime/model-artifacts/gemma-4-E4B-q8/raster/prefill-range/layer{l}.rindex"
@@ -149,38 +149,38 @@ commitments = [
   "a7bb06929c8f1b6cd9be3799e555ac5f9e4118d9b3ec44714ee10060acac7f2d", # l41
 ]
 
-[chain.input.prompt_text]
+[pipeline.input.prompt_text]
 index = "j"
-path = "/home/amcas/Development/iris/target/iris/run-prompt-placeholder/text_{j}.rastered"
-index_path = "/home/amcas/Development/iris/target/iris/run-prompt-placeholder/text_{j}.rindex"
+path = "/home/amcas/Development/iris/target/iwebs/run-prompt-placeholder/text_{j}.rastered"
+index_path = "/home/amcas/Development/iris/target/iwebs/run-prompt-placeholder/text_{j}.rindex"
 commitments = []
 
-[chain.input.prompt_marks]
+[pipeline.input.prompt_marks]
 index = "j"
-path = "/home/amcas/Development/iris/target/iris/run-prompt-placeholder/marks_{j}.rastered"
-index_path = "/home/amcas/Development/iris/target/iris/run-prompt-placeholder/marks_{j}.rindex"
+path = "/home/amcas/Development/iris/target/iwebs/run-prompt-placeholder/marks_{j}.rastered"
+index_path = "/home/amcas/Development/iris/target/iwebs/run-prompt-placeholder/marks_{j}.rindex"
 commitments = []
 
-[chain.input.claimed_ids]
+[pipeline.input.claimed_ids]
 index = "k"
-path = "/home/amcas/Development/iris/target/iris/run-prompt-placeholder/claimed_{k}.rastered"
-index_path = "/home/amcas/Development/iris/target/iris/run-prompt-placeholder/claimed_{k}.rindex"
+path = "/home/amcas/Development/iris/target/iwebs/run-prompt-placeholder/claimed_{k}.rastered"
+index_path = "/home/amcas/Development/iris/target/iwebs/run-prompt-placeholder/claimed_{k}.rindex"
 commitments = []
 
-[[chain.stage]]
+[[pipeline.stage]]
 name = "prompt_bind_p0"
 project = "/home/amcas/Development/iris/raster-stages/prompt-bind"
 inputs.descriptor = { external = { path = "/home/amcas/Development/iris/runtime/model-artifacts/gemma-4-E4B-q8/raster/sequence-check/descriptor.rastered", index_path = "/home/amcas/Development/iris/runtime/model-artifacts/gemma-4-E4B-q8/raster/sequence-check/descriptor.rindex", commitment = "34a3a7331f54ec8c617b4597e0250b29453ffae64687f6ead2ccfae592e76f8d" } }
 inputs.tokenizer = { external = { path = "/home/amcas/Development/iris/runtime/model-artifacts/gemma-4-E4B-q8/raster/prompt-bind/tokenizer.rastered", index_path = "/home/amcas/Development/iris/runtime/model-artifacts/gemma-4-E4B-q8/raster/prompt-bind/tokenizer.rindex", commitment = "fd8a40ee67edf1f97776b9dbef696d1bd3da56abadebbc046d7f75de9d9cd5bb" } }
 inputs.witness = { external = { path = "/home/amcas/Development/iris/runtime/model-artifacts/gemma-4-E4B-q8/raster/prompt-bind/witness.rastered", index_path = "/home/amcas/Development/iris/runtime/model-artifacts/gemma-4-E4B-q8/raster/prompt-bind/witness.rindex", commitment = "27793cdef029dc30b69b3bbf86270b41dda24a69495a386897d665e1265084c3" } }
 inputs.text = { input = "prompt_text_0" }
-inputs.config = { external = { path = "/home/amcas/Development/iris/target/iris/run-prompt-placeholder/config.rastered", index_path = "/home/amcas/Development/iris/target/iris/run-prompt-placeholder/config.rindex", commitment = "0000000000000000000000000000000000000000000000000000000000000000" } }
-inputs.schedule = { external = { path = "/home/amcas/Development/iris/target/iris/run-prompt-placeholder/schedule.rastered", index_path = "/home/amcas/Development/iris/target/iris/run-prompt-placeholder/schedule.rindex", commitment = "0000000000000000000000000000000000000000000000000000000000000000" } }
-inputs.text_digest = { external = { path = "/home/amcas/Development/iris/target/iris/run-prompt-placeholder/text_digest.rastered", index_path = "/home/amcas/Development/iris/target/iris/run-prompt-placeholder/text_digest.rindex", commitment = "0000000000000000000000000000000000000000000000000000000000000000" } }
+inputs.config = { external = { path = "/home/amcas/Development/iris/target/iwebs/run-prompt-placeholder/config.rastered", index_path = "/home/amcas/Development/iris/target/iwebs/run-prompt-placeholder/config.rindex", commitment = "0000000000000000000000000000000000000000000000000000000000000000" } }
+inputs.schedule = { external = { path = "/home/amcas/Development/iris/target/iwebs/run-prompt-placeholder/schedule.rastered", index_path = "/home/amcas/Development/iris/target/iwebs/run-prompt-placeholder/schedule.rindex", commitment = "0000000000000000000000000000000000000000000000000000000000000000" } }
+inputs.text_digest = { external = { path = "/home/amcas/Development/iris/target/iwebs/run-prompt-placeholder/text_digest.rastered", index_path = "/home/amcas/Development/iris/target/iwebs/run-prompt-placeholder/text_digest.rindex", commitment = "0000000000000000000000000000000000000000000000000000000000000000" } }
 inputs.source = { external = { path = "/home/amcas/Development/iris/runtime/model-artifacts/gemma-4-E4B-q8/raster/prompt-bind/no_source.rastered", index_path = "/home/amcas/Development/iris/runtime/model-artifacts/gemma-4-E4B-q8/raster/prompt-bind/no_source.rindex", commitment = "03fb66a51c44fd0df71a12e9fa3d2e5aadfd3789612658d4fdc4caac5051c954" } }
 inputs.previous = { external = { path = "/home/amcas/Development/iris/runtime/model-artifacts/gemma-4-E4B-q8/raster/prompt-bind/empty_prompt.rastered", index_path = "/home/amcas/Development/iris/runtime/model-artifacts/gemma-4-E4B-q8/raster/prompt-bind/empty_prompt.rindex", commitment = "ea2af99aadc696a83262ee549ec1541fb2e31fbf67950993b277d36e54b67b7c" } }
 
-[[chain.stage]]
+[[pipeline.stage]]
 name = "prompt_check_p0"
 project = "/home/amcas/Development/iris/raster-stages/prompt-check"
 inputs.tokenizer = { external = { path = "/home/amcas/Development/iris/runtime/model-artifacts/gemma-4-E4B-q8/raster/prompt-bind/tokenizer.rastered", index_path = "/home/amcas/Development/iris/runtime/model-artifacts/gemma-4-E4B-q8/raster/prompt-bind/tokenizer.rindex", commitment = "fd8a40ee67edf1f97776b9dbef696d1bd3da56abadebbc046d7f75de9d9cd5bb" } }
@@ -189,7 +189,7 @@ inputs.bound = { from = "prompt_bind_p0" }
 inputs.previous = { external = { path = "/home/amcas/Development/iris/runtime/model-artifacts/gemma-4-E4B-q8/raster/prompt-bind/empty_prompt.rastered", index_path = "/home/amcas/Development/iris/runtime/model-artifacts/gemma-4-E4B-q8/raster/prompt-bind/empty_prompt.rindex", commitment = "ea2af99aadc696a83262ee549ec1541fb2e31fbf67950993b277d36e54b67b7c" } }
 inputs.marks = { input = "prompt_marks_0" }
 
-[[chain.stage]]
+[[pipeline.stage]]
 name = "embed_p0"
 project = "/home/amcas/Development/iris/raster-stages/input-embedding"
 inputs.prompt = { from = "prompt_check_p0" }
@@ -198,26 +198,26 @@ inputs.previous = { external = { path = "/home/amcas/Development/iris/runtime/mo
 inputs.embedding = { external = { path = "/home/amcas/Development/iris/runtime/model-artifacts/gemma-4-E4B-q8/raster/input-embedding/embedding.rastered", index_path = "/home/amcas/Development/iris/runtime/model-artifacts/gemma-4-E4B-q8/raster/input-embedding/embedding.rindex", commitment = "791b6445ab47b4b64a93dafafab3c307b07c9f2fe346b94a2d4be0d4c425b79b" } }
 inputs.witness = { external = { path = "/home/amcas/Development/iris/runtime/model-artifacts/gemma-4-E4B-q8/raster/input-embedding/witness.rastered", index_path = "/home/amcas/Development/iris/runtime/model-artifacts/gemma-4-E4B-q8/raster/input-embedding/witness.rindex", commitment = "4ff694a3b6ce43abefe1d88f9126ddfd1139a7576ff58506a19af855bfbde4e8" } }
 
-[[chain.repeat]]
+[[pipeline.repeat]]
 name = "prompt"
 index = "j"
 start = 1
 count = 0
 
-  [[chain.repeat.stage]]
+  [[pipeline.repeat.stage]]
 name = "prompt_bind_p{j}"
 project = "/home/amcas/Development/iris/raster-stages/prompt-bind"
 inputs.descriptor = { external = { path = "/home/amcas/Development/iris/runtime/model-artifacts/gemma-4-E4B-q8/raster/sequence-check/descriptor.rastered", index_path = "/home/amcas/Development/iris/runtime/model-artifacts/gemma-4-E4B-q8/raster/sequence-check/descriptor.rindex", commitment = "34a3a7331f54ec8c617b4597e0250b29453ffae64687f6ead2ccfae592e76f8d" } }
 inputs.tokenizer = { external = { path = "/home/amcas/Development/iris/runtime/model-artifacts/gemma-4-E4B-q8/raster/prompt-bind/tokenizer.rastered", index_path = "/home/amcas/Development/iris/runtime/model-artifacts/gemma-4-E4B-q8/raster/prompt-bind/tokenizer.rindex", commitment = "fd8a40ee67edf1f97776b9dbef696d1bd3da56abadebbc046d7f75de9d9cd5bb" } }
 inputs.witness = { external = { path = "/home/amcas/Development/iris/runtime/model-artifacts/gemma-4-E4B-q8/raster/prompt-bind/witness.rastered", index_path = "/home/amcas/Development/iris/runtime/model-artifacts/gemma-4-E4B-q8/raster/prompt-bind/witness.rindex", commitment = "27793cdef029dc30b69b3bbf86270b41dda24a69495a386897d665e1265084c3" } }
 inputs.text = { input = "prompt_text_{j}" }
-inputs.config = { external = { path = "/home/amcas/Development/iris/target/iris/run-prompt-placeholder/config.rastered", index_path = "/home/amcas/Development/iris/target/iris/run-prompt-placeholder/config.rindex", commitment = "0000000000000000000000000000000000000000000000000000000000000000" } }
-inputs.schedule = { external = { path = "/home/amcas/Development/iris/target/iris/run-prompt-placeholder/schedule.rastered", index_path = "/home/amcas/Development/iris/target/iris/run-prompt-placeholder/schedule.rindex", commitment = "0000000000000000000000000000000000000000000000000000000000000000" } }
-inputs.text_digest = { external = { path = "/home/amcas/Development/iris/target/iris/run-prompt-placeholder/text_digest.rastered", index_path = "/home/amcas/Development/iris/target/iris/run-prompt-placeholder/text_digest.rindex", commitment = "0000000000000000000000000000000000000000000000000000000000000000" } }
+inputs.config = { external = { path = "/home/amcas/Development/iris/target/iwebs/run-prompt-placeholder/config.rastered", index_path = "/home/amcas/Development/iris/target/iwebs/run-prompt-placeholder/config.rindex", commitment = "0000000000000000000000000000000000000000000000000000000000000000" } }
+inputs.schedule = { external = { path = "/home/amcas/Development/iris/target/iwebs/run-prompt-placeholder/schedule.rastered", index_path = "/home/amcas/Development/iris/target/iwebs/run-prompt-placeholder/schedule.rindex", commitment = "0000000000000000000000000000000000000000000000000000000000000000" } }
+inputs.text_digest = { external = { path = "/home/amcas/Development/iris/target/iwebs/run-prompt-placeholder/text_digest.rastered", index_path = "/home/amcas/Development/iris/target/iwebs/run-prompt-placeholder/text_digest.rindex", commitment = "0000000000000000000000000000000000000000000000000000000000000000" } }
 inputs.source = { external = { path = "/home/amcas/Development/iris/runtime/model-artifacts/gemma-4-E4B-q8/raster/prompt-bind/no_source.rastered", index_path = "/home/amcas/Development/iris/runtime/model-artifacts/gemma-4-E4B-q8/raster/prompt-bind/no_source.rindex", commitment = "03fb66a51c44fd0df71a12e9fa3d2e5aadfd3789612658d4fdc4caac5051c954" } }
 inputs.previous = { from = "prompt_bind_p{j-1}", first = "prompt_bind_p0" }
 
-  [[chain.repeat.stage]]
+  [[pipeline.repeat.stage]]
 name = "prompt_check_p{j}"
 project = "/home/amcas/Development/iris/raster-stages/prompt-check"
 inputs.tokenizer = { external = { path = "/home/amcas/Development/iris/runtime/model-artifacts/gemma-4-E4B-q8/raster/prompt-bind/tokenizer.rastered", index_path = "/home/amcas/Development/iris/runtime/model-artifacts/gemma-4-E4B-q8/raster/prompt-bind/tokenizer.rindex", commitment = "fd8a40ee67edf1f97776b9dbef696d1bd3da56abadebbc046d7f75de9d9cd5bb" } }
@@ -226,7 +226,7 @@ inputs.bound = { from = "prompt_bind_p{j}" }
 inputs.previous = { from = "prompt_check_p{j-1}", first = "prompt_check_p0" }
 inputs.marks = { input = "prompt_marks_{j}" }
 
-  [[chain.repeat.stage]]
+  [[pipeline.repeat.stage]]
 name = "embed_p{j}"
 project = "/home/amcas/Development/iris/raster-stages/input-embedding"
 inputs.prompt = { from = "prompt_check_p{j}" }
@@ -235,12 +235,12 @@ inputs.previous = { from = "embed_p{j-1}", first = "embed_p0" }
 inputs.embedding = { external = { path = "/home/amcas/Development/iris/runtime/model-artifacts/gemma-4-E4B-q8/raster/input-embedding/embedding.rastered", index_path = "/home/amcas/Development/iris/runtime/model-artifacts/gemma-4-E4B-q8/raster/input-embedding/embedding.rindex", commitment = "791b6445ab47b4b64a93dafafab3c307b07c9f2fe346b94a2d4be0d4c425b79b" } }
 inputs.witness = { external = { path = "/home/amcas/Development/iris/runtime/model-artifacts/gemma-4-E4B-q8/raster/input-embedding/witness.rastered", index_path = "/home/amcas/Development/iris/runtime/model-artifacts/gemma-4-E4B-q8/raster/input-embedding/witness.rindex", commitment = "4ff694a3b6ce43abefe1d88f9126ddfd1139a7576ff58506a19af855bfbde4e8" } }
 
-[[chain.repeat]]
+[[pipeline.repeat]]
 name = "claimed_embed"
 index = "k"
 count = 0
 
-  [[chain.repeat.stage]]
+  [[pipeline.repeat.stage]]
 name = "embed_c{k}"
 project = "/home/amcas/Development/iris/raster-stages/input-embedding"
 inputs.prompt = { external = { path = "/home/amcas/Development/iris/runtime/model-artifacts/gemma-4-E4B-q8/raster/input-embedding/no_prompt.rastered", index_path = "/home/amcas/Development/iris/runtime/model-artifacts/gemma-4-E4B-q8/raster/input-embedding/no_prompt.rindex", commitment = "ea2af99aadc696a83262ee549ec1541fb2e31fbf67950993b277d36e54b67b7c" } }
@@ -249,13 +249,13 @@ inputs.previous = { from = "embed_c{k-1}", first = "embed_p@LAST_PROMPT_RANGE@" 
 inputs.embedding = { external = { path = "/home/amcas/Development/iris/runtime/model-artifacts/gemma-4-E4B-q8/raster/input-embedding/embedding.rastered", index_path = "/home/amcas/Development/iris/runtime/model-artifacts/gemma-4-E4B-q8/raster/input-embedding/embedding.rindex", commitment = "791b6445ab47b4b64a93dafafab3c307b07c9f2fe346b94a2d4be0d4c425b79b" } }
 inputs.witness = { external = { path = "/home/amcas/Development/iris/runtime/model-artifacts/gemma-4-E4B-q8/raster/input-embedding/witness.rastered", index_path = "/home/amcas/Development/iris/runtime/model-artifacts/gemma-4-E4B-q8/raster/input-embedding/witness.rindex", commitment = "4ff694a3b6ce43abefe1d88f9126ddfd1139a7576ff58506a19af855bfbde4e8" } }
 
-[[chain.repeat]]
+[[pipeline.repeat]]
 name = "layers"
 index = "l"
 start = 0
 count = 24
 
-  [[chain.repeat.stage]]
+  [[pipeline.repeat.stage]]
 name = "aux_p{j}_l{l}"
 index = "j"
 count = 0
@@ -264,7 +264,7 @@ inputs.embedded = { from = "embed_p{j}" }
 inputs.layer = { input = "aux_layer_{l}" }
 inputs.witness = { input = "aux_witness_{l}" }
 
-  [[chain.repeat.stage]]
+  [[pipeline.repeat.stage]]
 name = "aux_c{k}_l{l}"
 index = "k"
 count = 0
@@ -273,7 +273,7 @@ inputs.embedded = { from = "embed_c{k}" }
 inputs.layer = { input = "aux_layer_{l}" }
 inputs.witness = { input = "aux_witness_{l}" }
 
-  [[chain.repeat.stage]]
+  [[pipeline.repeat.stage]]
 name = "range_p0_l{l}"
 project = "/home/amcas/Development/iris/raster-stages/prefill-range"
 inputs.activations = { from = "range_p0_l{l-1}", first = "embed_p0" }
@@ -283,7 +283,7 @@ inputs.donor_b_kv = { external = { path = "/home/amcas/Development/iris/runtime/
 inputs.ple = { from = "aux_p0_l{l}" }
 inputs.layer = { input = "transformer_layer_{l}" }
 
-  [[chain.repeat.stage]]
+  [[pipeline.repeat.stage]]
 name = "range_p{j}_l{l}"
 index = "j"
 start = 1
@@ -296,7 +296,7 @@ inputs.donor_b_kv = { external = { path = "/home/amcas/Development/iris/runtime/
 inputs.ple = { from = "aux_p{j}_l{l}" }
 inputs.layer = { input = "transformer_layer_{l}" }
 
-  [[chain.repeat.stage]]
+  [[pipeline.repeat.stage]]
 name = "range_c{k}_l{l}"
 index = "k"
 count = 0
@@ -308,13 +308,13 @@ inputs.donor_b_kv = { external = { path = "/home/amcas/Development/iris/runtime/
 inputs.ple = { from = "aux_c{k}_l{l}" }
 inputs.layer = { input = "transformer_layer_{l}" }
 
-[[chain.repeat]]
+[[pipeline.repeat]]
 name = "shared_layers"
 index = "l"
 start = 24
 count = 18
 
-  [[chain.repeat.stage]]
+  [[pipeline.repeat.stage]]
 name = "aux_p{j}_l{l}"
 index = "j"
 count = 0
@@ -323,7 +323,7 @@ inputs.embedded = { from = "embed_p{j}" }
 inputs.layer = { input = "aux_layer_{l}" }
 inputs.witness = { input = "aux_witness_{l}" }
 
-  [[chain.repeat.stage]]
+  [[pipeline.repeat.stage]]
 name = "aux_c{k}_l{l}"
 index = "k"
 count = 0
@@ -332,7 +332,7 @@ inputs.embedded = { from = "embed_c{k}" }
 inputs.layer = { input = "aux_layer_{l}" }
 inputs.witness = { input = "aux_witness_{l}" }
 
-  [[chain.repeat.stage]]
+  [[pipeline.repeat.stage]]
 name = "range_p0_l{l}"
 project = "/home/amcas/Development/iris/raster-stages/prefill-range"
 inputs.activations = { from = "range_p0_l{l-1}", first = "range_p0_l23" }
@@ -342,7 +342,7 @@ inputs.donor_b_kv = { from = "range_p0_l23" }
 inputs.ple = { from = "aux_p0_l{l}" }
 inputs.layer = { input = "transformer_layer_{l}" }
 
-  [[chain.repeat.stage]]
+  [[pipeline.repeat.stage]]
 name = "range_p{j}_l{l}"
 index = "j"
 start = 1
@@ -355,7 +355,7 @@ inputs.donor_b_kv = { from = "range_p{j}_l23" }
 inputs.ple = { from = "aux_p{j}_l{l}" }
 inputs.layer = { input = "transformer_layer_{l}" }
 
-  [[chain.repeat.stage]]
+  [[pipeline.repeat.stage]]
 name = "range_c{k}_l{l}"
 index = "k"
 count = 0
@@ -367,7 +367,7 @@ inputs.donor_b_kv = { from = "range_c{k}_l23" }
 inputs.ple = { from = "aux_c{k}_l{l}" }
 inputs.layer = { input = "transformer_layer_{l}" }
 
-[[chain.stage]]
+[[pipeline.stage]]
 name = "check_c0"
 project = "/home/amcas/Development/iris/raster-stages/sequence-check"
 inputs.activations = { from = "range_c0_l41" }
@@ -379,13 +379,13 @@ inputs.decoder = { external = { path = "/home/amcas/Development/iris/runtime/mod
 inputs.descriptor = { external = { path = "/home/amcas/Development/iris/runtime/model-artifacts/gemma-4-E4B-q8/raster/sequence-check/descriptor.rastered", index_path = "/home/amcas/Development/iris/runtime/model-artifacts/gemma-4-E4B-q8/raster/sequence-check/descriptor.rindex", commitment = "34a3a7331f54ec8c617b4597e0250b29453ffae64687f6ead2ccfae592e76f8d" } }
 inputs.witness = { external = { path = "/home/amcas/Development/iris/runtime/model-artifacts/gemma-4-E4B-q8/raster/sequence-check/witness.rastered", index_path = "/home/amcas/Development/iris/runtime/model-artifacts/gemma-4-E4B-q8/raster/sequence-check/witness.rindex", commitment = "e37831a997f2dbb0c137197851e48688e795dd87f5b1ed0ba0b5f935104f6adc" } }
 
-[[chain.repeat]]
+[[pipeline.repeat]]
 name = "claimed"
 index = "k"
 start = 1
 count = 0
 
-  [[chain.repeat.stage]]
+  [[pipeline.repeat.stage]]
 name = "check_c{k}"
 project = "/home/amcas/Development/iris/raster-stages/sequence-check"
 inputs.activations = { from = "range_c{k}_l41" }

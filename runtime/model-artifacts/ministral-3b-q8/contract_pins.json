@@ -1,5 +1,5 @@
 {
-  "version": 6,
+  "version": 7,
   "procedure_kind": "single",
   "programs": {
     "family": "mistral-dense",
@@ -7,7 +7,7 @@
       {
         "stage": "prompt-source",
         "program_commitment": "da372b9dd85f2adf59809a3e5a32928ec6f99fd0c83ca1cf10255b6b805392fa",
-        "chained_inputs": [],
+        "piped_inputs": [],
         "run_inputs": [
           "documents",
           "recipe",
@@ -17,8 +17,8 @@
       },
       {
         "stage": "prompt-bind",
-        "program_commitment": "2e013a5337f442edbffd975add819b797b7208a885da5fc594bc69f0ecbe903a",
-        "chained_inputs": [
+        "program_commitment": "abf1136b702850f943c8d0b08ef4f8c492cde0bfc478fd85624d5d94deb3fa6f",
+        "piped_inputs": [
           {
             "name": "previous",
             "producers": [
@@ -67,8 +67,8 @@
       },
       {
         "stage": "prompt-check",
-        "program_commitment": "aa4e57fe8b5f49dbbd78070382816d10bda0398ceed5ed95a491b959f73d409d",
-        "chained_inputs": [
+        "program_commitment": "9694e5eada4bb9984e794b1ab6670b69d0bc99be8f990b347d5cd46b56f4f0bf",
+        "piped_inputs": [
           {
             "name": "bound",
             "producers": [
@@ -106,8 +106,8 @@
       },
       {
         "stage": "input-embedding",
-        "program_commitment": "f00d5c767c34f3903db06767b2417ebdfb8a8cfd95d4ee4551db876744d5c1a9",
-        "chained_inputs": [
+        "program_commitment": "d1a8e948ab0c376668bf88ae7b22c451ecd8e68b211f8b833b83309075cb8eb5",
+        "piped_inputs": [
           {
             "name": "previous",
             "producers": [
@@ -153,8 +153,8 @@
       },
       {
         "stage": "sequence-check",
-        "program_commitment": "2e0e08a9505f14ca5e740f73c06f2e185410d5b627e1fe477bcc8437d53cfdc5",
-        "chained_inputs": [
+        "program_commitment": "2e430996e170387f2df6efeb41ff0341f4ddac0d3afdd702d94c4118a4238190",
+        "piped_inputs": [
           {
             "name": "activations",
             "producers": [
@@ -216,8 +216,8 @@
       },
       {
         "stage": "claim-result",
-        "program_commitment": "00d4f4926abbef4a0a26d616051771f7f7df33b5044146d6a2489afd11b32749",
-        "chained_inputs": [
+        "program_commitment": "4e670cd5aac65aef6f02c3510eca7acf515003e5a9ed51524783b0e655a6e36b",
+        "piped_inputs": [
           {
             "name": "check",
             "producers": [
@@ -233,8 +233,8 @@
       },
       {
         "stage": "layer-mistral",
-        "program_commitment": "461de0844532da2c0f72007bfad3d4a4e7536afd188b284c96f6b12c66468035",
-        "chained_inputs": [
+        "program_commitment": "94ec7b7916fc91c547c09ac220510af9a048090af0f1bcdedeffb55569edcd17",
+        "piped_inputs": [
           {
             "name": "activations",
             "producers": [
