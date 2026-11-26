@@ -306,7 +306,7 @@ The source stage, the same day: `raster-stages/prompt-source`, with its lock.
 - **What changed from the plan above.** A document whose bytes are not the attested ones
   is found by comparing two chains, so the fault no longer says which document. A
   signature fault still does.
-- **Native.** A stage routine runs the same functions in the same order. A challenger
+- **Native.** A native stage runs the same functions in the same order. A challenger
   reruns the stage on the inputs the claim's prepared run names.
 
 Checked:
@@ -355,7 +355,7 @@ lock, at manifest version 18.
 
 - **The stage.** Three tiles: a seed, a loop over the forms, and one that states the
   record. Its logic is `phases/result/src/forms.rs`, which the stage compiles on its
-  own, the native run calls and the native routine calls. It reads the last check's
+  own, the native run calls and the native stage calls. It reads the last check's
   output through its own copy of the edge type, and a test holds the copy to the check's
   commitment. The forms are a run input, empty for a run that names none, so every pipeline
   ends in the stage.

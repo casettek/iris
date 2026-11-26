@@ -1,6 +1,6 @@
 # Vendored contract sources
 
-Sources iris's contracts import, copied unchanged. Nothing here is iris's.
+Sources IWEBS's contracts import, copied unchanged. Nothing here is IWEBS's.
 
 | Directory | From | Release | Licence |
 | --- | --- | --- | --- |
@@ -15,7 +15,7 @@ imports.
 
 The verifier takes proofs of one release of RISC Zero's circuits, fixed by
 `ControlID.CONTROL_ROOT`. It has to be the release Raster is built with:
-`ALLOWED_CONTROL_ROOT` in the `risc0-circuit-recursion` crate that iris's
+`ALLOWED_CONTROL_ROOT` in the `risc0-circuit-recursion` crate that IWEBS's
 `Cargo.lock` names is the same value. `contracts/test/FaultProof.t.sol`
 verifies a real fault proof with it.
 
