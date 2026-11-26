@@ -478,7 +478,7 @@ fn an_unproven_lookup_is_a_model_fault_and_changes_no_piece() {
 
 #[test]
 fn one_walk_of_a_bucket_finds_the_piece_and_proves_the_bucket() {
-    use model_identity::sparse;
+    use common_identity::sparse;
     let entries = [
         TokenEntry {
             token: String::from("a"),

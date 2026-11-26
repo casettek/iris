@@ -15,7 +15,7 @@ is converted into a bundle; everything committed after that is integers.
 - **Everything else** (norm weights, the per-layer-embedding gate and
   projections, scalars) is Q16.16.
 
-[`det_num`](../../phases/inference/numerics) defines every operation. Its `q8` module is
+[`inference_numerics`](../../phases/inference/numerics) defines every operation. Its `q8` module is
 the `Q8_0` arithmetic that all three paths call.
 
 ## `Q8_0` arithmetic
@@ -35,14 +35,14 @@ A dequantized matrix is never used for a product. Its per-weight rounding
 would give different bits from the exact product.
 
 Q16.16 products accumulate in wrapping Q32.32 and requantize once, as before.
-Norms, softmax, RoPE and GELU are `det_num`'s fixed-point routines.
+Norms, softmax, RoPE and GELU are `inference_numerics`'s fixed-point routines.
 
 ## `Q8_0` products on a GPU
 
 Built with the `gpu-kernels` feature, native-direct and native-staged run the
 transformer layer's `Q8_0` matrix products on an NVIDIA GPU
 (`phases/inference/kernels/cuda/q8_product.cu`). The kernel computes the same
-integers as `det_num::q8::dot_row`, with no floating point:
+integers as `inference_numerics::q8::dot_row`, with no floating point:
 
 - An activation is split into `v >> 16` and `v & 0xFFFF`. With weights in
   `[-128, 127]`, thirty-two products of either half stay below `2^31`, so each
@@ -74,7 +74,7 @@ as block rows, never as Q16.16 values.
 `iris model convert` writes a v3 bundle from a GGUF file
 ([model import](../workflows/model-import.md#converting-a-gguf-model)). It
 copies `Q8_0` blocks byte for byte and converts float tensors to Q16.16 with
-`det_num`'s exact conversion.
+`inference_numerics`'s exact conversion.
 
 ## Raster pages
 

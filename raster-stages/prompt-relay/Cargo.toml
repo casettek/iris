@@ -12,7 +12,7 @@ profiling = ["raster/profiling"]
 sign = []
 
 [dependencies]
-model-identity = { path = "../../phases/common/identity", default-features = false }
+common-identity = { path = "../../phases/common/identity", default-features = false }
 raster = { path = "../../../raster/crates/raster", default-features = false }
 serde = { version = "1.0", default-features = false, features = ["derive", "alloc"] }
 sha2 = { version = "0.10", default-features = false, features = ["compress"] }

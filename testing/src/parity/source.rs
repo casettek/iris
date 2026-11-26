@@ -12,20 +12,20 @@ use std::fs;
 use std::path::Path;
 
 use anyhow::{ensure, Context, Result};
-use model_manifest::ModelManifest;
+use inference_manifest::ModelManifest;
 use procedure_definition::{
     Case, CaseDocument, PathStep, PreparedSourceInputs, ProcedureKind, Specification,
     SpecificationDocument, SpecificationField, SpecificationForm, SpecificationModel,
     SpecificationSource, CASE_TOML, SPECIFICATION_TOML,
 };
-use run_prep::source::{LoadedDocument, LoadedSource};
+use procedure_pipeline::pipeline_runner::StagedExecutionBackend;
+use procedure_prepare::source::{LoadedDocument, LoadedSource};
 use serde_json::{json, Value};
-use source_core::{
+use source_phase::{
     hex, sha256, sign_attestation, signer_key, Attestation, CIPHER_NONE, FAULT_DOCUMENT,
     FAULT_FIELD_MISSING, FAULT_FIELD_NOT_SCALAR, FAULT_NONE, FAULT_SERVER, FAULT_SIGNATURE,
     SCHEME_SECP256K1,
 };
-use staged_infer::pipeline_runner::StagedExecutionBackend;
 
 use super::compare::{compare, read_boundaries};
 use super::{case_beside, command, logged, prompt_only_manifest};
@@ -287,7 +287,7 @@ fn run_honest(
         record == &direct,
         "direct inference and the claim state different records: {record} and {direct}"
     );
-    let expected = run_prep::source_id(Some(&source.run().record));
+    let expected = procedure_prepare::source_id(Some(&source.run().record));
     ensure!(
         record["source_sha256"] == json!(expected) && expected != "00".repeat(32),
         "the claim names source {}, the source step gives {expected}",
@@ -351,7 +351,7 @@ fn run_honest(
             out_dir: dir.join("fetched"),
         })
         .context("reading the claim back from the layer")?;
-    let fetched_source = run_prep::source::load_source(
+    let fetched_source = procedure_prepare::source::load_source(
         &procedure_definition::read_specification(&specification)?,
         fetched
             .case_path
@@ -370,7 +370,7 @@ fn run_honest(
         "the documents read back from the layer are not the ones the claim was built from"
     );
     ensure!(
-        run_prep::source_id(Some(&fetched_source.run().record)) == expected,
+        procedure_prepare::source_id(Some(&fetched_source.run().record)) == expected,
         "the source read back from the layer does not give the record the claim names"
     );
     Ok((
@@ -397,13 +397,13 @@ fn run_fault(
     text: &str,
     raw_prompt: bool,
     range_size: usize,
-    tokenizer: &prompt_prep::PromptTokenizer,
+    tokenizer: &inference_prompt::PromptTokenizer,
     expected: (u32, u32),
 ) -> Result<Value> {
     let files = dir.join("prompt");
-    let bound = prompt_prep::bound_ranges(text, raw_prompt, range_size, tokenizer)?;
-    let texts = run_prep::write_bound_text(&bound.ranges, &files)?;
-    let text_digest = run_prep::write_text_digest(&bound.text_digest, &files)?;
+    let bound = inference_prompt::bound_ranges(text, raw_prompt, range_size, tokenizer)?;
+    let texts = procedure_prepare::write_bound_text(&bound.ranges, &files)?;
+    let text_digest = procedure_prepare::write_text_digest(&bound.text_digest, &files)?;
     let manifest = dir.join("Raster.toml");
     fs::write(
         &manifest,
@@ -419,13 +419,13 @@ fn run_fault(
         .arg(&raster_dir);
     logged(run, &dir.join("raster.log"))
         .with_context(|| format!("source fault `{name}`: a Raster stage did not finish"))?;
-    let native_dir = staged_infer::CheckpointedInferenceExecutor
-        .run(staged_infer::CheckpointedInferenceConfig {
+    let native_dir = procedure_pipeline::CheckpointedInferenceExecutor
+        .run(procedure_pipeline::CheckpointedInferenceConfig {
             base_dir: dir.to_path_buf(),
             manifest_path: manifest,
             current_exe: exe.to_path_buf(),
             staged_backend: StagedExecutionBackend::InProcess,
-            parity_policy: staged_infer::ParityPolicy::Skip,
+            parity_policy: procedure_pipeline::ParityPolicy::Skip,
         })
         .with_context(|| format!("source fault `{name}`: a native stage did not finish"))?
         .pipeline_dir;
@@ -472,7 +472,7 @@ pub(super) fn run_source_scenario(
     model_path: &Path,
     model: &ModelManifest,
 ) -> Result<Value> {
-    use prompt_prep::{FAULT_SOURCE, FAULT_TEXT_SOURCE};
+    use inference_prompt::{FAULT_SOURCE, FAULT_TEXT_SOURCE};
     let dir = run_dir.join("source");
     let mut honest = honest_source()?;
     // The answer is learned first and named as the second form, so the claim's
@@ -497,7 +497,7 @@ pub(super) fn run_source_scenario(
             .context("model manifest has no parent directory")?
             .join(&model.bundle.tokenizer_path),
     )?;
-    let tokenizer = prompt_prep::prompt_tokenizer(&tokenizer)?;
+    let tokenizer = inference_prompt::prompt_tokenizer(&tokenizer)?;
 
     let other_secret = [9_u8; 32];
     let edited = |edit: &dyn Fn(&mut LoadedSource) -> Result<()>| -> Result<LoadedSource> {
@@ -589,7 +589,7 @@ pub(super) fn run_source_scenario(
             source.run().record.fault,
             expected.0
         );
-        let inputs = run_prep::write_source_inputs(&source, &case_dir.join("prompt"))?;
+        let inputs = procedure_prepare::write_source_inputs(&source, &case_dir.join("prompt"))?;
         faults.push(run_fault(
             root, &case_dir, exe, raster, &template, name, &inputs, &text, raw_prompt, range_size,
             &tokenizer, expected,

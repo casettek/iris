@@ -13,7 +13,7 @@ use raster_core::transition::{TraceCommitmentHeader, TransitionJournal};
 use sha2::{Digest, Sha256};
 
 use crate::availability::{BlobContents, PostedBlob};
-use model_manifest::direct::{model_id_of, ModelCommitment, ModelManifest};
+use inference_manifest::direct::{model_id_of, ModelCommitment, ModelManifest};
 use procedure_definition::checkpoint::{checkpoints_root, Checkpoint, CheckpointList};
 
 use procedure_definition::procedure_kind::ProcedureKind;
@@ -415,17 +415,17 @@ fn consensus_claim(second_output: &str) -> Claim {
 }
 
 /// The fixture's forms: its output, `ZK`, is the second.
-fn forms() -> Vec<result_core::Form> {
+fn forms() -> Vec<result_phase::Form> {
     [("no", 2), ("ZK", 1)]
         .into_iter()
-        .map(|(text, code)| result_core::Form {
+        .map(|(text, code)| result_phase::Form {
             text: text.to_string(),
             code,
         })
         .collect()
 }
 
-fn no_source(forms: Vec<result_core::Form>) -> RequiredOrigin {
+fn no_source(forms: Vec<result_phase::Form>) -> RequiredOrigin {
     RequiredOrigin {
         source: None,
         forms,

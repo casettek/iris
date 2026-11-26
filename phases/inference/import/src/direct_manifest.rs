@@ -3,7 +3,7 @@ use std::error::Error;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use model_manifest::{
+use inference_manifest::{
     model_id_of, write_json, DirectInferBundle, DirectInferProvenance, FamilyShape,
     ModelCommitment, ModelFamily, ModelManifest, MODEL_MANIFEST_JSON, MODEL_MANIFEST_VERSION,
 };
@@ -62,7 +62,7 @@ pub fn write_model_manifest(
             .encode()
             .map_err(|fault| format!("invalid model descriptor: {fault:?}"))?;
         fs::write(
-            artifact_dir.join(model_manifest::model_identity::MODEL_DESCRIPTOR_BIN),
+            artifact_dir.join(inference_manifest::model_identity::MODEL_DESCRIPTOR_BIN),
             bytes,
         )?;
     }
@@ -88,5 +88,5 @@ fn manifest_relative_path(artifact_dir: &Path, source: &Path) -> Result<PathBuf,
 }
 
 fn sha256_file(path: &Path) -> Result<String, Box<dyn Error>> {
-    model_manifest::file_sha256(path).map_err(|error| error.to_string().into())
+    inference_manifest::file_sha256(path).map_err(|error| error.to_string().into())
 }

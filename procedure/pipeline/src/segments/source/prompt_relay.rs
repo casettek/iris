@@ -2,13 +2,13 @@ use std::path::Path;
 
 use anyhow::Result;
 use claim_result::input::DecodeEdge;
-use source_core::relay::{run_relay_steps, RelayRecipe};
-use source_core::SourceRecord;
+use source_phase::relay::{run_relay_steps, RelayRecipe};
+use source_phase::SourceRecord;
 
 use crate::artifact_io::{with_main_sequence_scope, with_stage_sequence_scope};
 use crate::cache::{CachedInputs, MaterializationCache};
 
-/// The `prompt-relay` stage's inputs. The recipe's type is `source-core`'s,
+/// The `prompt-relay` stage's inputs. The recipe's type is `source-phase`'s,
 /// which the stage program compiles from the same source file, and the edge
 /// is read through the copy of its type the result stages read it by.
 pub struct Inputs {
@@ -98,7 +98,7 @@ impl crate::segments::NativeStage for Stage {
 mod tests {
     use super::*;
     use sha2::{Digest, Sha256};
-    use source_core::relay::{relay_recipe, FAULT_RELAYED};
+    use source_phase::relay::{relay_recipe, FAULT_RELAYED};
 
     /// The stage reads the earlier inference's last check as that check
     /// writes it, and the record it states is the one the first bind of the

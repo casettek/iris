@@ -1,6 +1,6 @@
 //! Semantic transition checks over authenticated predecessor metadata.
 use crate::{context::parse_id, ModelContext};
-use statement_core::{
+use common_statement::{
     Execution, Input, Operation, Source, StageSchedule, Statement, Step, BOUND, CHECKED, EMBEDDED,
     PREPARED, TOKENIZING,
 };
@@ -180,7 +180,7 @@ impl ModelContext {
             if previous.is_origin() {
                 self.require_execution(
                     e.before.position == 0
-                        && e.before == statement_core::Prefix::empty(&e.statement),
+                        && e.before == common_statement::Prefix::empty(&e.statement),
                 );
             } else if let Some(p) = previous.execution_context() {
                 self.require_execution(
@@ -465,7 +465,7 @@ mod tests {
                 ..schedule
             },
             StageSchedule {
-                prompt_ranges: statement_core::MAX_RANGES + 1,
+                prompt_ranges: common_statement::MAX_RANGES + 1,
                 ..schedule
             },
         ] {

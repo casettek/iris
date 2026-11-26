@@ -5,12 +5,12 @@
 ```bash
 cargo run --release -p iris-cli -- challenge build \
   --specification specification.toml \
-  --claim-context target/staged-infer/runs/.../claim_bundle.json \
-  --checkpoints target/staged-infer/runs/.../checkpoints.txt
+  --claim-context target/procedure-pipeline/runs/.../claim_bundle.json \
+  --checkpoints target/procedure-pipeline/runs/.../checkpoints.txt
 # or
 just challenge \
-  target/staged-infer/runs/.../claim_bundle.json \
-  target/staged-infer/runs/.../checkpoints.txt
+  target/procedure-pipeline/runs/.../claim_bundle.json \
+  target/procedure-pipeline/runs/.../checkpoints.txt
 ```
 
 Flow:
@@ -89,10 +89,10 @@ console output and the final timing artifact are retained alongside these update
 For manual fault tests, corrupt a copy of the claimed hash list and challenge that copy:
 
 ```bash
-just corrupt target/staged-infer/runs/.../checkpoints.txt
+just corrupt target/procedure-pipeline/runs/.../checkpoints.txt
 just challenge \
-  target/staged-infer/runs/.../claim_bundle.json \
-  target/staged-infer/runs/.../checkpoints.corrupt.txt
+  target/procedure-pipeline/runs/.../claim_bundle.json \
+  target/procedure-pipeline/runs/.../checkpoints.corrupt.txt
 ```
 
 ## From a posted claim

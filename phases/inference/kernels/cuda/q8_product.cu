@@ -1,14 +1,14 @@
 // Exact Q8_0 matrix products on an NVIDIA GPU.
 //
 // One output is the dot product of a token's Q16.16 activations with one row of
-// Q8_0 weights, exactly as det_num::q8::dot_row computes it:
+// Q8_0 weights, exactly as inference_numerics::q8::dot_row computes it:
 //   - within a 32-weight block the products are summed exactly,
 //   - each block sum is multiplied by the block's Q.24 scale and the blocks are
 //     summed in 128 bits,
 //   - the total is rounded once to Q16.16 (ties to even) and saturated to i32.
 // Everything is integer arithmetic, so a value does not depend on the order of
 // the sums or on the device. The Rust side checks a sample of every product
-// against det_num::q8::dot_row.
+// against inference_numerics::q8::dot_row.
 
 #include <cuda_runtime.h>
 

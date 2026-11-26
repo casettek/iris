@@ -78,15 +78,15 @@ impl ConsensusOutcome {
     /// direct inference computes it: the same functions the pipeline's result
     /// stage runs, over the same values.
     pub fn of(
-        forms: &[result_core::Form],
+        forms: &[result_phase::Form],
         first: &InferenceResult,
         second: &InferenceResult,
     ) -> Self {
-        let matched = result_core::run_consensus(
+        let matched = result_phase::run_consensus(
             forms,
             &first.generated_text,
             &second.generated_text,
-            result_core::same_input(
+            result_phase::same_input(
                 &first.input_text_sha256,
                 &first.source_sha256,
                 &second.input_text_sha256,
@@ -95,12 +95,12 @@ impl ConsensusOutcome {
         );
         // The step restates each claim record, which is no part of this
         // outcome: only the verdicts enter the answer.
-        let claimed = |result: &InferenceResult| result_core::Claimed {
+        let claimed = |result: &InferenceResult| result_phase::Claimed {
             statement: &[],
             output_text_sha256: &[],
             valid: result.valid,
         };
-        let record = result_core::close_consensus(matched, claimed(first), claimed(second));
+        let record = result_phase::close_consensus(matched, claimed(first), claimed(second));
         Self {
             same_input: record.same_input,
             agree: record.agree,

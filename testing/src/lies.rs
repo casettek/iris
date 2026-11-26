@@ -117,7 +117,8 @@ pub fn corrupt_claim(options: CorruptClaimOptions) -> Result<CorruptedClaim> {
     let mut lied_input = None;
     // Outputs the lying claim's records are read from, in place of the
     // honest ones at those checkpoints.
-    let mut forged_outputs: Vec<(usize, staged_infer::artifact_io::EncodedArtifact)> = Vec::new();
+    let mut forged_outputs: Vec<(usize, procedure_pipeline::artifact_io::EncodedArtifact)> =
+        Vec::new();
     let read_list = |checkpoint: &procedure_definition::Checkpoint,
                      position: usize|
      -> Result<BTreeMap<String, BTreeMap<String, String>>> {
@@ -263,7 +264,7 @@ pub fn corrupt_claim(options: CorruptClaimOptions) -> Result<CorruptedClaim> {
             let lying = serde_json::to_vec_pretty(&entries)?;
             let stated =
                 |checkpoint: &mut procedure_definition::Checkpoint,
-                 output: &staged_infer::artifact_io::EncodedArtifact| {
+                 output: &procedure_pipeline::artifact_io::EncodedArtifact| {
                     checkpoint.output_commitment = output.structural_commitment.clone();
                     checkpoint.output_sha256 = hex::encode(Sha256::digest(&output.data));
                 };
@@ -390,16 +391,16 @@ pub fn corrupt_claim(options: CorruptClaimOptions) -> Result<CorruptedClaim> {
 /// reach: the check's own output with nothing claimed differing and the
 /// record valid, and the last stage's output on that.
 struct ForgedVerdict {
-    check: staged_infer::artifact_io::EncodedArtifact,
-    result: staged_infer::artifact_io::EncodedArtifact,
+    check: procedure_pipeline::artifact_io::EncodedArtifact,
+    result: procedure_pipeline::artifact_io::EncodedArtifact,
 }
 
 /// Run the check in `check_dir` on its own inputs and state its verdict as
 /// valid, then run the result stage in `result_dir` on that record. Both
 /// directories are the claimer's own, with the files each stage was given.
 fn forge_valid_verdict(check_dir: &Path, result_dir: &Path) -> Result<ForgedVerdict> {
-    use staged_infer::artifact_io::encode_output;
-    use staged_infer::segments::{claim_result, result, sequence_check, StageKind};
+    use procedure_pipeline::artifact_io::encode_output;
+    use procedure_pipeline::segments::{claim_result, result, sequence_check, StageKind};
 
     ensure!(
         StageKind::from_stage_dir(result_dir)? == StageKind::Result(result::Stage::ClaimResult),
@@ -408,7 +409,7 @@ fn forge_valid_verdict(check_dir: &Path, result_dir: &Path) -> Result<ForgedVerd
         result_dir.display()
     );
     let files = |dir: &Path| (dir.join("input.json"), dir.join(INPUT_MANIFEST_JSON));
-    let cached = staged_infer::cache::CachedInputs::new();
+    let cached = procedure_pipeline::cache::CachedInputs::new();
     let (input, list) = files(check_dir);
     let mut edge = sequence_check::run_direct(&sequence_check::load_inputs_from_paths(
         &input, &list, &cached,

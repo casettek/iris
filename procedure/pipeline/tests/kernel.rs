@@ -2,8 +2,8 @@ use prefill_range::input::{
     pack_i32s, ActivationRow, ActivationSequence, KeyRow, LayerParams, PleLayerInputs, PleRow,
     TransformerLayer, PAGE_SIZE, Q8_PAGE_SIZE,
 };
+use procedure_pipeline::{run_prefill_range_direct, segments, PrefillRangeDirectInputs};
 use raster::{Bytes, List};
-use staged_infer::{run_prefill_range_direct, segments, PrefillRangeDirectInputs};
 
 const ONE: i32 = 1 << 16;
 
@@ -134,7 +134,7 @@ fn a_loaded_layer_keeps_the_root_of_its_bytes() {
     let loaded: segments::prefill_range::LoadedLayer = layer.clone().into();
     assert_eq!(
         loaded.root().as_slice(),
-        model_identity::stream::digest(&layer).as_slice()
+        common_identity::stream::digest(&layer).as_slice()
     );
     // Computed once and shared by every handle to this copy.
     assert!(std::ptr::eq(loaded.root(), loaded.clone().root()));

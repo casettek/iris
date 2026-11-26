@@ -7,7 +7,7 @@
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
-use prompt_prep::PreparedPiece;
+use inference_prompt::PreparedPiece;
 use sequence_check::input::GeneratedOutput;
 
 use crate::diagnostics::{DirectBoundaryRecord, DirectTrace};
@@ -95,7 +95,7 @@ fn generate_traced(
         // records agree byte for byte.
         if let Some(prompt_ranges) = prompt_ranges {
             let claimed_ranges = claimed_tokens.div_ceil(model.manifest().range_size as usize);
-            context.bind_schedule(model_identity::statement_core::StageSchedule {
+            context.bind_schedule(common_identity::common_statement::StageSchedule {
                 prompt_ranges,
                 claimed_ranges: u32::try_from(claimed_ranges).unwrap_or(u32::MAX),
             });
@@ -105,9 +105,9 @@ fn generate_traced(
                 context.require_execution(e.end.append(*id).is_ok());
             }
             e.prompt = Some(e.end);
-            e.phase = model_identity::statement_core::PREPARED;
+            e.phase = common_identity::common_statement::PREPARED;
             // The steps the pipeline's last prompt range and last check record.
-            e.step = model_identity::statement_core::Step::tokens(
+            e.step = common_identity::common_statement::Step::tokens(
                 e.schedule.prompt_ranges.saturating_sub(1),
             );
             if let Some(ids) = generated {
@@ -116,12 +116,12 @@ fn generate_traced(
                 for id in ids {
                     context.require_execution(e.end.append(*id).is_ok());
                 }
-                e.phase = model_identity::statement_core::CHECKED;
-                e.step = model_identity::statement_core::Step::check(
+                e.phase = common_identity::common_statement::CHECKED;
+                e.step = common_identity::common_statement::Step::check(
                     e.schedule.claimed_ranges.saturating_sub(1),
                 );
                 context.completed_layers = context.layers;
-                context.producer = model_identity::context::DECODE;
+                context.producer = common_identity::context::DECODE;
             }
             context.set_execution(&e);
         }
@@ -257,7 +257,7 @@ fn run_layers_and_logits(
     Vec<prefill_range::input::ActivationSequence>,
     crate::generation::PrefillLogits,
 )> {
-    if model.family() == model_manifest::ModelFamily::MistralDense {
+    if model.family() == inference_manifest::ModelFamily::MistralDense {
         return run_mistral_layers_and_logits(model, seed, prior_layers, timings, label, trace);
     }
     let ple_source = seed.clone();

@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use model_manifest::{file_sha256, ModelManifest};
+use inference_manifest::{file_sha256, ModelManifest};
 use procedure_definition::write_json;
 use serde_json::json;
 
@@ -116,13 +116,13 @@ start = 1
 count = 0
 
 "#)).unwrap();
-    let commitments = [model_manifest::ModelCommitment {
+    let commitments = [inference_manifest::ModelCommitment {
         role: String::from("embedding"),
         commitment: name.to_string(),
     }];
     let manifest: ModelManifest = serde_json::from_value(json!({
-        "version": model_manifest::MODEL_MANIFEST_VERSION,
-        "model_id": model_manifest::model_id_of(&commitments),
+        "version": inference_manifest::MODEL_MANIFEST_VERSION,
+        "model_id": inference_manifest::model_id_of(&commitments),
         "model_commitments": commitments,
         "range_size": 4,
         "bundle": {

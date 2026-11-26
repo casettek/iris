@@ -4,16 +4,16 @@
 //! Q16.16 fixed point throughout (`1.0 == 1 << 16`), integer-only so every
 //! tile replays bit-identically in the zkVM (SKILL.md §3).
 
-pub use model_identity::ModelContext;
+pub use common_identity::ModelContext;
 extern crate alloc;
 
 use alloc::string::String;
 use alloc::vec::Vec;
-use det_num::ops::{
+use inference_numerics::ops::{
     gelu_pytorch_tanh_act, mac_bits, mul_sat, requantize, rms_norm_in_place,
     value_rms_norm_in_place,
 };
-use det_num::{Acc, Act, Wgt};
+use inference_numerics::{Acc, Act, Wgt};
 use raster::{Bytes, BytesPage, List};
 use serde::{Deserialize, Serialize};
 

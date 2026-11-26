@@ -23,7 +23,7 @@ use blockchain_rules::checks::{
     SubmittedResult, CONTRACT_PINS_JSON,
 };
 use blockchain_rules::registry::{Procedure, Registry};
-use model_manifest::ModelManifest;
+use inference_manifest::ModelManifest;
 use procedure_definition::{
     read_checkpoint_list, read_json, read_specification, Checkpoint, CheckpointList, PreparedRun,
     ProcedureKind, Specification, CHECKPOINTS_TXT, CHECKPOINT_LIST_JSON,
@@ -160,11 +160,11 @@ fn required_origin(specification: &Specification) -> RequiredOrigin {
     // it. The hash is over the recipe alone, so the relay step over no
     // output states it.
     let relay_recipe_sha256 = specification.relay.as_ref().map(|relay| {
-        source_core::relay::run_relay_steps(&relay.recipe(), "", &[], &[], true)
+        source_phase::relay::run_relay_steps(&relay.recipe(), "", &[], &[], true)
             .record
             .recipe_sha256
     });
-    let Some(terms) = run_prep::source::source_terms(specification) else {
+    let Some(terms) = procedure_prepare::source::source_terms(specification) else {
         return RequiredOrigin {
             source: None,
             forms: Vec::new(),

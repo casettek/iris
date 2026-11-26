@@ -17,12 +17,12 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{ensure, Context, Result};
 use blockchain_rules::checks::CLAIM_SUBMISSION_JSON;
-use model_manifest::{ModelFamily, ModelManifest};
+use inference_manifest::{ModelFamily, ModelManifest};
 use procedure_definition::SpecificationForm;
 use procedure_definition::{PreparedRun, ProcedureKind};
-use run_prep::source::LoadedSource;
+use procedure_pipeline::pipeline_runner::StagedExecutionBackend;
+use procedure_prepare::source::LoadedSource;
 use serde_json::{json, Value};
-use staged_infer::pipeline_runner::StagedExecutionBackend;
 
 use super::compare::{compare, read_boundaries};
 use super::{case_beside, command, logged, source};
@@ -88,7 +88,7 @@ pub(super) fn run_consensus_scenario(
     let mut source = source::honest_source()?;
     let specification = write_run(&dir.join("answers"), &source, &models)?;
     let answers =
-        procedure_direct::infer::run_infer(specification.clone(), case_beside(&specification))
+        procedure_native::infer::run_infer(specification.clone(), case_beside(&specification))
             .context("the two models' answers")?;
     let texts: Vec<String> = answers
         .reports
@@ -110,7 +110,7 @@ pub(super) fn run_consensus_scenario(
     let claim_dir = dir.join("claim");
     let specification = write_run(&claim_dir, &source, &models)?;
     let direct =
-        procedure_direct::infer::run_infer(specification.clone(), case_beside(&specification))
+        procedure_native::infer::run_infer(specification.clone(), case_beside(&specification))
             .context("direct inference")?;
     let direct_consensus = direct
         .consensus

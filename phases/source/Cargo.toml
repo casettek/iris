@@ -1,5 +1,5 @@
 [package]
-name = "source-core"
+name = "source-phase"
 version = "0.1.0"
 edition = "2021"
 description = "The source step's shared source: attestation, field scan and prompt text"

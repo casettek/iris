@@ -12,16 +12,18 @@ use std::time::Instant;
 
 use anyhow::{ensure, Context, Result};
 use blockchain_rules::checks::{dispute_digest, settlement, stage_challenge, Settlement};
-use model_manifest::{file_sha256, ModelManifest};
+use inference_manifest::{file_sha256, ModelManifest};
+use inference_prompt::RunConfig;
 use procedure_definition::{
     build_checkpoint_list, checkpoint_hashes, read_checkpoint_list, read_json,
     write_checkpoint_hashes, CheckpointList,
 };
-use prompt_prep::RunConfig;
+use procedure_pipeline::pipeline_runner::StagedExecutionBackend;
+use procedure_pipeline::{
+    CheckpointedInferenceConfig, CheckpointedInferenceExecutor, ParityPolicy,
+};
 use raster_prover::commitment_file::CommitmentFile;
 use serde_json::{json, Value};
-use staged_infer::pipeline_runner::StagedExecutionBackend;
-use staged_infer::{CheckpointedInferenceConfig, CheckpointedInferenceExecutor, ParityPolicy};
 
 use super::{
     block_name, case_beside, command, logged, manifest_blocks, write_case, write_specification,
@@ -764,7 +766,7 @@ fn expect_divergence(
     let replay = scenario
         .dir
         .join(name)
-        .join("challenge/target/staged-infer/runs");
+        .join("challenge/target/procedure-pipeline/runs");
     let run = fs::read_dir(&replay)?
         .next()
         .with_context(|| format!("challenge `{name}` recorded no run"))??
@@ -823,7 +825,7 @@ fn replay_stage_dir(scenario: &Scenario, name: &str, stage: &str) -> Result<Path
     let runs = scenario
         .dir
         .join(name)
-        .join("challenge/target/staged-infer/runs");
+        .join("challenge/target/procedure-pipeline/runs");
     let run = fs::read_dir(&runs)?
         .next()
         .with_context(|| format!("challenge `{name}` recorded no run"))??
@@ -1393,10 +1395,10 @@ fn honest_inputs(scenario: &Scenario) -> Result<RunInputs> {
         .parent()
         .context("model manifest has no parent directory")?;
     let tokenizer: Value = read_json(&model_dir.join(&scenario.model.bundle.tokenizer_path))?;
-    let ranges = prompt_prep::marked_ranges(
+    let ranges = inference_prompt::marked_ranges(
         &prompt.initial_pieces,
         range_size as usize,
-        &prompt_prep::prompt_tokenizer(&tokenizer)?,
+        &inference_prompt::prompt_tokenizer(&tokenizer)?,
     )?;
     Ok(RunInputs {
         text: prompt.resolved_prompt.clone(),
@@ -1427,19 +1429,19 @@ fn render(model_path: &Path, model: &ModelManifest, run: &RunInputs, dir: &Path)
     let (template_path, segment) = model.verified_raster_template(model_path)?;
     let template = procedure_definition::ProcedureKind::single().pipeline_template(&[&segment])?;
     let range_size = run.config.range_size as usize;
-    let mark_files = run_prep::write_marks(&run.marks, dir)?;
-    let claimed_files = run_prep::write_claimed_ranges(&run.ids, range_size, dir)?;
+    let mark_files = procedure_prepare::write_marks(&run.marks, dir)?;
+    let claimed_files = procedure_prepare::write_claimed_ranges(&run.ids, range_size, dir)?;
     let tokenizer: Value = read_json(
         &model_path
             .parent()
             .context("model manifest has no parent directory")?
             .join(&model.bundle.tokenizer_path),
     )?;
-    let (slices, mut text_digest) = prompt_prep::text_for_ranges(
+    let (slices, mut text_digest) = inference_prompt::text_for_ranges(
         &run.text,
         run.config.raw_prompt,
         range_size,
-        &prompt_prep::prompt_tokenizer(&tokenizer)?,
+        &inference_prompt::prompt_tokenizer(&tokenizer)?,
         run.marks.len(),
     )?;
     if run.other_text_hash {
@@ -1450,16 +1452,16 @@ fn render(model_path: &Path, model: &ModelManifest, run: &RunInputs, dir: &Path)
         template_path
             .parent()
             .context("manifest template has no parent directory")?,
-        &run_prep::write_text_slices(&slices, dir)?,
-        &run_prep::write_run_config(&run.config, dir)?,
-        &run_prep::write_run_schedule(
+        &procedure_prepare::write_text_slices(&slices, dir)?,
+        &procedure_prepare::write_run_config(&run.config, dir)?,
+        &procedure_prepare::write_run_schedule(
             (mark_files.len() as i64 + run.schedule_skew[0]) as usize,
             (claimed_files.len() as i64 + run.schedule_skew[1]) as usize,
             dir,
         )?,
-        &run_prep::write_text_digest(&text_digest, dir)?,
+        &procedure_prepare::write_text_digest(&text_digest, dir)?,
         None,
-        &run_prep::write_result_forms(&[], dir)?,
+        &procedure_prepare::write_result_forms(&[], dir)?,
         &mark_files,
         &claimed_files,
     )
@@ -1910,7 +1912,7 @@ mod tests {
         let base = std::path::PathBuf::from(
             std::env::var_os("IRIS_PARITY_RUN").expect("set IRIS_PARITY_RUN"),
         );
-        let model: model_manifest::ModelManifest = procedure_definition::read_json(
+        let model: inference_manifest::ModelManifest = procedure_definition::read_json(
             &base.join("model-artifacts/parity-gemma/manifest.json"),
         )
         .unwrap();

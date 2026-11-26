@@ -19,8 +19,8 @@ follows, so this page says which is which until they agree.
 | Segment | The stages that share one purpose: what a phase becomes in a pipeline. A procedure's pipeline has a source segment, one inference segment per model, and a result segment. Raster's word | |
 | Stage | One program's place in a pipeline | |
 | Native stage | A stage's code as an ordinary host program runs it. It must give, byte for byte, what the stage's Raster program gives. The native stages are under `procedure/pipeline/src/segments/` | |
-| Native run | A procedure run the ordinary way, with nothing shaped for stages: every phase in turn, with inference generating its output. It gives the result as fast as possible, and it is the only run that generates | Direct run: `procedure-direct`, `direct-infer`, `iris infer` |
-| Pipeline run | A procedure run as its Raster pipeline: stage by stage, each verifying its part of an output that was stated beforehand, with a checkpoint per stage. Its stages run as native stages or as Raster programs. A claim, a challenge and `iris run` each make one | Staged run: `staged-infer`, `native-staged` for one on native stages |
+| Native run | A procedure run the ordinary way, with nothing shaped for stages: every phase in turn, with inference generating its output. It gives the result as fast as possible, and it is the only run that generates | Direct run: `procedure-native`, `inference-generation`, `iris infer` |
+| Pipeline run | A procedure run as its Raster pipeline: stage by stage, each verifying its part of an output that was stated beforehand, with a checkpoint per stage. Its stages run as native stages or as Raster programs. A claim, a challenge and `iris run` each make one | Staged run: `procedure-pipeline`, `native-staged` for one on native stages |
 | Checkpoint | What a claim commits to for one stage: its program, its inputs and its output | |
 | Checkpoint list | A claim's checkpoints, one per stage, in order | |
 | Checkpoint hashes | One hash per checkpoint of the list, in order (`checkpoints.txt`). A claim commits to its checkpoint list by the root of the tree over them | |

@@ -1,6 +1,6 @@
 use crate::check::WindowScan;
 use crate::input::*;
-use model_identity::stream;
+use common_identity::stream;
 use raster::prelude::*;
 #[tile(kind=iter)]
 pub fn identity_empty() -> BytesPage {
@@ -58,7 +58,7 @@ pub fn identity_component(
 }
 #[tile(kind=iter)]
 pub fn identity_prompt(mut context: PromptContext, root: BytesPage) -> PromptContext {
-    context.model = stream::verify(context.model, &root, model_identity::Role::Tokenizer);
+    context.model = stream::verify(context.model, &root, common_identity::Role::Tokenizer);
     context
         .model
         .require(context.model_id == context.model.model_id);
@@ -77,7 +77,7 @@ pub fn identity_sparse_context(
     header: SparseHeader,
     path: SparsePath,
 ) -> PromptContext {
-    context.model.require(model_identity::sparse::verify(
+    context.model.require(common_identity::sparse::verify(
         &header.root,
         header.count,
         u64::from(index),
@@ -95,7 +95,7 @@ pub fn identity_window_scan(
     header: SparseHeader,
     path: SparsePath,
 ) -> WindowScan {
-    scan.model_fault |= u32::from(!model_identity::sparse::verify(
+    scan.model_fault |= u32::from(!common_identity::sparse::verify(
         &header.root,
         header.count,
         u64::from(index),

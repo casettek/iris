@@ -1,7 +1,7 @@
 //! Model membership for the exact decoder entry consumed by finalization.
 use crate::input::DecoderToken;
 use alloc::{string::String, vec, vec::Vec};
-use model_identity::{ModelDescriptor, ModelFault, Role};
+use common_identity::{ModelDescriptor, ModelFault, Role};
 use raster::core::input::{
     ListProofDirection, ListProofSibling, SelectionProof, SelectionProofStep, SelectorPath,
     SelectorSegment,
@@ -214,11 +214,11 @@ pub fn decoder_witness(
 }
 
 pub fn final_context_fault(
-    edge: &model_identity::ModelContext,
+    edge: &common_identity::ModelContext,
     prompt: &crate::prompt::PromptContext,
     descriptor: &BytesPage,
 ) -> u32 {
-    let expected = model_identity::ModelContext::bind(descriptor.as_slice(), &prompt.model_id);
+    let expected = common_identity::ModelContext::bind(descriptor.as_slice(), &prompt.model_id);
     let mut checked = edge.clone();
     let mut statement = expected.clone();
     statement.bind_statement(
@@ -245,7 +245,7 @@ pub fn final_context_fault(
 #[tile(kind = iter, description = "Retain model faults and check final model lineage")]
 pub fn verify_final_model_context(
     mut state: crate::input::FinalizeState,
-    edge: model_identity::ModelContext,
+    edge: common_identity::ModelContext,
     prompt: crate::prompt::PromptContext,
     descriptor: BytesPage,
     has_selected: bool,
@@ -261,7 +261,7 @@ pub fn verify_final_model_context(
 /// the teacher-forced tokens that produced the checked execution endpoint.
 pub fn begin_final_history(
     state: &mut crate::input::FinalizeState,
-    edge: &model_identity::ModelContext,
+    edge: &common_identity::ModelContext,
     selected: bool,
     position: u32,
     token: u32,

@@ -6,7 +6,7 @@ use super::*;
 fn pins_are_of_one_procedure_kind_over_its_models_in_order() {
     let manifest = |pins: &ModelPins| -> ModelManifest {
         serde_json::from_value(serde_json::json!({
-            "version": model_manifest::MODEL_MANIFEST_VERSION,
+            "version": inference_manifest::MODEL_MANIFEST_VERSION,
             "model_id": pins.model_id,
             "model_commitments": pins.model_commitments,
             "range_size": pins.range_size,

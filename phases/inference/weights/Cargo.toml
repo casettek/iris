@@ -1,9 +1,9 @@
 [package]
-name = "detwgt"
+name = "inference-weights"
 version = "0.1.0"
 edition = "2021"
 
 [dependencies]
 anyhow = "1.0"
-det-num = { path = "../numerics" }
+inference-numerics = { path = "../numerics" }
 memmap2 = "0.9"

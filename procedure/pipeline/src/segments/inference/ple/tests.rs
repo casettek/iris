@@ -100,7 +100,7 @@ impl Fixture {
             (
                 "witness",
                 raster::encode_raster_value(
-                    &model_identity::sparse::witness(self.layer.embeddings.pages.as_slice())
+                    &common_identity::sparse::witness(self.layer.embeddings.pages.as_slice())
                         .unwrap(),
                 )
                 .unwrap(),
@@ -512,7 +512,7 @@ fn selective_loading_benchmark() {
 fn auxiliary_sparse_witness_is_rechecked_after_cache_hit() {
     let mut f = Fixture::new(4, 32);
     let root = raster::core::tree::value_root(&f.layer).unwrap();
-    let d = model_identity::ModelDescriptor {
+    let d = common_identity::ModelDescriptor {
         version: 2,
         tokenizer: [1; 32],
         decoder: [2; 32],
@@ -527,9 +527,9 @@ fn auxiliary_sparse_witness_is_rechecked_after_cache_hit() {
         .iter()
         .map(|b| format!("{b:02x}"))
         .collect::<String>();
-    let mut prompt = model_identity::ModelContext::bind(&d.encode().unwrap(), &id);
+    let mut prompt = common_identity::ModelContext::bind(&d.encode().unwrap(), &id);
     prompt.bind_statement(&"11".repeat(32), &"00".repeat(32), false, 8, 128);
-    prompt.bind_schedule(model_identity::statement_core::StageSchedule {
+    prompt.bind_schedule(common_identity::common_statement::StageSchedule {
         prompt_ranges: 1,
         claimed_ranges: 1,
     });
@@ -538,7 +538,7 @@ fn auxiliary_sparse_witness_is_rechecked_after_cache_hit() {
         prompt.append_consumed_token(row.token_id);
     }
     prompt.finish_prompt_range(true, f.embedded.rows.len() as u32, 0);
-    f.embedded.model = model_identity::ModelContext::embedding(&prompt, &Default::default());
+    f.embedded.model = common_identity::ModelContext::embedding(&prompt, &Default::default());
     for row in f.embedded.rows.iter() {
         f.embedded.model.append_consumed_token(row.token_id);
     }
@@ -558,7 +558,8 @@ fn auxiliary_sparse_witness_is_rechecked_after_cache_hit() {
         crate::segments::prefill_prepare_aux::run_direct(&inputs).unwrap()
     };
     assert_eq!(run().model.fault, 0);
-    let mut witness = model_identity::sparse::witness(f.layer.embeddings.pages.as_slice()).unwrap();
+    let mut witness =
+        common_identity::sparse::witness(f.layer.embeddings.pages.as_slice()).unwrap();
     let mut paths = witness.paths.as_slice().to_vec();
     paths[0].siblings = BytesPage::__from_parts(0, 0, vec![0; 31]);
     witness.paths = paths.into();

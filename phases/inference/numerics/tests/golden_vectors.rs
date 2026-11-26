@@ -1,8 +1,8 @@
 //! Literal expectations calculated with integer arithmetic, not another kernel.
-use det_num::ops::{
+use inference_numerics::ops::{
     acc_combine, add_sat, mac, mac_bits, requantize, rshift_round_ties_even, sub_sat,
 };
-use det_num::{Acc, Act, Wgt};
+use inference_numerics::{Acc, Act, Wgt};
 
 #[test]
 fn signed_rounding_ties_and_neighbors() {

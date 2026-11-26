@@ -12,9 +12,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
-use result_core::Form;
+use result_phase::Form;
 use serde::{Deserialize, Serialize};
-use source_core::{DocumentName, Field, Recipe, SignerKey};
+use source_phase::{DocumentName, Field, Recipe, SignerKey};
 
 use crate::procedure_kind::ProcedureKind;
 
@@ -63,8 +63,8 @@ pub struct SpecificationRelay {
 
 impl SpecificationRelay {
     /// The recipe as the relay stage takes it.
-    pub fn recipe(&self) -> source_core::relay::RelayRecipe {
-        source_core::relay::relay_recipe(&self.before, &self.after)
+    pub fn recipe(&self) -> source_phase::relay::RelayRecipe {
+        source_phase::relay::relay_recipe(&self.before, &self.after)
     }
 }
 
@@ -135,7 +135,7 @@ impl SpecificationField {
                 PathStep::Index(index) => index.to_string(),
             })
             .collect::<Vec<_>>()
-            .join(&source_core::PATH_SEPARATOR.to_string())
+            .join(&source_phase::PATH_SEPARATOR.to_string())
     }
 }
 
@@ -143,7 +143,7 @@ impl SpecificationSource {
     /// The recipe as the source stage takes it.
     pub fn recipe(&self) -> Recipe {
         Recipe {
-            base: source_core::text_chunks(&self.base).into(),
+            base: source_phase::text_chunks(&self.base).into(),
             documents: self
                 .documents
                 .iter()

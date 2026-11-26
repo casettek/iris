@@ -5,14 +5,14 @@ use std::process::{Command, Stdio};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{bail, ensure, Context, Result};
-use staged_infer::pipeline_runner::StagedExecutionBackend;
-use staged_infer::{CheckpointHashChallengeConfig, CheckpointedInferenceExecutor};
+use procedure_pipeline::pipeline_runner::StagedExecutionBackend;
+use procedure_pipeline::{CheckpointHashChallengeConfig, CheckpointedInferenceExecutor};
 
 use blockchain_rules::{
     read_challenge_bundle, read_claim_bundle, write_challenge_artifacts, ChallengeBundle,
     ChallengeSourcePath, ReplayPackage,
 };
-use model_manifest::verify_file_sha256;
+use inference_manifest::verify_file_sha256;
 use procedure_definition::{
     checkpoint_hashes, read_checkpoint_hashes, read_checkpoint_list,
     write_checkpoint_list_artifact, Case, CheckpointList, Divergence, PreparedRun, Specification,
@@ -709,7 +709,7 @@ fn final_record_rejection(result: &procedure_definition::InferenceResult) -> Opt
     if result.prompt_fault != 0 {
         return Some(format!(
             "the prompt was not prepared correctly: {} (fault {}, at position {})",
-            prompt_prep::fault_description(result.prompt_fault),
+            inference_prompt::fault_description(result.prompt_fault),
             result.prompt_fault,
             result.prompt_fault_position
         ));
@@ -722,7 +722,7 @@ fn final_record_rejection(result: &procedure_definition::InferenceResult) -> Opt
     if result.check_fault != 0 {
         return Some(format!(
             "the claimed output was not checked: {} (fault {}, at sequence position {})",
-            prompt_prep::check_fault_description(result.check_fault),
+            inference_prompt::check_fault_description(result.check_fault),
             result.check_fault,
             result.check_fault_position
         ));
@@ -736,7 +736,7 @@ fn final_record_rejection(result: &procedure_definition::InferenceResult) -> Opt
     if result.output_fault != 0 {
         return Some(format!(
             "the claimed output breaks the run's rules: {} (fault {})",
-            prompt_prep::output_fault_description(result.output_fault),
+            inference_prompt::output_fault_description(result.output_fault),
             result.output_fault
         ));
     }
@@ -1125,7 +1125,7 @@ mod tests {
             ),
             (
                 procedure_definition::InferenceResult {
-                    prompt_fault: prompt_prep::FAULT_NOT_THE_MERGE,
+                    prompt_fault: inference_prompt::FAULT_NOT_THE_MERGE,
                     prompt_fault_position: 7,
                     ..clean.clone()
                 },
@@ -1353,7 +1353,7 @@ mod tests {
         assert_eq!(frozen_claimed_ids(&manifest, "").unwrap(), [0, 0, 0]);
         let claimed = manifest.parent().unwrap().join("prompt/claimed_0.rastered");
         let other = manifest.parent().unwrap().join("other");
-        let file = run_prep::write_claimed_ranges(&[0, 0, 1], 4, &other)
+        let file = procedure_prepare::write_claimed_ranges(&[0, 0, 1], 4, &other)
             .unwrap()
             .remove(0);
         fs::copy(&file.path, &claimed).unwrap();

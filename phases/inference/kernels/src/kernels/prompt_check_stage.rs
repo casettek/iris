@@ -150,7 +150,7 @@ pub fn run_prompt_check(
     );
     let mut context = join_prompt_models(previous.context.clone(), &bound.context);
     context.model =
-        model_identity::stream::verify(context.model, root, model_identity::Role::Tokenizer);
+        common_identity::stream::verify(context.model, root, common_identity::Role::Tokenizer);
     context
         .model
         .require(context.model_id == context.model.model_id);

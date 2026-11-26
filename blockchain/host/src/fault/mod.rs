@@ -2,7 +2,7 @@
 
 use anyhow::{ensure, Context, Result};
 use blockchain_rules::{ChallengeBundle, ClaimBundle, ReplayPackage};
-use model_manifest::file_sha256;
+use inference_manifest::file_sha256;
 use procedure_definition::{read_json, write_json, CheckpointList, PreparedRun};
 use raster_core::transition::{TransitionJournal, TransitionState};
 use raster_prover::commitment_file::CommitmentFile;
@@ -198,7 +198,7 @@ pub fn prove(args: ProveArgs) -> Result<()> {
         .run_manifest_path
         .as_ref()
         .context("missing run manifest")?;
-    model_manifest::verify_file_sha256(
+    inference_manifest::verify_file_sha256(
         manifest,
         prepared
             .run_manifest_sha256
@@ -207,7 +207,7 @@ pub fn prove(args: ProveArgs) -> Result<()> {
         "frozen run",
     )?;
     for inference in &prepared.inferences {
-        model_manifest::verify_file_sha256(
+        inference_manifest::verify_file_sha256(
             &inference.model_manifest_path,
             &inference.model_manifest_sha256,
             "frozen model",
@@ -264,7 +264,7 @@ pub fn prove(args: ProveArgs) -> Result<()> {
     );
     // Guest dependencies can change without changing the stage's tile source.
     // Check the locked identity before the expensive replay, without rewriting it.
-    let project = staged_infer::pipeline_runner::stage_project(manifest, &bundle.stage)?;
+    let project = procedure_pipeline::pipeline_runner::stage_project(manifest, &bundle.stage)?;
     let status = Command::new("cargo")
         .args(["raster", "program", "--verify"])
         .current_dir(&project)

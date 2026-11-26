@@ -1,6 +1,6 @@
 use anyhow::{bail, Result};
-use det_num::ops::mul_sat;
-use det_num::Act;
+use inference_numerics::ops::mul_sat;
+use inference_numerics::Act;
 use input_embedding::input::{
     pack_i32s, q8_row_at, ActivationRow, ActivationSequence, EmbeddingTable, PromptTokenization,
 };
@@ -54,7 +54,7 @@ pub fn run_input_embedding_direct(
     }
 
     Ok(ActivationSequence {
-        model: model_identity::ModelContext::embedding(
+        model: common_identity::ModelContext::embedding(
             &inputs.prompt.context.model,
             &Default::default(),
         ),

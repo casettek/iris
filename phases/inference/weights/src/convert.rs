@@ -2,7 +2,7 @@
 //!
 //! `Q8_0` tensors are copied block for block, so their committed bytes are
 //! the publisher's. Float tensors (norms, the small per-layer-embedding
-//! matrices, scalars) become Q16.16 through `det_num`'s exact conversion. Any
+//! matrices, scalars) become Q16.16 through `inference_numerics`'s exact conversion. Any
 //! tensor the mapping does not know fails the conversion rather than being
 //! dropped.
 
@@ -116,13 +116,14 @@ pub fn convert(gguf_path: &Path, out: &Path, dequantize: bool) -> Result<Convert
             );
             if dequantize {
                 let cols = *dims.last().unwrap_or(&0) as usize;
-                let row_bytes = det_num::q8::row_bytes(cols).context("Q8_0 row width")?;
+                let row_bytes =
+                    inference_numerics::q8::row_bytes(cols).context("Q8_0 row width")?;
                 let mut values = vec![0; info.element_count() as usize];
                 for (row, out) in data
                     .chunks_exact(row_bytes)
                     .zip(values.chunks_exact_mut(cols))
                 {
-                    det_num::q8::dequantize_row(row, out).map_err(anyhow::Error::msg)?;
+                    inference_numerics::q8::dequantize_row(row, out).map_err(anyhow::Error::msg)?;
                 }
                 writer.q16(&target, &dims, &values)?;
             } else {
@@ -144,7 +145,7 @@ pub fn convert(gguf_path: &Path, out: &Path, dequantize: bool) -> Result<Convert
 fn float_values(kind: u32, data: &[u8]) -> Result<Vec<i32>> {
     let to_q16 = |x: f32| -> Result<i32> {
         ensure!(x.is_finite(), "tensor holds a non-finite value");
-        Ok(det_num::f32_to_wgt(x).to_bits())
+        Ok(inference_numerics::f32_to_wgt(x).to_bits())
     };
     match kind {
         gguf::F32 => data

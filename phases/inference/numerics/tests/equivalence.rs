@@ -1,7 +1,7 @@
 //! Self-contained deterministic checks for the vendored fixed-point kernels.
 
-use det_num::ops as det;
-use det_num::{f32_to_acc, f32_to_act, Acc, Act, Wgt};
+use inference_numerics::ops as det;
+use inference_numerics::{f32_to_acc, f32_to_act, Acc, Act, Wgt};
 
 /// Deterministic pseudo-random activations; no rand dependency, and the same
 /// sequence on every run so a failure is reproducible.

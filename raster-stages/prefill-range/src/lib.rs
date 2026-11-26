@@ -14,8 +14,8 @@ extern crate alloc;
 use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
-use det_num::ops::{attention_softmax, mac_bits, requantize, rope_rotate_pairs_in_place};
-use det_num::{Acc, Act};
+use inference_numerics::ops::{attention_softmax, mac_bits, requantize, rope_rotate_pairs_in_place};
+use inference_numerics::{Acc, Act};
 use raster::prelude::*;
 
 pub mod input;
@@ -130,7 +130,7 @@ pub fn kv_out_len(params: LayerParams) -> u32 {
 
 #[tile(kind = iter, description = "Reject a Q8_0 weight region of the wrong byte length")]
 pub fn assert_matrix_bytes(byte_len: u64, out_len: u32, in_width: u32) -> Result<u32> {
-    let row = det_num::q8::row_bytes(in_width as usize)
+    let row = inference_numerics::q8::row_bytes(in_width as usize)
         .ok_or_else(|| alloc::format!("matrix width {in_width} is not whole Q8_0 blocks"))?;
     let expected = out_len as u64 * row as u64;
     if byte_len == expected {
@@ -284,7 +284,7 @@ fn mac_q8_page(
             row.len()
         ));
     }
-    let stride = det_num::q8::row_bytes(row.len())
+    let stride = inference_numerics::q8::row_bytes(row.len())
         .ok_or_else(|| alloc::format!("matvec in_width {in_width} is not whole Q8_0 blocks"))?;
     if page.len() % stride != 0 {
         return Err(String::from(
@@ -301,7 +301,7 @@ fn mac_q8_page(
         if out_idx >= out.len() {
             return Err(String::from("weight page writes past the accumulator"));
         }
-        out[out_idx] = det_num::q8::dot_row(&row, weights)?;
+        out[out_idx] = inference_numerics::q8::dot_row(&row, weights)?;
     }
     state.values = pack_i32s(&out);
     Ok(())
@@ -433,7 +433,7 @@ pub fn finish_qkv(
 /// Rotary position embedding for one head row, in place.
 ///
 /// Delegates to the vendored canonical kernel rather than reimplementing the
-/// rotation: `det_num::ops::rope_rotate_pairs_in_place` is a byte-for-byte copy
+/// rotation: `inference_numerics::ops::rope_rotate_pairs_in_place` is a byte-for-byte copy
 /// of the reference's, held there by an equivalence test. The only work here is
 /// moving between the pipeline's raw Q16.16 `i32` lanes and the `Act` newtype.
 ///
@@ -1235,7 +1235,7 @@ pub fn begin_cache_coverage(context: ModelContext, window: u32) -> CacheCoverage
     cache_coverage(&context, window)
 }
 pub fn cache_coverage(context: &ModelContext, window: u32) -> CacheCoverage {
-    if context.is_origin() || context.producer == model_identity::context::EMBEDDING {
+    if context.is_origin() || context.producer == common_identity::context::EMBEDDING {
         return CacheCoverage {
             next: 0,
             end: 0,

@@ -1,7 +1,7 @@
 //! Adapters from legacy JSON model manifests to the bounded stage descriptor.
 use crate::direct::{ModelCommitment, ModelManifest};
 use anyhow::{ensure, Context, Result};
-use model_identity::{ModelDescriptor, DESCRIPTOR_VERSION, MAX_LAYERS};
+use common_identity::{ModelDescriptor, DESCRIPTOR_VERSION, MAX_LAYERS};
 
 pub const MODEL_DESCRIPTOR_BIN: &str = "model-descriptor.bin";
 

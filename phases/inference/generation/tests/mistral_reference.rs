@@ -23,11 +23,11 @@
 
 use std::path::Path;
 
-use direct_infer::detwgt::MmapDetwgt;
-use direct_infer::generation::PrefillLogits;
-use direct_infer::model::DirectInferenceModel;
-use direct_infer::view_kernels::{run_mistral_range_view, score_prefill_logits_view};
-use model_manifest::MistralShape;
+use inference_generation::generation::PrefillLogits;
+use inference_generation::inference_weights::MmapDetwgt;
+use inference_generation::model::DirectInferenceModel;
+use inference_generation::view_kernels::{run_mistral_range_view, score_prefill_logits_view};
+use inference_manifest::MistralShape;
 use prefill_range::input::{pack_i32s, ActivationRow, ActivationSequence};
 use raster::List;
 
@@ -56,11 +56,12 @@ mod float {
             for block in view
                 .row(row)
                 .unwrap()
-                .chunks_exact(det_num::q8::BLOCK_BYTES)
+                .chunks_exact(inference_numerics::q8::BLOCK_BYTES)
             {
-                let scale = det_num::q8::scale_q24(u16::from_le_bytes([block[0], block[1]]))
-                    .expect("a finite scale") as f64
-                    / f64::from(1_u32 << 24);
+                let scale =
+                    inference_numerics::q8::scale_q24(u16::from_le_bytes([block[0], block[1]]))
+                        .expect("a finite scale") as f64
+                        / f64::from(1_u32 << 24);
                 values.extend(
                     block[2..]
                         .iter()
@@ -144,11 +145,12 @@ mod float {
                 for block in embedding
                     .row(*id as usize)
                     .unwrap()
-                    .chunks_exact(det_num::q8::BLOCK_BYTES)
+                    .chunks_exact(inference_numerics::q8::BLOCK_BYTES)
                 {
-                    let scale = det_num::q8::scale_q24(u16::from_le_bytes([block[0], block[1]]))
-                        .unwrap() as f64
-                        / f64::from(1_u32 << 24);
+                    let scale =
+                        inference_numerics::q8::scale_q24(u16::from_le_bytes([block[0], block[1]]))
+                            .unwrap() as f64
+                            / f64::from(1_u32 << 24);
                     row.extend(block[2..].iter().map(|q| scale * f64::from(*q as i8)));
                 }
                 row

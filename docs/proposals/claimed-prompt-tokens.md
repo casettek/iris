@@ -187,7 +187,7 @@ Run them with:
 ```sh
 cargo test -p inference-kernels prompt_check
 cargo test --release -p inference-kernels -- --ignored exactly_the_merge_grouping_passes_exhaustive
-cargo test --release -p staged-infer --test prompt_check -- --ignored --nocapture
+cargo test --release -p procedure-pipeline --test prompt_check -- --ignored --nocapture
 ```
 
 ## The stage

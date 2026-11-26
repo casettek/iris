@@ -1,5 +1,5 @@
 // Real native -> replay -> targeted corruption -> fault proof. No model required.
-use model_manifest::file_sha256;
+use inference_manifest::file_sha256;
 use procedure_definition::{read_json, write_json};
 use serde_json::{json, Value};
 use std::{

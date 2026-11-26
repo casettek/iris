@@ -1,5 +1,5 @@
 [package]
-name = "model-identity"
+name = "common-identity"
 version = "0.1.0"
 edition = "2021"
 
@@ -8,7 +8,7 @@ default = []
 std = ["raster-core/std"]
 
 [dependencies]
-statement-core = { path = "../statement" }
+common-statement = { path = "../statement" }
 raster = { path = "../../../../raster/crates/raster", default-features = false }
 raster-core = { path = "../../../../raster/crates/raster-core", default-features = false }
 serde = { version = "1", default-features = false, features = ["derive", "alloc"] }

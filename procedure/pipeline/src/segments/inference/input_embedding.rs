@@ -24,7 +24,7 @@ pub struct Inputs {
     pub claimed: ClaimedOutput,
     /// Where this range starts: right after the previous range's rows.
     pub start_position: u32,
-    pub model: model_identity::ModelContext,
+    pub model: common_identity::ModelContext,
     embedding: Weights,
 }
 enum Weights {
@@ -35,8 +35,8 @@ impl Inputs {
     /// Already-materialized comparison path; indexed Raster inputs use selective loading.
     pub fn eager(prompt: PromptTokenization, embedding: Arc<EmbeddingTable>) -> Self {
         Self {
-            component_root: model_identity::stream::digest(embedding.as_ref()),
-            model: model_identity::ModelContext::embedding(
+            component_root: common_identity::stream::digest(embedding.as_ref()),
+            model: common_identity::ModelContext::embedding(
                 &prompt.context.model,
                 &Default::default(),
             ),
@@ -135,10 +135,10 @@ pub fn run_direct(inputs: &Inputs) -> Result<ActivationSequence> {
         inputs.claimed.token_ids.len() as u64,
     );
     output.start_position = inputs.start_position;
-    output.model = model_identity::stream::verify(
+    output.model = common_identity::stream::verify(
         output.model,
         &inputs.component_root,
-        model_identity::Role::Embedding,
+        common_identity::Role::Embedding,
     );
     Ok(output)
 }
@@ -154,7 +154,7 @@ fn load_inputs_from_initialized_runtime(
         raster::entry_argument_spec::<ClaimedOutput>("claimed"),
         raster::entry_argument_spec::<ActivationSequence>("previous"),
         raster::entry_argument_spec::<EmbeddingTable>("embedding"),
-        raster::entry_argument_spec::<model_identity::sparse::SparseWitness>("witness"),
+        raster::entry_argument_spec::<common_identity::sparse::SparseWitness>("witness"),
     ])?;
     let component_root;
     let prompt = match cached_inputs.get("prompt") {
@@ -210,7 +210,7 @@ fn load_inputs_from_initialized_runtime(
         // Preserve postcard compatibility; never use this to recover from invalid Raster.
         let witness =
             raster::materialize_auth_return(raster::entry_argument_auth_ref::<
-                model_identity::sparse::SparseWitness,
+                common_identity::sparse::SparseWitness,
             >(binding.reference.clone(), "witness"));
         let table = materialize_with_cache(None, key, || {
             raster::materialize_auth_return(raster::entry_argument_auth_ref::<EmbeddingTable>(
@@ -236,19 +236,20 @@ fn load_inputs_from_initialized_runtime(
                 .get(index as usize)
                 .zip(witness.paths.as_slice().get(index as usize))
                 .map(|(page, path)| {
-                    model_identity::sparse::verify(
+                    common_identity::sparse::verify(
                         &witness.header.root,
                         witness.header.count,
                         index,
                         path,
-                        &model_identity::stream::digest(page),
+                        &common_identity::stream::digest(page),
                     )
                 })
                 .unwrap_or(false);
         }
         Weights::Eager(table)
     };
-    let mut model = model_identity::ModelContext::embedding(&prompt.context.model, &previous.model);
+    let mut model =
+        common_identity::ModelContext::embedding(&prompt.context.model, &previous.model);
     model.require(sparse_valid);
     model.require(!previous.model.is_origin() || previous.rows.is_empty());
     model.require(!prompt.context.model.is_origin() || prompt.token_ids.is_empty());

@@ -17,8 +17,8 @@ pub(crate) struct InferArgs {
 /// What a consensus states of its two inferences. Printed before either
 /// inference's result, whose last lines are its generated text.
 pub(crate) fn print_consensus(
-    first: &staged_infer::InferenceResult,
-    second: &staged_infer::InferenceResult,
+    first: &procedure_pipeline::InferenceResult,
+    second: &procedure_pipeline::InferenceResult,
     consensus: &procedure_definition::ConsensusOutcome,
 ) {
     println!("consensus: {}", consensus.description(first, second));
@@ -29,7 +29,7 @@ pub(crate) fn print_consensus(
 /// One inference's result. `inference` is which of the run's models made it,
 /// whose tokenizer the ids decode by.
 pub(crate) fn print_infer_result(
-    result: &staged_infer::InferenceResult,
+    result: &procedure_pipeline::InferenceResult,
     specification_path: Option<&Path>,
     inference: usize,
 ) {
@@ -69,7 +69,7 @@ pub(crate) fn print_infer_result(
 }
 
 pub(crate) fn render_token_trace_for_run(
-    result: &staged_infer::InferenceResult,
+    result: &procedure_pipeline::InferenceResult,
     specification_path: &Path,
     inference: usize,
 ) -> Result<String> {
@@ -84,7 +84,7 @@ pub(crate) fn render_token_trace_for_run(
         specification_dir,
         specification.model_manifest_of(inference)?,
     );
-    let model_manifest: model_manifest::ModelManifest =
+    let model_manifest: inference_manifest::ModelManifest =
         procedure_definition::read_json(&model_manifest_path)?;
     let model_manifest_dir = model_manifest_path
         .parent()
@@ -96,7 +96,7 @@ pub(crate) fn render_token_trace_for_run(
 }
 
 pub(crate) fn render_token_trace(
-    result: &staged_infer::InferenceResult,
+    result: &procedure_pipeline::InferenceResult,
     decoder: &TokenDecoder,
 ) -> String {
     let mut out = String::from("generated tokens:\n");
@@ -264,11 +264,13 @@ pub(crate) fn quote_token(token: &str) -> String {
     format!("{token:?}")
 }
 
-pub(crate) fn print_infer_timing_summary(timings: &staged_infer::InferenceTimings) {
+pub(crate) fn print_infer_timing_summary(timings: &procedure_pipeline::InferenceTimings) {
     eprint!("{}", render_infer_timing_summary(timings));
 }
 
-pub(crate) fn render_infer_timing_summary(timings: &staged_infer::InferenceTimings) -> String {
+pub(crate) fn render_infer_timing_summary(
+    timings: &procedure_pipeline::InferenceTimings,
+) -> String {
     if is_direct_infer_timing(timings) {
         return render_direct_infer_timing_summary(timings);
     }
@@ -324,7 +326,7 @@ pub(crate) fn render_infer_timing_summary(timings: &staged_infer::InferenceTimin
     out
 }
 
-pub(crate) fn is_direct_infer_timing(timings: &staged_infer::InferenceTimings) -> bool {
+pub(crate) fn is_direct_infer_timing(timings: &procedure_pipeline::InferenceTimings) -> bool {
     !timings.stages.is_empty()
         && timings
             .stages
@@ -333,7 +335,7 @@ pub(crate) fn is_direct_infer_timing(timings: &staged_infer::InferenceTimings) -
 }
 
 pub(crate) fn render_direct_infer_timing_summary(
-    timings: &staged_infer::InferenceTimings,
+    timings: &procedure_pipeline::InferenceTimings,
 ) -> String {
     let named = |name: &str| {
         timings
@@ -405,7 +407,7 @@ pub(crate) fn format_duration(duration: std::time::Duration) -> String {
 /// What a direct run found: the procedure kind, the source, and each
 /// inference's result and timings.
 pub(crate) fn print_direct_run(
-    run: &procedure_direct::InferRun,
+    run: &procedure_native::InferRun,
     specification_path: &Path,
     case_path: &Path,
 ) -> Result<()> {
@@ -474,7 +476,7 @@ mod tests {
 
     #[test]
     fn direct_infer_timing_summary_uses_phase_language() {
-        let timings = staged_infer::InferenceTimings {
+        let timings = procedure_pipeline::InferenceTimings {
             total_duration: std::time::Duration::from_millis(10),
             stages: vec![
                 direct_timing("load_direct_model", 1),
@@ -514,7 +516,7 @@ mod tests {
             special_ids: std::collections::BTreeSet::from([1, 2]),
             terminal_ids: std::collections::BTreeSet::from([1]),
         };
-        let result = staged_infer::InferenceResult {
+        let result = procedure_pipeline::InferenceResult {
             generated_token_count: 6,
             generated_token_ids: vec![2, 150917, 10, 999, 1, 3],
             generated_token_ids_sha256: String::from("sha"),
@@ -533,9 +535,9 @@ mod tests {
         assert!(trace.contains(r#"5: id=3 token="late" kind=after_stop rendered=<skipped>"#));
     }
 
-    fn direct_timing(stage: &str, millis: u64) -> staged_infer::InferStageTiming {
+    fn direct_timing(stage: &str, millis: u64) -> procedure_pipeline::InferStageTiming {
         let duration = std::time::Duration::from_millis(millis);
-        staged_infer::InferStageTiming {
+        procedure_pipeline::InferStageTiming {
             stage: stage.to_string(),
             routine: String::from("direct-infer"),
             input_synthesis_duration: std::time::Duration::ZERO,

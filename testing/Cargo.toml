@@ -6,29 +6,29 @@ description = "The parity gate, the claims a lying claimer would submit, and the
 
 [features]
 cuda = ["blockchain-host/cuda"]
-gpu-kernels = ["blockchain-host/gpu-kernels", "direct-infer/gpu-kernels", "staged-infer/gpu-kernels"]
+gpu-kernels = ["blockchain-host/gpu-kernels", "inference-generation/gpu-kernels", "procedure-pipeline/gpu-kernels"]
 
 [dependencies]
 anyhow = "1.0"
 blockchain-host = { path = "../blockchain/host" }
 blockchain-rules = { path = "../blockchain/rules" }
-det-num = { path = "../phases/inference/numerics" }
-direct-infer = { path = "../phases/inference/generation" }
+inference-numerics = { path = "../phases/inference/numerics" }
+inference-generation = { path = "../phases/inference/generation" }
 hex = "0.4"
-model-manifest = { path = "../phases/inference/manifest" }
+inference-manifest = { path = "../phases/inference/manifest" }
 postcard = { version = "1", features = ["alloc"] }
 procedure-definition = { path = "../procedure/definition" }
-procedure-direct = { path = "../procedure/native" }
+procedure-native = { path = "../procedure/native" }
 raster = { path = "../../raster/crates/raster" }
 raster-compiler = { path = "../../raster/crates/raster-compiler" }
 raster-prover = { path = "../../raster/crates/raster-prover" }
 raster-runtime = { path = "../../raster/crates/raster-runtime" }
-run-prep = { path = "../procedure/prepare" }
-prompt-prep = { path = "../phases/inference/prompt" }
+procedure-prepare = { path = "../procedure/prepare" }
+inference-prompt = { path = "../phases/inference/prompt" }
 sequence-check = { path = "../raster-stages/sequence-check" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 sha2 = "0.10"
-source-core = { path = "../phases/source", features = ["sign"] }
-staged-infer = { path = "../procedure/pipeline" }
+source-phase = { path = "../phases/source", features = ["sign"] }
+procedure-pipeline = { path = "../procedure/pipeline" }
 toml = "0.8"

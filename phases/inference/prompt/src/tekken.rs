@@ -13,7 +13,7 @@
 //!
 //! This is the host's tokenizer for direct inference, and the one the prompt
 //! stages are held to. They do not run this code: they cut words with
-//! `prompt-core`'s scanner, a character at a time, and check the merge that a
+//! `inference-tokenizer`'s scanner, a character at a time, and check the merge that a
 //! claim states. The tests here compare the two.
 
 use std::collections::HashMap;

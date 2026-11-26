@@ -15,8 +15,8 @@ use blockchain_host::{
     audit, blockchain, challenge, challenge_profile, claim, claim_check, fault, measure, posted,
     posting,
 };
-use model_import::convert;
-use procedure_direct::{absolute, infer};
+use inference_import::convert;
+use procedure_native::{absolute, infer};
 use testing::{lies, parity};
 
 pub use blockchain_rules::{
@@ -199,12 +199,12 @@ fn warn_if_debug_build(workflow: &str) {
 
 fn execute(cli: Cli) -> Result<ExitCode> {
     if let Some(bytes) = cli.aux_worker {
-        staged_infer::worker::run_worker(bytes)?;
+        procedure_pipeline::worker::run_worker(bytes)?;
         return Ok(ExitCode::SUCCESS);
     }
     if let Some(stage_dir) = cli.run_stage.as_ref() {
         require_input_args(&cli)?;
-        staged_infer::parity::run_hidden_stage_direct(stage_dir)?;
+        procedure_pipeline::parity::run_hidden_stage_direct(stage_dir)?;
         return Ok(ExitCode::SUCCESS);
     }
 
@@ -213,7 +213,7 @@ fn execute(cli: Cli) -> Result<ExitCode> {
             let status = run_hidden_compare(&stage_dir)?;
             return finish_parity_run(status, &stage_dir);
         }
-        let report = staged_infer::parity::run_hidden_stage_compare(&stage_dir)?;
+        let report = procedure_pipeline::parity::run_hidden_stage_compare(&stage_dir)?;
         return Ok(if report.matched {
             ExitCode::SUCCESS
         } else {
@@ -455,7 +455,7 @@ mod tests {
     }
 
     /// The one table of formats and versions says what the code says. The
-    /// weight file's two versions are `detwgt`'s, which this crate does not
+    /// weight file's two versions are `inference-weights`'s, which this crate does not
     /// link: its row is checked by its presence alone.
     #[test]
     fn the_formats_table_is_current() {
@@ -464,9 +464,9 @@ mod tests {
             CHALLENGE_SUBMISSION_VERSION, CLAIM_SUBMISSION_VERSION, CONTRACT_PINS_VERSION,
         };
         use blockchain_rules::registry::{PROCEDURE_VERSION, REGISTRY_VERSION};
-        use model_identity::statement_core::EXECUTION_VERSION;
-        use model_identity::DESCRIPTOR_VERSION;
-        use model_manifest::MODEL_MANIFEST_VERSION;
+        use common_identity::common_statement::EXECUTION_VERSION;
+        use common_identity::DESCRIPTOR_VERSION;
+        use inference_manifest::MODEL_MANIFEST_VERSION;
         use procedure_definition::PREPARED_RUN_VERSION;
 
         let table = include_str!(concat!(

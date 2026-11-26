@@ -4,7 +4,7 @@
 
 use std::error::Error;
 
-use detwgt::{DetwgtSlice, MmapDetwgt};
+use inference_weights::{DetwgtSlice, MmapDetwgt};
 use raster::{Bytes, BytesPage, List};
 
 use super::externals::PAGE_SIZE;
@@ -91,7 +91,7 @@ pub(super) fn q8_columns<const P: u64>(
 }
 
 fn q8_paged<const P: u64>(name: &str, cols: usize, bytes: Vec<u8>) -> Result<Bytes<P>> {
-    let row = det_num::q8::row_bytes(cols)
+    let row = inference_numerics::q8::row_bytes(cols)
         .ok_or_else(|| format!("'{name}' rows of {cols} values are not whole Q8_0 blocks"))?;
     if P as usize % row != 0 {
         return Err(
@@ -202,7 +202,7 @@ mod tests {
                 }
             }
             std::fs::write(&path, file).unwrap();
-            let eager = detwgt::load(&path).unwrap();
+            let eager = inference_weights::load(&path).unwrap();
             let expected = eager.get(name).unwrap();
             let mapped = MmapDetwgt::open(&path).unwrap();
             let cases = [

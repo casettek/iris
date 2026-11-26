@@ -30,7 +30,7 @@ impl Inputs {
     /// Construct the eager comparison path from already materialized weights.
     pub fn eager(embedded: ActivationSequence, layer: Arc<PleLayer>) -> Self {
         Self {
-            component_root: model_identity::stream::digest(layer.as_ref()),
+            component_root: common_identity::stream::digest(layer.as_ref()),
             embedded,
             layer: Weights::Eager(layer),
         }
@@ -102,10 +102,10 @@ pub fn run_direct(inputs: &Inputs) -> Result<PleLayerInputs> {
         }),
         Weights::Selective(layer) => ple::run(&inputs.embedded, layer),
     }?;
-    output.model = model_identity::stream::verify(
+    output.model = common_identity::stream::verify(
         output.model,
         &inputs.component_root,
-        model_identity::Role::Auxiliary(output.layer_idx),
+        common_identity::Role::Auxiliary(output.layer_idx),
     );
     Ok(output)
 }
@@ -121,7 +121,7 @@ fn load_inputs_from_initialized_runtime(
     let binding = raster::start_program(&[
         raster::entry_argument_spec::<ActivationSequence>("embedded"),
         raster::entry_argument_spec::<PleLayer>("layer"),
-        raster::entry_argument_spec::<model_identity::sparse::SparseWitness>("witness"),
+        raster::entry_argument_spec::<common_identity::sparse::SparseWitness>("witness"),
     ])?;
     let component_root;
     let mut embedded = match cached_inputs.get("embedded") {
@@ -166,7 +166,7 @@ fn load_inputs_from_initialized_runtime(
         });
         let witness =
             raster::materialize_auth_return(raster::entry_argument_auth_ref::<
-                model_identity::sparse::SparseWitness,
+                common_identity::sparse::SparseWitness,
             >(binding.reference.clone(), "witness"));
         let layer = materialize_with_cache(materialization_cache, layer_key, || {
             raster::materialize_auth_return(raster::entry_argument_auth_ref::<PleLayer>(
@@ -196,12 +196,12 @@ fn load_inputs_from_initialized_runtime(
                     .get(index as usize)
                     .zip(witness.paths.as_slice().get(index as usize))
                     .map(|(page, path)| {
-                        model_identity::sparse::verify(
+                        common_identity::sparse::verify(
                             &witness.header.root,
                             witness.header.count,
                             index,
                             path,
-                            &model_identity::stream::digest(page),
+                            &common_identity::stream::digest(page),
                         )
                     })
                     .unwrap_or(false),

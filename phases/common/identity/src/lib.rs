@@ -479,4 +479,4 @@ pub mod sparse;
 mod execution;
 #[cfg(test)]
 mod schedule_tests;
-pub use statement_core;
+pub use common_statement;

@@ -2,11 +2,11 @@
 //!
 //! `DecodeEdge`, `ClaimRecord` and `OutputRecord` are `sequence-check`'s,
 //! duplicated field for field, because a pipeline binds by structural
-//! commitment and not by Rust type name. A test in `staged-infer` holds the
+//! commitment and not by Rust type name. A test in `procedure-pipeline` holds the
 //! two to the same commitment. This stage reads two things of the edge: the
 //! generated text, and the claim record.
 
-pub use model_identity::ModelContext;
+pub use common_identity::ModelContext;
 extern crate alloc;
 
 use alloc::string::String;

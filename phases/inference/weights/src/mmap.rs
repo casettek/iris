@@ -12,7 +12,7 @@ const PAYLOAD_ALIGNMENT: usize = 64;
 /// The `element_width` of a tensor stored as `Q8_0` blocks (detwgt v3): rows
 /// of 34-byte blocks, each a half-precision scale and 32 signed bytes, as
 /// GGUF lays them out. Such a tensor holds no Q16.16 values; its products and
-/// lookups go through `det_num::q8`, never through a dequantized copy.
+/// lookups go through `inference_numerics::q8`, never through a dequantized copy.
 pub const Q8_0_WIDTH: u32 = 8;
 
 #[derive(Debug)]
@@ -107,7 +107,7 @@ impl MmapDetwgt {
     /// embedding table is taken without requantizing it.
     pub fn q8_column_blocks(&self, name: &str, start: usize, end: usize) -> Result<Vec<u8>> {
         let matrix = self.q8_matrix(name)?;
-        let block = det_num::q8::BLOCK;
+        let block = inference_numerics::q8::BLOCK;
         if start > end || end > matrix.cols() || start % block != 0 || end % block != 0 {
             bail!(
                 "columns {start}..{end} of tensor '{name}' (width {}) do not fall on {block}-value blocks",
@@ -115,8 +115,8 @@ impl MmapDetwgt {
             );
         }
         let (from, to) = (
-            start / block * det_num::q8::BLOCK_BYTES,
-            end / block * det_num::q8::BLOCK_BYTES,
+            start / block * inference_numerics::q8::BLOCK_BYTES,
+            end / block * inference_numerics::q8::BLOCK_BYTES,
         );
         let mut out = Vec::with_capacity(matrix.rows() * (to - from));
         for row in 0..matrix.rows() {
@@ -404,7 +404,7 @@ pub struct Q8MatrixView<'a> {
 
 impl<'a> Q8MatrixView<'a> {
     pub fn new(bytes: &'a [u8], rows: usize, cols: usize) -> Result<Self> {
-        let row_bytes = det_num::q8::row_bytes(cols).ok_or_else(|| {
+        let row_bytes = inference_numerics::q8::row_bytes(cols).ok_or_else(|| {
             anyhow::anyhow!("Q8_0 rows need a positive multiple of 32 columns, got {cols}")
         })?;
         if Some(bytes.len()) != rows.checked_mul(row_bytes) {
@@ -449,10 +449,11 @@ impl<'a> Q8MatrixView<'a> {
         Ok(&self.bytes[row_idx * self.row_bytes..(row_idx + 1) * self.row_bytes])
     }
 
-    /// One row's Q16.16 values, for lookups. Products use `det_num::q8::dot_row`.
+    /// One row's Q16.16 values, for lookups. Products use `inference_numerics::q8::dot_row`.
     pub fn row_dequantized(&self, row_idx: usize) -> Result<Vec<i32>> {
         let mut out = vec![0; self.cols];
-        det_num::q8::dequantize_row(self.row(row_idx)?, &mut out).map_err(anyhow::Error::msg)?;
+        inference_numerics::q8::dequantize_row(self.row(row_idx)?, &mut out)
+            .map_err(anyhow::Error::msg)?;
         Ok(out)
     }
 }
@@ -471,7 +472,7 @@ fn parse_directory(bytes: &[u8], path: &Path) -> Result<BTreeMap<String, TensorE
     }
     let spec = cursor.u32()?;
     if spec != DET_NUM_SPEC_VERSION {
-        bail!("unsupported det_num spec version {spec}");
+        bail!("unsupported inference_numerics spec version {spec}");
     }
 
     let tensor_count = cursor.u64()?;
@@ -492,7 +493,7 @@ fn parse_directory(bytes: &[u8], path: &Path) -> Result<BTreeMap<String, TensorE
             16 | 32 => element_count as usize * (element_width / 8) as usize,
             Q8_0_WIDTH if version >= 3 => {
                 let cols = *dims.last().unwrap_or(&0) as usize;
-                det_num::q8::row_bytes(cols)
+                inference_numerics::q8::row_bytes(cols)
                     .map(|row| element_count as usize / cols * row)
                     .ok_or_else(|| {
                         anyhow::anyhow!("Q8_0 tensor '{name}' rows are not whole blocks")

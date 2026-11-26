@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use crate::{DirectInferenceConfig, DirectInferenceExecutor};
 use anyhow::{Context, Result};
 use procedure_definition::{ConsensusOutcome, ProcedureKind, ResultKind};
-use staged_infer::InferenceRunReport;
+use procedure_pipeline::InferenceRunReport;
 
 /// A procedure kind run directly: one report per inference, in order, and what a
 /// consensus states of the two.

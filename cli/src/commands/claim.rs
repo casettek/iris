@@ -172,9 +172,9 @@ impl ClaimBuildArgs {
     pub(crate) fn into_options(self) -> Result<ClaimBuildOptions> {
         let current_exe = std::env::current_exe().context("failed to locate current executable")?;
         let staged_backend = if self.staged_subprocess {
-            staged_infer::pipeline_runner::StagedExecutionBackend::Subprocess
+            procedure_pipeline::pipeline_runner::StagedExecutionBackend::Subprocess
         } else {
-            staged_infer::pipeline_runner::StagedExecutionBackend::InProcess
+            procedure_pipeline::pipeline_runner::StagedExecutionBackend::InProcess
         };
         let mut options = ClaimBuildOptions::from_current_dir(
             current_exe,

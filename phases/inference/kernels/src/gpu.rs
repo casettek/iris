@@ -1,7 +1,7 @@
 //! The layer's `Q8_0` products on an NVIDIA GPU.
 //!
 //! `cuda/q8_product.cu` computes each output with the same integers as
-//! `det_num::q8::dot_row`: exact block sums, a 128-bit sum of the scaled
+//! `inference_numerics::q8::dot_row`: exact block sums, a 128-bit sum of the scaled
 //! blocks, one rounding and a saturation. There is no floating point, so a
 //! value cannot depend on the device. `row_dot` stays the definition of every
 //! value, and a sample of each product is checked against it before the
@@ -26,7 +26,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 
 use anyhow::{bail, Result};
-use det_num::q8;
+use inference_numerics::q8;
 
 use crate::tensor::{MatrixSource, Q8Key, Q8Source, Slab};
 

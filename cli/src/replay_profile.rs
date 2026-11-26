@@ -1,9 +1,11 @@
 //! Standalone stage profiling, using the same Raster v4 report helpers as challenges.
 use anyhow::{ensure, Result};
 use procedure_definition::write_json;
+use procedure_pipeline::pipeline_runner::StagedExecutionBackend;
+use procedure_pipeline::{
+    CheckpointedInferenceConfig, CheckpointedInferenceExecutor, ParityPolicy,
+};
 use raster_analysis::replay_profile::ReplayProfile;
-use staged_infer::pipeline_runner::StagedExecutionBackend;
-use staged_infer::{CheckpointedInferenceConfig, CheckpointedInferenceExecutor, ParityPolicy};
 use std::{
     fs::{self, File},
     path::PathBuf,

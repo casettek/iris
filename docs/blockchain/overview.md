@@ -60,7 +60,7 @@ parity gate.
 A blob is named by its height, namespace and commitment. The commitment is
 Celestia's own: the blob split into 512-byte shares, a namespaced Merkle tree
 over them in subtrees, and a Merkle root over the subtree roots. iris computes
-it itself (`iris_celestia::blob_commitment`), so a pointer can
+it itself (`blockchain_celestia::blob_commitment`), so a pointer can
 be checked before anything is posted. The tests reproduce seven commitments
 the local node gave.
 
@@ -132,7 +132,7 @@ Four contracts, in [`blockchain/contracts/src`](../../blockchain/contracts/src):
 
 Each entry point takes one `bytes` argument, the ABI encoding of one struct
 (`IrisTypes.sol`), and decodes it itself. iris writes that encoding
-(`iris_evm`), with its own ABI encoder: no ABI library is
+(`blockchain_evm`), with its own ABI encoder: no ABI library is
 involved on either side of the format.
 
 **The registry** recomputes a procedure's id from what it is given, with
@@ -325,7 +325,7 @@ follows from a dismissal yet (see [what is open](../protocol/open.md)).
 RISC Zero wrote it, and it begins with the window's opening state, whose size
 depends on where the window opens. `RasterJournal.sol` finds the fields above
 by walking it. `iris evm fault-proof` makes the same reading of the bytes
-(`iris_evm::read_fault_journal`) and holds it to the decoded
+(`blockchain_evm::read_fault_journal`) and holds it to the decoded
 journal every time it writes a call, and a unit test holds it to RISC Zero's
 own encoding, so a change of Raster's journal is caught before a contract
 reads one wrongly.

@@ -1,21 +1,21 @@
 [package]
-name = "model-import"
+name = "inference-import"
 version = "0.1.0"
 edition = "2021"
 
 # Not a Raster program: a host-side tool that turns a model bundle into this
 # pipeline's committed externals. It has no tiles and no `#[sequence] main`.
 [[bin]]
-name = "model-import"
+name = "inference-import"
 path = "src/main.rs"
 
 [dependencies]
 anyhow = "1.0"
-model-identity = { path = "../../common/identity" }
+common-identity = { path = "../../common/identity" }
 sequence-check = { path = "../../../raster-stages/sequence-check" }
-det-num = { path = "../numerics" }
-detwgt = { path = "../weights" }
-model-manifest = { path = "../manifest" }
+inference-numerics = { path = "../numerics" }
+inference-weights = { path = "../weights" }
+inference-manifest = { path = "../manifest" }
 inference-kernels = { path = "../kernels" }
 raster = { path = "../../../../raster/crates/raster" }
 serde = { version = "1.0", features = ["derive"] }
@@ -27,6 +27,6 @@ sha2 = "0.10"
 # exactly how they would silently drift into different buckets.
 prompt-check = { path = "../../../raster-stages/prompt-check" }
 
-prompt-prep = { path = "../prompt" }
+inference-prompt = { path = "../prompt" }
 # The `mistral-dense` layer external is the stage's own type.
 layer-mistral = { path = "../../../raster-stages/layer-mistral" }

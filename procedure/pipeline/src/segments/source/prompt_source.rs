@@ -1,12 +1,12 @@
 use std::path::Path;
 
 use anyhow::Result;
-use source_core::{run_source_steps, Recipe, SignerKey, SourceDocuments, SourceRecord};
+use source_phase::{run_source_steps, Recipe, SignerKey, SourceDocuments, SourceRecord};
 
 use crate::artifact_io::{with_main_sequence_scope, with_stage_sequence_scope};
 use crate::cache::{CachedInputs, MaterializationCache};
 
-/// The `prompt-source` stage's inputs. The types are `source-core`'s: the
+/// The `prompt-source` stage's inputs. The types are `source-phase`'s: the
 /// stage program compiles the same source file, and a pipeline links by
 /// structure.
 pub struct Inputs {

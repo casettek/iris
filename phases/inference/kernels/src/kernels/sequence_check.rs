@@ -73,7 +73,7 @@ impl Argmax {
 /// One vocabulary entry's softcapped score against a `Q8_0` head row.
 pub fn score_row(normalized: &[i32], row: &[u8], cap: i32) -> Result<i32> {
     Ok(softcap(
-        det_num::q8::dot_row(normalized, row).map_err(anyhow::Error::msg)?,
+        inference_numerics::q8::dot_row(normalized, row).map_err(anyhow::Error::msg)?,
         cap,
     ))
 }
@@ -253,7 +253,7 @@ pub fn run_sequence_check_direct(inputs: SequenceCheckDirectInputs<'_>) -> Resul
     };
     let positions = check_positions(inputs.activations, inputs.previous, &params)?;
 
-    let stride = det_num::q8::row_bytes(head.hidden_size as usize).unwrap_or(0) as u64;
+    let stride = inference_numerics::q8::row_bytes(head.hidden_size as usize).unwrap_or(0) as u64;
     let byte_len = inputs.head.projection.byte_len();
     ensure!(
         stride != 0 && byte_len % stride == 0,

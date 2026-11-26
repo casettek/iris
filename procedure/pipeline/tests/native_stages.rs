@@ -1,9 +1,9 @@
 use input_embedding::input::{EmbeddingTable, PromptTokenization};
 use prefill_prepare_aux::input::{PleLayer, PleLayerParams};
+use procedure_pipeline::{kernels, segments};
 use raster::{Bytes, List};
 use sequence_check::input::{DecoderTable, DecoderToken};
 use serde::Serialize;
-use staged_infer::{kernels, segments};
 
 const ONE: i32 = 1 << 16;
 
@@ -465,13 +465,16 @@ fn sequence_check_matches_a_greedy_oracle_at_every_position() {
     // vocabulary, keep the first maximum.
     let mut prior = check::DecodeEdge::default();
     let mut greedy = Vec::new();
-    let stride = det_num::q8::row_bytes(hidden).unwrap();
+    let stride = inference_numerics::q8::row_bytes(hidden).unwrap();
     for row in prompt_len - 1..rows - 1 {
         let mut normalized = row_values(row);
         check::rms_norm(&mut normalized, &norm, 1 << 10).unwrap();
         let (mut best_id, mut best) = (0, i32::MIN);
         for (id, bytes) in projection_bytes.chunks_exact(stride).enumerate() {
-            let value = check::softcap(det_num::q8::dot_row(&normalized, bytes).unwrap(), 30 * ONE);
+            let value = check::softcap(
+                inference_numerics::q8::dot_row(&normalized, bytes).unwrap(),
+                30 * ONE,
+            );
             if id == 0 || value > best {
                 (best_id, best) = (id as u32, value);
             }
@@ -700,7 +703,7 @@ fn sequence_check_matches_a_greedy_oracle_at_every_position() {
 }
 
 fn authenticate_decoder_inputs(mut inputs: FinalizeCase) -> FinalizeCase {
-    let d = model_identity::ModelDescriptor {
+    let d = common_identity::ModelDescriptor {
         version: 2,
         tokenizer: [1; 32],
         decoder: raster::core::tree::value_root(&inputs.decoder).unwrap(),
@@ -712,7 +715,7 @@ fn authenticate_decoder_inputs(mut inputs: FinalizeCase) -> FinalizeCase {
     inputs.context.model_id = hex::encode(d.model_id().unwrap());
     inputs.descriptor = raster::BytesPage::__from_parts(0, 0, d.encode().unwrap());
     inputs.context.model =
-        model_identity::ModelContext::bind(inputs.descriptor.as_slice(), &inputs.context.model_id);
+        common_identity::ModelContext::bind(inputs.descriptor.as_slice(), &inputs.context.model_id);
     inputs.context.input_text_sha256 = "11".repeat(32);
     inputs.context.range_size = inputs.context.range_size.max(4);
     inputs.context.prompt_tokens = inputs.context.prompt_tokens.max(1);
@@ -725,7 +728,7 @@ fn authenticate_decoder_inputs(mut inputs: FinalizeCase) -> FinalizeCase {
         inputs.context.range_size,
     );
     // The prompt and the claimed ids, each in whole ranges.
-    let schedule = model_identity::statement_core::StageSchedule {
+    let schedule = common_identity::common_statement::StageSchedule {
         prompt_ranges: inputs
             .context
             .prompt_tokens
@@ -753,12 +756,12 @@ fn authenticate_decoder_inputs(mut inputs: FinalizeCase) -> FinalizeCase {
         e.end.append(id).unwrap();
     }
     e.claimed = true;
-    e.phase = model_identity::statement_core::CHECKED;
-    e.step = model_identity::statement_core::Step::check(schedule.claimed_ranges - 1);
+    e.phase = common_identity::common_statement::CHECKED;
+    e.step = common_identity::common_statement::Step::check(schedule.claimed_ranges - 1);
     inputs.edge.decode_position = e.end.position.saturating_sub(1);
     inputs.edge.token_id = inputs.edge.generated_token_ids.last().copied().unwrap_or(0);
     inputs.edge.model.set_execution(&e);
-    inputs.edge.model.producer = model_identity::context::DECODE;
+    inputs.edge.model.producer = common_identity::context::DECODE;
     inputs.edge.model.completed_layers = inputs.edge.model.layers;
     inputs.witness = sequence_check::decoder_witness(&inputs.decoder).unwrap();
     inputs
@@ -810,9 +813,9 @@ fn decoder_substitution_publishes_sticky_fault_and_preserves_statement_identity(
     assert_eq!(result.generated_token_ids.as_slice(), &[0, 0]);
     // An honestly rebuilt witness for the wrong data still fails the old model.
     inputs.context.model =
-        model_identity::ModelContext::bind(inputs.descriptor.as_slice(), &inputs.context.model_id);
+        common_identity::ModelContext::bind(inputs.descriptor.as_slice(), &inputs.context.model_id);
     inputs.edge.model = inputs.context.model.clone();
-    inputs.edge.model.producer = model_identity::context::DECODE;
+    inputs.edge.model.producer = common_identity::context::DECODE;
     inputs.edge.model.completed_layers = inputs.edge.model.layers;
     inputs.witness = sequence_check::decoder_witness(&inputs.decoder).unwrap();
     assert_eq!(inputs.run().model_fault, 1);

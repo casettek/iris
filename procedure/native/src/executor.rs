@@ -5,8 +5,10 @@
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
-use direct_infer::model::DirectInferenceModel;
-use direct_infer::{generate, generate_with_boundaries, DirectBoundaryRecord, GenerationInput};
+use inference_generation::model::DirectInferenceModel;
+use inference_generation::{
+    generate, generate_with_boundaries, DirectBoundaryRecord, GenerationInput,
+};
 use procedure_definition::{
     read_case, read_specification, InferStageTiming, InferenceResult, InferenceRunReport,
     InferenceTimings,
@@ -89,7 +91,7 @@ impl DirectInferenceExecutor {
         // The run's text, what it was built from and its forms, and the text
         // as this model's tokenizer first cuts it.
         let prepare_started = Instant::now();
-        let prepared_prompt = run_prep::prepare_prompt(
+        let prepared_prompt = procedure_prepare::prepare_prompt(
             model.tokenizer(),
             &specification,
             case_dir,
@@ -99,7 +101,7 @@ impl DirectInferenceExecutor {
         )?;
         // What the statement names as the text's source: zeros when the text
         // is taken as given.
-        let source_sha256 = run_prep::source_id(prepared_prompt.source.as_ref());
+        let source_sha256 = procedure_prepare::source_id(prepared_prompt.source.as_ref());
         let input = GenerationInput {
             text: &prepared_prompt.resolved_prompt,
             pieces: &prepared_prompt.initial_pieces,
@@ -123,9 +125,11 @@ impl DirectInferenceExecutor {
             .result_input_of(config.inference)
             .is_some()
         {
-            let matched =
-                run_prep::source::run_forms(prepared_prompt.forms.iter(), &output.generated_text);
-            (matched.code, run_prep::source::forms_id(&matched))
+            let matched = procedure_prepare::source::run_forms(
+                prepared_prompt.forms.iter(),
+                &output.generated_text,
+            );
+            (matched.code, procedure_prepare::source::forms_id(&matched))
         } else {
             (0, String::new())
         };

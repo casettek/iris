@@ -8,7 +8,7 @@
 //! refuses anything else.
 //!
 //! ```sh
-//! cargo run -p model-import -- \
+//! cargo run -p inference-import -- \
 //!   --model ../iris/assets/tiny-gemma-dev
 //! ```
 //!
@@ -29,7 +29,7 @@ mod mistral;
 
 use externals::*;
 use gemma::*;
-use model_manifest::ModelFamily;
+use inference_manifest::ModelFamily;
 use std::collections::BTreeMap;
 use std::error::Error;
 use std::fs;
@@ -136,7 +136,7 @@ pub fn run_from_args(args: impl IntoIterator<Item = String>) -> Result<(), Box<d
 fn parse_args_from(args: impl IntoIterator<Item = String>) -> Result<ImportConfig, Box<dyn Error>> {
     let mut model_dir = None;
     let mut manifest = None;
-    let mut artifact_root = PathBuf::from(model_manifest::MODEL_ARTIFACTS_DIR);
+    let mut artifact_root = PathBuf::from(inference_manifest::MODEL_ARTIFACTS_DIR);
     let mut model_id = None;
     let mut only_tokenizer = false;
     let mut only_layers = false;
@@ -383,7 +383,7 @@ pub fn import_model(args: ImportConfig) -> Result<ImportResult, Box<dyn Error>> 
 
     // Keep the bundle file-backed instead of owning the entire file plus all
     // decoded tensors. Writers pack only the current external into pages.
-    let weights = detwgt::MmapDetwgt::open(&args.model_dir.join("model.detwgt"))?;
+    let weights = inference_weights::MmapDetwgt::open(&args.model_dir.join("model.detwgt"))?;
     let config: serde_json::Value =
         serde_json::from_slice(&fs::read(args.model_dir.join("config.json"))?)?;
     let text = config
@@ -473,7 +473,7 @@ pub fn import_model(args: ImportConfig) -> Result<ImportResult, Box<dyn Error>> 
             &weights,
             shape.hidden,
             shape.vocab,
-            det_num::f32_to_act((shape.hidden as f32).sqrt()).to_bits(),
+            inference_numerics::f32_to_act((shape.hidden as f32).sqrt()).to_bits(),
             &layout,
             &mut stages,
         )?;
@@ -529,7 +529,7 @@ pub fn import_model(args: ImportConfig) -> Result<ImportResult, Box<dyn Error>> 
         &weights,
         shape.hidden,
         shape.vocab,
-        det_num::f32_to_act((shape.hidden as f32).sqrt()).to_bits(),
+        inference_numerics::f32_to_act((shape.hidden as f32).sqrt()).to_bits(),
         &layout,
         &mut stages,
     )?;
@@ -564,7 +564,7 @@ fn finish_import(
     args: &ImportConfig,
     layout: &ArtifactLayout,
     family: ModelFamily,
-    manifest_shape: model_manifest::FamilyShape,
+    manifest_shape: inference_manifest::FamilyShape,
     pipeline: &PipelineLayers,
     eos_ids: &std::collections::BTreeSet<u32>,
     decoder_commitment: &str,
@@ -572,8 +572,10 @@ fn finish_import(
     stages: &[String],
 ) -> Result<ImportResult, Box<dyn Error>> {
     let commitments = model_commitments(pipeline, decoder_commitment, stages)?;
-    let descriptor =
-        model_manifest::model_identity::descriptor_from_commitments(&commitments, pipeline.layers)?;
+    let descriptor = inference_manifest::model_identity::descriptor_from_commitments(
+        &commitments,
+        pipeline.layers,
+    )?;
     let descriptor =
         raster::BytesPage::__from_parts(0, 0, descriptor.encode().map_err(|f| format!("{f:?}"))?);
     let descriptor_commitment = write_external(
@@ -634,7 +636,7 @@ fn save_model_template(
     // Generated paths start at the importing workspace. Resolve them before
     // saving under the model directory (or an optional custom --manifest path).
     let template =
-        model_manifest::resolve_raster_manifest_paths(manifest, &std::env::current_dir()?)
+        inference_manifest::resolve_raster_manifest_paths(manifest, &std::env::current_dir()?)
             .map_err(|error| -> Box<dyn Error> { error.to_string().into() })?;
     let path = args.artifact_dir().join("Raster.toml");
     fs::create_dir_all(args.artifact_dir())?;
@@ -661,9 +663,9 @@ fn model_commitments(
     pipeline: &PipelineLayers,
     decoder_commitment: &str,
     stages: &[String],
-) -> Result<Vec<model_manifest::ModelCommitment>, Box<dyn Error>> {
+) -> Result<Vec<inference_manifest::ModelCommitment>, Box<dyn Error>> {
     let entry =
-        |role: String, commitment: String| model_manifest::ModelCommitment { role, commitment };
+        |role: String, commitment: String| inference_manifest::ModelCommitment { role, commitment };
     let mut entries = vec![
         entry(
             String::from("tokenizer"),
@@ -1211,7 +1213,7 @@ fn indexed_model_inputs(
 /// committed scalar is the same value the deterministic path uses, not a
 /// near one.
 fn det_act_bits(value: f32) -> i32 {
-    det_num::f32_to_act(value).to_bits()
+    inference_numerics::f32_to_act(value).to_bits()
 }
 
 /// Converts a config float to Q16.16, the representation everything else uses.
@@ -1263,11 +1265,11 @@ fn write_tokenizer(
 ) -> Result<(String, String), Box<dyn Error>> {
     // Reject unsupported profiles, invalid IDs and malformed merge tables
     // before replacing any existing tokenizer/decoder artifact.
-    let prepared_tokenizer = prompt_prep::prompt_tokenizer(tokenizer)?;
+    let prepared_tokenizer = inference_prompt::prompt_tokenizer(tokenizer)?;
     let model = tokenizer
         .get("model")
         .ok_or("tokenizer.json has no model")?;
-    let vocab_map = prompt_prep::vocab_map(model)?;
+    let vocab_map = inference_prompt::vocab_map(model)?;
 
     let mut vocab: Vec<TokenEntry> = vocab_map
         .iter()
@@ -1294,8 +1296,8 @@ fn write_tokenizer(
         .collect();
 
     let max_token_id = vocab.iter().map(|entry| entry.id).max().unwrap_or(0);
-    // As `prompt_prep::decoder_table` builds it, which direct inference decodes with.
-    let byte_level = prompt_prep::is_tekken(tokenizer);
+    // As `inference_prompt::decoder_table` builds it, which direct inference decodes with.
+    let byte_level = inference_prompt::is_tekken(tokenizer);
     let mut decoder_tokens = vec![DecoderToken::default(); max_token_id.saturating_add(1) as usize];
     for entry in &vocab {
         decoder_tokens[entry.id as usize] = DecoderToken {
@@ -1469,19 +1471,19 @@ mod tests {
                 ]
                 .into_iter()
                 .enumerate()
-                .map(|(i, role)| model_manifest::ModelCommitment {
+                .map(|(i, role)| inference_manifest::ModelCommitment {
                     role: role.into(),
                     commitment: format!("{:02x}", i).repeat(32),
                 })
                 .collect::<Vec<_>>(),
             )
             .unwrap();
-            let model = model_manifest::ModelManifest::load_verified(&model_path).unwrap();
+            let model = inference_manifest::ModelManifest::load_verified(&model_path).unwrap();
             let descriptor_bytes = fs::read(
                 model_path
                     .parent()
                     .unwrap()
-                    .join(model_manifest::model_identity::MODEL_DESCRIPTOR_BIN),
+                    .join(inference_manifest::model_identity::MODEL_DESCRIPTOR_BIN),
             )
             .unwrap();
             assert_eq!(
@@ -1506,12 +1508,12 @@ mod tests {
         }
         fs::write(base.join("shared/Raster.toml"), "overwritten").unwrap();
         for (path, template) in &models {
-            let model = model_manifest::ModelManifest::load_verified(path).unwrap();
+            let model = inference_manifest::ModelManifest::load_verified(path).unwrap();
             assert_eq!(model.verified_raster_template(path).unwrap().1, *template);
         }
         args.only_direct = true;
         import_model(args).unwrap();
-        let direct_only = model_manifest::ModelManifest::load_verified(&models[1].0).unwrap();
+        let direct_only = inference_manifest::ModelManifest::load_verified(&models[1].0).unwrap();
         assert!(direct_only.provenance.is_none());
         assert!(direct_only.verified_raster_template(&models[1].0).is_err());
         fs::remove_dir_all(base).unwrap();
@@ -1537,7 +1539,7 @@ mod tests {
             ImportConfig {
                 model_dir: PathBuf::from("model-bundles/model"),
                 manifest: Some(PathBuf::from("Raster.toml")),
-                artifact_root: PathBuf::from(model_manifest::MODEL_ARTIFACTS_DIR),
+                artifact_root: PathBuf::from(inference_manifest::MODEL_ARTIFACTS_DIR),
                 model_id: None,
                 only_tokenizer: true,
                 only_layers: false,

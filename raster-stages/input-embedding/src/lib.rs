@@ -16,8 +16,8 @@
 extern crate alloc;
 
 use alloc::string::String;
-use det_num::ops::mul_sat;
-use det_num::Act;
+use inference_numerics::ops::mul_sat;
+use inference_numerics::Act;
 use raster::prelude::*;
 
 pub mod input;

@@ -28,16 +28,16 @@ test-workspace:
     cargo test --workspace
 
 test-direct:
-    cargo test -p direct-infer
+    cargo test -p inference-generation
 
 test-staged:
-    cargo test -p staged-infer
+    cargo test -p procedure-pipeline
 
 test-cli:
     cargo test -p iris-cli
 
 test-artifacts:
-    cargo test -p model-manifest -p procedure-definition -p blockchain-rules
+    cargo test -p inference-manifest -p procedure-definition -p blockchain-rules
 
 stage-check stage:
     cargo check --manifest-path "raster-stages/{{stage}}/Cargo.toml" --no-default-features

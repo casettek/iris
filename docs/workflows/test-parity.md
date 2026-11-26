@@ -29,7 +29,7 @@ The sibling `../raster` checkout and its normal Rust/RISC Zero build prerequisit
 must be available, as required by this workspace's path dependencies. The gate
 builds that checkout's Raster CLI into `target/parity-tools`; it does not use the
 installed `cargo-raster`. It builds inference stage binaries in release mode
-under `target/parity-host` and runs `det-num`'s independent arithmetic vectors.
+under `target/parity-host` and runs `inference-numerics`'s independent arithmetic vectors.
 These isolated host builds use RISC Zero's `RISC0_SKIP_BUILD=1` option to omit
 unused proof guests and enable incremental compilation. Normal inference and
 proving build settings are unaffected; the report records these build settings.
@@ -385,7 +385,7 @@ the existing weight-cache budget, and read each required embedding page once per
 invocation. Pages are not retained across stages. The projection is still prepared
 for each invocation. Artifact files must remain immutable during a run.
 
-The implementation lives in `staged-infer`. It uses Raster's existing public
+The implementation lives in `procedure-pipeline`. It uses Raster's existing public
 selection/witness APIs, including explicit proof and typed-payload checks when
 the staged process runs with `RASTER_AUTH=0`. Raster stage implementations,
 Raster libraries, shared kernels, stage identities, and checkpoint formats are
@@ -414,9 +414,9 @@ choose the configured representation internally.
 The focused regression and loading benchmark are in the staged crate:
 
 ```sh
-RASTER_AUTH=0 cargo test --release --locked -p staged-infer --lib ple::tests -- --test-threads=1
-RASTER_AUTH=0 cargo test --release --locked -p staged-infer --lib segments::inference::ple::tests::selective_loading_benchmark -- --ignored --exact --nocapture
-cargo test --release --locked -p staged-infer --test worker_parity -- --test-threads=1
+RASTER_AUTH=0 cargo test --release --locked -p procedure-pipeline --lib ple::tests -- --test-threads=1
+RASTER_AUTH=0 cargo test --release --locked -p procedure-pipeline --lib segments::inference::ple::tests::selective_loading_benchmark -- --ignored --exact --nocapture
+cargo test --release --locked -p procedure-pipeline --test worker_parity -- --test-threads=1
 ```
 
 With `STAGED_INFER_REPLAY_BIN_DIR` pointing at the built stage binaries, also run
@@ -426,7 +426,7 @@ With `STAGED_INFER_REPLAY_BIN_DIR` pointing at the built stage binaries, also ru
 `--test worker_parity -- --ignored --exact`. They cover authenticated multi-page
 and saturation cases, and repeated-range worker execution, respectively.
 
-For a full small-model gate, build `iris-cli`, `staged-infer`, and all Raster
+For a full small-model gate, build `iris-cli`, `procedure-pipeline`, and all Raster
 stage binaries in release mode into the same directory, with `RISC0_SKIP_BUILD=1`
 for this host-only test. Then run (use the configured Python executable on Windows):
 

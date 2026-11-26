@@ -1,13 +1,13 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
-use model_manifest::{DirectInferShape, MistralShape, ModelFamily, ModelManifest};
+use inference_manifest::{DirectInferShape, MistralShape, ModelFamily, ModelManifest};
+use inference_prompt::PreparedPiece;
 use prompt_check::input::BpePieces;
-use prompt_prep::PreparedPiece;
 use raster::{Bytes, List};
 
-use detwgt::{DetwgtMatrixView, DetwgtSlice, MmapDetwgt, Q8MatrixView};
 use inference_kernels::tensor::{MatrixSource, Q8Key, Q8Source};
+use inference_weights::{DetwgtMatrixView, DetwgtSlice, MmapDetwgt, Q8MatrixView};
 
 const ONE: i32 = 1 << 16;
 pub const MISSING_DIRECT_MANIFEST: &str = "run iris model import ... to generate a model manifest";
@@ -66,7 +66,7 @@ impl MatrixSource for DirectMatrixView<'_> {
     }
 }
 
-/// A memory-mapped `Q8_0` matrix. Products use `det_num::q8::dot_row`, the
+/// A memory-mapped `Q8_0` matrix. Products use `inference_numerics::q8::dot_row`, the
 /// arithmetic every Raster stage uses; there is no Q16.16 row view.
 #[derive(Debug, Clone, Copy)]
 pub struct DirectQ8View<'a> {
@@ -85,17 +85,17 @@ impl<'a> DirectQ8View<'a> {
     /// Columns `start..start + width` of one row, dequantized for a lookup.
     /// Both ends must fall on 32-value blocks.
     pub fn row_columns(&self, row_idx: usize, start: usize, width: usize) -> Result<Vec<i32>> {
-        let block = det_num::q8::BLOCK;
+        let block = inference_numerics::q8::BLOCK;
         if start % block != 0 || width % block != 0 || start + width > self.inner.cols() {
             bail!(
                 "columns {start}..{} do not fall on Q8_0 blocks",
                 start + width
             );
         }
-        let bytes = &self.inner.row(row_idx)?[start / block * det_num::q8::BLOCK_BYTES
-            ..(start + width) / block * det_num::q8::BLOCK_BYTES];
+        let bytes = &self.inner.row(row_idx)?[start / block * inference_numerics::q8::BLOCK_BYTES
+            ..(start + width) / block * inference_numerics::q8::BLOCK_BYTES];
         let mut out = vec![0; width];
-        det_num::q8::dequantize_row(bytes, &mut out).map_err(anyhow::Error::msg)?;
+        inference_numerics::q8::dequantize_row(bytes, &mut out).map_err(anyhow::Error::msg)?;
         Ok(out)
     }
 }
@@ -122,7 +122,7 @@ impl MatrixSource for DirectQ8View<'_> {
     }
 
     fn row_dot(&self, row_idx: usize, input: &[i32]) -> Result<i32> {
-        det_num::q8::dot_row(input, self.inner.row(row_idx)?).map_err(anyhow::Error::msg)
+        inference_numerics::q8::dot_row(input, self.inner.row(row_idx)?).map_err(anyhow::Error::msg)
     }
 }
 
@@ -240,10 +240,10 @@ impl DirectInferenceModel {
     /// preparation counts it. `None` when the prompt cannot be cut into ranges,
     /// which only a pipeline needs.
     pub fn prompt_ranges(&self, pieces: &[PreparedPiece]) -> Option<u32> {
-        let ranges = prompt_prep::marked_ranges(
+        let ranges = inference_prompt::marked_ranges(
             pieces,
             self.manifest.range_size as usize,
-            &prompt_prep::prompt_tokenizer(&self.tokenizer).ok()?,
+            &inference_prompt::prompt_tokenizer(&self.tokenizer).ok()?,
         )
         .ok()?;
         u32::try_from(ranges.len()).ok()
@@ -279,7 +279,7 @@ impl DirectInferenceModel {
         &self,
         pieces: &[PreparedPiece],
     ) -> Result<prompt_check::input::PromptTokenization> {
-        let tokenizer = prompt_prep::prompt_tokenizer(&self.tokenizer)?;
+        let tokenizer = inference_prompt::prompt_tokenizer(&self.tokenizer)?;
         let pieces = BpePieces {
             pieces: List::from(
                 pieces
@@ -317,10 +317,13 @@ impl DirectInferenceModel {
         let Ok(shape) = self.manifest.shape.gemma() else {
             return Ok(row);
         };
-        let scale = det_num::Act::from_bits(shape.embedding_scale);
+        let scale = inference_numerics::Act::from_bits(shape.embedding_scale);
         Ok(row
             .into_iter()
-            .map(|bits| det_num::ops::mul_sat(det_num::Act::from_bits(bits), scale).to_bits())
+            .map(|bits| {
+                inference_numerics::ops::mul_sat(inference_numerics::Act::from_bits(bits), scale)
+                    .to_bits()
+            })
             .collect())
     }
 
@@ -592,7 +595,7 @@ impl DirectInferenceModel {
     }
 
     pub fn decoder_table(&self) -> Result<sequence_check::input::DecoderTable> {
-        prompt_prep::decoder_table(&self.tokenizer, &self.manifest.eos_token_ids)
+        inference_prompt::decoder_table(&self.tokenizer, &self.manifest.eos_token_ids)
     }
 
     pub fn manifest(&self) -> &ModelManifest {

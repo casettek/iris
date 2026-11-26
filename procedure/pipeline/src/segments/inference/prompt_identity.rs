@@ -1,5 +1,5 @@
 //! Native mirror of the authored sparse tokenizer lookups.
-use model_identity::{sparse, stream};
+use common_identity::{sparse, stream};
 use prompt_check::input::*;
 
 pub(crate) fn root(t: &PromptTokenizer, w: &TokenizerWitness) -> raster::BytesPage {

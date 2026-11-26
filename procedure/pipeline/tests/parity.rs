@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use staged_infer::parity::{
+use procedure_pipeline::parity::{
     render_timing_summary, ParityAuthority, ParityReport, PipelineExecutionTimes, RasterSourceMode,
 };
 
@@ -8,7 +8,7 @@ use staged_infer::parity::{
 fn parity_artifacts_live_under_stage_directory() {
     let stage = Path::new("target/raster/pipelines/run/range_p0_l3");
     assert_eq!(
-        staged_infer::parity::parity_dir(stage),
+        procedure_pipeline::parity::parity_dir(stage),
         stage.join("staged-infer-parity")
     );
 }

@@ -1,6 +1,6 @@
 pub mod diagnostics;
-pub use detwgt;
 pub use diagnostics::DirectBoundaryRecord;
+pub use inference_weights;
 pub mod executor;
 pub mod generation;
 pub mod model;

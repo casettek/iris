@@ -99,7 +99,7 @@ pub fn load(path: &Path) -> Result<Artifact, Box<dyn Error>> {
     }
     let spec = cursor.u32()?;
     if spec != DET_NUM_SPEC_VERSION {
-        return Err(format!("unsupported det_num spec version {spec}").into());
+        return Err(format!("unsupported inference_numerics spec version {spec}").into());
     }
 
     let tensor_count = cursor.u64()?;

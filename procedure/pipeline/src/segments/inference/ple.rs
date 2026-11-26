@@ -249,7 +249,7 @@ mod tests;
 
 impl SelectedWeights {
     pub(crate) fn identity(&self, source: &VerifiedSelections) -> Result<(BytesPage, bool)> {
-        use model_identity::{
+        use common_identity::{
             sparse::{SparseHeader, SparsePath},
             stream,
         };
@@ -266,7 +266,7 @@ impl SelectedWeights {
             let mut path = fields(&["witness", "paths"]);
             path.segments.push(SelectorSegment::Index(index));
             let proof: SparsePath = source.select(path)?;
-            valid &= model_identity::sparse::verify(
+            valid &= common_identity::sparse::verify(
                 &header.root,
                 header.count,
                 index,
@@ -282,9 +282,9 @@ pub(crate) fn ple_identity_root(
     projection: &Bytes<PAGE_SIZE>,
     byte_len: u64,
     page_size: u64,
-    header: &model_identity::sparse::SparseHeader,
+    header: &common_identity::sparse::SparseHeader,
 ) -> BytesPage {
-    use model_identity::stream;
+    use common_identity::stream;
     let embeddings = stream::structure(&[
         ("byte_len", stream::digest(&byte_len)),
         ("page_size", stream::digest(&page_size)),

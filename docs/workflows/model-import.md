@@ -57,7 +57,7 @@ It copies `config.json`, `tokenizer.json` and `chat_template.jinja` from
 and vocabulary match `config.json`. It then writes `model.detwgt`:
 
 - `Q8_0` tensors are copied block for block.
-- F32 and BF16 tensors become Q16.16 through `det_num`'s exact conversion.
+- F32 and BF16 tensors become Q16.16 through `inference_numerics`'s exact conversion.
 - GGUF names map to the Hugging Face names the importer reads.
 - `rope_freqs` is skipped, because RoPE comes from `config.json`.
 - Any tensor without a mapping fails the conversion.

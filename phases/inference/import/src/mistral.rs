@@ -7,8 +7,8 @@ use std::collections::BTreeSet;
 use std::error::Error;
 
 use inference_kernels::mistral::num::{attention_scale_q32, yarn_inverse_frequencies};
+use inference_manifest::MistralShape;
 use layer_mistral::input::{LayerParams, TransformerLayer};
-use model_manifest::MistralShape;
 
 use super::externals::page_of_i32s;
 use super::{external_line, mapped_weights, write_external, ArtifactLayout, PipelineLayers};
@@ -81,7 +81,7 @@ pub(super) fn pipeline_layers(shape: &MistralShape) -> PipelineLayers {
 
 /// Writes one external per layer: its parameters and its seven matrices.
 pub(super) fn write_layers(
-    weights: &detwgt::MmapDetwgt,
+    weights: &inference_weights::MmapDetwgt,
     shape: &MistralShape,
     layout: &ArtifactLayout,
     stages: &mut Vec<String>,
@@ -272,7 +272,7 @@ pub(super) fn shape_from_config(text: &serde_json::Value) -> Result<MistralShape
         head_dim,
         intermediate_size: whole(text, "intermediate_size")? as u32,
         vocab_size: whole(text, "vocab_size")? as u32,
-        norm_eps: det_num::f32_to_acc(
+        norm_eps: inference_numerics::f32_to_acc(
             text.get("rms_norm_eps")
                 .and_then(serde_json::Value::as_f64)
                 .ok_or("config.json text_config has no rms_norm_eps")? as f32,

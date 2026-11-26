@@ -1,5 +1,5 @@
 [package]
-name = "prompt-prep"
+name = "inference-prompt"
 version = "0.1.0"
 edition = "2021"
 description = "Preparing a prompt for a model: tokenizer, pieces, ranges and the decoder table"

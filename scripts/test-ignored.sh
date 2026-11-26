@@ -44,22 +44,22 @@ step ignored-merge-exhaustive "token check: only the merge's own grouping passes
 
 step ignored-stage-binaries "stage programs build as host binaries" \
     cargo build -p input-embedding -p prefill-prepare-aux -p prefill-range -p layer-mistral \
-    -p prompt-bind -p prompt-check -p sequence-check -p staged-infer --bins
+    -p prompt-bind -p prompt-check -p sequence-check -p procedure-pipeline --bins
 
 # Benchmarks print timings and assert nothing; the helper is spawned by
 # another test; the production vocabulary test runs in release below.
 STAGED_INFER_REPLAY_BIN_DIR="$repo_root/target/debug" BPE_REFERENCE_TOKENIZER="$tokenizer" \
     step ignored-staged "native loaders match authenticated Raster stage binaries" \
-    cargo test -p staged-infer --no-fail-fast -- --ignored --test-threads=1 \
+    cargo test -p procedure-pipeline --no-fail-fast -- --ignored --test-threads=1 \
     --skip benchmark --skip challenge_cleanup_child \
     --skip claimed_tokens_on_the_production_vocabulary
 
 BPE_REFERENCE_TOKENIZER="$tokenizer" \
     step ignored-production-vocabulary "claimed tokens check out on the real vocabulary" \
-    cargo test --release -p staged-infer --test prompt_check -- --ignored
+    cargo test --release -p procedure-pipeline --test prompt_check -- --ignored
 
 step ignored-direct "direct inference on the real model gives the known token" \
-    cargo test --release -p procedure-direct --test executor -- --ignored
+    cargo test --release -p procedure-native --test executor -- --ignored
 
 IRIS_PARITY_RUN="$parity_run" \
     step ignored-parity-attacks "kept attacks replay the same natively and through Raster" \

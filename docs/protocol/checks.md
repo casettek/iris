@@ -362,7 +362,7 @@ claimed output follows from the claimer's inputs.
 ```bash
 cargo run --release -p iris-cli -- claim check \
   --specification specification.toml \
-  --submission target/staged-infer/runs/.../claim_submission.json
+  --submission target/procedure-pipeline/runs/.../claim_submission.json
 ```
 
 The command reads the checkpoint files, every stage's input list and the

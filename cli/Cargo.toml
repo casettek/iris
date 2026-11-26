@@ -10,7 +10,7 @@ path = "src/main.rs"
 
 [features]
 cuda = ["blockchain-host/cuda", "testing/cuda"]
-gpu-kernels = ["direct-infer/gpu-kernels", "staged-infer/gpu-kernels", "blockchain-host/gpu-kernels", "testing/gpu-kernels", "procedure-direct/gpu-kernels", "procedure-run/gpu-kernels"]
+gpu-kernels = ["inference-generation/gpu-kernels", "procedure-pipeline/gpu-kernels", "blockchain-host/gpu-kernels", "testing/gpu-kernels", "procedure-native/gpu-kernels", "procedure-run/gpu-kernels"]
 replay-profile = []
 
 [dependencies]
@@ -18,19 +18,19 @@ anyhow = "1.0"
 blockchain-host = { path = "../blockchain/host" }
 blockchain-rules = { path = "../blockchain/rules" }
 clap = { version = "4.5", features = ["derive"] }
-direct-infer = { path = "../phases/inference/generation" }
-model-identity = { path = "../phases/common/identity" }
-model-import = { path = "../phases/inference/import" }
-model-manifest = { path = "../phases/inference/manifest" }
+inference-generation = { path = "../phases/inference/generation" }
+common-identity = { path = "../phases/common/identity" }
+inference-import = { path = "../phases/inference/import" }
+inference-manifest = { path = "../phases/inference/manifest" }
 procedure-definition = { path = "../procedure/definition" }
-procedure-direct = { path = "../procedure/native" }
+procedure-native = { path = "../procedure/native" }
 procedure-run = { path = "../procedure/run" }
 raster-analysis = { path = "../../raster/crates/raster-analysis" }
 raster-runtime = { path = "../../raster/crates/raster-runtime" }
-run-prep = { path = "../procedure/prepare" }
+procedure-prepare = { path = "../procedure/prepare" }
 serde_json = "1.0"
-source-core = { path = "../phases/source", features = ["sign"] }
-staged-infer = { path = "../procedure/pipeline" }
+source-phase = { path = "../phases/source", features = ["sign"] }
+procedure-pipeline = { path = "../procedure/pipeline" }
 testing = { path = "../testing" }
 toml = "0.8"
 

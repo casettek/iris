@@ -5,8 +5,8 @@
 
 use std::path::Path;
 
-use ::model_identity::context::parse_id;
-use ::model_identity::statement_core::Statement;
+use ::common_identity::common_statement::Statement;
+use ::common_identity::context::parse_id;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -53,7 +53,7 @@ pub struct RequiredOrigin {
     /// and not only their hash: the result step is a comparison per form, so
     /// a contract takes it on the submitted output itself and does not rest
     /// on the result stage, which is too short to be replayed in a dispute.
-    pub forms: Vec<result_core::Form>,
+    pub forms: Vec<result_phase::Form>,
     /// The hash over the recipe a relay must build its prompt with: the text
     /// before and after the earlier output. `None` in a procedure that
     /// relays nothing, and one that accepts any recipe.
@@ -63,10 +63,10 @@ pub struct RequiredOrigin {
 impl RequiredOrigin {
     /// What the result step states of an output read by these forms.
     pub fn result_of(&self, output_text: &str) -> SubmittedResult {
-        let matched = result_core::run_forms(&self.forms, output_text);
+        let matched = result_phase::run_forms(&self.forms, output_text);
         SubmittedResult {
             code: matched.code,
-            forms_sha256: result_core::forms_id(&matched),
+            forms_sha256: result_phase::forms_id(&matched),
         }
     }
 
@@ -74,13 +74,13 @@ impl RequiredOrigin {
     /// forms, when both claim records are valid and name one input. A
     /// contract has held the submission to both before it asks.
     pub fn consensus_of(&self, first_output: &str, second_output: &str) -> SubmittedConsensus {
-        let valid = || result_core::Claimed {
+        let valid = || result_phase::Claimed {
             statement: &[],
             output_text_sha256: &[],
             valid: true,
         };
-        let record = result_core::close_consensus(
-            result_core::run_consensus(&self.forms, first_output, second_output, true),
+        let record = result_phase::close_consensus(
+            result_phase::run_consensus(&self.forms, first_output, second_output, true),
             valid(),
             valid(),
         );
@@ -130,8 +130,8 @@ pub struct RequiredSource {
 
 /// The digest a statement names for a source record: see `source_id` in the
 /// shared prompt source, which is where the first bind computes it.
-pub fn source_record_id(record: &source_core::SourceRecord) -> String {
-    prompt_core::source_id(&prompt_core::SourceRecord {
+pub fn source_record_id(record: &source_phase::SourceRecord) -> String {
+    inference_tokenizer::source_id(&inference_tokenizer::SourceRecord {
         present: record.present,
         text_sha256: record.text_sha256.clone(),
         text_total: record.text_total,
@@ -173,13 +173,13 @@ pub struct ClaimSubmission {
     /// The source record that digest is over, for a claim that names a
     /// source. A contract reads the signer and the recipe from it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub source: Option<source_core::SourceRecord>,
+    pub source: Option<source_phase::SourceRecord>,
     /// The record each relay of the claim states, one per inference a relay
     /// gives its prompt, in the order the procedure kind runs them. Such an
     /// inference's statement is over this record's text and digest, in place
     /// of the claim's input and source.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub relays: Vec<source_core::SourceRecord>,
+    pub relays: Vec<source_phase::SourceRecord>,
     /// What each inference claims, in the order the procedure kind runs them: one
     /// for the `single` procedure kind, two for `consensus`.
     pub inferences: Vec<SubmittedInference>,
@@ -462,8 +462,8 @@ impl ClaimSubmission {
         procedure: String,
         results: &[&InferenceResult],
         consensus: Option<SubmittedConsensus>,
-        source: Option<&source_core::SourceRecord>,
-        relays: Vec<source_core::SourceRecord>,
+        source: Option<&source_phase::SourceRecord>,
+        relays: Vec<source_phase::SourceRecord>,
         pipeline_dir: &Path,
     ) -> Result<Self> {
         let first = results.first().context("a claim holds an inference")?;
@@ -586,7 +586,7 @@ pub fn check_procedure_kind(
 pub fn relay_record(
     submission: &ClaimSubmission,
     inference: usize,
-) -> std::result::Result<Option<&source_core::SourceRecord>, SubmissionRejection> {
+) -> std::result::Result<Option<&source_phase::SourceRecord>, SubmissionRejection> {
     let procedure_kind = submission.procedure_kind;
     if procedure_kind.relayed_from(inference).is_none() {
         return Ok(None);
@@ -726,8 +726,8 @@ pub fn check_origin(
             .ok_or(SubmissionRejection::AnotherRelayed { inference })?;
         let hash = |text: &str| hex::decode(text).unwrap_or_default();
         // The relay step's own function over the earlier record's values.
-        let named = source_core::relay::fold_relayed(
-            source_core::relay::begin_relay_fold(),
+        let named = source_phase::relay::fold_relayed(
+            source_phase::relay::begin_relay_fold(),
             "",
             &hash(&relayed.record.statement_sha256),
             &hash(&relayed.record.output_text_sha256),

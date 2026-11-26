@@ -1,5 +1,5 @@
 use crate::input::*;
-use model_identity::stream;
+use common_identity::stream;
 use raster::prelude::*;
 #[tile(kind=iter)]
 pub fn identity_empty() -> BytesPage {
@@ -34,7 +34,7 @@ pub fn identity_component(params: BytesPage, projection: BytesPage) -> BytesPage
 }
 #[tile(kind=iter)]
 pub fn identity_verify(context: ModelContext, root: BytesPage) -> ModelContext {
-    stream::verify(context, &root, model_identity::Role::Head)
+    stream::verify(context, &root, common_identity::Role::Head)
 }
 
 #[tile(kind=iter)]

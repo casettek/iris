@@ -6,16 +6,16 @@
 //! shared prompt source — because the pipeline binds by structural commitment,
 //! not by Rust type name. `DecodeEdge` is this stage's own: a check reads the
 //! edge of the check before it.
-//! The scoring numerics delegate to `det_num`, so a score is bit-identical to
+//! The scoring numerics delegate to `inference_numerics`, so a score is bit-identical to
 //! direct generation's score of the same activation row.
 
-pub use model_identity::ModelContext;
+pub use common_identity::ModelContext;
 extern crate alloc;
 
 use alloc::string::String;
 use alloc::vec::Vec;
-use det_num::ops::{mac_bits, requantize, rms_norm_in_place, softcap_act};
-use det_num::{Acc, Act, Wgt};
+use inference_numerics::ops::{mac_bits, requantize, rms_norm_in_place, softcap_act};
+use inference_numerics::{Acc, Act, Wgt};
 use raster::{Bytes, BytesPage, List};
 use serde::{Deserialize, Serialize};
 

@@ -104,7 +104,8 @@ pub(crate) fn select_positions_measured(
     let mut stats = RunStats::default();
     let params = &head.metadata.params;
     let hidden = params.hidden_size as usize;
-    let stride = det_num::q8::row_bytes(hidden).context("head width is not whole Q8_0 blocks")?;
+    let stride =
+        inference_numerics::q8::row_bytes(hidden).context("head width is not whole Q8_0 blocks")?;
     for position in positions {
         ensure!(
             position.len() == hidden,

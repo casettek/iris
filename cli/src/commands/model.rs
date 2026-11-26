@@ -34,7 +34,7 @@ pub(crate) struct ModelImportArgs {
     /// Also save a copy of the model-specific Raster template at this path.
     #[arg(long)]
     manifest: Option<PathBuf>,
-    #[arg(long = "artifact-root", default_value = model_manifest::MODEL_ARTIFACTS_DIR)]
+    #[arg(long = "artifact-root", default_value = inference_manifest::MODEL_ARTIFACTS_DIR)]
     artifact_root: PathBuf,
     #[arg(long = "model-id")]
     model_id: Option<String>,
@@ -52,13 +52,13 @@ pub(crate) struct ModelImportArgs {
     #[arg(long)]
     no_stage_fixtures: bool,
     /// Largest range, in prompt tokens or claimed ids.
-    #[arg(long = "range-size", default_value_t = model_import::DEFAULT_RANGE_SIZE)]
+    #[arg(long = "range-size", default_value_t = inference_import::DEFAULT_RANGE_SIZE)]
     range_size: u32,
 }
 
 impl ModelImportArgs {
-    pub(crate) fn into_import_config(self) -> model_import::ImportConfig {
-        model_import::ImportConfig {
+    pub(crate) fn into_import_config(self) -> inference_import::ImportConfig {
+        inference_import::ImportConfig {
             model_dir: self.model_dir,
             manifest: self.manifest,
             artifact_root: self.artifact_root,
@@ -81,7 +81,7 @@ pub(crate) fn run(command: ModelCommand) -> Result<ExitCode> {
             Ok(ExitCode::SUCCESS)
         }
         ModelCommand::Import(args) => {
-            let imported = model_import::import_model(args.into_import_config())
+            let imported = inference_import::import_model(args.into_import_config())
                 .map_err(|error| anyhow::anyhow!("{error}"))?;
             if let (Some(manifest), Some(template)) =
                 (&imported.model_manifest_path, &imported.template)
@@ -102,12 +102,11 @@ pub(crate) fn run(command: ModelCommand) -> Result<ExitCode> {
 /// An import made where the stage projects are not locked gets no pins and
 /// says so. It can still run; it cannot have a claim checked against it.
 fn write_contract_pins(model_manifest_path: &std::path::Path, template: &str) {
-    let pins =
-        model_manifest::ModelManifest::load_verified(model_manifest_path).and_then(|manifest| {
-            blockchain_rules::checks::ContractPins::from_import(&manifest, template)
-        });
+    let pins = inference_manifest::ModelManifest::load_verified(model_manifest_path).and_then(
+        |manifest| blockchain_rules::checks::ContractPins::from_import(&manifest, template),
+    );
     let path = model_manifest_path.with_file_name(blockchain_rules::checks::CONTRACT_PINS_JSON);
-    match pins.and_then(|pins| model_manifest::write_json(&path, &pins)) {
+    match pins.and_then(|pins| inference_manifest::write_json(&path, &pins)) {
         Ok(()) => println!("wrote {}", path.display()),
         Err(error) => println!("no contract pins written: {error:#}"),
     }
@@ -122,7 +121,7 @@ mod tests {
         let config = ModelImportArgs {
             model_dir: PathBuf::from("model"),
             manifest: Some(PathBuf::from("Raster.toml")),
-            artifact_root: PathBuf::from(model_manifest::MODEL_ARTIFACTS_DIR),
+            artifact_root: PathBuf::from(inference_manifest::MODEL_ARTIFACTS_DIR),
             model_id: Some(String::from("gemma")),
             only_tokenizer: true,
             only_layers: false,
@@ -130,16 +129,16 @@ mod tests {
             only_ple: false,
             only_direct: false,
             no_stage_fixtures: false,
-            range_size: model_import::DEFAULT_RANGE_SIZE,
+            range_size: inference_import::DEFAULT_RANGE_SIZE,
         }
         .into_import_config();
 
         assert_eq!(
             config,
-            model_import::ImportConfig {
+            inference_import::ImportConfig {
                 model_dir: PathBuf::from("model"),
                 manifest: Some(PathBuf::from("Raster.toml")),
-                artifact_root: PathBuf::from(model_manifest::MODEL_ARTIFACTS_DIR),
+                artifact_root: PathBuf::from(inference_manifest::MODEL_ARTIFACTS_DIR),
                 model_id: Some(String::from("gemma")),
                 only_tokenizer: true,
                 only_layers: false,
@@ -147,7 +146,7 @@ mod tests {
                 only_ple: false,
                 only_direct: false,
                 no_stage_fixtures: false,
-                range_size: model_import::DEFAULT_RANGE_SIZE,
+                range_size: inference_import::DEFAULT_RANGE_SIZE,
             }
         );
     }

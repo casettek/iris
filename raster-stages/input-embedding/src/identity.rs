@@ -1,5 +1,5 @@
 use crate::input::*;
-use model_identity::stream;
+use common_identity::stream;
 use raster::prelude::*;
 #[tile(kind=iter)]
 pub fn identity_embedding_context(
@@ -12,7 +12,7 @@ pub fn identity_embedding_context(
     let mut model = ModelContext::embedding(&prompt, &previous);
     model.require(!previous.is_origin() || previous_rows.count == 0);
     model.require(!prompt.is_origin() || prompt_count == 0);
-    stream::verify(model, &root, model_identity::Role::Embedding)
+    stream::verify(model, &root, common_identity::Role::Embedding)
 }
 
 #[tile(kind=iter)]
@@ -56,7 +56,7 @@ pub fn identity_sparse_page(
     path: SparsePath,
 ) -> ModelContext {
     let mut model = model;
-    model.require(model_identity::sparse::verify(
+    model.require(common_identity::sparse::verify(
         &header.root,
         header.count,
         index,

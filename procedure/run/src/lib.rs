@@ -16,10 +16,12 @@ use procedure_definition::{
     build_checkpoint_list, read_case, read_checkpoint_list, read_specification, ConsensusOutcome,
     Divergence, InferenceResult, ProcedureKind,
 };
-use procedure_direct::{absolute, DirectInferenceConfig, DirectInferenceExecutor, InferRun};
-use run_prep::staged::StagedRun;
-use staged_infer::pipeline_runner::StagedExecutionBackend;
-use staged_infer::{CheckpointedInferenceConfig, CheckpointedInferenceExecutor, ParityPolicy};
+use procedure_native::{absolute, DirectInferenceConfig, DirectInferenceExecutor, InferRun};
+use procedure_pipeline::pipeline_runner::StagedExecutionBackend;
+use procedure_pipeline::{
+    CheckpointedInferenceConfig, CheckpointedInferenceExecutor, ParityPolicy,
+};
+use procedure_prepare::staged::StagedRun;
 
 /// What a procedure is run from.
 #[derive(Debug, Clone)]
@@ -67,7 +69,7 @@ pub fn run(options: &RunOptions) -> Result<ProcedureRun> {
 /// The direct run: every inference of the procedure generated, and what the
 /// procedure states of them.
 pub fn run_direct(options: &RunOptions) -> Result<InferRun> {
-    procedure_direct::run_infer(
+    procedure_native::run_infer(
         absolute(&options.base_dir, &options.specification_path),
         absolute(&options.base_dir, &options.case_path),
     )
@@ -98,7 +100,7 @@ pub fn run_staged(options: &RunOptions, direct: &InferRun) -> Result<Checkpointe
             .result
             .clone())
     };
-    let prepared = run_prep::staged::prepare_run(StagedRun {
+    let prepared = procedure_prepare::staged::prepare_run(StagedRun {
         base_dir: &options.base_dir,
         specification_path,
         specification: &specification,

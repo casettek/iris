@@ -16,32 +16,32 @@ pub struct PostedRun {
     /// The source stage's inputs, in a run that has a source.
     pub source: Option<PostedSourceInputs>,
     /// The result stage's forms.
-    pub forms: result_core::ResultForms,
+    pub forms: result_phase::ResultForms,
     /// One per inference, in the order the procedure kind runs them.
     pub inferences: Vec<PostedInference>,
     /// The relay stage's recipe, in a run of a procedure kind that relays an
     /// output.
-    pub relay: Option<source_core::relay::RelayRecipe>,
+    pub relay: Option<source_phase::relay::RelayRecipe>,
 }
 
 /// What the source stage is given: the key attestations are checked against,
 /// the recipe, and the documents with their attestations.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PostedSourceInputs {
-    pub signer: source_core::SignerKey,
-    pub recipe: source_core::Recipe,
-    pub documents: source_core::SourceDocuments,
+    pub signer: source_phase::SignerKey,
+    pub recipe: source_phase::Recipe,
+    pub documents: source_phase::SourceDocuments,
 }
 
 /// What one inference's stages are given.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PostedInference {
-    pub config: prompt_core::RunConfig,
-    pub schedule: prompt_core::RunSchedule,
+    pub config: inference_tokenizer::RunConfig,
+    pub schedule: inference_tokenizer::RunSchedule,
     /// What the run claims of the whole text.
-    pub text_digest: prompt_core::TextDigest,
+    pub text_digest: inference_tokenizer::TextDigest,
     /// One slice of the text per prompt range.
-    pub text: Vec<prompt_core::PromptText>,
+    pub text: Vec<inference_tokenizer::PromptText>,
     /// One set of token marks per prompt range.
     pub marks: Vec<Vec<u32>>,
     /// One set of claimed output ids per claimed range.
@@ -51,17 +51,17 @@ pub struct PostedInference {
 /// One of a run's inputs, with the stage input it is given as.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RunInput<'a> {
-    Signer(&'a source_core::SignerKey),
-    Recipe(&'a source_core::Recipe),
-    Documents(&'a source_core::SourceDocuments),
-    Forms(&'a result_core::ResultForms),
-    Config(&'a prompt_core::RunConfig),
-    Schedule(&'a prompt_core::RunSchedule),
-    TextDigest(&'a prompt_core::TextDigest),
-    Text(&'a prompt_core::PromptText),
+    Signer(&'a source_phase::SignerKey),
+    Recipe(&'a source_phase::Recipe),
+    Documents(&'a source_phase::SourceDocuments),
+    Forms(&'a result_phase::ResultForms),
+    Config(&'a inference_tokenizer::RunConfig),
+    Schedule(&'a inference_tokenizer::RunSchedule),
+    TextDigest(&'a inference_tokenizer::TextDigest),
+    Text(&'a inference_tokenizer::PromptText),
     Marks(&'a [u32]),
     Claimed(&'a [u32]),
-    RelayRecipe(&'a source_core::relay::RelayRecipe),
+    RelayRecipe(&'a source_phase::relay::RelayRecipe),
 }
 
 impl RunInput<'_> {

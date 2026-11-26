@@ -1,5 +1,5 @@
 [package]
-name = "result-core"
+name = "result-phase"
 version = "0.1.0"
 edition = "2021"
 description = "The result steps' shared source: forms, and the agreement of two outputs"

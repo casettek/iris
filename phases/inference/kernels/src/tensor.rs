@@ -1,6 +1,6 @@
 use anyhow::{anyhow, bail, Result};
-use det_num::ops::{mac_bits, requantize};
-use det_num::Acc;
+use inference_numerics::ops::{mac_bits, requantize};
+use inference_numerics::Acc;
 use prefill_range::input::PAGE_SIZE;
 use raster::{Bytes, BytesPage};
 use rayon::prelude::*;
@@ -323,7 +323,7 @@ impl MatrixSource for Matrix {
 }
 
 /// A `Q8_0` matrix: rows of 34-byte blocks, as committed. Products go
-/// through `det_num::q8::dot_row`; there is deliberately no Q16.16 view,
+/// through `inference_numerics::q8::dot_row`; there is deliberately no Q16.16 view,
 /// because a dequantized product rounds differently.
 #[derive(Clone, Debug)]
 pub struct Q8Matrix {
@@ -350,7 +350,7 @@ impl Q8Matrix {
     }
 
     pub fn from_bytes(name: &str, bytes: Vec<u8>, rows: usize, cols: usize) -> Result<Self> {
-        let row_bytes = det_num::q8::row_bytes(cols)
+        let row_bytes = inference_numerics::q8::row_bytes(cols)
             .ok_or_else(|| anyhow!("{name} rows of {cols} values are not whole Q8_0 blocks"))?;
         let expected = rows
             .checked_mul(row_bytes)
@@ -380,7 +380,8 @@ impl Q8Matrix {
             bail!("Q8_0 row {row_idx} out of range for {} rows", self.rows);
         }
         let mut out = vec![0; self.cols];
-        det_num::q8::dequantize_row(self.row(row_idx), &mut out).map_err(anyhow::Error::msg)?;
+        inference_numerics::q8::dequantize_row(self.row(row_idx), &mut out)
+            .map_err(anyhow::Error::msg)?;
         Ok(out)
     }
 }
@@ -412,7 +413,7 @@ impl MatrixSource for Q8Matrix {
                 self.rows
             );
         }
-        det_num::q8::dot_row(input, self.row(row_idx)).map_err(anyhow::Error::msg)
+        inference_numerics::q8::dot_row(input, self.row(row_idx)).map_err(anyhow::Error::msg)
     }
 }
 
@@ -619,13 +620,13 @@ mod tests {
     fn q8_matrix(rows: usize, cols: usize) -> Q8Matrix {
         let mut bytes = Vec::new();
         for row in 0..rows {
-            for block in 0..cols / det_num::q8::BLOCK {
+            for block in 0..cols / inference_numerics::q8::BLOCK {
                 let sign = ((row * 7 + block) % 2) as u16;
                 let exponent = 6 + ((row + block) % 4) as u16;
                 let mantissa = ((row * 131 + block * 17) % 1024) as u16;
                 bytes.extend_from_slice(&(sign << 15 | exponent << 10 | mantissa).to_le_bytes());
                 bytes.extend(
-                    (0..det_num::q8::BLOCK)
+                    (0..inference_numerics::q8::BLOCK)
                         .map(|col| ((row * 37 + block * 11 + col * 5) % 256) as u8),
                 );
             }
@@ -664,7 +665,7 @@ mod tests {
                 for row in 0..rows {
                     assert_eq!(
                         output.row(token)[row],
-                        det_num::q8::dot_row(input.row(token), matrix.row(row)).unwrap(),
+                        inference_numerics::q8::dot_row(input.row(token), matrix.row(row)).unwrap(),
                         "{rows}x{cols}, token {token}, row {row}"
                     );
                 }

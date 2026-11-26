@@ -27,7 +27,7 @@ pub use inference::{
     ConsensusOutcome, InferAuxWaveTiming, InferStageTiming, InferenceResult, InferenceRunReport,
     InferenceTimings,
 };
-pub use model_manifest::io::{read_json, write_json};
+pub use inference_manifest::io::{read_json, write_json};
 pub use procedure_kind::ProcedureKind;
 pub use run::{
     PreparedInference, PreparedPiece, PreparedPrompt, PreparedRun, PreparedSourceInputs,

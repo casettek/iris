@@ -132,7 +132,7 @@ impl Fixture {
                 },
             ]),
         };
-        let mut descriptor = model_identity::ModelDescriptor {
+        let mut descriptor = common_identity::ModelDescriptor {
             version: 2,
             tokenizer: [1; 32],
             decoder: raster::core::tree::value_root(&decoder_table).unwrap(),
@@ -167,7 +167,7 @@ impl Fixture {
         );
         let page_witness = self.external(
             "page_witness",
-            &model_identity::sparse::witness(q8_one_hot::<195_840>(2, 0x3c00).pages.as_slice())
+            &common_identity::sparse::witness(q8_one_hot::<195_840>(2, 0x3c00).pages.as_slice())
                 .unwrap(),
         );
         let head = self.external(
@@ -229,7 +229,7 @@ impl Fixture {
         descriptor.auxiliary = aux.iter().map(|b| root(b)).collect();
         descriptor.transformer = layers.iter().map(|b| root(b)).collect();
         let context = input_embedding::prompt::PromptContext {
-            model: model_identity::ModelContext::bind(
+            model: common_identity::ModelContext::bind(
                 &descriptor.encode().unwrap(),
                 &hex::encode(descriptor.model_id().unwrap()),
             ),
@@ -256,11 +256,11 @@ impl Fixture {
         // before it.
         let empty_sequence = self.external(
             "empty_sequence",
-            &staged_infer::kernels::origin::empty_sequence(),
+            &procedure_pipeline::kernels::origin::empty_sequence(),
         );
         let empty_edge = self.external(
             "empty_edge",
-            &staged_infer::kernels::origin::empty_decode_edge(),
+            &procedure_pipeline::kernels::origin::empty_decode_edge(),
         );
         let mut text = String::from("[pipeline]\nname = \"worker-parity\"\nversion = \"0.1.0\"\n");
         let mut add = |name: String, project: &str, inputs: Vec<(&str, String)>| {
@@ -410,7 +410,7 @@ impl Fixture {
         self.run_mode(budget, workers, subprocess, "selective")
     }
     fn run_mode(&self, budget: usize, workers: usize, subprocess: bool, mode: &str) -> PathBuf {
-        let mut cmd = Command::new(env!("CARGO_BIN_EXE_staged-infer"));
+        let mut cmd = Command::new(env!("CARGO_BIN_EXE_procedure-pipeline"));
         cmd.current_dir(&self.base)
             .args(["pipeline", "run"])
             .env("STAGED_INFER_WEIGHT_CACHE_BYTES", budget.to_string())
@@ -426,7 +426,7 @@ impl Fixture {
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         );
-        let root = self.base.join("target/staged-infer/runs");
+        let root = self.base.join("target/procedure-pipeline/runs");
         fs::read_dir(root)
             .unwrap()
             .map(|e| e.unwrap().path())
@@ -512,8 +512,8 @@ fn repeated_ranges_have_identical_checkpoints_with_worker_and_cache_reuse() {
 /// from the last check's record, as a checkpointed run does.
 #[test]
 fn uncheckpointed_inference_gives_the_checkpointed_result() {
-    use staged_infer::pipeline_runner::StagedExecutionBackend;
-    use staged_infer::{
+    use procedure_pipeline::pipeline_runner::StagedExecutionBackend;
+    use procedure_pipeline::{
         CheckpointedInferenceConfig, CheckpointedInferenceExecutor, UncheckpointedInferenceConfig,
         UncheckpointedInferenceExecutor,
     };
@@ -535,9 +535,9 @@ fn uncheckpointed_inference_gives_the_checkpointed_result() {
             base_dir: f.base.clone(),
             manifest_path: f.base.join("Raster.toml"),
             // The auxiliary stages run in worker processes of this binary.
-            current_exe: PathBuf::from(env!("CARGO_BIN_EXE_staged-infer")),
+            current_exe: PathBuf::from(env!("CARGO_BIN_EXE_procedure-pipeline")),
             staged_backend: StagedExecutionBackend::InProcess,
-            parity_policy: staged_infer::ParityPolicy::Skip,
+            parity_policy: procedure_pipeline::ParityPolicy::Skip,
         })
         .unwrap();
     let result = checkpointed
@@ -576,7 +576,7 @@ fn workers_reject_bad_protocol_and_failed_stage_inputs() {
             }}})
         ),
     ] {
-        let mut child = Command::new(env!("CARGO_BIN_EXE_staged-infer"))
+        let mut child = Command::new(env!("CARGO_BIN_EXE_procedure-pipeline"))
             .args(["--aux-worker", "1024"])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -599,7 +599,7 @@ fn workers_reject_bad_protocol_and_failed_stage_inputs() {
         }
     }
     // A graceful shutdown is accepted by both executable frontends (CLI tested separately).
-    let mut child = Command::new(env!("CARGO_BIN_EXE_staged-infer"))
+    let mut child = Command::new(env!("CARGO_BIN_EXE_procedure-pipeline"))
         .args(["--aux-worker", "0"])
         .stdin(Stdio::piped())
         .spawn()
@@ -617,7 +617,7 @@ fn workers_reject_bad_protocol_and_failed_stage_inputs() {
 fn selective_input_failure_does_not_publish_and_unknown_mode_fails_early() {
     let mut f = Fixture::new();
     f.manifest();
-    let bad_mode = Command::new(env!("CARGO_BIN_EXE_staged-infer"))
+    let bad_mode = Command::new(env!("CARGO_BIN_EXE_procedure-pipeline"))
         .current_dir(&f.base)
         .args(["pipeline", "run"])
         .env("STAGED_INFER_PLE_LOADING", "typo")
@@ -625,10 +625,12 @@ fn selective_input_failure_does_not_publish_and_unknown_mode_fails_early() {
         .unwrap();
     assert!(!bad_mode.status.success());
     assert!(String::from_utf8_lossy(&bad_mode.stderr).contains("must be selective or eager"));
-    assert!(!f.base.join("target/staged-infer/runs").exists());
+    assert!(!f.base.join("target/procedure-pipeline/runs").exists());
     let run = f.run(0, 1, false);
     let source = run.join("aux_p0_l0");
-    let dest = f.base.join("target/staged-infer/runs/rejected/aux_p0_l0");
+    let dest = f
+        .base
+        .join("target/procedure-pipeline/runs/rejected/aux_p0_l0");
     fs::create_dir_all(&dest).unwrap();
     for file in ["input.json", "input_manifest.json"] {
         fs::copy(source.join(file), dest.join(file)).unwrap();
@@ -638,7 +640,7 @@ fn selective_input_failure_does_not_publish_and_unknown_mode_fails_early() {
     let mut data = fs::read(&path).unwrap();
     *data.last_mut().unwrap() ^= 0x40;
     fs::write(path, data).unwrap();
-    let result = Command::new(env!("CARGO_BIN_EXE_staged-infer"))
+    let result = Command::new(env!("CARGO_BIN_EXE_procedure-pipeline"))
         .current_dir(&f.base)
         .arg("--run-stage")
         .arg(&dest)
@@ -675,7 +677,7 @@ fn worker_reuse_preserves_output_isolation_and_reports_failed_writes() {
     fs::create_dir_all(&good).unwrap();
     let blocked = f.base.join("worker-blocked");
     fs::write(&blocked, b"not a directory").unwrap();
-    let mut child = Command::new(env!("CARGO_BIN_EXE_staged-infer"))
+    let mut child = Command::new(env!("CARGO_BIN_EXE_procedure-pipeline"))
         .args(["--aux-worker", "1048576"])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -770,12 +772,12 @@ fn challenge_cleanup_child() {
         .unwrap();
     let path = base.join("claimed-hashes.json");
     let hashes = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
-    let result = staged_infer::CheckpointedInferenceExecutor
-        .run_until_hash_divergence(staged_infer::CheckpointHashChallengeConfig {
+    let result = procedure_pipeline::CheckpointedInferenceExecutor
+        .run_until_hash_divergence(procedure_pipeline::CheckpointHashChallengeConfig {
             base_dir: base.clone(),
             manifest_path: base.join("Raster.toml"),
-            current_exe: env!("CARGO_BIN_EXE_staged-infer").into(),
-            staged_backend: staged_infer::pipeline_runner::StagedExecutionBackend::InProcess,
+            current_exe: env!("CARGO_BIN_EXE_procedure-pipeline").into(),
+            staged_backend: procedure_pipeline::pipeline_runner::StagedExecutionBackend::InProcess,
             claimed_hashes_path: path,
             claimed_hashes: hashes,
             claimed_sources: None,

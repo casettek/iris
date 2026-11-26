@@ -4,7 +4,7 @@
 //! The node is the local one of `blockchain/devstack/` (or any node whose
 //! key can pay for blobs). A blob is named by the block it was included in,
 //! its namespace and Celestia's own commitment to its bytes, which iris
-//! computes itself (`iris_celestia`) before it posts and checks on what it
+//! computes itself (`blockchain_celestia`) before it posts and checks on what it
 //! reads back.
 //!
 //! What is still the host's word here: that a block's data root is one
@@ -17,10 +17,10 @@ use std::net::TcpStream;
 use std::time::Duration;
 
 use anyhow::{bail, ensure, Context, Result};
+use blockchain_celestia::blob_commitment;
 use blockchain_rules::availability::{
     AvailabilityLayer, AvailabilityProof, BlobPointer, PostedBlob, NAMESPACE_BYTES,
 };
-use iris_celestia::blob_commitment;
 use serde_json::{json, Value};
 
 use crate::posting::{contents_of, BlockRoot, PostingLayer};

@@ -2,11 +2,11 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use direct_infer::detwgt::MmapDetwgt;
-use direct_infer::model::{
+use inference_generation::inference_weights::MmapDetwgt;
+use inference_generation::model::{
     DirectFinalHead, DirectMatrixView, DirectQ8View, DirectTransformerLayer,
 };
-use direct_infer::view_kernels::{run_prefill_range_view, score_prefill_logits_view};
+use inference_generation::view_kernels::{run_prefill_range_view, score_prefill_logits_view};
 use inference_kernels::tensor::{dot_bits, matvec_from_source, Matrix, MatrixSource};
 use prefill_range::input::{
     pack_i32s, unpack_i32s, ActivationRow, ActivationSequence, LayerParams, PleLayerInputs, PleRow,
@@ -149,7 +149,7 @@ fn final_head_logits_feed_shared_decode_select_tie_break() {
     };
     let logits = score_prefill_logits_view(&activations, &head).unwrap();
     let prior = inference_kernels::kernels::origin::empty_decode_edge();
-    let edge = direct_infer::generation::select_next_token(&logits, &prior).unwrap();
+    let edge = inference_generation::generation::select_next_token(&logits, &prior).unwrap();
 
     assert_eq!(logits.decode_position, 1);
     assert_eq!(logits.logits.len(), 3);

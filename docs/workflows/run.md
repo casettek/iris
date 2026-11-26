@@ -15,14 +15,14 @@ Flow:
 1. **The native run.** `procedure_run::run_direct` runs the procedure as `infer` does: each inference generated in turn, then what the procedure states of them. The command prints the result here, before any stage runs.
 2. **The pipeline run.** `procedure_run::run_staged` prepares a pipeline run on the output the native run generated and runs it stage by stage, as [`claim build`](claim-build.md) does. Each stage verifies its part of that output and leaves a checkpoint.
 3. **The two results are held equal.** The command fails if the pipeline run states any field of any inference's result otherwise than the native run did, or another consensus. That is a failure of parity between generation and verification, and the error names the field.
-4. **The checkpoints are written**: `checkpoint_list.json` and `checkpoints.txt` in the pipeline run's directory under `target/staged-infer/runs/`.
+4. **The checkpoints are written**: `checkpoint_list.json` and `checkpoints.txt` in the pipeline run's directory under `target/procedure-pipeline/runs/`.
 
 Output: everything `infer` prints, then
 
 ```text
 staged run: 87 stages, and the result the direct run stated
-checkpoint list: target/staged-infer/runs/<run>/checkpoint_list.json
-checkpoints: target/staged-infer/runs/<run>/checkpoints.txt
+checkpoint list: target/procedure-pipeline/runs/<run>/checkpoint_list.json
+checkpoints: target/procedure-pipeline/runs/<run>/checkpoints.txt
 ```
 
 ## Comparing two runs

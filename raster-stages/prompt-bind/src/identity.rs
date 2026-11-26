@@ -1,7 +1,7 @@
 //! The tokenizer's commitment, rebuilt from the parts this stage reads, for
 //! the model's descriptor to be held to.
 use crate::input::*;
-use model_identity::stream;
+use common_identity::stream;
 use raster::prelude::*;
 
 #[tile(kind=iter)]

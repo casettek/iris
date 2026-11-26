@@ -4,8 +4,8 @@ use crate::{
     segments::inference::verified_weights::{fields, PageRegion, VerifiedSelections},
 };
 use anyhow::{Context, Result};
-use det_num::{ops::mul_sat, Act};
 use inference_kernels::weight_budget::RetainedWeightBytes;
+use inference_numerics::{ops::mul_sat, Act};
 use raster::BytesPage;
 use raster_runtime::EntryArgumentsBinding;
 use std::{collections::BTreeMap, sync::Arc};
@@ -96,7 +96,7 @@ impl SelectedEmbedding {
 impl SelectedEmbedding {
     /// Read current witness inputs even when numerical metadata came from cache.
     pub(crate) fn identity(&self, source: &VerifiedSelections) -> Result<(BytesPage, bool)> {
-        use model_identity::{
+        use common_identity::{
             sparse::{SparseHeader, SparsePath},
             stream,
         };
@@ -116,7 +116,7 @@ impl SelectedEmbedding {
                 SelectorSegment::Field("paths".into()),
                 SelectorSegment::Index(index),
             ]))?;
-            valid &= model_identity::sparse::verify(
+            valid &= common_identity::sparse::verify(
                 &header.root,
                 header.count,
                 index,
@@ -132,9 +132,9 @@ pub(crate) fn embedding_identity_root(
     scale: i32,
     byte_len: u64,
     page_size: u64,
-    header: &model_identity::sparse::SparseHeader,
+    header: &common_identity::sparse::SparseHeader,
 ) -> BytesPage {
-    use model_identity::stream;
+    use common_identity::stream;
     let values = stream::structure(&[
         ("byte_len", stream::digest(&byte_len)),
         ("page_size", stream::digest(&page_size)),

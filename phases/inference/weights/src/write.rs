@@ -73,7 +73,7 @@ impl DetwgtWriter {
     /// A `Q8_0` tensor: its rows of blocks, exactly as GGUF stores them.
     pub fn q8_0(&mut self, name: &str, dims: &[u64], blocks: &[u8]) -> Result<()> {
         let cols = *dims.last().unwrap_or(&0) as usize;
-        let row_bytes = det_num::q8::row_bytes(cols)
+        let row_bytes = inference_numerics::q8::row_bytes(cols)
             .with_context(|| format!("Q8_0 tensor '{name}' rows are not whole blocks"))?;
         let rows = dims.iter().product::<u64>() as usize / cols;
         ensure!(
@@ -85,7 +85,7 @@ impl DetwgtWriter {
         let mut values = vec![0_i32; cols];
         let mut mass = 0_u64;
         for row in blocks.chunks_exact(row_bytes) {
-            det_num::q8::dequantize_row(row, &mut values)
+            inference_numerics::q8::dequantize_row(row, &mut values)
                 .map_err(|error| anyhow::anyhow!("Q8_0 tensor '{name}': {error}"))?;
             mass = mass.max(values.iter().map(|v| v.unsigned_abs() as u64).sum());
         }
@@ -138,7 +138,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("detwgt-write-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("model.detwgt");
-        let mut block = vec![0_u8; det_num::q8::BLOCK_BYTES * 2];
+        let mut block = vec![0_u8; inference_numerics::q8::BLOCK_BYTES * 2];
         block[..2].copy_from_slice(&0x3c00_u16.to_le_bytes()); // scale 1.0
         block[2] = 3;
         block[34..36].copy_from_slice(&0xbc00_u16.to_le_bytes()); // scale -1.0

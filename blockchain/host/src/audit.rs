@@ -64,8 +64,8 @@ pub struct ClaimAudit {
 /// found here is pointed at with `voidClaim`, and the
 /// claim is void: there is no challenge to post and nothing to answer.
 pub fn audit_claim(options: AuditClaimOptions) -> Result<ClaimAudit> {
+    use blockchain_evm::{abi_encode, checkpoint_fault_token, claim_id, InputQuestion};
     use blockchain_rules::checks::{CheckpointHashes, LinkCheck, StageAdmission};
-    use iris_evm::{abi_encode, checkpoint_fault_token, claim_id, InputQuestion};
 
     let submission: ClaimSubmission = read_json(&options.submission_path)?;
     let procedure = crate::claim_check::spec_procedure(

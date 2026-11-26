@@ -1,7 +1,7 @@
 //! Observability of a frozen challenge using Raster's existing run/replay interfaces.
 use anyhow::{ensure, Context, Result};
 use blockchain_rules::{ChallengeBundle, ClaimBundle, ReplayPackage};
-use model_manifest::file_sha256;
+use inference_manifest::file_sha256;
 use procedure_definition::{read_json, write_json, CheckpointList, PreparedRun};
 use raster_analysis::replay_profile::ReplayProfile;
 use raster_compiler::{CfsBuilder, Project};
@@ -228,7 +228,7 @@ pub fn run(args: ProfileArgs) -> Result<PathBuf> {
         .run_manifest_path
         .as_ref()
         .context("missing run manifest")?;
-    model_manifest::verify_file_sha256(
+    inference_manifest::verify_file_sha256(
         manifest,
         prepared
             .run_manifest_sha256
@@ -237,7 +237,7 @@ pub fn run(args: ProfileArgs) -> Result<PathBuf> {
         "frozen run",
     )?;
     for inference in &prepared.inferences {
-        model_manifest::verify_file_sha256(
+        inference_manifest::verify_file_sha256(
             &inference.model_manifest_path,
             &inference.model_manifest_sha256,
             "frozen model",
@@ -265,7 +265,7 @@ pub fn run(args: ProfileArgs) -> Result<PathBuf> {
     let original = CommitmentFile::read_memory(&original_path)?;
     original.validate()?;
     let original_hash = file_sha256(&original_path)?;
-    let project = staged_infer::pipeline_runner::stage_project(manifest, &bundle.stage)?;
+    let project = procedure_pipeline::pipeline_runner::stage_project(manifest, &bundle.stage)?;
     fs::create_dir_all(&args.output)?;
     let output = fs::canonicalize(args.output)?;
     let summary_path = output.join("challenge-profile.json");

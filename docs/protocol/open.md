@@ -24,7 +24,7 @@ decided. The last is what Raster would have to change.
 - **The proof that replaces the attester.** The stand-in runs host code: the
   source step, the checkpoint package check, the reading of records, and
   Raster's trace header. A receipt needs that code in a crate a guest can
-  build. The source step already is one, in `source-core`.
+  build. The source step already is one, in `source-phase`.
 - **Short stages.** A stage whose trace is shorter than a replay window
   cannot be disputed ([the issue](../issues/short-stage-fault-window.md)).
   The claimer chooses the input, so it can make one occur. Three cases are

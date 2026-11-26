@@ -2,8 +2,8 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
-use staged_infer::pipeline_runner::StagedExecutionBackend;
-use staged_infer::{
+use procedure_pipeline::pipeline_runner::StagedExecutionBackend;
+use procedure_pipeline::{
     CheckpointedInferenceConfig, CheckpointedInferenceExecutor, CheckpointedInferenceResult,
     ParityPolicy,
 };
@@ -15,8 +15,8 @@ use procedure_definition::{
     write_checkpoint_hashes, write_json, Case, InferenceResult, PreparedRun, Specification,
     CHECKPOINT_LIST_JSON, PREPARED_RUN_JSON,
 };
-use run_prep::staged::Frozen;
-pub use run_prep::staged::{
+use procedure_prepare::staged::Frozen;
+pub use procedure_prepare::staged::{
     render_pipeline, render_ranged_manifest, without_source_stage, FrozenSource, InferenceFiles,
     PreparedClaimRun, RunExternal,
 };
@@ -424,7 +424,7 @@ pub fn prepare_challenge_run(
     specification: &Specification,
     case: &Case,
     source: Option<FrozenSource<'_>>,
-    forms: &[run_prep::source::Form],
+    forms: &[procedure_prepare::source::Form],
     ids: &[Vec<u32>],
     prompts: &[procedure_definition::PreparedPrompt],
 ) -> Result<PreparedClaimRun> {
@@ -459,7 +459,7 @@ fn prepare_run(
 ) -> Result<PreparedClaimRun> {
     let discover =
         procedure_run::direct_output(&options.base_dir, &specification_path, case_path.as_deref());
-    run_prep::staged::prepare_run(run_prep::staged::StagedRun {
+    procedure_prepare::staged::prepare_run(procedure_prepare::staged::StagedRun {
         base_dir: &options.base_dir,
         specification_path: specification_path.clone(),
         specification,
@@ -566,7 +566,7 @@ fn default_corrupted_hashes_path(source: &Path) -> PathBuf {
 mod tests {
     use super::*;
     use blockchain_rules::CLAIM_BUNDLE_JSON;
-    use model_manifest::ModelManifest;
+    use inference_manifest::ModelManifest;
     use procedure_definition::read_json;
     use procedure_definition::CHECKPOINT_LIST_JSON;
     use std::fs;
@@ -1093,7 +1093,7 @@ name = "result"
 inputs.check = { from = "check_c@LAST_CLAIMED_RANGE@" }
 inputs.forms = { external = { path = "/repo/target/iris/run-prompt-placeholder/result_forms.rastered", index_path = "/repo/target/iris/run-prompt-placeholder/result_forms.rindex", commitment = "0" } }
 "#;
-        let file = |name: &str, commitment: &str| run_prep::RunFile {
+        let file = |name: &str, commitment: &str| procedure_prepare::RunFile {
             path: PathBuf::from(format!("/tmp/run/prompt/{name}.rastered")),
             index_path: PathBuf::from(format!("/tmp/run/prompt/{name}.rindex")),
             commitment: commitment.into(),
@@ -1113,7 +1113,7 @@ inputs.forms = { external = { path = "/repo/target/iris/run-prompt-placeholder/r
             file("marks_2", "a2"),
         ];
         let claimed = [file("claimed_0", "c0")];
-        let render = |template: &str, claimed: &[run_prep::RunFile]| {
+        let render = |template: &str, claimed: &[procedure_prepare::RunFile]| {
             render_ranged_manifest(
                 template,
                 Path::new("/repo"),

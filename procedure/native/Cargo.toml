@@ -1,22 +1,22 @@
 [package]
-name = "procedure-direct"
+name = "procedure-native"
 version = "0.1.0"
 edition = "2021"
 description = "The direct run of a procedure: its result as fast as possible"
 
 [features]
-gpu-kernels = ["direct-infer/gpu-kernels", "staged-infer/gpu-kernels"]
+gpu-kernels = ["inference-generation/gpu-kernels", "procedure-pipeline/gpu-kernels"]
 
 [dependencies]
-run-prep = { path = "../prepare" }
+procedure-prepare = { path = "../prepare" }
 anyhow = "1.0"
-direct-infer = { path = "../../phases/inference/generation" }
+inference-generation = { path = "../../phases/inference/generation" }
 procedure-definition = { path = "../definition" }
-staged-infer = { path = "../pipeline" }
+procedure-pipeline = { path = "../pipeline" }
 
 [dev-dependencies]
 inference-kernels = { path = "../../phases/inference/kernels" }
-model-manifest = { path = "../../phases/inference/manifest" }
+inference-manifest = { path = "../../phases/inference/manifest" }
 prefill-range = { path = "../../raster-stages/prefill-range" }
 raster = { path = "../../../raster/crates/raster" }
 sequence-check = { path = "../../raster-stages/sequence-check" }

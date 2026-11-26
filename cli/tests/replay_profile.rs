@@ -5,8 +5,10 @@ use std::process::{Command, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use procedure_definition::{read_json, EXECUTION_TIMES_JSON};
-use staged_infer::pipeline_runner::StagedExecutionBackend;
-use staged_infer::{CheckpointedInferenceConfig, CheckpointedInferenceExecutor, ParityPolicy};
+use procedure_pipeline::pipeline_runner::StagedExecutionBackend;
+use procedure_pipeline::{
+    CheckpointedInferenceConfig, CheckpointedInferenceExecutor, ParityPolicy,
+};
 
 fn repo_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -180,14 +182,14 @@ for line in sys.stdin:
         times["aux_waves"][0]["last_stage"],
         "prefill_prepare_aux_l1"
     );
-    let count = fs::read_dir(root.join("target/staged-infer/runs"))
+    let count = fs::read_dir(root.join("target/procedure-pipeline/runs"))
         .unwrap()
         .count();
     assert!(CheckpointedInferenceExecutor
         .run_through_stage(config, "prefill_prepare_aux")
         .is_err());
     assert_eq!(
-        fs::read_dir(root.join("target/staged-infer/runs"))
+        fs::read_dir(root.join("target/procedure-pipeline/runs"))
             .unwrap()
             .count(),
         count

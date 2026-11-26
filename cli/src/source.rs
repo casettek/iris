@@ -11,8 +11,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{bail, ensure, Context, Result};
 use clap::{Args, Subcommand};
-use run_prep::source::{fault_description, load_source, LoadedSource, SourceRecord, FAULT_NONE};
-use source_core::{
+use procedure_prepare::source::{
+    fault_description, load_source, LoadedSource, SourceRecord, FAULT_NONE,
+};
+use source_phase::{
     hex, sha256, sign_attestation, signer_key, unhex, verify_attestation, Attestation, CIPHER_NONE,
     SCHEME_SECP256K1,
 };
@@ -204,7 +206,7 @@ pub fn stage_inputs(specification: &Path, case: &Path, out: &Path) -> Result<()>
     };
     fs::create_dir_all(out).with_context(|| format!("failed to create {}", out.display()))?;
     let out = fs::canonicalize(out)?;
-    let files = run_prep::write_source_inputs(&source, &out)?;
+    let files = procedure_prepare::write_source_inputs(&source, &out)?;
     let mut input = serde_json::Map::new();
     let mut manifest = serde_json::Map::new();
     for (name, file) in [
@@ -258,7 +260,7 @@ pub fn print_source_lines(source: &LoadedSource) {
 mod tests {
     use super::*;
     use procedure_definition::{Case, CaseDocument, Specification};
-    use run_prep::source::sourced_prompt;
+    use procedure_prepare::source::sourced_prompt;
 
     const EVENT: &str = r#"{"type":"Feature","properties":{"mag":5.1,"products":{"losspager":[{"id":"p1","contents":{"comments.json":{"url":"https://example.org/p1/comments.json"}}}]}},"id":"us7000abcd"}"#;
     const COMMENTS: &str = r#"{"impact1": "Green alert.", "impact2": ""}"#;
@@ -317,7 +319,7 @@ code = 2
     }
 
     /// The public key `keygen` wrote in a directory.
-    fn public_key(dir: &Path) -> source_core::SignerKey {
+    fn public_key(dir: &Path) -> source_phase::SignerKey {
         serde_json::from_str(&fs::read_to_string(dir.join(SIGNER_PUBLIC_FILE)).unwrap()).unwrap()
     }
 

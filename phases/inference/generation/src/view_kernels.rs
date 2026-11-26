@@ -23,7 +23,7 @@ pub fn run_input_embedding_view(
         });
     }
     Ok(ActivationSequence {
-        model: model_identity::ModelContext::embedding(
+        model: common_identity::ModelContext::embedding(
             &bound_model_context(model),
             &Default::default(),
         ),
@@ -42,7 +42,7 @@ pub fn run_decode_embed_view(
         bail!("decode-embed received the empty decode edge with no selected token");
     }
     Ok(ActivationSequence {
-        model: model_identity::ModelContext::embedding(
+        model: common_identity::ModelContext::embedding(
             &bound_model_context(model),
             &Default::default(),
         ),
@@ -277,12 +277,12 @@ fn unpack(page: &raster::BytesPage) -> Result<Vec<i32>> {
     prefill_range::input::unpack_i32s(page).map_err(anyhow::Error::msg)
 }
 
-pub(crate) fn bound_model_context(model: &DirectInferenceModel) -> model_identity::ModelContext {
+pub(crate) fn bound_model_context(model: &DirectInferenceModel) -> common_identity::ModelContext {
     let bytes = model
         .manifest()
         .descriptor()
         .ok()
         .and_then(|d| d.encode().ok())
         .unwrap_or_default();
-    model_identity::ModelContext::bind(&bytes, &model.manifest().model_id)
+    common_identity::ModelContext::bind(&bytes, &model.manifest().model_id)
 }

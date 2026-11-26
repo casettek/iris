@@ -4,13 +4,13 @@
 //! Q16.16 fixed-point throughout. Tiles must replay bit-identically inside the
 //! zkVM, so floats are out — see SKILL.md §3.
 
-pub use model_identity::ModelContext;
+pub use common_identity::ModelContext;
 extern crate alloc;
 
 use alloc::string::String;
 use alloc::vec::Vec;
-use det_num::ops::{mac_bits, mul_sat, requantize, rms_norm_in_place};
-use det_num::{Acc, Act, Wgt};
+use inference_numerics::ops::{mac_bits, mul_sat, requantize, rms_norm_in_place};
+use inference_numerics::{Acc, Act, Wgt};
 use raster::{Bytes, BytesPage, List};
 use serde::{Deserialize, Serialize};
 
@@ -188,7 +188,7 @@ pub fn q8_row_at(
     let local = byte_off
         .checked_sub(page.offset())
         .ok_or_else(|| String::from("row offset is before this page"))? as usize;
-    let len = det_num::q8::row_bytes(n_values as usize)
+    let len = inference_numerics::q8::row_bytes(n_values as usize)
         .ok_or_else(|| alloc::format!("row width {n_values} is not whole Q8_0 blocks"))?;
     let bytes = page.as_slice().get(local..local + len).ok_or_else(|| {
         alloc::format!(
@@ -197,7 +197,7 @@ pub fn q8_row_at(
         )
     })?;
     let mut values = alloc::vec![0; n_values as usize];
-    det_num::q8::dequantize_row(bytes, &mut values).map_err(String::from)?;
+    inference_numerics::q8::dequantize_row(bytes, &mut values).map_err(String::from)?;
     Ok(values)
 }
 
@@ -283,4 +283,4 @@ pub fn rms_norm(row: &mut [i32], weights: &[i32], eps: i64) -> core::result::Res
     Ok(())
 }
 
-pub use model_identity::sparse::{SparseHeader, SparsePath, SparseWitness};
+pub use common_identity::sparse::{SparseHeader, SparsePath, SparseWitness};

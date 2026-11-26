@@ -1,11 +1,11 @@
 [package]
-name = "staged-infer"
+name = "procedure-pipeline"
 version = "0.1.0"
 edition = "2021"
-default-run = "staged-infer"
+default-run = "procedure-pipeline"
 
 [[bin]]
-name = "staged-infer"
+name = "procedure-pipeline"
 path = "src/main.rs"
 
 [features]
@@ -13,11 +13,11 @@ path = "src/main.rs"
 gpu-kernels = ["inference-kernels/gpu-kernels"]
 
 [dependencies]
-model-identity = { path = "../../phases/common/identity", default-features = false }
+common-identity = { path = "../../phases/common/identity", default-features = false }
 inference-kernels = { path = "../../phases/inference/kernels" }
 anyhow = "1.0"
 clap = { version = "4.5", features = ["derive"] }
-det-num = { path = "../../phases/inference/numerics" }
+inference-numerics = { path = "../../phases/inference/numerics" }
 hex = "0.4"
 input-embedding = { path = "../../raster-stages/input-embedding" }
 procedure-definition = { path = "../definition" }
@@ -28,7 +28,7 @@ prompt-check = { path = "../../raster-stages/prompt-check" }
 sequence-check = { path = "../../raster-stages/sequence-check" }
 claim-result = { path = "../../raster-stages/claim-result" }
 consensus-result = { path = "../../raster-stages/consensus-result" }
-source-core = { path = "../../phases/source" }
+source-phase = { path = "../../phases/source" }
 raster = { path = "../../../raster/crates/raster" }
 raster-core = { path = "../../../raster/crates/raster-core" }
 raster-runtime = { path = "../../../raster/crates/raster-runtime" }
@@ -40,4 +40,4 @@ toml = "0.8"
 sysinfo = { version = "0.33", default-features = false, features = ["system"] }
 
 [dev-dependencies]
-prompt-prep = { path = "../../phases/inference/prompt" }
+inference-prompt = { path = "../../phases/inference/prompt" }

@@ -234,7 +234,7 @@ pub fn score_head_page(
     };
     let hidden = params.hidden_size as usize;
     let page = input.into_value();
-    let stride = match det_num::q8::row_bytes(hidden) {
+    let stride = match inference_numerics::q8::row_bytes(hidden) {
         Some(stride) if page.len() % stride == 0 => stride,
         _ => {
             record_argmax_error(
@@ -257,7 +257,7 @@ pub fn score_head_page(
     let first_id = (page.offset() / stride as u64) as u32;
     for (local, row) in page.as_slice().chunks_exact(stride).enumerate() {
         let token_id = first_id + local as u32;
-        match det_num::q8::dot_row(&position, row) {
+        match inference_numerics::q8::dot_row(&position, row) {
             Ok(score) => {
                 let value = softcap(score, params.softcap);
                 if !state.has_value || value > state.value {

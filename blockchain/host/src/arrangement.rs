@@ -17,8 +17,8 @@ use std::path::Path;
 use anyhow::{bail, ensure, Context, Result};
 use blockchain_rules::checks::read_input_manifest;
 use procedure_definition::CheckpointList;
+use procedure_pipeline::pipeline_runner::{expanded_stages, ExpandedInput, ExpandedStage};
 use sha2::{Digest, Sha256};
-use staged_infer::pipeline_runner::{expanded_stages, ExpandedInput, ExpandedStage};
 
 /// The arranged pipeline's file name, beside the run's own manifest.
 pub const ARRANGED_MANIFEST: &str = "claim_arranged.toml";

@@ -69,12 +69,12 @@ fn try_main() -> Result<ExitCode> {
 
 fn execute(cli: Cli) -> Result<ExitCode> {
     if let Some(bytes) = cli.aux_worker {
-        staged_infer::worker::run_worker(bytes)?;
+        procedure_pipeline::worker::run_worker(bytes)?;
         return Ok(ExitCode::SUCCESS);
     }
     if let Some(stage_dir) = cli.run_stage.as_ref() {
         require_input_args(&cli)?;
-        staged_infer::parity::run_hidden_stage_direct(stage_dir)?;
+        procedure_pipeline::parity::run_hidden_stage_direct(stage_dir)?;
         return Ok(ExitCode::SUCCESS);
     }
 
@@ -83,7 +83,7 @@ fn execute(cli: Cli) -> Result<ExitCode> {
             let status = run_hidden_compare(&stage_dir)?;
             return finish_parity_run(status, &stage_dir);
         }
-        let report = staged_infer::parity::run_hidden_stage_compare(&stage_dir)?;
+        let report = procedure_pipeline::parity::run_hidden_stage_compare(&stage_dir)?;
         return Ok(if report.matched {
             ExitCode::SUCCESS
         } else {
@@ -101,21 +101,21 @@ fn execute(cli: Cli) -> Result<ExitCode> {
         }) => {
             let exe = std::env::current_exe().context("failed to locate current executable")?;
             let staged_backend = if staged_subprocess {
-                staged_infer::pipeline_runner::StagedExecutionBackend::Subprocess
+                procedure_pipeline::pipeline_runner::StagedExecutionBackend::Subprocess
             } else {
-                staged_infer::pipeline_runner::StagedExecutionBackend::InProcess
+                procedure_pipeline::pipeline_runner::StagedExecutionBackend::InProcess
             };
             let manifest_path = std::env::current_dir()
                 .context("failed to read current directory")?
                 .join("Raster.toml");
-            let run = staged_infer::pipeline_runner::run(
+            let run = procedure_pipeline::pipeline_runner::run(
                 &manifest_path,
                 raster_stage.as_deref(),
                 &exe,
                 staged_backend,
             )?;
             if let Some(selected_stage_dir) = run.selected_stage_dir.as_ref() {
-                let report = staged_infer::parity::read_parity_report(selected_stage_dir)?;
+                let report = procedure_pipeline::parity::read_parity_report(selected_stage_dir)?;
                 print!(
                     "{}",
                     render_timing_summary_or_warning(&run.pipeline_dir, &report)
@@ -131,7 +131,7 @@ fn execute(cli: Cli) -> Result<ExitCode> {
 }
 
 fn finish_parity_run(status: ExitStatus, stage_dir: &Path) -> Result<ExitCode> {
-    match staged_infer::parity::read_parity_report(stage_dir) {
+    match procedure_pipeline::parity::read_parity_report(stage_dir) {
         Ok(report) => {
             let pipeline_dir = stage_dir
                 .parent()
@@ -156,17 +156,17 @@ fn require_input_args(cli: &Cli) -> Result<()> {
 
 fn render_timing_summary_or_warning(
     pipeline_dir: &Path,
-    report: &staged_infer::parity::ParityReport,
+    report: &procedure_pipeline::parity::ParityReport,
 ) -> String {
-    staged_infer::parity::read_pipeline_execution_times(pipeline_dir)
-        .and_then(|timings| staged_infer::parity::render_timing_summary(&timings, report))
+    procedure_pipeline::parity::read_pipeline_execution_times(pipeline_dir)
+        .and_then(|timings| procedure_pipeline::parity::render_timing_summary(&timings, report))
         .unwrap_or_else(|error| format!("\ntiming summary unavailable: {error:#}\n"))
 }
 
 fn run_hidden_compare(stage_dir: &Path) -> Result<ExitStatus> {
     let input = stage_dir.join("input.json");
     let input_manifest = stage_dir.join("input_manifest.json");
-    let prior_report = staged_infer::parity::parity_dir(stage_dir).join("report.json");
+    let prior_report = procedure_pipeline::parity::parity_dir(stage_dir).join("report.json");
     if let Err(error) = std::fs::remove_file(&prior_report) {
         if error.kind() != std::io::ErrorKind::NotFound {
             return Err(error)
@@ -282,13 +282,13 @@ mod tests {
 
     #[test]
     fn missing_execution_times_do_not_override_parity() {
-        let report = staged_infer::parity::ParityReport {
+        let report = procedure_pipeline::parity::ParityReport {
             version: 3,
             stage: String::from("range_p0_l3"),
             routine: String::from("prefill_range"),
             instance: Some(3),
-            authority: staged_infer::parity::ParityAuthority::NonAuthoritative,
-            raster_source_mode: staged_infer::parity::RasterSourceMode::Unauthenticated,
+            authority: procedure_pipeline::parity::ParityAuthority::NonAuthoritative,
+            raster_source_mode: procedure_pipeline::parity::RasterSourceMode::Unauthenticated,
             matched: true,
             input_load_duration_ns: 1,
             kernel_duration_ns: 1,

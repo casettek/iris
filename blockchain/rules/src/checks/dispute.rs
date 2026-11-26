@@ -4,7 +4,7 @@
 
 use std::collections::BTreeMap;
 
-use ::model_identity::context::parse_id;
+use ::common_identity::context::parse_id;
 use raster_core::pipeline::{
     defend, DefenceInput, DefenceJournal, DefenceRefusal, InputBindingSource, PipelineCommitment,
     PipelineShape, StageChallenge, StageCheckpoint,

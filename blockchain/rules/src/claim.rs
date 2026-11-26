@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
-use model_manifest::io::{read_json, write_json};
+use inference_manifest::io::{read_json, write_json};
 use procedure_definition::checkpoint::{
     build_checkpoint_list, write_checkpoint_hashes_artifact, CHECKPOINT_LIST_JSON,
 };

@@ -128,7 +128,7 @@ pub fn text_of(inference: &PostedInference) -> String {
 
 /// A posted source's documents as files: each document's bytes, with its
 /// attestation.
-pub fn documents_of(source: &PostedSourceInputs) -> Vec<(Vec<u8>, &source_core::Attestation)> {
+pub fn documents_of(source: &PostedSourceInputs) -> Vec<(Vec<u8>, &source_phase::Attestation)> {
     source
         .documents
         .attestations
@@ -163,8 +163,8 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
         let marks = vec![vec![1u32, 0, 0, 1], vec![1]];
         let ids = [5u32, 6, 7];
-        let text = prompt_prep::prompt_text("hello there");
-        let config = prompt_prep::RunConfig {
+        let text = inference_prompt::prompt_text("hello there");
+        let config = inference_prompt::RunConfig {
             model_id: "ab".repeat(32),
             raw_prompt: true,
             max_new_tokens: 3,
@@ -178,7 +178,7 @@ mod tests {
 
         let posted = PostedInference {
             config: recast(&config).unwrap(),
-            schedule: prompt_core::RunSchedule {
+            schedule: inference_tokenizer::RunSchedule {
                 prompt_ranges: 2,
                 claimed_ranges: 2,
             },

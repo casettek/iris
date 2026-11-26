@@ -14,7 +14,7 @@ Flow:
 2. Direct inference discovers the output ids. They must fill `max_new_tokens` unless the last one is EOS.
 3. The prompt's pieces are tokenized natively and the tokens cut into ranges of at most the model's range size, and the ids into ranges of the same size. A prompt range may end between any two tokens. The text is cut to match: slice `j` is the bytes whose scan yields range `j`'s pieces, so each range's bind stage reads only its own part of the prompt.
 4. Each prompt range's slice of the original text (`text_{j}`), the text digest (`text_digest`: the whole text's SHA-256, its length, and the first and last bytes the template's trim keeps), the run's configuration (`config`), its stage schedule (`schedule`), each prompt range's token marks (`marks_{j}`: one number per piece, 1 where a token starts) and each claimed range (`claimed_{k}`) are written as externals under `target/iris/runs/<run>/prompt/`, and a run-specific `Raster.toml` beside it commits to them. The configuration holds the model id, `raw_prompt`, `max_new_tokens` and the range size. The model id comes from the model manifest, which recomputes it from its commitments by role when it is loaded.
-5. `staged-infer` reads the run manifest and expands the [pipeline](../protocol/raster-pipeline.md).
+5. `procedure-pipeline` reads the run manifest and expands the [pipeline](../protocol/raster-pipeline.md).
 6. Each stage synthesizes `input.json` and `input_manifest.json`, runs the host implementation, and writes Raster-compatible output artifacts.
 7. Claim build applies the rule a challenger will. If the final record's committed verdict counts any claimed id that is not the greedy selection, claim build fails: direct and teacher-forced inference are not in parity, and the claim would refute itself.
 8. `blockchain-rules` scans the completed pipeline directory and writes the claim files.
@@ -31,7 +31,7 @@ are not the run's greedy output fail the build at step 7.
 ids instead of discovering them. A rejection is then a warning, and the claim is
 written anyway. This builds deliberately false claims for challenge tests.
 
-Per-stage checkpoint files live under `target/staged-infer/runs/<run>/<stage>/`:
+Per-stage checkpoint files live under `target/procedure-pipeline/runs/<run>/<stage>/`:
 
 - `input.json`
 - `input_manifest.json`
@@ -52,17 +52,17 @@ Claim files live beside the generated checkpoint tree:
 
 ```bash
 cargo run --release -p iris-cli -- test corrupt-checkpoints \
-  --checkpoints target/staged-infer/runs/.../checkpoints.txt \
+  --checkpoints target/procedure-pipeline/runs/.../checkpoints.txt \
   --random
 # or
-just corrupt target/staged-infer/runs/.../checkpoints.txt
+just corrupt target/procedure-pipeline/runs/.../checkpoints.txt
 ```
 
 The helper writes a corrupted hash list plus a local `*.corruption.json` manifest that records the selected checkpoint for debugging. Stage-based selection is also available when `checkpoint_list.json` is beside the hash list:
 
 ```bash
 cargo run --release -p iris-cli -- test corrupt-checkpoints \
-  --checkpoints target/staged-infer/runs/.../checkpoints.txt \
+  --checkpoints target/procedure-pipeline/runs/.../checkpoints.txt \
   --stage range_p0_l3
 ```
 
@@ -108,7 +108,7 @@ from unauthenticated native checkpoint generation.
 
 ## Validation and benchmarking
 
-`cargo test -p staged-infer -p inference-kernels -p blockchain-host -p iris-cli` includes a two-layer,
+`cargo test -p procedure-pipeline -p inference-kernels -p blockchain-host -p iris-cli` includes a two-layer,
 three-claimed-range fixture that compares every checkpoint across cache
 budgets, worker counts, and the diagnostic backend. To compare the same fixture
 against actual authenticated Raster stage execution:
@@ -116,7 +116,7 @@ against actual authenticated Raster stage execution:
 ```bash
 cargo build -p input-embedding -p prefill-prepare-aux \
   -p prefill-range -p sequence-check --bins
-STAGED_INFER_REPLAY_BIN_DIR="$PWD/target/debug" cargo test -p staged-infer \
+STAGED_INFER_REPLAY_BIN_DIR="$PWD/target/debug" cargo test -p procedure-pipeline \
   --test worker_parity repeated_ranges_match_authenticated_raster_stage_execution -- --ignored
 ```
 

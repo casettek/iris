@@ -17,11 +17,11 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{ensure, Context, Result};
 use blockchain_rules::checks::CLAIM_SUBMISSION_JSON;
-use model_manifest::ModelManifest;
+use inference_manifest::ModelManifest;
 use procedure_definition::{PreparedRun, ProcedureKind, SpecificationRelay};
+use procedure_pipeline::pipeline_runner::StagedExecutionBackend;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-use staged_infer::pipeline_runner::StagedExecutionBackend;
 
 use super::compare::{compare, read_boundaries};
 use super::{case_beside, command, logged, source};
@@ -67,7 +67,7 @@ pub(super) fn run_relay_scenario(
         Some(relay),
     )?;
     let direct =
-        procedure_direct::infer::run_infer(specification.clone(), case_beside(&specification))
+        procedure_native::infer::run_infer(specification.clone(), case_beside(&specification))
             .context("direct inference")?;
     let [first, second] = direct.reports.as_slice() else {
         anyhow::bail!(
@@ -89,7 +89,7 @@ pub(super) fn run_relay_scenario(
     // The first inference is held to the run's source, the second to the
     // relay's record, and the result is of the second output alone.
     ensure!(
-        first.source_sha256 == run_prep::source_id(Some(&source.run().record))
+        first.source_sha256 == procedure_prepare::source_id(Some(&source.run().record))
             && second.source_sha256 != first.source_sha256,
         "the two inferences do not name their own sources"
     );
@@ -184,7 +184,7 @@ pub(super) fn run_relay_scenario(
     // the first inference's claim record, and the record the second
     // statement names.
     let stated = &raster_outputs["relay"].value;
-    let record: source_core::SourceRecord =
+    let record: source_phase::SourceRecord =
         serde_json::from_value(stated.clone()).context("the relay stage's output")?;
     ensure!(
         record.present
@@ -194,7 +194,7 @@ pub(super) fn run_relay_scenario(
             && record.text_total == relayed.len() as u64,
         "the relay's record is not of the prompt the second inference ran: {stated}"
     );
-    let expected = run_prep::relayed_run(
+    let expected = procedure_prepare::relayed_run(
         &procedure_definition::read_specification(&specification)?,
         first,
     )?
@@ -204,7 +204,7 @@ pub(super) fn run_relay_scenario(
         "the relay stage states another record than direct inference: {stated}"
     );
     ensure!(
-        second.source_sha256 == run_prep::source_id(Some(&record)),
+        second.source_sha256 == procedure_prepare::source_id(Some(&record)),
         "the second statement does not name the relay's record"
     );
     let result = &raster_outputs["result"].value;

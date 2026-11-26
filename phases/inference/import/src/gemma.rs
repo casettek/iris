@@ -8,7 +8,7 @@
 //! paging, commitments, the pipeline template and the manifest.
 //!
 //! A second family gets its own module beside this one, and a variant of
-//! `model_manifest::ModelFamily`.
+//! `inference_manifest::ModelFamily`.
 
 use super::*;
 
@@ -103,7 +103,7 @@ impl Shape {
     ///
     /// `base_bits` is the base as `Acc` (Q32.32) bits. Both bases this model
     /// declares are exact integers, so the encoding is a plain shift — asserted
-    /// against local `f32_to_acc` in `det-num/tests/equivalence.rs`.
+    /// against local `f32_to_acc` in `inference-numerics/tests/equivalence.rs`.
     ///
     /// `freq_base_dim` is the layer's `head_dim`, which is *not* `rotary_dim`
     /// once the rotation is partial: a full-attention head is 512 wide and
@@ -176,7 +176,7 @@ impl Shape {
             // epsilon in accumulator units. Encoded through local
             // `f32_to_acc` so it is the same value, not a near one — 1e-6 in
             // Q16.16 rounds to zero, which is how this was silently disabled.
-            norm_eps: det_num::f32_to_acc(
+            norm_eps: inference_numerics::f32_to_acc(
                 text.get("rms_norm_eps")
                     .and_then(serde_json::Value::as_f64)
                     .unwrap_or(1e-6) as f32,
@@ -195,7 +195,7 @@ impl Shape {
 /// converted by local `f32_to_act` so the committed bits are the deterministic
 /// path's exactly, and a family that does not scale passes one.
 pub(super) fn write_embedding(
-    weights: &detwgt::MmapDetwgt,
+    weights: &inference_weights::MmapDetwgt,
     hidden: usize,
     vocab: usize,
     embedding_scale: i32,
@@ -213,7 +213,7 @@ pub(super) fn write_embedding(
         )?,
     };
     let commitment = write_external(&table, layout, "raster-stages/input-embedding", "embedding")?;
-    let witness = model_identity::sparse::witness(table.values.pages.as_slice())
+    let witness = common_identity::sparse::witness(table.values.pages.as_slice())
         .map_err(|f| format!("{f:?}"))?;
     let witness_commitment =
         write_external(&witness, layout, "raster-stages/input-embedding", "witness")?;
@@ -264,7 +264,7 @@ pub(super) fn write_embedding(
 // ---------------------------------------------------------------------------
 
 pub(super) fn write_ple_layers(
-    weights: &detwgt::MmapDetwgt,
+    weights: &inference_weights::MmapDetwgt,
     shape: &Shape,
     layout: &ArtifactLayout,
     stages: &mut Vec<String>,
@@ -312,7 +312,7 @@ pub(super) fn write_ple_layers(
         let name = format!("layer{layer_idx}");
         let commitment =
             write_external(&layer, layout, "raster-stages/prefill-prepare-aux", &name)?;
-        let witness = model_identity::sparse::witness(layer.embeddings.pages.as_slice())
+        let witness = common_identity::sparse::witness(layer.embeddings.pages.as_slice())
             .map_err(|f| format!("{f:?}"))?;
         let witness_name = format!("witness{layer_idx}");
         let witness_commitment = write_external(
@@ -354,7 +354,7 @@ pub(super) fn write_ple_layers(
 // ---------------------------------------------------------------------------
 
 pub(super) fn write_transformer_layers(
-    weights: &detwgt::MmapDetwgt,
+    weights: &inference_weights::MmapDetwgt,
     shape: &Shape,
     layout: &ArtifactLayout,
     stages: &mut Vec<String>,
@@ -564,7 +564,7 @@ pub(super) fn inv_sqrt_q16(n: usize) -> i32 {
 
 /// Every family's head: the final norm and the projection to the vocabulary.
 pub(super) fn write_head(
-    weights: &detwgt::MmapDetwgt,
+    weights: &inference_weights::MmapDetwgt,
     hidden: usize,
     vocab: usize,
     norm_eps: i64,
@@ -697,7 +697,7 @@ pub(super) fn require_known_tensors<'a>(
     Err(format!(
         "the bundle has language-model weights the {} import does not read: {shown}{more}; \
          it is another model family, or one this build does not import yet",
-        model_manifest::ModelFamily::GemmaDense.name()
+        inference_manifest::ModelFamily::GemmaDense.name()
     )
     .into())
 }
@@ -726,8 +726,8 @@ impl Shape {
     pub(super) fn manifest_shape(
         &self,
         text_config: &serde_json::Value,
-    ) -> model_manifest::DirectInferShape {
-        model_manifest::DirectInferShape {
+    ) -> inference_manifest::DirectInferShape {
+        inference_manifest::DirectInferShape {
             hidden_size: self.hidden as u32,
             num_hidden_layers: self.layers as u32,
             num_attention_heads: self.heads as u32,

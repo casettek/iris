@@ -384,7 +384,7 @@ mod tests {
 
     #[test]
     fn missing_duplicate_and_unexpected_boundaries_fail() {
-        let names = direct_infer::diagnostics::boundary_names(4, 8, true);
+        let names = inference_generation::diagnostics::boundary_names(4, 8, true);
         assert_eq!(names.len(), 91);
         check_inventory(&names, &names).unwrap();
         assert!(check_inventory(&names, &names[..90]).is_err());

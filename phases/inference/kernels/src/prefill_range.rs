@@ -4,8 +4,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use anyhow::{bail, Result};
-use det_num::ops::{attention_softmax, rope_rotate_pairs_in_place};
-use det_num::{Acc, Act};
+use inference_numerics::ops::{attention_softmax, rope_rotate_pairs_in_place};
+use inference_numerics::{Acc, Act};
 use raster::List;
 use rayon::prelude::*;
 

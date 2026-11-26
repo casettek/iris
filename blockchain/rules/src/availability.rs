@@ -30,7 +30,7 @@
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-pub use prompt_core::{PromptText, RunConfig, RunSchedule, TextDigest};
+pub use inference_tokenizer::{PromptText, RunConfig, RunSchedule, TextDigest};
 
 pub use procedure_definition::run_inputs::{
     PostedInference, PostedRun, PostedSourceInputs, RunInput,
@@ -198,7 +198,7 @@ pub struct HostAttestation {
     /// The data root of the block the blob is in, in lowercase hex. A
     /// contract holds it to the root its oracle has for that height.
     pub data_root: String,
-    /// The attester's signature over `iris_evm::attestation_digest`: 65
+    /// The attester's signature over `blockchain_evm::attestation_digest`: 65
     /// bytes in hex, `r`, `s` and the recovery byte (27 or 28).
     pub signature: String,
 }
@@ -884,13 +884,13 @@ mod tests {
 
     /// A run of one inference over two prompt ranges and one claimed range.
     fn run() -> PostedRun {
-        use prompt_core::PromptText;
+        use inference_tokenizer::PromptText;
         let slice = |text: &str| PromptText {
             chunks: vec![text.to_string()].into(),
         };
         PostedRun {
             source: None,
-            forms: result_core::ResultForms::default(),
+            forms: result_phase::ResultForms::default(),
             inferences: vec![PostedInference {
                 config: Default::default(),
                 schedule: Default::default(),

@@ -9,8 +9,8 @@
 
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
-use model_identity::context::parse_id;
-use model_identity::statement_core::Statement;
+use common_identity::context::parse_id;
+use common_identity::common_statement::Statement;
 use raster::prelude::*;
 use sha2::{Digest, Sha256};
 

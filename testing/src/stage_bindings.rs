@@ -186,7 +186,7 @@ mod tests {
             * calls("check_sixty_four", "check_eight")
             + calls("check_pass", "check_eight");
         let rounds = eights * calls("check_eight", "check_round");
-        assert_eq!(rounds, 2 * (prompt_prep::MAX_MERGED_TOKEN_CHARS - 1));
+        assert_eq!(rounds, 2 * (inference_prompt::MAX_MERGED_TOKEN_CHARS - 1));
         // Both passes, and the scan that closes each.
         assert_eq!(calls("main", "check_pass"), 2);
         assert_eq!(calls("main", "closing_scan"), 2);

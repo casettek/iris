@@ -171,7 +171,7 @@ check's record, which already says whether the output is complete.
 
 Two crates, `phases/source` and `phases/result`, hold every function the two new stages compute: the
 attestation message, the field scan, the text fold, the form match. Tiles call it, the
-native stage twins call it and direct calls it, as with `prompt-core`.
+native stage twins call it and direct calls it, as with `inference-tokenizer`.
 
 | Where | What it gains |
 | --- | --- |
@@ -232,7 +232,7 @@ until the notary replaces it.
 
 ## Build order
 
-1. `source-core`, `iris attest sign`, the `[source]` table and the direct path. The
+1. `source-phase`, `iris attest sign`, the `[source]` table and the direct path. The
    backend's earthquake case runs through it. No pipeline change.
 2. The native `source` and `result` routines, the bind's new input, checkpoints, and a
    parity case for each row of the table above.
@@ -248,7 +248,7 @@ test tier's lock check passes.
 
 - `phases/source`: the attestation, the field scan, the text and recipe hashes, the
   record and the form match, one function per step a stage would take. It builds without
-  the standard library. It is a workspace member through `run-prep`'s dependency on it and
+  the standard library. It is a workspace member through `procedure-prepare`'s dependency on it and
   is not yet listed in the root `Cargo.toml`, because Raster's lock check reads that file
   and listing it would make every stage lock stale before step 3 re-locks them anyway.
 - `iris attest keygen` and `iris attest sign`.
@@ -322,7 +322,7 @@ Checked:
 
 On the parity claim's small documents the stage is 63 trace steps, under the 128 a replay
 needs. On the real documents it is 158 with 4,096-byte chunks. Smaller chunks would
-lengthen it: `DOCUMENT_PAGE` in `source-core` is the one number.
+lengthen it: `DOCUMENT_PAGE` in `source-phase` is the one number.
 
 The batch, the same day:
 

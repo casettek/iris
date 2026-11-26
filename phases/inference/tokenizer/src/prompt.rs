@@ -275,7 +275,7 @@ pub struct TextDigest {
     pub keep_end: u64,
 }
 
-/// What the source step established about the text: see `source-core`, whose
+/// What the source step established about the text: see `source-phase`, whose
 /// record this is field for field. A run whose text is taken as given has the
 /// default, with `present` false.
 ///
@@ -347,7 +347,7 @@ pub struct RunSchedule {
 pub fn bind_run_schedule(mut context: PromptContext, schedule: &RunSchedule) -> PromptContext {
     context
         .model
-        .bind_schedule(model_identity::statement_core::StageSchedule {
+        .bind_schedule(common_identity::common_statement::StageSchedule {
             prompt_ranges: schedule.prompt_ranges,
             claimed_ranges: schedule.claimed_ranges,
         });
@@ -371,7 +371,7 @@ pub struct BpePiece {
 /// All-scalar and small, so it travels through every prompt stage.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
 pub struct PromptContext {
-    pub model: model_identity::ModelContext,
+    pub model: common_identity::ModelContext,
     /// SHA-256 of the original UTF-8 prompt bytes, in lowercase hex.
     pub input_text_sha256: String,
     /// [`source_id`] of the record the text was built from.
@@ -1026,7 +1026,7 @@ pub fn open_bind_range(
     tokenizer_root: &BytesPage,
     profile: &TokenizerProfile,
 ) -> BindOpen {
-    use model_identity::{stream, ModelContext, Role};
+    use common_identity::{stream, ModelContext, Role};
     if *previous == PromptContext::default() {
         let mut context = open_prompt_context(digest, config);
         context.source_sha256 = source_id(source);
@@ -1098,7 +1098,7 @@ pub struct BucketWalk {
 /// The walk before any entry.
 pub fn begin_bucket_walk() -> BucketWalk {
     BucketWalk {
-        entries: model_identity::stream::empty(),
+        entries: common_identity::stream::empty(),
         found: false,
         token_id: 0,
     }
@@ -1106,7 +1106,7 @@ pub fn begin_bucket_walk() -> BucketWalk {
 
 /// Adds one entry to the walk.
 pub fn walk_bucket_entry(mut walk: BucketWalk, entry: &TokenEntry, piece: &str) -> BucketWalk {
-    use model_identity::stream;
+    use common_identity::stream;
     walk.entries = stream::append(&walk.entries, &stream::digest(entry));
     if entry.token == piece {
         walk.found = true;
@@ -1123,7 +1123,7 @@ pub fn bucket_walk_proven(
     header: &SparseHeader,
     path: &SparsePath,
 ) -> bool {
-    use model_identity::{sparse, stream};
+    use common_identity::{sparse, stream};
     let root = stream::structure(&[("entries", stream::finish(&walk.entries))]);
     sparse::verify(&header.root, header.count, u64::from(index), path, &root)
 }
@@ -1355,8 +1355,8 @@ pub fn join_prompt_models(previous: PromptContext, bound: &PromptContext) -> Pro
         joined.model.same_model(&bound.model);
     }
     let valid = joined.model.valid()
-        && joined.model.producer == model_identity::context::PROMPT
-        && bound.model.producer == model_identity::context::PROMPT
+        && joined.model.producer == common_identity::context::PROMPT
+        && bound.model.producer == common_identity::context::PROMPT
         && joined.model.model_id == joined.model_id
         && bound.model.model_id == bound.model_id;
     joined.model.require(valid);
@@ -1364,7 +1364,7 @@ pub fn join_prompt_models(previous: PromptContext, bound: &PromptContext) -> Pro
         bound
             .model
             .execution_context()
-            .is_some_and(|e| e.phase == model_identity::statement_core::BOUND),
+            .is_some_and(|e| e.phase == common_identity::common_statement::BOUND),
     );
     joined.model.begin_prompt_range();
     joined.model.require_bound(&bound.model);
@@ -1372,7 +1372,7 @@ pub fn join_prompt_models(previous: PromptContext, bound: &PromptContext) -> Pro
     joined
 }
 
-pub use model_identity::sparse::{SparseHeader, SparsePath, SparseWitness};
+pub use common_identity::sparse::{SparseHeader, SparsePath, SparseWitness};
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
 pub struct TokenizerWitness {
     pub vocab: SparseHeader,
@@ -1382,9 +1382,9 @@ pub struct TokenizerWitness {
 }
 pub fn tokenizer_witness(
     tokenizer: &PromptTokenizer,
-) -> core::result::Result<TokenizerWitness, model_identity::ModelFault> {
-    let vocab = model_identity::sparse::witness(tokenizer.vocab_buckets.as_slice())?;
-    let merges = model_identity::sparse::witness(tokenizer.merge_buckets.as_slice())?;
+) -> core::result::Result<TokenizerWitness, common_identity::ModelFault> {
+    let vocab = common_identity::sparse::witness(tokenizer.vocab_buckets.as_slice())?;
+    let merges = common_identity::sparse::witness(tokenizer.merge_buckets.as_slice())?;
     Ok(TokenizerWitness {
         vocab: vocab.header,
         vocab_paths: vocab.paths,

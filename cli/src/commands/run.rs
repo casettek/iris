@@ -33,9 +33,9 @@ pub(crate) fn run(args: RunArgs) -> Result<ExitCode> {
         case_path: args.case.clone(),
         current_exe: std::env::current_exe().context("failed to locate current executable")?,
         staged_backend: if args.staged_subprocess {
-            staged_infer::pipeline_runner::StagedExecutionBackend::Subprocess
+            procedure_pipeline::pipeline_runner::StagedExecutionBackend::Subprocess
         } else {
-            staged_infer::pipeline_runner::StagedExecutionBackend::InProcess
+            procedure_pipeline::pipeline_runner::StagedExecutionBackend::InProcess
         },
         base_dir: base_dir.clone(),
     };

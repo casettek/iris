@@ -51,7 +51,7 @@ impl Inputs {
         witness: Arc<DecoderWitness>,
     ) -> Self {
         Self {
-            component_root: model_identity::stream::digest(head.as_ref()),
+            component_root: common_identity::stream::digest(head.as_ref()),
             activations,
             previous,
             prior,
@@ -120,10 +120,10 @@ pub fn run_direct(inputs: &Inputs) -> Result<DecodeEdge> {
         &inputs.context.model,
         &inputs.prior.model,
     );
-    edge.model = model_identity::stream::verify(
+    edge.model = common_identity::stream::verify(
         edge.model,
         &inputs.component_root,
-        model_identity::Role::Head,
+        common_identity::Role::Head,
     );
     edge.model
         .require(!inputs.prior.model.is_origin() || inputs.prior.generated_token_ids.is_empty());
@@ -196,7 +196,7 @@ fn load_inputs_from_initialized_runtime(
         raster::entry_argument_spec::<raster::BytesPage>("descriptor"),
         raster::entry_argument_spec::<DecoderWitness>("witness"),
     ])?;
-    let component_root = model_identity::stream::page(
+    let component_root = common_identity::stream::page(
         &binding
             .arguments
             .iter()

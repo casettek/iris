@@ -6,11 +6,11 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
-use ::model_identity::context::parse_id;
+use ::common_identity::context::parse_id;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
-use model_manifest::direct::{model_id_of, ModelCommitment, ModelManifest};
+use inference_manifest::direct::{model_id_of, ModelCommitment, ModelManifest};
 use procedure_definition::checkpoint::locked_program_commitment;
 use procedure_definition::procedure_kind::ProcedureKind;
 

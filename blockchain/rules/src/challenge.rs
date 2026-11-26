@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 
-use model_manifest::io::{read_json, write_json};
+use inference_manifest::io::{read_json, write_json};
 use procedure_definition::checkpoint::read_checkpoint_from_stage_dir;
 pub use procedure_definition::divergence::{Divergence, DivergenceReason, DIVERGENCE_JSON};
 

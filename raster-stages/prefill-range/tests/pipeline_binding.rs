@@ -1,4 +1,4 @@
-use model_identity::{statement_core::Execution, ModelContext};
+use common_identity::{common_statement::Execution, ModelContext};
 use prefill_range::{cache_coverage, consume_cache_position, validate_cache_coverage};
 
 fn context(start: u32, end: u32) -> ModelContext {
@@ -14,7 +14,7 @@ fn context(start: u32, end: u32) -> ModelContext {
         execution.end.append(0).unwrap();
     }
     model.set_execution(&execution);
-    model.producer = model_identity::context::TRANSFORMER;
+    model.producer = common_identity::context::TRANSFORMER;
     model
 }
 

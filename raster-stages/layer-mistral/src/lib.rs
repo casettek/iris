@@ -13,7 +13,7 @@
 //! K/V, pass 2 attends. The layer loop lives in the pipeline manifest.
 //!
 //! The steps have the shape of `prefill-range`'s, which is Gemma's layer. The
-//! arithmetic that is this family's own is `det-num`'s `mistral` module.
+//! arithmetic that is this family's own is `inference-numerics`'s `mistral` module.
 //!
 //! `#![no_std]` so the same tiles compile into RISC0 replay guests.
 
@@ -24,9 +24,9 @@ extern crate alloc;
 use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
-use det_num::mistral::{rotate_consecutive_pairs, scaled_score, silu};
-use det_num::ops::{attention_softmax, mac_bits, requantize};
-use det_num::{Acc, Act};
+use inference_numerics::mistral::{rotate_consecutive_pairs, scaled_score, silu};
+use inference_numerics::ops::{attention_softmax, mac_bits, requantize};
+use inference_numerics::{Acc, Act};
 use raster::prelude::*;
 
 pub mod input;
@@ -117,7 +117,7 @@ pub fn kv_out_len(params: LayerParams) -> u32 {
 
 #[tile(kind = iter, description = "Reject a Q8_0 weight region of the wrong byte length")]
 pub fn assert_matrix_bytes(byte_len: u64, out_len: u32, in_width: u32) -> Result<u32> {
-    let row = det_num::q8::row_bytes(in_width as usize)
+    let row = inference_numerics::q8::row_bytes(in_width as usize)
         .ok_or_else(|| alloc::format!("matrix width {in_width} is not whole Q8_0 blocks"))?;
     let expected = out_len as u64 * row as u64;
     if byte_len == expected {
@@ -247,7 +247,7 @@ fn mac_q8_page(
             row.len()
         ));
     }
-    let stride = det_num::q8::row_bytes(row.len())
+    let stride = inference_numerics::q8::row_bytes(row.len())
         .ok_or_else(|| alloc::format!("matvec in_width {in_width} is not whole Q8_0 blocks"))?;
     if page.len() % stride != 0 {
         return Err(String::from(
@@ -264,7 +264,7 @@ fn mac_q8_page(
         if out_idx >= out.len() {
             return Err(String::from("weight page writes past the accumulator"));
         }
-        out[out_idx] = finish(det_num::q8::dot_row(&row, weights)?);
+        out[out_idx] = finish(inference_numerics::q8::dot_row(&row, weights)?);
     }
     state.values = pack_i32s(&out);
     Ok(())
@@ -887,7 +887,7 @@ pub fn begin_cache_coverage(context: ModelContext) -> CacheCoverage {
 
 /// The positions the inherited cache must hold: every one before the range.
 pub fn cache_coverage(context: &ModelContext) -> CacheCoverage {
-    if context.is_origin() || context.producer == model_identity::context::EMBEDDING {
+    if context.is_origin() || context.producer == common_identity::context::EMBEDDING {
         return CacheCoverage {
             next: 0,
             end: 0,

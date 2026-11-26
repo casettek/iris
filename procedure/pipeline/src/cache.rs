@@ -24,7 +24,7 @@ pub enum CachedStageValue {
     PleLayerInputs(aux_input::PleLayerInputs),
     RangeActivations(range_input::ActivationSequence),
     DecodeEdge(check_input::DecodeEdge),
-    SourceRecord(source_core::SourceRecord),
+    SourceRecord(source_phase::SourceRecord),
     ResultRecord(claim_result::forms::ResultRecord),
     ConsensusRecord(consensus_result::consensus::ConsensusRecord),
 }
@@ -642,11 +642,11 @@ mod tests {
 
     #[test]
     fn cached_prompt_converts_to_embedding_input() {
-        let model = model_identity::ModelContext {
+        let model = common_identity::ModelContext {
             model_id: "ab".repeat(32),
             fault: 7,
             layers: 2,
-            producer: model_identity::context::PROMPT,
+            producer: common_identity::context::PROMPT,
             ..Default::default()
         };
         let cached = CachedStageValue::PromptTokenization(prompt_input::PromptTokenization {

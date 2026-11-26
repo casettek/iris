@@ -94,7 +94,7 @@ pub struct Procedure {
     pub source: Option<RequiredSource>,
     /// The texts an output is read by, in order. May be empty.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub forms: Vec<result_core::Form>,
+    pub forms: Vec<result_phase::Form>,
     /// The recipe a relay must build its prompt with, or `None`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub relay_recipe_sha256: Option<String>,
@@ -265,7 +265,7 @@ impl Registry {
     }
 
     pub fn write(&self, path: &Path) -> Result<()> {
-        model_manifest::io::write_json(path, self)
+        inference_manifest::io::write_json(path, self)
     }
 
     /// Register a procedure and return its id. Registering one twice

@@ -734,22 +734,45 @@ dependencies = [
 ]
 
 [[package]]
-name = "blockchain-host"
+name = "blockchain-celestia"
+version = "0.1.0"
+dependencies = [
+ "hex",
+ "sha2",
+]
+
+[[package]]
+name = "blockchain-evm"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "blockchain-rules",
- "clap",
- "direct-infer",
  "hex",
- "iris-celestia",
- "iris-evm",
+ "procedure-definition",
+ "raster-core",
+ "sha2",
+ "source-phase",
+]
+
+[[package]]
+name = "blockchain-host"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "blockchain-celestia",
+ "blockchain-evm",
+ "blockchain-rules",
+ "clap",
+ "hex",
+ "inference-generation",
+ "inference-manifest",
+ "inference-prompt",
  "k256",
- "model-manifest",
  "postcard",
  "procedure-definition",
+ "procedure-pipeline",
+ "procedure-prepare",
  "procedure-run",
- "prompt-prep",
  "raster",
  "raster-analysis",
  "raster-backend-risc0",
@@ -757,14 +780,12 @@ dependencies = [
  "raster-core",
  "raster-prover",
  "raster-runtime",
- "result-core",
+ "result-phase",
  "risc0-zkvm",
- "run-prep",
  "serde",
  "serde_json",
  "sha2",
- "source-core",
- "staged-infer",
+ "source-phase",
  "toml",
 ]
 
@@ -773,18 +794,18 @@ name = "blockchain-rules"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "common-identity",
  "hex",
- "model-identity",
- "model-manifest",
+ "inference-manifest",
+ "inference-tokenizer",
  "postcard",
  "procedure-definition",
- "prompt-core",
  "raster-core",
- "result-core",
+ "result-phase",
  "serde",
  "serde_json",
  "sha2",
- "source-core",
+ "source-phase",
  "toml",
 ]
 
@@ -1019,7 +1040,7 @@ dependencies = [
 name = "claim-result"
 version = "0.1.0"
 dependencies = [
- "model-identity",
+ "common-identity",
  "raster",
  "serde",
  "sha2",
@@ -1092,10 +1113,30 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1d07550c9036bf2ae0c684c4297d503f838287c83c53686d05370d0e139ae570"
 
 [[package]]
+name = "common-identity"
+version = "0.1.0"
+dependencies = [
+ "common-statement",
+ "raster",
+ "raster-core",
+ "serde",
+ "sha2",
+]
+
+[[package]]
+name = "common-statement"
+version = "0.1.0"
+dependencies = [
+ "postcard",
+ "serde",
+ "sha2",
+]
+
+[[package]]
 name = "consensus-result"
 version = "0.1.0"
 dependencies = [
- "model-identity",
+ "common-identity",
  "raster",
  "serde",
  "sha2",
@@ -1511,22 +1552,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "det-num"
-version = "0.1.0"
-dependencies = [
- "fixed",
-]
-
-[[package]]
-name = "detwgt"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "det-num",
- "memmap2",
-]
-
-[[package]]
 name = "digest"
 version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1545,28 +1570,6 @@ dependencies = [
  "const-oid",
  "crypto-common",
  "subtle",
-]
-
-[[package]]
-name = "direct-infer"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "det-num",
- "detwgt",
- "inference-kernels",
- "input-embedding",
- "model-identity",
- "model-manifest",
- "prefill-prepare-aux",
- "prefill-range",
- "prompt-check",
- "prompt-prep",
- "raster",
- "sequence-check",
- "serde",
- "serde_json",
- "sha2",
 ]
 
 [[package]]
@@ -2603,14 +2606,56 @@ dependencies = [
 ]
 
 [[package]]
+name = "inference-generation"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "common-identity",
+ "inference-kernels",
+ "inference-manifest",
+ "inference-numerics",
+ "inference-prompt",
+ "inference-weights",
+ "input-embedding",
+ "prefill-prepare-aux",
+ "prefill-range",
+ "prompt-check",
+ "raster",
+ "sequence-check",
+ "serde",
+ "serde_json",
+ "sha2",
+]
+
+[[package]]
+name = "inference-import"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "common-identity",
+ "inference-kernels",
+ "inference-manifest",
+ "inference-numerics",
+ "inference-prompt",
+ "inference-weights",
+ "layer-mistral",
+ "prompt-check",
+ "raster",
+ "sequence-check",
+ "serde",
+ "serde_json",
+ "sha2",
+]
+
+[[package]]
 name = "inference-kernels"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "det-num",
+ "common-identity",
+ "inference-numerics",
  "input-embedding",
  "layer-mistral",
- "model-identity",
  "prefill-prepare-aux",
  "prefill-range",
  "prompt-check",
@@ -2622,11 +2667,64 @@ dependencies = [
 ]
 
 [[package]]
+name = "inference-manifest"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "common-identity",
+ "hex",
+ "serde",
+ "serde_json",
+ "sha2",
+]
+
+[[package]]
+name = "inference-numerics"
+version = "0.1.0"
+dependencies = [
+ "fixed",
+]
+
+[[package]]
+name = "inference-prompt"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "inference-kernels",
+ "input-embedding",
+ "prompt-check",
+ "raster",
+ "sequence-check",
+ "serde",
+ "serde_json",
+ "sha2",
+]
+
+[[package]]
+name = "inference-tokenizer"
+version = "0.1.0"
+dependencies = [
+ "common-identity",
+ "raster",
+ "serde",
+ "sha2",
+]
+
+[[package]]
+name = "inference-weights"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "inference-numerics",
+ "memmap2",
+]
+
+[[package]]
 name = "input-embedding"
 version = "0.1.0"
 dependencies = [
- "det-num",
- "model-identity",
+ "common-identity",
+ "inference-numerics",
  "raster",
  "serde",
  "sha2",
@@ -2648,14 +2746,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6a756c3fac73139e83f14c2d742155dd2b78d3ee56597b419a0579b7bdd6dd78"
 
 [[package]]
-name = "iris-celestia"
-version = "0.1.0"
-dependencies = [
- "hex",
- "sha2",
-]
-
-[[package]]
 name = "iris-cli"
 version = "0.1.0"
 dependencies = [
@@ -2663,14 +2753,16 @@ dependencies = [
  "blockchain-host",
  "blockchain-rules",
  "clap",
- "direct-infer",
+ "common-identity",
  "hex",
- "model-identity",
- "model-import",
- "model-manifest",
+ "inference-generation",
+ "inference-import",
+ "inference-manifest",
  "postcard",
  "procedure-definition",
- "procedure-direct",
+ "procedure-native",
+ "procedure-pipeline",
+ "procedure-prepare",
  "procedure-run",
  "raster",
  "raster-analysis",
@@ -2678,27 +2770,12 @@ dependencies = [
  "raster-backend-risc0",
  "raster-compiler",
  "raster-runtime",
- "run-prep",
  "sequence-check",
  "serde",
  "serde_json",
- "source-core",
- "staged-infer",
+ "source-phase",
  "testing",
  "toml",
-]
-
-[[package]]
-name = "iris-evm"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "blockchain-rules",
- "hex",
- "procedure-definition",
- "raster-core",
- "sha2",
- "source-core",
 ]
 
 [[package]]
@@ -2864,8 +2941,8 @@ checksum = "a4933f3f57a8e9d9da04db23fb153356ecaf00cbd14aee46279c33dc80925c37"
 name = "layer-mistral"
 version = "0.1.0"
 dependencies = [
- "det-num",
- "model-identity",
+ "common-identity",
+ "inference-numerics",
  "raster",
  "raster-runtime",
  "serde",
@@ -3160,49 +3237,6 @@ dependencies = [
  "libc",
  "wasi",
  "windows-sys 0.61.2",
-]
-
-[[package]]
-name = "model-identity"
-version = "0.1.0"
-dependencies = [
- "raster",
- "raster-core",
- "serde",
- "sha2",
- "statement-core",
-]
-
-[[package]]
-name = "model-import"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "det-num",
- "detwgt",
- "inference-kernels",
- "layer-mistral",
- "model-identity",
- "model-manifest",
- "prompt-check",
- "prompt-prep",
- "raster",
- "sequence-check",
- "serde",
- "serde_json",
- "sha2",
-]
-
-[[package]]
-name = "model-manifest"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "hex",
- "model-identity",
- "serde",
- "serde_json",
- "sha2",
 ]
 
 [[package]]
@@ -3641,8 +3675,8 @@ dependencies = [
 name = "prefill-prepare-aux"
 version = "0.1.0"
 dependencies = [
- "det-num",
- "model-identity",
+ "common-identity",
+ "inference-numerics",
  "raster",
  "raster-runtime",
  "serde",
@@ -3652,8 +3686,8 @@ dependencies = [
 name = "prefill-range"
 version = "0.1.0"
 dependencies = [
- "det-num",
- "model-identity",
+ "common-identity",
+ "inference-numerics",
  "raster",
  "raster-runtime",
  "serde",
@@ -3703,37 +3737,92 @@ name = "procedure-definition"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "common-identity",
  "hex",
- "model-identity",
- "model-manifest",
+ "inference-manifest",
+ "inference-prompt",
+ "inference-tokenizer",
  "postcard",
- "prompt-core",
- "prompt-prep",
  "raster-core",
- "result-core",
+ "result-phase",
  "serde",
  "serde_json",
  "sha2",
- "source-core",
+ "source-phase",
  "toml",
 ]
 
 [[package]]
-name = "procedure-direct"
+name = "procedure-native"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "direct-infer",
+ "inference-generation",
  "inference-kernels",
- "model-manifest",
+ "inference-manifest",
  "prefill-range",
  "procedure-definition",
+ "procedure-pipeline",
+ "procedure-prepare",
  "raster",
- "run-prep",
  "sequence-check",
  "serde_json",
  "sha2",
- "staged-infer",
+]
+
+[[package]]
+name = "procedure-pipeline"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "claim-result",
+ "clap",
+ "common-identity",
+ "consensus-result",
+ "hex",
+ "inference-kernels",
+ "inference-numerics",
+ "inference-prompt",
+ "input-embedding",
+ "layer-mistral",
+ "prefill-prepare-aux",
+ "prefill-range",
+ "procedure-definition",
+ "prompt-check",
+ "raster",
+ "raster-core",
+ "raster-runtime",
+ "rayon",
+ "sequence-check",
+ "serde",
+ "serde_json",
+ "sha2",
+ "source-phase",
+ "sysinfo",
+ "toml",
+]
+
+[[package]]
+name = "procedure-prepare"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "hex",
+ "inference-kernels",
+ "inference-manifest",
+ "inference-prompt",
+ "inference-tokenizer",
+ "input-embedding",
+ "postcard",
+ "procedure-definition",
+ "prompt-check",
+ "raster",
+ "result-phase",
+ "serde",
+ "serde_json",
+ "sha2",
+ "source-phase",
+ "toml",
 ]
 
 [[package]]
@@ -3742,17 +3831,17 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "procedure-definition",
- "procedure-direct",
- "run-prep",
+ "procedure-native",
+ "procedure-pipeline",
+ "procedure-prepare",
  "serde_json",
- "staged-infer",
 ]
 
 [[package]]
 name = "prompt-bind"
 version = "0.1.0"
 dependencies = [
- "model-identity",
+ "common-identity",
  "raster",
  "serde",
  "sha2",
@@ -3762,34 +3851,9 @@ dependencies = [
 name = "prompt-check"
 version = "0.1.0"
 dependencies = [
- "model-identity",
+ "common-identity",
  "raster",
  "serde",
- "sha2",
-]
-
-[[package]]
-name = "prompt-core"
-version = "0.1.0"
-dependencies = [
- "model-identity",
- "raster",
- "serde",
- "sha2",
-]
-
-[[package]]
-name = "prompt-prep"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "inference-kernels",
- "input-embedding",
- "prompt-check",
- "raster",
- "sequence-check",
- "serde",
- "serde_json",
  "sha2",
 ]
 
@@ -3797,8 +3861,8 @@ dependencies = [
 name = "prompt-relay"
 version = "0.1.0"
 dependencies = [
+ "common-identity",
  "k256",
- "model-identity",
  "raster",
  "serde",
  "sha2",
@@ -4387,7 +4451,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "result-core"
+name = "result-phase"
 version = "0.1.0"
 dependencies = [
  "raster",
@@ -4858,29 +4922,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "48fd7bd8a6377e15ad9d42a8ec25371b94ddc67abe7c8b9127bec79bebaaae18"
 
 [[package]]
-name = "run-prep"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "hex",
- "inference-kernels",
- "input-embedding",
- "model-manifest",
- "postcard",
- "procedure-definition",
- "prompt-check",
- "prompt-core",
- "prompt-prep",
- "raster",
- "result-core",
- "serde",
- "serde_json",
- "sha2",
- "source-core",
- "toml",
-]
-
-[[package]]
 name = "rusqlite"
 version = "0.37.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5124,8 +5165,8 @@ dependencies = [
 name = "sequence-check"
 version = "0.1.0"
 dependencies = [
- "det-num",
- "model-identity",
+ "common-identity",
+ "inference-numerics",
  "raster",
  "serde",
  "sha2",
@@ -5306,7 +5347,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "source-core"
+name = "source-phase"
 version = "0.1.0"
 dependencies = [
  "k256",
@@ -5371,47 +5412,6 @@ dependencies = [
  "libc",
  "psm",
  "windows-sys 0.61.2",
-]
-
-[[package]]
-name = "staged-infer"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "claim-result",
- "clap",
- "consensus-result",
- "det-num",
- "hex",
- "inference-kernels",
- "input-embedding",
- "layer-mistral",
- "model-identity",
- "prefill-prepare-aux",
- "prefill-range",
- "procedure-definition",
- "prompt-check",
- "prompt-prep",
- "raster",
- "raster-core",
- "raster-runtime",
- "rayon",
- "sequence-check",
- "serde",
- "serde_json",
- "sha2",
- "source-core",
- "sysinfo",
- "toml",
-]
-
-[[package]]
-name = "statement-core"
-version = "0.1.0"
-dependencies = [
- "postcard",
- "serde",
- "sha2",
 ]
 
 [[package]]
@@ -5545,25 +5545,25 @@ dependencies = [
  "anyhow",
  "blockchain-host",
  "blockchain-rules",
- "det-num",
- "direct-infer",
  "hex",
- "model-manifest",
+ "inference-generation",
+ "inference-manifest",
+ "inference-numerics",
+ "inference-prompt",
  "postcard",
  "procedure-definition",
- "procedure-direct",
- "prompt-prep",
+ "procedure-native",
+ "procedure-pipeline",
+ "procedure-prepare",
  "raster",
  "raster-compiler",
  "raster-prover",
  "raster-runtime",
- "run-prep",
  "sequence-check",
  "serde",
  "serde_json",
  "sha2",
- "source-core",
- "staged-infer",
+ "source-phase",
  "toml",
 ]
 

@@ -5,7 +5,7 @@
 
 use std::collections::BTreeMap;
 
-use ::model_identity::context::parse_id;
+use ::common_identity::context::parse_id;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 

@@ -13,7 +13,7 @@ use alloc::vec::Vec;
 const ONE_Q32: u64 = 1 << 32;
 /// `ln 2` in Q32, rounded to nearest.
 const LN_2_Q32: u64 = 2_977_044_472;
-/// `2 pi` and its quarters in Q32.32, the constants `det-num` reduces angles by.
+/// `2 pi` and its quarters in Q32.32, the constants `inference-numerics` reduces angles by.
 const HALF_PI_Q32: i64 = 6_746_518_852;
 const PI_Q32: i64 = 13_493_037_705;
 const THREE_HALF_PI_Q32: i64 = 20_239_556_557;
@@ -78,7 +78,7 @@ pub fn silu(x: i32) -> i32 {
 
 /// Sine and cosine of a Q32.32 angle, in Q30.
 ///
-/// The angle is reduced to a quarter turn as `det-num` reduces it. Each
+/// The angle is reduced to a quarter turn as `inference-numerics` reduces it. Each
 /// series is in Horner form over the square of the reduced angle, every
 /// product rounded down.
 fn sin_cos_q30(angle: i64) -> (i64, i64) {

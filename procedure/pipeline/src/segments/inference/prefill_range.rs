@@ -44,7 +44,7 @@ impl LoadedLayer {
     pub fn root(&self) -> &raster::BytesPage {
         self.0
             .root
-            .get_or_init(|| model_identity::stream::digest(&self.0.layer))
+            .get_or_init(|| common_identity::stream::digest(&self.0.layer))
     }
 }
 
@@ -121,14 +121,14 @@ pub fn run_direct_with_weight_cache(
         },
         weight_cache,
     )?;
-    output.model = model_identity::stream::verify(
+    output.model = common_identity::stream::verify(
         output.model,
         inputs.layer.root(),
-        model_identity::Role::Transformer(inputs.layer.params.layer_idx),
+        common_identity::Role::Transformer(inputs.layer.params.layer_idx),
     );
     output.model.require(
         !(inputs.prior_kv.model.is_origin()
-            || inputs.prior_kv.model.producer == model_identity::context::EMBEDDING)
+            || inputs.prior_kv.model.producer == common_identity::context::EMBEDDING)
             || inputs.prior_kv.kv.is_empty(),
     );
     Ok(output)

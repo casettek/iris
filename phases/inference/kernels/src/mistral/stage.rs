@@ -92,7 +92,7 @@ impl<'a> PagedQ8<'a> {
         cols: usize,
         key: Q8Key,
     ) -> Result<Self> {
-        let Some(row_bytes) = det_num::q8::row_bytes(cols) else {
+        let Some(row_bytes) = inference_numerics::q8::row_bytes(cols) else {
             bail!("{name} rows of {cols} values are not whole Q8_0 blocks");
         };
         if region.page_size() != P || P as usize % row_bytes != 0 {
@@ -159,7 +159,7 @@ impl MatrixSource for PagedQ8<'_> {
                 self.rows
             );
         }
-        det_num::q8::dot_row(input, self.row(row_idx)).map_err(anyhow::Error::msg)
+        inference_numerics::q8::dot_row(input, self.row(row_idx)).map_err(anyhow::Error::msg)
     }
 }
 

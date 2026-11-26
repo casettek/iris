@@ -14,13 +14,13 @@ use std::process::{Command, Stdio};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{bail, ensure, Context, Result};
-use model_manifest::{file_sha256, ModelManifest};
+use inference_manifest::{file_sha256, ModelManifest};
 use procedure_definition::{read_json, write_json, InferenceResult};
-use procedure_direct::{DirectInferenceConfig, DirectInferenceExecutor};
+use procedure_native::{DirectInferenceConfig, DirectInferenceExecutor};
+use procedure_pipeline::pipeline_runner::StagedExecutionBackend;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-use staged_infer::pipeline_runner::StagedExecutionBackend;
 
 use blockchain_host::claim::{build_posted_claim, prepare_claim_run, ClaimBuildOptions};
 use compare::{
@@ -118,7 +118,7 @@ fn outcomes(report: &Value) -> Value {
     };
     let layer_program = report["layer_program"]
         .as_str()
-        .unwrap_or(model_manifest::ModelFamily::GemmaDense.layer_program());
+        .unwrap_or(inference_manifest::ModelFamily::GemmaDense.layer_program());
     let mut replayed = BTreeMap::<&str, u64>::new();
     let mut found_only = BTreeMap::<&str, u64>::new();
     let mut rejected = 0u64;
@@ -320,7 +320,7 @@ fn run_suite(
     // not pin. Raster's own checks do not see one.
     crate::stage_bindings::check_stage_programs(root)?;
     ensure!(
-        model_manifest::ModelFamily::ALL
+        inference_manifest::ModelFamily::ALL
             .iter()
             .any(|family| family.parity_bundle() == bundle),
         "`{bundle}` is not a family's parity bundle"
@@ -379,7 +379,7 @@ fn run_suite(
         "--release",
         "--locked",
         "-p",
-        "det-num",
+        "inference-numerics",
         "--test",
         "golden_vectors",
     ]);
@@ -619,7 +619,7 @@ fn run_case(
         claimed.len(),
         case.tokens
     );
-    let direct_names = direct_infer::diagnostics::boundary_names(
+    let direct_names = inference_generation::diagnostics::boundary_names(
         model.shape.num_hidden_layers(),
         case.tokens,
         shape.auxiliary,
@@ -676,7 +676,7 @@ fn run_case(
     // A run that names no forms has no code, and its forms hash says so.
     ensure!(
         record["result_code"] == json!(0)
-            && record["result_forms_sha256"] == json!(run_prep::source::no_forms_id()),
+            && record["result_forms_sha256"] == json!(procedure_prepare::source::no_forms_id()),
         "a run without forms states a result: {record}"
     );
     // Every check states a record, and only the last range's is a claim's:
@@ -838,10 +838,10 @@ fn run_pipeline_fault_scenario(
         .parent()
         .context("model manifest has no parent directory")?;
     let tokenizer: Value = read_json(&model_dir.join(&model.bundle.tokenizer_path))?;
-    let ranges = prompt_prep::marked_ranges(
+    let ranges = inference_prompt::marked_ranges(
         &prompt.initial_pieces,
         range_size as usize,
-        &prompt_prep::prompt_tokenizer(&tokenizer)?,
+        &inference_prompt::prompt_tokenizer(&tokenizer)?,
     )?;
     let canonical: Vec<Vec<u32>> = ranges.iter().map(|range| range.marks.clone()).collect();
     // Every piece's mark, and the first place after the start where a token begins.
@@ -879,7 +879,7 @@ fn run_pipeline_fault_scenario(
             greedy,
             2,
             true,
-            prompt_prep::CHECK_FAULT_NO_CLAIMED_TOKENS,
+            inference_prompt::CHECK_FAULT_NO_CLAIMED_TOKENS,
             positions,
             [0, 0],
         ),
@@ -889,7 +889,7 @@ fn run_pipeline_fault_scenario(
             greedy,
             2,
             true,
-            prompt_prep::CHECK_FAULT_NO_CLAIMED_TOKENS,
+            inference_prompt::CHECK_FAULT_NO_CLAIMED_TOKENS,
             positions,
             [0, 0],
         ),
@@ -953,21 +953,22 @@ fn run_pipeline_fault_scenario(
         let dir = case_dir.join("pipeline-faults").join(name);
         let files = dir.join("prompt");
         let manifest = dir.join("Raster.toml");
-        let mark_files = run_prep::write_marks(&marks, &files)?;
-        let claimed_files = run_prep::write_claimed_ranges(ids, range_size as usize, &files)?;
-        let (slices, text_digest) = prompt_prep::text_for_ranges(
+        let mark_files = procedure_prepare::write_marks(&marks, &files)?;
+        let claimed_files =
+            procedure_prepare::write_claimed_ranges(ids, range_size as usize, &files)?;
+        let (slices, text_digest) = inference_prompt::text_for_ranges(
             &prompt.resolved_prompt,
             case.raw_prompt,
             range_size as usize,
-            &prompt_prep::prompt_tokenizer(&tokenizer)?,
+            &inference_prompt::prompt_tokenizer(&tokenizer)?,
             marks.len(),
         )?;
         let rendered = blockchain_host::claim::render_ranged_manifest(
             &template,
             template_dir,
-            &run_prep::write_text_slices(&slices, &files)?,
-            &run_prep::write_run_config(
-                &prompt_prep::RunConfig {
+            &procedure_prepare::write_text_slices(&slices, &files)?,
+            &procedure_prepare::write_run_config(
+                &inference_prompt::RunConfig {
                     model_id: model.model_id.clone(),
                     raw_prompt: case.raw_prompt,
                     max_new_tokens: budget,
@@ -975,14 +976,14 @@ fn run_pipeline_fault_scenario(
                 },
                 &files,
             )?,
-            &run_prep::write_run_schedule(
+            &procedure_prepare::write_run_schedule(
                 (mark_files.len() as i64 + skew[0]) as usize,
                 (claimed_files.len() as i64 + skew[1]) as usize,
                 &files,
             )?,
-            &run_prep::write_text_digest(&text_digest, &files)?,
+            &procedure_prepare::write_text_digest(&text_digest, &files)?,
             None,
-            &run_prep::write_result_forms(&[], &files)?,
+            &procedure_prepare::write_result_forms(&[], &files)?,
             &mark_files,
             &claimed_files,
         )?;
@@ -997,13 +998,13 @@ fn run_pipeline_fault_scenario(
             .arg(&raster_dir);
         logged(run, &dir.join("raster.log"))
             .with_context(|| format!("pipeline fault `{name}`: a Raster stage did not finish"))?;
-        let native_run = staged_infer::CheckpointedInferenceExecutor
-            .run(staged_infer::CheckpointedInferenceConfig {
+        let native_run = procedure_pipeline::CheckpointedInferenceExecutor
+            .run(procedure_pipeline::CheckpointedInferenceConfig {
                 base_dir: dir.clone(),
                 manifest_path: manifest.clone(),
                 current_exe: exe.to_path_buf(),
                 staged_backend: StagedExecutionBackend::InProcess,
-                parity_policy: staged_infer::ParityPolicy::Skip,
+                parity_policy: procedure_pipeline::ParityPolicy::Skip,
             })
             .with_context(|| format!("pipeline fault `{name}`: a native stage did not finish"))?;
 
@@ -1063,7 +1064,8 @@ fn run_pipeline_fault_scenario(
             ),
             "short-of-budget" => ensure!(
                 record["claim_mismatches"] == json!(0)
-                    && record["output_fault"] == json!(prompt_prep::OUTPUT_FAULT_SHORT_WITHOUT_EOS),
+                    && record["output_fault"]
+                        == json!(inference_prompt::OUTPUT_FAULT_SHORT_WITHOUT_EOS),
                 "pipeline fault `{name}`: the output fault is not published: {record}"
             ),
             _ => {}
@@ -1099,11 +1101,11 @@ fn run_prompt_fault_scenario(
     model: &ModelManifest,
     prepared: &blockchain_host::claim::PreparedClaimRun,
 ) -> Result<Value> {
-    use prompt_prep::{
+    use inference_prompt::{
         FAULT_CUT_BEYOND_TEXT, FAULT_EMPTY_RANGE, FAULT_NONE, FAULT_NOT_THE_MERGE,
         FAULT_TEXT_DIGEST,
     };
-    use run_prep::RunFile;
+    use procedure_prepare::RunFile;
     let pieces = &prepared.prepared_run.first()?.prompt.initial_pieces;
     let tokenizer: Value = read_json(
         &model_path
@@ -1112,10 +1114,10 @@ fn run_prompt_fault_scenario(
             .join(&model.bundle.tokenizer_path),
     )?;
     // The merge's own marks, range by range.
-    let canonical: Vec<Vec<u32>> = prompt_prep::marked_ranges(
+    let canonical: Vec<Vec<u32>> = inference_prompt::marked_ranges(
         pieces,
         model.range_size as usize,
-        &prompt_prep::prompt_tokenizer(&tokenizer)?,
+        &inference_prompt::prompt_tokenizer(&tokenizer)?,
     )?
     .into_iter()
     .map(|range| range.marks)
@@ -1200,16 +1202,16 @@ fn run_prompt_fault_scenario(
     ));
 
     let template = fs::read_to_string(&prepared.manifest_path)?;
-    let prompt_tokenizer = prompt_prep::prompt_tokenizer(&tokenizer)?;
+    let prompt_tokenizer = inference_prompt::prompt_tokenizer(&tokenizer)?;
     let text = &prepared.prepared_run.first()?.prompt.resolved_prompt;
     let raw_prompt = prepared.prepared_run.raw_prompt;
     let mut report = Vec::new();
     for (name, marks, fault, complete) in cases {
         let dir = case_dir.join("prompt-faults").join(name);
-        let files: Vec<RunFile> = run_prep::write_marks(&marks, &dir.join("prompt"))?;
+        let files: Vec<RunFile> = procedure_prepare::write_marks(&marks, &dir.join("prompt"))?;
         // The same text and the same digest of it, for however many ranges
         // these marks make.
-        let (mut slices, mut text_digest) = prompt_prep::text_for_ranges(
+        let (mut slices, mut text_digest) = inference_prompt::text_for_ranges(
             text,
             raw_prompt,
             model.range_size as usize,
@@ -1236,9 +1238,9 @@ fn run_prompt_fault_scenario(
             }
             _ => false,
         };
-        let texts = run_prep::write_text_slices(&slices, &dir.join("prompt"))?;
+        let texts = procedure_prepare::write_text_slices(&slices, &dir.join("prompt"))?;
         let text_digest = other_digest
-            .then(|| run_prep::write_text_digest(&text_digest, &dir.join("prompt")))
+            .then(|| procedure_prepare::write_text_digest(&text_digest, &dir.join("prompt")))
             .transpose()?;
         let manifest = dir.join("Raster.toml");
         fs::write(
@@ -1255,13 +1257,13 @@ fn run_prompt_fault_scenario(
             .arg(&raster_dir);
         logged(run, &dir.join("raster.log"))
             .with_context(|| format!("prompt fault `{name}`: a Raster stage did not finish"))?;
-        let native_dir = staged_infer::CheckpointedInferenceExecutor
-            .run(staged_infer::CheckpointedInferenceConfig {
+        let native_dir = procedure_pipeline::CheckpointedInferenceExecutor
+            .run(procedure_pipeline::CheckpointedInferenceConfig {
                 base_dir: dir.clone(),
                 manifest_path: manifest.clone(),
                 current_exe: exe.to_path_buf(),
                 staged_backend: StagedExecutionBackend::InProcess,
-                parity_policy: staged_infer::ParityPolicy::Skip,
+                parity_policy: procedure_pipeline::ParityPolicy::Skip,
             })
             .with_context(|| format!("prompt fault `{name}`: a native stage did not finish"))?
             .pipeline_dir;
@@ -1304,16 +1306,16 @@ fn run_long_text_case(
     raster: &Path,
     template: &str,
     raw_prompt: bool,
-    tokenizer: &prompt_prep::PromptTokenizer,
+    tokenizer: &inference_prompt::PromptTokenizer,
 ) -> Result<Value> {
     let dir = case_dir.join("prompt-faults/long-text");
     let files = dir.join("prompt");
     let text = "ab ".repeat(1024);
     // All of it in one range, with what is true of it claimed.
     let (slices, text_digest) =
-        prompt_prep::text_for_ranges(&text, raw_prompt, usize::MAX, tokenizer, 1)?;
-    let texts = run_prep::write_text_slices(&slices, &files)?;
-    let text_digest = run_prep::write_text_digest(&text_digest, &files)?;
+        inference_prompt::text_for_ranges(&text, raw_prompt, usize::MAX, tokenizer, 1)?;
+    let texts = procedure_prepare::write_text_slices(&slices, &files)?;
+    let text_digest = procedure_prepare::write_text_digest(&text_digest, &files)?;
     let manifest = dir.join("Raster.toml");
     fs::write(
         &manifest,
@@ -1328,13 +1330,13 @@ fn run_long_text_case(
         .args(["--no-auth", "--run"])
         .arg(&raster_dir);
     logged(run, &dir.join("raster.log")).context("a long text did not finish through Raster")?;
-    let native_dir = staged_infer::CheckpointedInferenceExecutor
-        .run(staged_infer::CheckpointedInferenceConfig {
+    let native_dir = procedure_pipeline::CheckpointedInferenceExecutor
+        .run(procedure_pipeline::CheckpointedInferenceConfig {
             base_dir: dir.clone(),
             manifest_path: manifest,
             current_exe: exe.to_path_buf(),
             staged_backend: StagedExecutionBackend::InProcess,
-            parity_policy: staged_infer::ParityPolicy::Skip,
+            parity_policy: procedure_pipeline::ParityPolicy::Skip,
         })
         .context("a long text did not finish natively")?
         .pipeline_dir;
@@ -1386,12 +1388,15 @@ fn block_name(block: &[&str]) -> String {
 /// constant, as in a run whose text is taken as given.
 fn prompt_only_manifest(
     template: &str,
-    texts: &[run_prep::RunFile],
-    cuts: &[run_prep::RunFile],
-    text_digest: Option<&run_prep::RunFile>,
+    texts: &[procedure_prepare::RunFile],
+    cuts: &[procedure_prepare::RunFile],
+    text_digest: Option<&procedure_prepare::RunFile>,
     source: Option<&procedure_definition::PreparedSourceInputs>,
 ) -> Result<String> {
-    let input = |name: &str, family: &str, files: &[run_prep::RunFile]| -> Result<String> {
+    let input = |name: &str,
+                 family: &str,
+                 files: &[procedure_prepare::RunFile]|
+     -> Result<String> {
         let dir = files[0]
             .path
             .parent()
@@ -1538,7 +1543,11 @@ pub fn compare_teacher_forced(tf_dir: &Path, direct_dir: &Path) -> Result<Value>
     let tokens = generated.as_array().context("missing generated ids")?.len();
     ensure!(tokens > 0, "direct generation produced no tokens");
     check_inventory(
-        &direct_infer::diagnostics::boundary_names(shape.layers, tokens as u32, shape.auxiliary),
+        &inference_generation::diagnostics::boundary_names(
+            shape.layers,
+            tokens as u32,
+            shape.auxiliary,
+        ),
         &direct_names,
     )
     .with_context(|| format!("{}: not a direct run", direct_dir.display()))?;
@@ -1920,7 +1929,9 @@ fn validate_model_bundle(
             && shape.final_logit_softcap > 0,
         "model bundle shape or active numerics changed"
     );
-    let weights = direct_infer::detwgt::MmapDetwgt::open(&model_bundle.join("model.detwgt"))?;
+    let weights = inference_generation::inference_weights::MmapDetwgt::open(
+        &model_bundle.join("model.detwgt"),
+    )?;
     for layer in 0..4 {
         for tensor in [
             "mlp.gate_proj.weight",
@@ -1929,7 +1940,8 @@ fn validate_model_bundle(
         ] {
             let matrix =
                 weights.q8_matrix(&format!("model.language_model.layers.{layer}.{tensor}"))?;
-            let bytes = matrix.rows() * det_num::q8::row_bytes(matrix.cols()).unwrap_or(0);
+            let bytes =
+                matrix.rows() * inference_numerics::q8::row_bytes(matrix.cols()).unwrap_or(0);
             ensure!(
                 matrix.rows() * matrix.cols() == 128 * 2048
                     && bytes > 195_840

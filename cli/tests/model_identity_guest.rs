@@ -1,5 +1,5 @@
 //! Explicit guest execution gate; requires the installed RISC Zero toolchain.
-use model_identity::ModelDescriptor;
+use common_identity::ModelDescriptor;
 use raster::{BytesPage, List};
 use raster_backend::ExecutionMode;
 use raster_backend_risc0::Risc0Backend;
@@ -117,12 +117,12 @@ fn component_roles_and_sticky_context_are_enforced_in_guests() {
         auxiliary: vec![[5; 32], [6; 32]],
         transformer: vec![[7; 32], [8; 32]],
     };
-    let mut context = model_identity::ModelContext::bind(
+    let mut context = common_identity::ModelContext::bind(
         &d.encode().unwrap(),
         &hex::encode(d.model_id().unwrap()),
     );
     context.bind_statement(&"11".repeat(32), &"00".repeat(32), false, 4, 4);
-    context.bind_schedule(model_identity::statement_core::StageSchedule {
+    context.bind_schedule(common_identity::common_statement::StageSchedule {
         prompt_ranges: 1,
         claimed_ranges: 1,
     });
@@ -132,29 +132,34 @@ fn component_roles_and_sticky_context_are_enforced_in_guests() {
     for (stage, role, root, indexed) in [
         (
             "prompt-check",
-            model_identity::Role::Tokenizer,
+            common_identity::Role::Tokenizer,
             [1; 32],
             false,
         ),
         (
             "input-embedding",
-            model_identity::Role::Embedding,
+            common_identity::Role::Embedding,
             [3; 32],
             false,
         ),
         (
             "prefill-prepare-aux",
-            model_identity::Role::Auxiliary(1),
+            common_identity::Role::Auxiliary(1),
             [6; 32],
             true,
         ),
         (
             "prefill-range",
-            model_identity::Role::Transformer(1),
+            common_identity::Role::Transformer(1),
             [8; 32],
             true,
         ),
-        ("sequence-check", model_identity::Role::Head, [4; 32], false),
+        (
+            "sequence-check",
+            common_identity::Role::Head,
+            [4; 32],
+            false,
+        ),
     ] {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../raster-stages")
@@ -198,7 +203,7 @@ fn component_roles_and_sticky_context_are_enforced_in_guests() {
             } else if stage == "input-embedding" {
                 postcard::to_allocvec(&(
                     &input,
-                    &model_identity::ModelContext::default(),
+                    &common_identity::ModelContext::default(),
                     &root,
                     (0u32,),
                     0u64,
@@ -208,7 +213,7 @@ fn component_roles_and_sticky_context_are_enforced_in_guests() {
                 postcard::to_allocvec(&(&input, &root)).unwrap()
             };
             let execution = runner.run(&bytes, ExecutionMode::Estimate).unwrap();
-            let output: model_identity::ModelContext = if stage == "prompt-check" {
+            let output: common_identity::ModelContext = if stage == "prompt-check" {
                 postcard::from_bytes::<sequence_check::prompt::PromptContext>(&execution.output)
                     .unwrap()
                     .model
@@ -216,18 +221,18 @@ fn component_roles_and_sticky_context_are_enforced_in_guests() {
                 postcard::from_bytes(&execution.output).unwrap()
             };
             let input = if stage == "input-embedding" {
-                model_identity::ModelContext::embedding(&input, &Default::default())
+                common_identity::ModelContext::embedding(&input, &Default::default())
             } else {
                 input
             };
             let expected_role = match role {
-                model_identity::Role::Auxiliary(_) => model_identity::Role::Auxiliary(index),
-                model_identity::Role::Transformer(_) => model_identity::Role::Transformer(index),
+                common_identity::Role::Auxiliary(_) => common_identity::Role::Auxiliary(index),
+                common_identity::Role::Transformer(_) => common_identity::Role::Transformer(index),
                 r => r,
             };
             assert_eq!(
                 output,
-                model_identity::stream::verify(input, &root, expected_role)
+                common_identity::stream::verify(input, &root, expected_role)
             );
             assert_eq!(
                 output.fault == 0,
@@ -259,7 +264,7 @@ fn page_bytes_and_final_context_are_checked_in_guests() {
     let runner = builder
         .build_tile_runner(&discovery.get("identity_page").unwrap())
         .unwrap();
-    let mut fold = model_identity::stream::empty();
+    let mut fold = common_identity::stream::empty();
     for (index, bytes) in [vec![1, 2, 3, 4], vec![5, 6], vec![7; 195_840]]
         .into_iter()
         .enumerate()
@@ -280,7 +285,7 @@ fn page_bytes_and_final_context_are_checked_in_guests() {
             transition.state_in,
             raster::core::tree::value_root(&fold).unwrap()
         );
-        fold = model_identity::stream::append(&fold, &model_identity::stream::digest(&value));
+        fold = common_identity::stream::append(&fold, &common_identity::stream::digest(&value));
         assert_eq!(
             transition.state_out,
             raster::core::tree::value_root(&fold).unwrap()
@@ -358,7 +363,7 @@ fn page_bytes_and_final_context_are_checked_in_guests() {
 #[test]
 #[ignore = "executes sparse membership checks in three production Raster guests"]
 fn sparse_membership_is_checked_by_production_guests() {
-    use model_identity::{sparse, stream, ModelContext};
+    use common_identity::{sparse, stream, ModelContext};
     let values = vec![
         page(vec![1; 1024]),
         page(vec![2; 1024]),
@@ -496,9 +501,9 @@ fn prompt_statement_substitution_is_rejected_in_guest() {
         transformer: vec![[6; 32]],
     };
     let model_id = hex::encode(descriptor.model_id().unwrap());
-    let mut model = model_identity::ModelContext::bind(&descriptor.encode().unwrap(), &model_id);
+    let mut model = common_identity::ModelContext::bind(&descriptor.encode().unwrap(), &model_id);
     model.bind_statement(&"11".repeat(32), &"00".repeat(32), false, 8, 4);
-    model.bind_schedule(model_identity::statement_core::StageSchedule {
+    model.bind_schedule(common_identity::common_statement::StageSchedule {
         prompt_ranges: 2,
         claimed_ranges: 1,
     });
@@ -546,7 +551,7 @@ fn prompt_statement_substitution_is_rejected_in_guest() {
 #[test]
 #[ignore = "builds and executes the production prompt-bind guest"]
 fn a_bind_opens_and_continues_in_guest_as_it_does_natively() {
-    use model_identity::statement_core::{Step, MAX_RANGES};
+    use common_identity::common_statement::{Step, MAX_RANGES};
     use sequence_check::prompt::{
         open_bind_range, text_digest_of, BindCarry, BindOpen, PromptContext, RunConfig,
         RunSchedule, SourceRecord, TokenizerProfile,
@@ -676,11 +681,11 @@ fn a_bind_opens_and_continues_in_guest_as_it_does_natively() {
 }
 
 fn execution_fixture() -> (
-    model_identity::ModelContext,
-    model_identity::ModelContext,
-    model_identity::ModelContext,
+    common_identity::ModelContext,
+    common_identity::ModelContext,
+    common_identity::ModelContext,
 ) {
-    use model_identity::ModelContext;
+    use common_identity::ModelContext;
     let d = ModelDescriptor {
         version: 2,
         tokenizer: [1; 32],
@@ -692,7 +697,7 @@ fn execution_fixture() -> (
     };
     let mut p = ModelContext::bind(&d.encode().unwrap(), &hex::encode(d.model_id().unwrap()));
     p.bind_statement(&"11".repeat(32), &"00".repeat(32), false, 4, 4);
-    p.bind_schedule(model_identity::statement_core::StageSchedule {
+    p.bind_schedule(common_identity::common_statement::StageSchedule {
         prompt_ranges: 1,
         claimed_ranges: 1,
     });
@@ -717,7 +722,7 @@ fn execution_fixture() -> (
 #[test]
 #[ignore = "builds and executes production sequence-check guests, finalization among them"]
 fn pipeline_history_and_transcript_substitutions_match_native_in_guest() {
-    use model_identity::ModelContext;
+    use common_identity::ModelContext;
     let (prompt, previous, current) = execution_fixture();
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../raster-stages/sequence-check")

@@ -25,7 +25,7 @@ pub(crate) fn require_input_args(cli: &Cli) -> Result<()> {
 }
 
 pub(crate) fn finish_parity_run(status: ExitStatus, stage_dir: &Path) -> Result<ExitCode> {
-    match staged_infer::parity::read_parity_report(stage_dir) {
+    match procedure_pipeline::parity::read_parity_report(stage_dir) {
         Ok(report) => {
             let pipeline_dir = stage_dir
                 .parent()
@@ -43,17 +43,17 @@ pub(crate) fn finish_parity_run(status: ExitStatus, stage_dir: &Path) -> Result<
 
 pub(crate) fn render_timing_summary_or_warning(
     pipeline_dir: &Path,
-    report: &staged_infer::parity::ParityReport,
+    report: &procedure_pipeline::parity::ParityReport,
 ) -> String {
-    staged_infer::parity::read_pipeline_execution_times(pipeline_dir)
-        .and_then(|timings| staged_infer::parity::render_timing_summary(&timings, report))
+    procedure_pipeline::parity::read_pipeline_execution_times(pipeline_dir)
+        .and_then(|timings| procedure_pipeline::parity::render_timing_summary(&timings, report))
         .unwrap_or_else(|error| format!("\ntiming summary unavailable: {error:#}\n"))
 }
 
 pub(crate) fn run_hidden_compare(stage_dir: &Path) -> Result<ExitStatus> {
     let input = stage_dir.join("input.json");
     let input_manifest = stage_dir.join("input_manifest.json");
-    let prior_report = staged_infer::parity::parity_dir(stage_dir).join("report.json");
+    let prior_report = procedure_pipeline::parity::parity_dir(stage_dir).join("report.json");
     if let Err(error) = fs::remove_file(&prior_report) {
         if error.kind() != std::io::ErrorKind::NotFound {
             return Err(error)

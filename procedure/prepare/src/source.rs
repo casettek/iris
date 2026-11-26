@@ -1,15 +1,15 @@
 //! A run's source, as the specification and the case give it.
 //!
 //! Reading the case's files is all that happens here. What they mean is in
-//! `source-core`, which the stages will run too.
+//! `source-phase`, which the stages will run too.
 
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{ensure, Context, Result};
 use procedure_definition::{Case, Specification, SpecificationForm, SpecificationSource};
-pub use result_core::{forms_id, run_forms, Form};
-pub use source_core::{
+pub use result_phase::{forms_id, run_forms, Form};
+pub use source_phase::{
     fault_description, Attestation, DocumentName, Field, Recipe, SignerKey, SourceDocument,
     SourceRecord, SourceRun, FAULT_NONE,
 };
@@ -79,7 +79,7 @@ pub fn load_source(
 
 impl LoadedSource {
     /// The documents as the source stage takes them.
-    pub fn documents(&self) -> source_core::SourceDocuments {
+    pub fn documents(&self) -> source_phase::SourceDocuments {
         let sources: Vec<SourceDocument> = self
             .documents
             .iter()
@@ -88,13 +88,13 @@ impl LoadedSource {
                 body: &document.body,
             })
             .collect();
-        source_core::source_documents(&sources)
+        source_phase::source_documents(&sources)
     }
 
     /// The source step over these files: its record, with any fault in it,
     /// and the prompt text.
     pub fn run(&self) -> SourceRun {
-        source_core::run_source_steps(
+        source_phase::run_source_steps(
             &self.specification.signer,
             &self.specification.recipe(),
             &self.documents(),
@@ -114,7 +114,7 @@ impl LoadedSource {
 
     /// The result step over an output text.
     pub fn result_code(&self, output: &str) -> u32 {
-        result_core::run_forms(&self.forms(), output).code
+        result_phase::run_forms(&self.forms(), output).code
     }
 }
 
@@ -123,9 +123,9 @@ impl LoadedSource {
 /// forms the output is read by.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SourceTerms {
-    /// As in [`source_core::SourceRecord::signer`].
+    /// As in [`source_phase::SourceRecord::signer`].
     pub signer: String,
-    /// As in [`source_core::SourceRecord::recipe_sha256`].
+    /// As in [`source_phase::SourceRecord::recipe_sha256`].
     pub recipe_sha256: String,
     /// The forms the output is read by, in order.
     pub forms: Vec<Form>,
@@ -136,10 +136,10 @@ pub fn source_terms(specification: &Specification) -> Option<SourceTerms> {
     let source = specification.source.as_ref()?;
     // The recipe's hash is over the recipe alone, so the source step over no
     // documents states it.
-    let record = source_core::run_source_steps(
+    let record = source_phase::run_source_steps(
         &source.signer,
         &source.recipe(),
-        &source_core::source_documents(&[]),
+        &source_phase::source_documents(&[]),
     )
     .record;
     Some(SourceTerms {

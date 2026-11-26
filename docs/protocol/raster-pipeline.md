@@ -43,7 +43,7 @@ The pipeline verifies a *known* output with one pass over `prompt ‖ claimed_ou
 | `claim-result` | `result` | Compare the output text with the run's forms and state the first one's code beside the claim record |
 | `consensus-result` | `result` | In a [consensus](procedure-kinds.md) pipeline: read both inferences' outputs by the run's forms and state whether they agree |
 
-Autoregressive generation is not a pipeline. It lives in `direct-infer`, which discovers the output a claim then verifies.
+Autoregressive generation is not a pipeline. It lives in `inference-generation`, which discovers the output a claim then verifies.
 
 ## Ranges
 
@@ -321,8 +321,8 @@ three affected program identities as described in [development](development.md).
 ### Statement and token-history binding
 
 Every nonempty stage boundary carries a versioned `Execution` record inside
-`ModelContext.execution`. The shared `statement-core` crate defines the canonical
-statement hash and position-sensitive token-prefix hash; `model-identity` checks
+`ModelContext.execution`. The shared `common-statement` crate defines the canonical
+statement hash and position-sensitive token-prefix hash; `common-identity` checks
 stage transitions. The record binds the input-text hash, the source digest, model
 ID, raw-prompt flag, generation budget, and range size. Embedding folds the actual consumed
 IDs, so changing a token while keeping the same length and final token changes
@@ -381,7 +381,7 @@ Every stage records its step in `Execution`: its operation, range and layer. In
 a tile it works out that step from its committed inputs, requires the
 schedule to contain it, and requires each input to carry the step the schedule
 puts before it, under the same statement and schedule. The rules are in
-`statement-core`'s `schedule.rs` and applied by `model-identity`'s `execution.rs`.
+`common-statement`'s `schedule.rs` and applied by `common-identity`'s `execution.rs`.
 
 | Stage | Its step must be | Its inputs must carry |
 | --- | --- | --- |

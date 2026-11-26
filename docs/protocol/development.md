@@ -7,9 +7,9 @@ The repo is a Cargo workspace for host/support crates plus Raster stage crates. 
 ```bash
 cargo check --workspace
 cargo test --workspace
-cargo test -p direct-infer
-cargo test -p staged-infer
-cargo test -p model-manifest -p procedure-definition -p blockchain-rules
+cargo test -p inference-generation
+cargo test -p procedure-pipeline
+cargo test -p inference-manifest -p procedure-definition -p blockchain-rules
 cargo test -p iris-cli
 ```
 
@@ -101,7 +101,7 @@ IRIS_GPU_MIN_WORK=0 cargo run --release --locked -p iris-cli --features gpu-kern
 The workflow CLI is the primary API. These lower-level commands remain useful for debugging:
 
 ```bash
-cargo run -p staged-infer -- pipeline run
+cargo run -p procedure-pipeline -- pipeline run
 cargo raster pipeline run --no-auth --show-output
 cargo raster show target/raster/pipelines-no-auth/latest/check_c0/output.bin
 ```

@@ -9,8 +9,8 @@
 //! head is their product times `1 / sqrt(head_dim)`.
 
 use anyhow::{bail, ensure, Result};
-use det_num::ops::attention_softmax;
-use det_num::Act;
+use inference_numerics::ops::attention_softmax;
+use inference_numerics::Act;
 use rayon::prelude::*;
 
 use super::num::{rotate_consecutive_pairs, scaled_score, silu};

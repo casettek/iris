@@ -1,5 +1,5 @@
 use crate::input::*;
-use model_identity::stream;
+use common_identity::stream;
 use raster::prelude::*;
 #[tile(kind=iter)]
 pub fn identity_empty() -> BytesPage {
@@ -56,7 +56,7 @@ pub fn identity_component(
 }
 #[tile(kind=iter)]
 pub fn identity_verify(context: ModelContext, root: BytesPage, layer: u32) -> ModelContext {
-    stream::verify(context, &root, model_identity::Role::Transformer(layer))
+    stream::verify(context, &root, common_identity::Role::Transformer(layer))
 }
 
 #[tile(kind=iter)]
@@ -77,7 +77,7 @@ pub fn identity_prior_guard(
     count: u64,
 ) -> ModelContext {
     model.require(
-        !(prior.is_origin() || prior.producer == model_identity::context::EMBEDDING) || count == 0,
+        !(prior.is_origin() || prior.producer == common_identity::context::EMBEDDING) || count == 0,
     );
     model
 }

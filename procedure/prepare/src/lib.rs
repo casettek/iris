@@ -5,13 +5,13 @@ use std::fs;
 use std::path::Path;
 
 use anyhow::{Context, Result};
-use input_embedding::input::ClaimedOutput;
-use model_manifest::ModelManifest;
-use procedure_definition::{Case, PreparedPrompt, Specification};
-use prompt_check::input::{PromptText, RunConfig, RunSchedule, TextDigest};
-use prompt_prep::{
+use inference_manifest::ModelManifest;
+use inference_prompt::{
     claimed_ranges, prompt_text, split_prompt, tokenizer_profile, BoundRange, MarkedRange,
 };
+use input_embedding::input::ClaimedOutput;
+use procedure_definition::{Case, PreparedPrompt, Specification};
+use prompt_check::input::{PromptText, RunConfig, RunSchedule, TextDigest};
 use raster::List;
 
 pub mod run_inputs;
@@ -81,8 +81,8 @@ pub fn rendered_prompt(
 pub fn relayed_run(
     specification: &Specification,
     earlier: &procedure_definition::InferenceResult,
-) -> Result<source_core::relay::RelayRun> {
-    use source_core::relay::{relay_fault_description, run_relay_steps};
+) -> Result<source_phase::relay::RelayRun> {
+    use source_phase::relay::{relay_fault_description, run_relay_steps};
     let relay = specification.relay.as_ref().context(
         "the specification has no `[relay]` table to build a prompt around an earlier output with",
     )?;
@@ -109,7 +109,7 @@ pub fn relayed_run(
 /// Writes the `claim-result` stage's forms for a run.
 pub fn write_result_forms(forms: &[source::Form], dir: &Path) -> Result<RunFile> {
     write_run_file(
-        &result_core::ResultForms {
+        &result_phase::ResultForms {
             forms: forms.to_vec().into(),
         },
         dir,
@@ -388,9 +388,9 @@ fn resolve_prompt(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use model_manifest::{DirectInferBundle, DirectInferShape};
+    use inference_manifest::{DirectInferBundle, DirectInferShape};
+    use inference_prompt::*;
     use prompt_check::input::BpePiece;
-    use prompt_prep::*;
     use std::path::PathBuf;
 
     #[test]
@@ -591,7 +591,7 @@ mod tests {
 
     #[test]
     fn the_source_record_is_one_value_under_both_of_its_types() {
-        // The source step states `source_core::SourceRecord` and the bind
+        // The source step states `source_phase::SourceRecord` and the bind
         // reads `SourceRecord` of the shared prompt source. A pipeline links
         // them by structure, so the two must commit alike.
         let record = source::SourceRecord {
@@ -723,9 +723,11 @@ mod tests {
 
     fn model_manifest() -> ModelManifest {
         ModelManifest {
-            version: model_manifest::MODEL_MANIFEST_VERSION,
-            family: model_manifest::ModelFamily::GemmaDense.name().to_string(),
-            model_id: model_manifest::model_id_of(&[]),
+            version: inference_manifest::MODEL_MANIFEST_VERSION,
+            family: inference_manifest::ModelFamily::GemmaDense
+                .name()
+                .to_string(),
+            model_id: inference_manifest::model_id_of(&[]),
             model_commitments: Vec::new(),
             range_size: 512,
             bundle: DirectInferBundle {

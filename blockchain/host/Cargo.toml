@@ -6,19 +6,19 @@ description = "What a claimer, a challenger and a defender do on the host, for a
 
 [features]
 cuda = ["risc0-zkvm/cuda", "raster-backend-risc0/cuda"]
-gpu-kernels = ["direct-infer/gpu-kernels", "staged-infer/gpu-kernels"]
+gpu-kernels = ["inference-generation/gpu-kernels", "procedure-pipeline/gpu-kernels"]
 
 [dependencies]
 procedure-run = { path = "../../procedure/run" }
 anyhow = "1.0"
 blockchain-rules = { path = "../rules" }
 clap = { version = "4.5", features = ["derive"] }
-direct-infer = { path = "../../phases/inference/generation" }
+inference-generation = { path = "../../phases/inference/generation" }
 hex = "0.4"
-iris-celestia = { path = "../celestia" }
-iris-evm = { path = "../evm" }
+blockchain-celestia = { path = "../celestia" }
+blockchain-evm = { path = "../evm" }
 k256 = { version = "0.13", default-features = false, features = ["ecdsa"] }
-model-manifest = { path = "../../phases/inference/manifest" }
+inference-manifest = { path = "../../phases/inference/manifest" }
 postcard = { version = "1", features = ["alloc"] }
 procedure-definition = { path = "../../procedure/definition" }
 raster = { path = "../../../raster/crates/raster" }
@@ -28,13 +28,13 @@ raster-compiler = { path = "../../../raster/crates/raster-compiler" }
 raster-core = { path = "../../../raster/crates/raster-core" }
 raster-prover = { path = "../../../raster/crates/raster-prover" }
 raster-runtime = { path = "../../../raster/crates/raster-runtime" }
-result-core = { path = "../../phases/result" }
+result-phase = { path = "../../phases/result" }
 risc0-zkvm = { version = "3.0", default-features = false, features = ["prove", "std"] }
-run-prep = { path = "../../procedure/prepare" }
-prompt-prep = { path = "../../phases/inference/prompt" }
+procedure-prepare = { path = "../../procedure/prepare" }
+inference-prompt = { path = "../../phases/inference/prompt" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 sha2 = "0.10"
-source-core = { path = "../../phases/source", features = ["sign"] }
-staged-infer = { path = "../../procedure/pipeline" }
+source-phase = { path = "../../phases/source", features = ["sign"] }
+procedure-pipeline = { path = "../../procedure/pipeline" }
 toml = "0.8"

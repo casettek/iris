@@ -1,6 +1,6 @@
 //! Shared Rastered data types for the `input-embedding` stage.
 
-pub use model_identity::ModelContext;
+pub use common_identity::ModelContext;
 extern crate alloc;
 
 use alloc::string::String;
@@ -141,7 +141,7 @@ pub fn q8_row_at(
     let local = byte_off
         .checked_sub(page.offset())
         .ok_or_else(|| String::from("row offset is before this page"))? as usize;
-    let len = det_num::q8::row_bytes(n_values as usize)
+    let len = inference_numerics::q8::row_bytes(n_values as usize)
         .ok_or_else(|| alloc::format!("row width {n_values} is not whole Q8_0 blocks"))?;
     let bytes = page.as_slice().get(local..local + len).ok_or_else(|| {
         alloc::format!(
@@ -150,8 +150,8 @@ pub fn q8_row_at(
         )
     })?;
     let mut values = alloc::vec![0; n_values as usize];
-    det_num::q8::dequantize_row(bytes, &mut values).map_err(String::from)?;
+    inference_numerics::q8::dequantize_row(bytes, &mut values).map_err(String::from)?;
     Ok(values)
 }
 
-pub use model_identity::sparse::{SparseHeader, SparsePath, SparseWitness};
+pub use common_identity::sparse::{SparseHeader, SparsePath, SparseWitness};

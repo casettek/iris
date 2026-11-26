@@ -9,9 +9,9 @@ edition = "2021"
 gpu-kernels = []
 
 [dependencies]
-model-identity = { path = "../../common/identity", default-features = false }
+common-identity = { path = "../../common/identity", default-features = false }
 anyhow = "1.0"
-det-num = { path = "../numerics" }
+inference-numerics = { path = "../numerics" }
 input-embedding = { path = "../../../raster-stages/input-embedding" }
 prefill-range = { path = "../../../raster-stages/prefill-range" }
 layer-mistral = { path = "../../../raster-stages/layer-mistral" }

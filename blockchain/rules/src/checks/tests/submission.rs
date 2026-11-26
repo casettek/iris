@@ -497,7 +497,7 @@ fn the_source_and_the_forms_are_held_to_what_the_contract_requires() {
         })
     );
 
-    let record = source_core::SourceRecord {
+    let record = source_phase::SourceRecord {
         present: true,
         text_sha256: hex::encode([5; 32]),
         text_total: 2388,
@@ -551,7 +551,7 @@ fn the_source_and_the_forms_are_held_to_what_the_contract_requires() {
         Err(SubmissionRejection::AnotherSourceRecord { .. })
     ));
 
-    let with = |edit: &dyn Fn(&mut source_core::SourceRecord)| {
+    let with = |edit: &dyn Fn(&mut source_phase::SourceRecord)| {
         let mut record = record.clone();
         edit(&mut record);
         let mut submission = sourced.clone();
@@ -584,8 +584,8 @@ fn relay_submission() -> (ClaimSubmission, Vec<ModelPins>, String) {
     // The result stage does not read the first inference.
     submission.inferences[0].result = SubmittedResult::default();
     let first = submission.inferences[0].clone();
-    let record = source_core::relay::run_relay_steps(
-        &source_core::relay::relay_recipe("Was this right: ", "\nAnswer."),
+    let record = source_phase::relay::run_relay_steps(
+        &source_phase::relay::relay_recipe("Was this right: ", "\nAnswer."),
         &first.output_text,
         &hex::decode(&first.record.statement_sha256).unwrap(),
         &hex::decode(&first.record.output_text_sha256).unwrap(),
@@ -664,11 +664,11 @@ fn a_relay_submission_holds_the_second_inference_to_the_first_ones_record() {
     ));
     // A relay record with a fault is no source for a claim.
     let mut faulted = submission.clone();
-    faulted.relays[0].fault = source_core::relay::FAULT_RELAYED;
+    faulted.relays[0].fault = source_phase::relay::FAULT_RELAYED;
     assert_eq!(
         check_origin(&origin, &faulted),
         Err(SubmissionRejection::SourceFault {
-            fault: source_core::relay::FAULT_RELAYED
+            fault: source_phase::relay::FAULT_RELAYED
         })
     );
 

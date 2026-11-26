@@ -92,9 +92,9 @@ fn claimed_tokens_on_the_production_vocabulary() {
     let tokenizer: Value =
         serde_json::from_slice(&std::fs::read(tokenizer_path()).expect("Gemma tokenizer.json"))
             .unwrap();
-    let table = prompt_prep::prompt_tokenizer(&tokenizer).unwrap();
-    let vocab = prompt_prep::vocab_map(&tokenizer["model"]).unwrap();
-    let profile = prompt_prep::tokenizer_profile(&tokenizer).unwrap();
+    let table = inference_prompt::prompt_tokenizer(&tokenizer).unwrap();
+    let vocab = inference_prompt::vocab_map(&tokenizer["model"]).unwrap();
+    let profile = inference_prompt::tokenizer_profile(&tokenizer).unwrap();
 
     // Text to build prompts from: ordinary vocabulary entries, spelled as a
     // user would type them. Joining entries end to end puts token boundaries

@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
-use model_manifest::{file_sha256 as sha256_file, ModelManifest};
+use inference_manifest::{file_sha256 as sha256_file, ModelManifest};
 use procedure_definition::run_inputs::PostedRun;
 use procedure_definition::{
     read_json, write_json, Case, InferenceResult, PreparedRun, Specification, PREPARED_RUN_JSON,
@@ -288,7 +288,7 @@ pub fn prepare_run(run: StagedRun<'_>) -> Result<PreparedClaimRun> {
         .ok_or_else(|| anyhow::anyhow!("manifest template has no parent directory"))?;
     let form_values = match given {
         Some(given) => given.forms.clone(),
-        None => result_core::ResultForms {
+        None => result_phase::ResultForms {
             forms: first.prompt.forms.to_vec().into(),
         },
     };
@@ -372,22 +372,22 @@ pub fn prepare_run(run: StagedRun<'_>) -> Result<PreparedClaimRun> {
                 .clone(),
         };
         if check_claimed_length {
-            prompt_prep::validate_claimed_length(
+            inference_prompt::validate_claimed_length(
                 &ids,
                 specification.max_new_tokens,
                 &model.prompt.eos_token_ids,
             )?;
         }
         let range_size = model.manifest.range_size;
-        let bound = prompt_prep::bound_ranges(
+        let bound = inference_prompt::bound_ranges(
             &model.prompt.resolved_prompt,
             specification.raw_prompt,
             range_size as usize,
-            &prompt_prep::prompt_tokenizer(&model.tokenizer)?,
+            &inference_prompt::prompt_tokenizer(&model.tokenizer)?,
         )?;
         // A claim's ids are cut as `claimed_ranges` cuts them, which also
         // refuses a claim of no ids.
-        prompt_prep::claimed_ranges(&ids, range_size as usize)?;
+        inference_prompt::claimed_ranges(&ids, range_size as usize)?;
         let claimed: Vec<Vec<u32>> = ids
             .chunks(range_size as usize)
             .map(<[u32]>::to_vec)
@@ -395,13 +395,13 @@ pub fn prepare_run(run: StagedRun<'_>) -> Result<PreparedClaimRun> {
         // The values a stage is given, which are what the claim posts. Each
         // file is written from its value, so the two cannot differ.
         let posted = PostedInference {
-            config: prompt_core::RunConfig {
+            config: inference_tokenizer::RunConfig {
                 model_id: model.manifest.model_id.clone(),
                 raw_prompt: specification.raw_prompt,
                 max_new_tokens: specification.max_new_tokens,
                 range_size,
             },
-            schedule: prompt_core::RunSchedule {
+            schedule: inference_tokenizer::RunSchedule {
                 prompt_ranges: u32::try_from(bound.ranges.len())
                     .context("prompt range count exceeds u32")?,
                 claimed_ranges: u32::try_from(claimed.len())
@@ -656,7 +656,7 @@ pub fn render_pipeline(
             "a run needs one slice of text for each prompt range"
         );
     }
-    let template = model_manifest::resolve_raster_manifest_paths(template, template_dir)?;
+    let template = inference_manifest::resolve_raster_manifest_paths(template, template_dir)?;
     let template = match source {
         Some(_) => template,
         None => without_source_stage(&template)?,

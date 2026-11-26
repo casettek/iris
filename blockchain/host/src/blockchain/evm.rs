@@ -10,12 +10,12 @@
 use std::path::Path;
 
 use anyhow::{ensure, Context, Result};
-use blockchain_rules::availability::{AvailabilityProof, HostAttestation, PostedBlob};
-use blockchain_rules::checks::{ChallengeSubmission, ClaimSubmission};
-use iris_evm::{
+use blockchain_evm::{
     abi_encode, attestation_digest, call_with_bytes, challenge_id, challenge_token, claim_id,
     claim_token, fault_proof_token, procedure_token, read_fault_journal, FaultVerdict,
 };
+use blockchain_rules::availability::{AvailabilityProof, HostAttestation, PostedBlob};
+use blockchain_rules::checks::{ChallengeSubmission, ClaimSubmission};
 use procedure_definition::{
     checkpoint_opening, read_checkpoint_hashes, read_checkpoint_list, read_json, CHECKPOINTS_TXT,
     CHECKPOINT_LIST_JSON,
@@ -79,7 +79,7 @@ struct OpenedChallenge {
 }
 
 impl OpenedChallenge {
-    fn token(&self) -> Result<iris_evm::Token> {
+    fn token(&self) -> Result<blockchain_evm::Token> {
         challenge_token(
             &self.claim_id,
             &self.challenge,

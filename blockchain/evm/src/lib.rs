@@ -493,7 +493,7 @@ fn result_token(result: &SubmittedResult) -> Result<Token> {
 }
 
 /// A source record, with its hashes as the hex text the stages hash.
-fn source_token(source: &source_core::SourceRecord) -> Token {
+fn source_token(source: &source_phase::SourceRecord) -> Token {
     Token::Tuple(vec![
         Token::flag(source.present),
         Token::text(&source.text_sha256),

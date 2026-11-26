@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::encoding::{parse_hash, root_from_path, tree_path, tree_root, Encoder};
-use model_manifest::io::{read_json, write_json};
+use inference_manifest::io::{read_json, write_json};
 
 pub const CHECKPOINT_LIST_JSON: &str = "checkpoint_list.json";
 pub const CHECKPOINTS_TXT: &str = "checkpoints.txt";
@@ -380,7 +380,7 @@ pub fn locked_program_commitment(stage_project: &Path) -> Result<String> {
     )
     .with_context(|| format!("failed to parse {}", path.display()))?;
     anyhow::ensure!(
-        model_identity::context::parse_id(&lock.program_commitment).is_some(),
+        common_identity::context::parse_id(&lock.program_commitment).is_some(),
         "{} does not record a 32-byte program commitment",
         path.display()
     );

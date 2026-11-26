@@ -2,11 +2,11 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use model_manifest::{
+use inference_manifest::{
     DirectInferBundle, DirectInferShape, ModelManifest, MODEL_ARTIFACTS_DIR, MODEL_MANIFEST_JSON,
 };
 use procedure_definition::{write_json, CASE_TOML, SPECIFICATION_TOML};
-use procedure_direct::{DirectInferenceConfig, DirectInferenceExecutor};
+use procedure_native::{DirectInferenceConfig, DirectInferenceExecutor};
 use sha2::{Digest, Sha256};
 
 const ONE: i32 = 1 << 16;
@@ -113,9 +113,11 @@ fn direct_executor_runs_from_direct_manifest_without_raster_toml() {
     write_json(
         &manifest_path,
         &ModelManifest {
-            version: model_manifest::MODEL_MANIFEST_VERSION,
-            family: model_manifest::ModelFamily::GemmaDense.name().to_string(),
-            model_id: model_manifest::model_id_of(&[]),
+            version: inference_manifest::MODEL_MANIFEST_VERSION,
+            family: inference_manifest::ModelFamily::GemmaDense
+                .name()
+                .to_string(),
+            model_id: inference_manifest::model_id_of(&[]),
             model_commitments: Vec::new(),
             range_size: 512,
             bundle: DirectInferBundle {
@@ -383,9 +385,11 @@ fn write_tiny_model_detwgt(path: &Path) {
 
 fn tiny_direct_manifest(detwgt: &Path, config: &Path, tokenizer: &Path) -> ModelManifest {
     ModelManifest {
-        version: model_manifest::MODEL_MANIFEST_VERSION,
-        family: model_manifest::ModelFamily::GemmaDense.name().to_string(),
-        model_id: model_manifest::model_id_of(&[]),
+        version: inference_manifest::MODEL_MANIFEST_VERSION,
+        family: inference_manifest::ModelFamily::GemmaDense
+            .name()
+            .to_string(),
+        model_id: inference_manifest::model_id_of(&[]),
         model_commitments: Vec::new(),
         range_size: 512,
         bundle: DirectInferBundle {

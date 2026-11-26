@@ -200,7 +200,7 @@ fn prompt_fixture(pages: usize, width: u32) -> (Fixture, EmbeddingTable, PromptT
     f.write("embedding", &table);
     f.write(
         "witness",
-        &model_identity::sparse::witness(table.values.pages.as_slice()).unwrap(),
+        &common_identity::sparse::witness(table.values.pages.as_slice()).unwrap(),
     );
     f.write("prompt", &prompt);
     f.write("claimed", &input_embedding::input::ClaimedOutput::default());
@@ -275,7 +275,7 @@ fn embedding_fixed_point_boundaries_and_empty_prompt() {
         f.write("embedding", &table);
         f.write(
             "witness",
-            &model_identity::sparse::witness(table.values.pages.as_slice()).unwrap(),
+            &common_identity::sparse::witness(table.values.pages.as_slice()).unwrap(),
         );
         assert_eq!(f.prompt(None).unwrap(), eager_prompt(&table, &prompt));
     }
@@ -312,7 +312,7 @@ fn embedding_rejects_cross_page_rows_and_bad_geometry() {
     f.write("embedding", &table);
     f.write(
         "witness",
-        &model_identity::sparse::witness(table.values.pages.as_slice()).unwrap(),
+        &common_identity::sparse::witness(table.values.pages.as_slice()).unwrap(),
     );
     assert!(f.prompt(None).is_err());
 }
@@ -328,7 +328,7 @@ fn embedding_rejects_corruption_and_separates_commitments_and_paths() {
     f.write("embedding", &table);
     f.write(
         "witness",
-        &model_identity::sparse::witness(table.values.pages.as_slice()).unwrap(),
+        &common_identity::sparse::witness(table.values.pages.as_slice()).unwrap(),
     );
     let second = f
         .selected(prompt.token_ids.as_slice(), Some(&cache))
@@ -348,7 +348,7 @@ fn embedding_rejects_corruption_and_separates_commitments_and_paths() {
     f.write("embedding", &table);
     f.write(
         "witness",
-        &model_identity::sparse::witness(table.values.pages.as_slice()).unwrap(),
+        &common_identity::sparse::witness(table.values.pages.as_slice()).unwrap(),
     );
     let mut other_table = table.clone();
     other_table.embedding_scale += 1;
@@ -358,7 +358,7 @@ fn embedding_rejects_corruption_and_separates_commitments_and_paths() {
     f.write("embedding", &table);
     f.write(
         "witness",
-        &model_identity::sparse::witness(table.values.pages.as_slice()).unwrap(),
+        &common_identity::sparse::witness(table.values.pages.as_slice()).unwrap(),
     );
     f.update(
         "input_manifest.json",
@@ -388,7 +388,7 @@ fn embedding_multi_page_authenticated_raster_parity() {
         f.write("embedding", &table);
         f.write(
             "witness",
-            &model_identity::sparse::witness(table.values.pages.as_slice()).unwrap(),
+            &common_identity::sparse::witness(table.values.pages.as_slice()).unwrap(),
         );
         f.compare_raster(
             "input-embedding",
@@ -402,7 +402,7 @@ fn embedding_multi_page_authenticated_raster_parity() {
     f.write("embedding", &zero);
     f.write(
         "witness",
-        &model_identity::sparse::witness(zero.values.pages.as_slice()).unwrap(),
+        &common_identity::sparse::witness(zero.values.pages.as_slice()).unwrap(),
     );
     assert!(f.prompt(None).is_err());
     let bin = PathBuf::from(std::env::var_os("STAGED_INFER_REPLAY_BIN_DIR").unwrap());
@@ -992,7 +992,7 @@ impl Fixture {
         );
         let dest = self
             .dir
-            .join("target/staged-infer/runs")
+            .join("target/procedure-pipeline/runs")
             .join(label)
             .join(stage);
         fs::create_dir_all(&dest).unwrap();
@@ -1084,7 +1084,7 @@ fn standalone_publishes_exact_outputs_and_rejects_corruption_before_publication(
 fn sparse_embedding_checks_current_proofs_with_warm_cache() {
     let (f, table, mut prompt) = prompt_fixture(4, 32);
     let root = raster::core::tree::value_root(&table).unwrap();
-    let descriptor = model_identity::ModelDescriptor {
+    let descriptor = common_identity::ModelDescriptor {
         version: 2,
         tokenizer: [1; 32],
         decoder: [2; 32],
@@ -1099,7 +1099,7 @@ fn sparse_embedding_checks_current_proofs_with_warm_cache() {
         .iter()
         .map(|b| format!("{b:02x}"))
         .collect::<String>();
-    prompt.context.model = model_identity::ModelContext::bind(&descriptor.encode().unwrap(), &id);
+    prompt.context.model = common_identity::ModelContext::bind(&descriptor.encode().unwrap(), &id);
     prompt.context.model_id = id;
     prompt.token_ids = vec![0].into();
     prompt
@@ -1109,7 +1109,7 @@ fn sparse_embedding_checks_current_proofs_with_warm_cache() {
     prompt
         .context
         .model
-        .bind_schedule(model_identity::statement_core::StageSchedule {
+        .bind_schedule(common_identity::common_statement::StageSchedule {
             prompt_ranges: 1,
             claimed_ranges: 1,
         });
@@ -1117,7 +1117,7 @@ fn sparse_embedding_checks_current_proofs_with_warm_cache() {
     prompt.context.model.append_consumed_token(0);
     prompt.context.model.finish_prompt_range(true, 1, 0);
     f.write("prompt", &prompt);
-    let witness = model_identity::sparse::witness(table.values.pages.as_slice()).unwrap();
+    let witness = common_identity::sparse::witness(table.values.pages.as_slice()).unwrap();
     let cache = MaterializationCache::with_budget(Arc::new(WeightBudget::new(1 << 20)));
     let run = || f.prompt(Some(&cache)).unwrap();
     let check = |label: &str, clean: bool| {
@@ -1166,7 +1166,7 @@ fn sparse_embedding_checks_current_proofs_with_warm_cache() {
         0,
         "consumed bytes must match the original root"
     );
-    let replacement = model_identity::sparse::witness(mutate(0).values.pages.as_slice()).unwrap();
+    let replacement = common_identity::sparse::witness(mutate(0).values.pages.as_slice()).unwrap();
     f.write("witness", &replacement);
     check("sparse-replaced-witness", false);
     assert_ne!(
@@ -1209,7 +1209,7 @@ fn sparse_merge_fault_survives_later_matches_and_cached_tokenizer() {
     };
     let witness = tokenizer_witness(&tokenizer).unwrap();
     let root = raster::core::tree::value_root(&tokenizer).unwrap();
-    let descriptor = model_identity::ModelDescriptor {
+    let descriptor = common_identity::ModelDescriptor {
         version: 2,
         tokenizer: root,
         decoder: [1; 32],
@@ -1246,9 +1246,9 @@ fn sparse_merge_fault_survives_later_matches_and_cached_tokenizer() {
         context: PromptContext {
             model: {
                 let mut model =
-                    model_identity::ModelContext::bind(&descriptor.encode().unwrap(), &id);
+                    common_identity::ModelContext::bind(&descriptor.encode().unwrap(), &id);
                 model.bind_statement(&"11".repeat(32), &"00".repeat(32), false, 8, 4);
-                model.bind_schedule(model_identity::statement_core::StageSchedule {
+                model.bind_schedule(common_identity::common_statement::StageSchedule {
                     prompt_ranges: 1,
                     claimed_ranges: 1,
                 });

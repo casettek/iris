@@ -73,14 +73,14 @@ pub struct PreparedPrompt {
     /// signed documents. The first bind is given it, and the statement names
     /// its digest.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub source: Option<source_core::SourceRecord>,
+    pub source: Option<source_phase::SourceRecord>,
     /// The texts the result stage compares the output with. Empty for a run
     /// that names none.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub forms: Vec<result_core::Form>,
+    pub forms: Vec<result_phase::Form>,
 }
 
-pub use prompt_prep::PreparedPiece;
+pub use inference_prompt::PreparedPiece;
 
 impl PreparedRun {
     /// The first inference: the only one of a procedure kind that makes one, and

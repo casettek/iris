@@ -1,4 +1,4 @@
-use model_identity::ModelDescriptor;
+use common_identity::ModelDescriptor;
 use raster::{BytesPage, List};
 use sequence_check::finalize_model::decoder_membership;
 use sequence_check::input::{DecoderTable, DecoderToken};
