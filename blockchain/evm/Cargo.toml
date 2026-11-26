@@ -10,3 +10,4 @@ blockchain-rules = { path = "../rules" }
 procedure-definition = { path = "../../procedure/definition" }
 raster-core = { path = "../../../raster/crates/raster-core" }
 sha2 = "0.10"
+source-core = { path = "../../phases/source" }

@@ -18,6 +18,10 @@
 # `submitFaultProof`), and the contract is held to iris on changed copies of
 # the honest claim and of the first challenge.
 #
+# Last, a claim of the `relay` procedure kind, on the run the gate's relay
+# scenario made: it must stand, and a lie in its second inference must be
+# challenged by a replay of a run rebuilt from what the claim posted.
+#
 # usage: test-blockchain.sh [--deploy] [--real-model <specification>]
 #   --deploy       build and deploy the contracts first (new addresses: claims
 #                  made before are not on them)
@@ -99,6 +103,7 @@ if [ -z "$parity_run" ]; then
     done
 fi
 small_specification="$parity_run/over-window/specification.toml"
+relay_specification="$parity_run/relay/run/specification.toml"
 if [ -z "$parity_run" ] || [ ! -f "$small_specification" ]; then
     echo "no parity run of the gemma family's small model under target/parity: run the parity gate first (\`just test-parity\`)" >&2
     exit 1
@@ -316,6 +321,21 @@ forged_verdict() {
 }
 step blockchain-forged-verdict "forged verdict: arrives valid, found at the last check" \
     forged_verdict forged-verdict other-ids "$small_specification" no
+
+# A relay: two models, the second on the first one's output. Its submission
+# holds the relay's record, which the contract holds to the first inference's
+# claim record and to the recipe the procedure pins.
+if [ -f "$relay_specification" ]; then
+    step blockchain-relay-claim "relay: an honest claim built" \
+        build_claim relay-honest "$relay_specification"
+    step blockchain-relay-honest "relay: taken, and every question refused" \
+        honest_claim relay-honest "$relay_specification"
+    step blockchain-relay-arranged "relay, another range's marks in the second inference: challenged by a replay" \
+        replayed_lie relay-arranged relay-honest "$relay_specification" m1_prompt_check_p1 yes no --fault arrangement --input marks
+else
+    echo "the parity run has no relay scenario at $relay_specification: run the parity gate again" >&2
+    failed=1
+fi
 
 if [ -n "$real_specification" ]; then
     step blockchain-real-claims "real model: an honest claim and one of other ids built" \

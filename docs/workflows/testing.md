@@ -60,8 +60,8 @@ stage is longer than its replay window. On the synthetic model that is
 The stage ladder is what runs the other programs through authenticated Raster,
 with a smaller window. That includes `prompt-source` and `claim-result`, on the
 claim the gate's source scenario builds, and `consensus-result`, on the claim its
-consensus scenario builds, and `prompt-relay`, on the run its relay scenario
-makes. The two result programs and the relay program are a handful of steps and are
+consensus scenario builds, and `prompt-relay`, on the claim its relay scenario
+builds. The two result programs and the relay program are a handful of steps and are
 committed at a window of two.
 
 ## The blockchain tier
@@ -81,7 +81,11 @@ Everything it makes is kept under `target/blockchain-test/<run>`.
 
 The small model is the gemma family's, from the newest parity run of it. Its
 check stage is under the replay window, so there the forged verdict is
-followed only as far as the replay. `--real-model <specification>` adds a
+followed only as far as the replay. The tier also builds a claim of the
+`relay` procedure kind, on the run the gate's relay scenario made: the
+contract must take it and agree with iris on changed copies of it, and a lie
+in its second inference must be challenged by a replay of a run rebuilt from
+what the claim posted. `--real-model <specification>` adds a
 claim of that specification's model on the `case.toml` beside it, another layer's weights given to one of its
 stages, and the forged verdict, each of which must end in a challenge the
 contract accepts. With a short prompt on a GPU build that adds a few minutes.

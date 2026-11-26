@@ -38,6 +38,10 @@ pub struct Frozen<'a> {
     pub source: Option<FrozenSource<'a>>,
     pub forms: &'a [crate::source::Form],
     pub ids: &'a [Vec<u32>],
+    /// Each inference's prompt as the claim prepared it. Read for an
+    /// inference a relay gives its prompt: its text is the claim's, as the
+    /// run's own text is.
+    pub prompts: &'a [procedure_definition::PreparedPrompt],
 }
 
 /// One inference of a run being prepared: its model, and the prompt as that
@@ -153,39 +157,71 @@ pub fn prepare_run(run: StagedRun<'_>) -> Result<PreparedClaimRun> {
             .ok_or_else(|| anyhow::anyhow!("model manifest has no parent directory"))?;
         let tokenizer_path = absolute(model_manifest_dir, &manifest.bundle.tokenizer_path);
         let tokenizer: serde_json::Value = read_json(&tokenizer_path)?;
-        let relayed = match procedure_kind.relayed_from(inference) {
-            None => None,
-            Some(earlier) => {
-                // What a claim of a relay fixes and posts is not written yet,
-                // so one is prepared from its specification and case only.
+        let relayed_from = procedure_kind.relayed_from(inference);
+        // The output a relayed prompt is built around, when it is found here.
+        let relayed = match relayed_from {
+            Some(earlier) if discovering => Some(
+                models[earlier]
+                    .discovered
+                    .clone()
+                    .with_context(|| format!("inference {earlier} has no output yet"))?,
+            ),
+            _ => None,
+        };
+        let mut prompt = match (relayed_from, &frozen, given) {
+            // The run's own prompt, or one built here around an output found
+            // here.
+            (None, ..) | (Some(_), None, None) => {
                 anyhow::ensure!(
-                    discovering,
-                    "a run of the `{procedure_kind}` procedure kind is prepared from its \
-                     specification and case: it cannot yet be rebuilt from a claim or from \
-                     given output ids"
+                    relayed_from.is_none() || discovering,
+                    "inference {inference} of the `{procedure_kind}` procedure kind has its \
+                     prompt from an earlier output, which given output ids do not hold"
                 );
-                Some(
-                    models[earlier]
-                        .discovered
-                        .clone()
-                        .with_context(|| format!("inference {earlier} has no output yet"))?,
-                )
+                crate::prepare_prompt(
+                    &tokenizer,
+                    specification,
+                    case_dir,
+                    case,
+                    &manifest,
+                    relayed.as_ref(),
+                )?
+            }
+            // A claim's own text for the prompt a relay gave: what the claim
+            // fixed, or what it posted. The relay stage states the record of
+            // the text its own run gives, and the bind holds this text to it.
+            (Some(_), Some(frozen), _) => {
+                let claimed = frozen.prompts.get(inference).with_context(|| {
+                    format!("the claim fixed no prompt for inference {inference}")
+                })?;
+                crate::rendered_prompt(
+                    &tokenizer,
+                    specification,
+                    &manifest,
+                    claimed.resolved_prompt.clone(),
+                    claimed.source.clone(),
+                    frozen.forms.to_vec(),
+                )?
+            }
+            (Some(_), None, Some(given)) => {
+                let posted = given.inferences.get(inference).with_context(|| {
+                    format!("the claim posted no inputs for inference {inference}")
+                })?;
+                crate::rendered_prompt(
+                    &tokenizer,
+                    specification,
+                    &manifest,
+                    crate::run_inputs::text_of(posted),
+                    None,
+                    specification.forms(),
+                )?
             }
         };
-        let mut prompt = crate::prepare_prompt(
-            &tokenizer,
-            specification,
-            case_dir,
-            case,
-            &manifest,
-            relayed.as_ref(),
-        )?;
         let discovered = if discovering {
             Some(discover(inference, relayed.as_ref())?)
         } else {
             None
         };
-        if let Some(frozen) = &frozen {
+        if let (Some(frozen), None) = (&frozen, relayed_from) {
             if let Some((record, _)) = frozen.source {
                 prompt.source = Some(record.clone());
             }
@@ -241,9 +277,7 @@ pub fn prepare_run(run: StagedRun<'_>) -> Result<PreparedClaimRun> {
         (None, Some((_, inputs))) if given.is_none() => Some(inputs.clone()),
         _ => None,
     };
-    // A relay's recipe is not among the values a claim posts yet.
-    let postable = (given.is_some() || source_values.is_some() == source_inputs.is_some())
-        && !procedure_kind.relays();
+    let postable = given.is_some() || source_values.is_some() == source_inputs.is_some();
     // The imports wrote each model's segment of a chain. The procedure kind makes the
     // chain's template from them.
     let segments: Vec<&str> = models.iter().map(|model| model.segment.as_str()).collect();
@@ -263,11 +297,39 @@ pub fn prepare_run(run: StagedRun<'_>) -> Result<PreparedClaimRun> {
         &prompt_dir,
         "result_forms",
     )?;
-    // The relay stage's recipe, in a procedure kind that relays an output.
-    let relay_recipe = specification
-        .relay
+    // The relay stage's recipe, in a procedure kind that relays an output:
+    // the claim's own for a challenger of what it posted, or the
+    // specification's.
+    let relay_values = match given {
+        Some(given) => given.relay.clone(),
+        None => specification
+            .relay
+            .as_ref()
+            .map(procedure_definition::SpecificationRelay::recipe),
+    };
+    anyhow::ensure!(
+        relay_values.is_some() == procedure_kind.relays(),
+        "a run of the `{procedure_kind}` procedure kind {} a relay recipe, and this one {}",
+        if procedure_kind.relays() {
+            "has"
+        } else {
+            "has no"
+        },
+        if relay_values.is_some() {
+            "has one"
+        } else {
+            "has none"
+        }
+    );
+    let relay_recipe = relay_values
         .as_ref()
-        .map(|relay| crate::write_run_file(&relay.recipe(), &prompt_dir, RELAY_RECIPE))
+        .map(|recipe| {
+            crate::write_run_input(
+                procedure_definition::run_inputs::RunInput::RelayRecipe(recipe),
+                &prompt_dir,
+                RELAY_RECIPE,
+            )
+        })
         .transpose()?;
     let run_files: Vec<(&str, &crate::RunFile)> = relay_recipe
         .iter()
@@ -421,6 +483,7 @@ pub fn prepare_run(run: StagedRun<'_>) -> Result<PreparedClaimRun> {
                 source: source_values,
                 forms: form_values,
                 inferences: values,
+                relay: relay_values,
             },
             &run_dir,
         )?;

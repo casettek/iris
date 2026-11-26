@@ -6,12 +6,10 @@ two models and whether they agree; and `relay`, two inferences with the first
 one's output inside the second one's prompt. Others can be added beside them
 without each command growing its own switch.
 
-`consensus` runs directly, builds a claim with a submission, passes a
-contract's checks, can be challenged, and has a scenario in the parity gate. The
-backend runs `single` and `consensus`.
-
-`relay` runs directly and as a pipeline (`iris infer`, `iris run`). No claim
-is made of one yet: see [what is not built](#what-is-not-built).
+`consensus` and `relay` each run directly, build a claim with a submission,
+pass a contract's checks, can be challenged, and have a scenario in the parity
+gate and a claim in the blockchain tier. The backend runs `single` and
+`consensus`.
 
 ## What a procedure kind arranges
 
@@ -82,7 +80,7 @@ keeps its files in `prompt/`.
 | --- | --- | --- |
 | Specification | `procedure_kind = "consensus"` | Optional. A specification that names none is of `single`. A name that is no procedure kind is an error |
 | `prepared_run.json` | `procedure_kind` | The claim's frozen run, which its claim bundle points at. Required, version 20 |
-| `claim_submission.json` | `procedure_kind` | Required, version 5. It holds one entry per inference, and for `consensus` the agreement |
+| `claim_submission.json` | `procedure_kind` | Required. It holds one entry per inference, for `consensus` the agreement, and for `relay` the relay's record |
 | `iris infer`, `iris claim build` | a `procedure_kind:` line | Printed before the result |
 
 A specification names its models as `[[model]]` tables, in the order the
@@ -225,8 +223,8 @@ refuses a source with a fault.
 output is in the run as the first inference's result, which has no code: the
 result stage did not read it.
 
-`iris infer` and `iris run` print each inference's result under an
-`inference:` line, in the order they were made.
+`iris infer`, `iris run` and `iris claim build` print each inference's result
+under an `inference:` line, in the order they were made.
 
 Like `source` and `result`, `relay` is a few steps and one per chunk of the
 recipe, so on a short recipe its checkpoint cannot be replayed at the
@@ -241,6 +239,30 @@ claim's last checkpoint must run that procedure kind's result program
 approved set. A claim built as one procedure kind and labelled as another ends in the
 wrong program.
 
+### What a contract reads of a kind
+
+A contract does not read the name either. A registered procedure states its
+kind's arrangement (`Arrangement` in `blockchain/rules/src/registry.rs`), and
+the contract reads that. Registering a procedure of a new kind made of
+existing segments needs no change to the contracts.
+
+| Field | Meaning | `single` | `consensus` | `relay` |
+| --- | --- | --- | --- | --- |
+| `result_program` | The stage program that states the result | `claim-result` | `consensus-result` | `claim-result` |
+| `result_inputs` | For each inference, the result stage's input that reads its last check, or empty | `check` | `first`, `second` | empty, `check` |
+| `agreement` | Whether the result states an agreement of two inferences | no | yes | no |
+| `relayed_from` | For each inference, one more than the inference whose output its prompt holds, or zero | 0 | 0, 0 | 0, 1 |
+
+There is one inference per model the procedure pins. The arrangement is made
+from the kind's shape when a procedure is made (`Procedure::of`) and is part
+of the procedure's id. The registry refuses one that says nothing of some
+inference, relays from a later inference, or states an agreement of other
+than two.
+
+The checks iris makes itself follow the kind's shape, which is compiled in.
+So iris takes no registered procedure whose arrangement is not its kind's in
+this build (`Registry::get`).
+
 ### What a contract checks of a consensus claim
 
 The submission holds both inferences' plaintexts, records and results, and the
@@ -254,6 +276,34 @@ result stage read for that inference. See [the contract](checks.md).
 The parity gate's [consensus scenario](../workflows/test-parity.md#consensus-scenario)
 runs one consensus claim over the gate's own model and the other family's.
 
+### What a contract checks of a relay claim
+
+The submission holds both inferences' plaintexts and records, the second
+one's result, and the relay's record. A contract pins one model per inference
+and the relay's recipe.
+
+- The first statement is the first model over the input hash and source the
+  submission names. The second is the second model over the relay record's
+  text hash and the record's digest. So the two statements are over different
+  inputs, and the second names the relay's record.
+- The relay's record has no fault, is of one document, is built with the
+  recipe the procedure pins, and its documents hash is over the first
+  inference's claim record as submitted: its statement and its output text
+  hash. A claim whose first output is not the one the second prompt was built
+  on is refused here, with no stage replayed.
+- The first inference has no result code, and the second one's is what the
+  contract's forms give its plaintext.
+- The result stage read the second inference's last check, and the second
+  record is the one in that check. The first record needs no check of its own:
+  the relay's record names it, the second statement names the relay's record,
+  and the second record is held to its check.
+
+A claim posts the relay's recipe with its other run inputs, so a challenger
+runs the relay stage on what the claimer's did.
+
+The parity gate's [relay scenario](../workflows/test-parity.md#relay-scenario)
+builds one relay claim, and the blockchain tier submits one to the contracts.
+
 ## What is not built
 
 For `consensus`:
@@ -263,14 +313,11 @@ a file, and `iris claim check --pins` checks a claim against it.
 
 For `relay`:
 
-- A claim. `iris claim build` refuses a relay, because three things a claim
-  needs are not written: the relay recipe among the values a claim posts, the
-  rebuilding of a relay run from a claim, and the rules a contract holds a
-  relay's submission to. Its two inferences name different inputs, and the
-  rules hold every statement of a claim to one.
-- A contract's pin of the relay recipe. The second statement names the recipe
-  through the relay's record, so a claim commits to it, and nothing holds it
-  to the recipe a procedure registered.
+- The backend and the frontend do not run it yet.
+- A second prompt that also reads the signed documents. It is fixed text
+  around the first output.
+- A replay of the `relay` stage on a short recipe: the stage is under the
+  challenge window there, as `source` and `result` are.
 
 ## Adding a procedure kind
 
@@ -319,7 +366,11 @@ What a new kind needs depends on what it is made of:
 | A new program of an existing segment | The stage project under `raster-stages/`, its logic under `phases/`, its native stage in the segment's folder under `procedure/pipeline/src/segments/` with its entry in that segment's `Stage`, and the program's entry in `procedure/definition/src/segment_kind.rs`. A new result program also needs what `iris infer` and `iris claim build` print for it and how a claim of it is judged when every checkpoint matches |
 | A new segment kind | As a new program, with a folder of its own under `segments/` and the kind's entry in `segment_kind.rs` |
 
-Not yet read from the shape: a contract tells `consensus` from `single` by the
-kind's name (`IrisClaims.sol`). A run prepares one source's inputs and one
-relay recipe, so a shape has at most one `prompt-source` step and one
-`prompt-relay` step.
+A registration on the contract is a call, not a change to it: the registered
+procedure states the kind's arrangement
+([what a contract reads of a kind](#what-a-contract-reads-of-a-kind)).
+
+Two limits a shape is held to that are not the contracts': a run prepares one
+source's inputs and one relay recipe, so a shape has at most one
+`prompt-source` step and one `prompt-relay` step. And a result that states an
+agreement is of two inferences.

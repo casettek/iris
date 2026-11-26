@@ -38,6 +38,23 @@ struct Procedure {
     bool hasRecipe;
     bytes32 recipe;
     Form[] forms;
+    // How the procedure arranges its inferences into its result
+    // (`blockchain_rules::registry::Arrangement`). The contracts read these,
+    // and `procedureKind` is a label. There is one inference per model.
+    //
+    // The stage program that states the result, by its name.
+    string resultProgram;
+    // For each inference, the result stage's input that reads its last check.
+    // Empty for an inference the result does not read.
+    string[] resultInputs;
+    // Whether the result states an agreement of two inferences.
+    bool agreement;
+    // For each inference, one more than the inference whose output its prompt
+    // holds. Zero for an inference whose prompt is the claim's own.
+    uint32[] relayedFrom;
+    // The recipe a relay must build its prompt with, when one is pinned.
+    bool hasRelayRecipe;
+    bytes32 relayRecipe;
 }
 
 // What a procedure says of one input of one of its programs: where the
@@ -91,6 +108,13 @@ struct SourceRecord {
     string signer;
     uint32 fault;
     uint64 faultPosition;
+}
+
+// What a relay stage states of the prompt it gives an inference: the hash of
+// the prompt's text, and the record that text's hash is in.
+struct Relay {
+    bytes32 inputTextSha256;
+    SourceRecord record;
 }
 
 struct NamedPosition {
@@ -151,6 +175,8 @@ struct Claim {
     bytes32 sourceSha256;
     bool hasSource;
     SourceRecord source;
+    // One per inference a relay gives its prompt, in the inferences' order.
+    Relay[] relays;
     Inference[] inferences;
     bool hasConsensus;
     Consensus consensus;

@@ -448,11 +448,13 @@ fn rebuild_teacher_forced_run(
         .run_manifest_path
         .as_ref()
         .context("prepared run has no run_manifest_path")?;
-    // The run's text, source record and forms are the same in every
-    // inference, so the first holds them.
+    // The run's own text, source record and forms are in its first
+    // inference.
     let claimed = frozen.first()?;
     // The claim's text is taken as given: its source record and forms are
-    // handed over below, and no source is read again.
+    // handed over below, and no source is read again. The relay's recipe is
+    // the challenger's own, as its models are: a claim that used another
+    // differs at the relay stage's committed inputs.
     let specification = Specification {
         procedure_kind: frozen.procedure_kind,
         raw_prompt: frozen.raw_prompt,
@@ -460,8 +462,13 @@ fn rebuild_teacher_forced_run(
         models: selected.models,
         source: None,
         forms: Vec::new(),
-        relay: None,
+        relay: selected.relay,
     };
+    let prompts: Vec<procedure_definition::PreparedPrompt> = frozen
+        .inferences
+        .iter()
+        .map(|inference| inference.prompt.clone())
+        .collect();
     let case = Case::of_prompt(claimed.prompt.resolved_prompt.clone());
     let ids = (0..frozen.inferences.len())
         .map(|inference| {
@@ -488,6 +495,7 @@ fn rebuild_teacher_forced_run(
             .zip(frozen.source_inputs.as_ref()),
         &claimed.prompt.forms,
         &ids,
+        &prompts,
     )?;
     for (claimed, rebuilt) in frozen
         .inferences

@@ -518,6 +518,7 @@ fn the_source_and_the_forms_are_held_to_what_the_contract_requires() {
             recipe_sha256: Some(hex::encode([10; 32])),
         }),
         forms: forms(),
+        relay_recipe_sha256: None,
     };
     assert_eq!(check_origin(&required, &sourced), Ok(()));
 
@@ -569,5 +570,133 @@ fn the_source_and_the_forms_are_held_to_what_the_contract_requires() {
     assert!(matches!(
         with(&|record| record.recipe_sha256 = hex::encode([13; 32])),
         Err(SubmissionRejection::AnotherRecipe { .. })
+    ));
+}
+
+/// A relay claim of the fixture's two models: the second inference on a
+/// prompt built around the first one's output, and the result of the second
+/// alone. Returns the hash of its recipe beside it.
+fn relay_submission() -> (ClaimSubmission, Vec<ModelPins>, String) {
+    let (_, models) = consensus_pins();
+    let mut submission = consensus_claim(" ZK\n").submission;
+    submission.procedure_kind = ProcedureKind::named("relay").unwrap();
+    submission.consensus = None;
+    // The result stage does not read the first inference.
+    submission.inferences[0].result = SubmittedResult::default();
+    let first = submission.inferences[0].clone();
+    let record = source_core::relay::run_relay_steps(
+        &source_core::relay::relay_recipe("Was this right: ", "\nAnswer."),
+        &first.output_text,
+        &hex::decode(&first.record.statement_sha256).unwrap(),
+        &hex::decode(&first.record.output_text_sha256).unwrap(),
+        true,
+    )
+    .record;
+    let output = "ZK";
+    submission.inferences[1] = SubmittedInference {
+        output_text: output.to_string(),
+        record: SubmittedRecord {
+            statement_sha256: hex::encode(
+                expected_statement(
+                    &models[1],
+                    REQUIRED,
+                    &record.text_sha256,
+                    &source_record_id(&record),
+                )
+                .unwrap(),
+            ),
+            output_text_sha256: hex::encode(Sha256::digest(output.as_bytes())),
+            valid: true,
+        },
+        result: no_source(forms()).result_of(output),
+    };
+    let recipe = record.recipe_sha256.clone();
+    submission.relays = vec![record];
+    (submission, models.to_vec(), recipe)
+}
+
+#[test]
+fn a_relay_submission_holds_the_second_inference_to_the_first_ones_record() {
+    let relay = ProcedureKind::named("relay").unwrap();
+    let (submission, models, recipe) = relay_submission();
+    let origin = RequiredOrigin {
+        relay_recipe_sha256: Some(recipe),
+        ..no_source(forms())
+    };
+    let checked = |submission: &ClaimSubmission| {
+        check_procedure_kind(relay, submission)?;
+        for (inference, model) in models.iter().enumerate() {
+            check_submission(model, REQUIRED, submission, inference)?;
+        }
+        check_origin(&origin, submission)
+    };
+    assert_eq!(checked(&submission), Ok(()));
+    // The two statements are over different inputs: the second is over the
+    // relay's record.
+    assert_ne!(
+        submission.relays[0].text_sha256,
+        submission.input_text_sha256
+    );
+    // The result stage states the second inference alone.
+    assert_eq!(submission.stated().inferences.len(), 1);
+    assert_eq!(
+        submission.stated().inferences[0].record,
+        submission.inferences[1].record
+    );
+
+    // Another first output, with a record that commits to it: the relay's
+    // record names the output it was built on, and this is not it.
+    let mut swapped = submission.clone();
+    swapped.inferences[0].output_text = String::from("another answer");
+    swapped.inferences[0].record.output_text_sha256 =
+        hex::encode(Sha256::digest(b"another answer"));
+    assert_eq!(
+        checked(&swapped),
+        Err(SubmissionRejection::AnotherRelayed { inference: 1 })
+    );
+
+    // Another relay record than the one the second statement names.
+    let mut other_record = submission.clone();
+    other_record.relays[0].text_total += 1;
+    assert!(matches!(
+        checked(&other_record),
+        Err(SubmissionRejection::StatementMismatch { .. })
+    ));
+    // A relay record with a fault is no source for a claim.
+    let mut faulted = submission.clone();
+    faulted.relays[0].fault = source_core::relay::FAULT_RELAYED;
+    assert_eq!(
+        check_origin(&origin, &faulted),
+        Err(SubmissionRejection::SourceFault {
+            fault: source_core::relay::FAULT_RELAYED
+        })
+    );
+
+    // A claim with no relay record, or one too many, is not a relay claim.
+    for relays in [Vec::new(), vec![submission.relays[0].clone(); 2]] {
+        let mut reshaped = submission.clone();
+        reshaped.relays = relays;
+        assert!(matches!(
+            check_procedure_kind(relay, &reshaped),
+            Err(SubmissionRejection::AnotherShape { .. })
+        ));
+    }
+
+    // The recipe is the one the contract pins.
+    let other_recipe = RequiredOrigin {
+        relay_recipe_sha256: Some("ab".repeat(32)),
+        ..no_source(forms())
+    };
+    assert!(matches!(
+        check_origin(&other_recipe, &submission),
+        Err(SubmissionRejection::AnotherRecipe { .. })
+    ));
+
+    // The first inference has no result: the result stage did not read it.
+    let mut coded = submission.clone();
+    coded.inferences[0].result = no_source(forms()).result_of("ZK");
+    assert!(matches!(
+        checked(&coded),
+        Err(SubmissionRejection::AnotherForms { .. })
     ));
 }

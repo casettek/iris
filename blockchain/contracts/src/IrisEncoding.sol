@@ -95,6 +95,16 @@ library IrisEncoding {
         );
     }
 
+    // --- a relay: `fold_relayed` ---
+
+    /// What a relay's record names the claim record it was built on by: the
+    /// record's documents hash, before it is written as hex.
+    function relayed(Record memory named) internal pure returns (bytes32) {
+        return sha256(
+            abi.encodePacked(bytes32(0), le32(32), named.statement, le32(32), named.outputTextSha256)
+        );
+    }
+
     // --- the forms: `run_forms` ---
 
     /// The largest form the result step compares.
@@ -394,7 +404,7 @@ library IrisEncoding {
 
     function procedureId(Procedure memory procedure) internal pure returns (bytes32) {
         bytes memory encoded = abi.encodePacked(
-            "iris/procedure/v3\x00",
+            "iris/procedure/v4\x00",
             le32(procedure.version),
             text(procedure.procedureKind),
             text(procedure.family),
@@ -422,6 +432,17 @@ library IrisEncoding {
         for (uint256 i = 0; i < procedure.forms.length; i++) {
             encoded = abi.encodePacked(encoded, text(procedure.forms[i].text), le32(procedure.forms[i].code));
         }
+        encoded = abi.encodePacked(encoded, text(procedure.resultProgram), count(procedure.resultInputs.length));
+        for (uint256 i = 0; i < procedure.resultInputs.length; i++) {
+            encoded = abi.encodePacked(encoded, text(procedure.resultInputs[i]));
+        }
+        encoded = abi.encodePacked(encoded, flag(procedure.agreement), count(procedure.relayedFrom.length));
+        for (uint256 i = 0; i < procedure.relayedFrom.length; i++) {
+            encoded = abi.encodePacked(encoded, le32(procedure.relayedFrom[i]));
+        }
+        encoded = procedure.hasRelayRecipe
+            ? abi.encodePacked(encoded, bytes1(0x01), hash(procedure.relayRecipe))
+            : abi.encodePacked(encoded, bytes1(0x00));
         return sha256(encoded);
     }
 }

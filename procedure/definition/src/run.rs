@@ -30,8 +30,10 @@ pub struct PreparedRun {
     /// prompt that run holds.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub case_path: Option<PathBuf>,
-    /// The procedure kind's inferences, in the order it runs them. Each holds the
-    /// run's text, source record and forms, which are the same in all.
+    /// The procedure kind's inferences, in the order it runs them. Each holds its
+    /// prompt's text and the record of what that text was built from: the
+    /// run's own, or for an inference a relay gives its prompt, the relay's.
+    /// The forms are the same in all.
     pub inferences: Vec<PreparedInference>,
     pub raw_prompt: bool,
     pub max_new_tokens: u32,

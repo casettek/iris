@@ -156,10 +156,19 @@ pub fn run_pins(base_dir: &Path, specification_path: &Path) -> Result<ContractPi
 /// forms its output is read by. A contract holds these as it holds the
 /// parameters: they are the terms the claim was asked for under.
 fn required_origin(specification: &Specification) -> RequiredOrigin {
+    // A relay's recipe is the specification's own text, so a procedure pins
+    // it. The hash is over the recipe alone, so the relay step over no
+    // output states it.
+    let relay_recipe_sha256 = specification.relay.as_ref().map(|relay| {
+        source_core::relay::run_relay_steps(&relay.recipe(), "", &[], &[], true)
+            .record
+            .recipe_sha256
+    });
     let Some(terms) = run_prep::source::source_terms(specification) else {
         return RequiredOrigin {
             source: None,
             forms: Vec::new(),
+            relay_recipe_sha256,
         };
     };
     RequiredOrigin {
@@ -171,6 +180,7 @@ fn required_origin(specification: &Specification) -> RequiredOrigin {
             recipe_sha256: None,
         }),
         forms: terms.forms,
+        relay_recipe_sha256,
     }
 }
 

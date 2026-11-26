@@ -23,7 +23,6 @@ raster = { path = "../../raster/crates/raster" }
 raster-compiler = { path = "../../raster/crates/raster-compiler" }
 raster-prover = { path = "../../raster/crates/raster-prover" }
 raster-runtime = { path = "../../raster/crates/raster-runtime" }
-procedure-run = { path = "../procedure/run" }
 run-prep = { path = "../procedure/prepare" }
 prompt-prep = { path = "../phases/inference/prompt" }
 sequence-check = { path = "../raster-stages/sequence-check" }

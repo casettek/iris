@@ -54,6 +54,10 @@ pub struct RequiredOrigin {
     /// a contract takes it on the submitted output itself and does not rest
     /// on the result stage, which is too short to be replayed in a dispute.
     pub forms: Vec<result_core::Form>,
+    /// The hash over the recipe a relay must build its prompt with: the text
+    /// before and after the earlier output. `None` in a procedure that
+    /// relays nothing, and one that accepts any recipe.
+    pub relay_recipe_sha256: Option<String>,
 }
 
 impl RequiredOrigin {
@@ -170,6 +174,12 @@ pub struct ClaimSubmission {
     /// source. A contract reads the signer and the recipe from it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source: Option<source_core::SourceRecord>,
+    /// The record each relay of the claim states, one per inference a relay
+    /// gives its prompt, in the order the procedure kind runs them. Such an
+    /// inference's statement is over this record's text and digest, in place
+    /// of the claim's input and source.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub relays: Vec<source_core::SourceRecord>,
     /// What each inference claims, in the order the procedure kind runs them: one
     /// for the `single` procedure kind, two for `consensus`.
     pub inferences: Vec<SubmittedInference>,
@@ -251,8 +261,12 @@ pub enum SubmissionRejection {
         expected: ProcedureKind,
         submitted: ProcedureKind,
     },
+    /// A relay record is not built on the claim record of the inference
+    /// whose output it relays.
+    AnotherRelayed { inference: usize },
     /// The claim does not hold what a claim of its procedure kind does: another
-    /// number of inferences, or a consensus where there is none to state.
+    /// number of inferences or of relay records, or a consensus where there
+    /// is none to state.
     AnotherShape {
         procedure_kind: ProcedureKind,
         inferences: usize,
@@ -339,6 +353,11 @@ impl std::fmt::Display for SubmissionRejection {
             } => write!(
                 f,
                 "the prompt was built with recipe {submitted}, but the contract's is {expected}"
+            ),
+            Self::AnotherRelayed { inference } => write!(
+                f,
+                "the relay record of inference {inference} is not built on the claim record of \
+                 the inference whose output it relays"
             ),
             Self::AnotherProcedureKind {
                 expected,
@@ -444,6 +463,7 @@ impl ClaimSubmission {
         results: &[&InferenceResult],
         consensus: Option<SubmittedConsensus>,
         source: Option<&source_core::SourceRecord>,
+        relays: Vec<source_core::SourceRecord>,
         chain_dir: &Path,
     ) -> Result<Self> {
         let first = results.first().context("a claim holds an inference")?;
@@ -458,6 +478,7 @@ impl ClaimSubmission {
             input_text_sha256: first.input_text_sha256.clone(),
             source_sha256: first.source_sha256.clone(),
             source: source.cloned(),
+            relays,
             inferences: results
                 .iter()
                 .map(|result| SubmittedInference {
@@ -481,13 +502,15 @@ impl ClaimSubmission {
     }
 
     /// What the result stage's output must state for this submission to be
-    /// its claim's.
+    /// its claim's: the inferences that stage reads, in order.
     pub fn stated(&self) -> ResultInOutput {
         ResultInOutput {
             inferences: self
                 .inferences
                 .iter()
-                .map(|inference| StatedInference {
+                .enumerate()
+                .filter(|(inference, _)| self.procedure_kind.result_input_of(*inference).is_some())
+                .map(|(_, inference)| StatedInference {
                     record: inference.record.clone(),
                     result: inference.result.clone(),
                 })
@@ -533,10 +556,15 @@ pub fn check_procedure_kind(
             submitted: submission.procedure_kind,
         });
     }
-    // A claim of a procedure kind holds one entry per inference it makes, and an
-    // agreement exactly when the procedure kind states one.
+    // A claim of a procedure kind holds one entry per inference it makes, a
+    // relay record per inference a relay gives its prompt, and an agreement
+    // exactly when the procedure kind states one.
     let states_consensus = required.result().states_agreement();
+    let relays = (0..required.inferences())
+        .filter(|inference| required.relayed_from(*inference).is_some())
+        .count();
     if submission.inferences.len() != required.inferences()
+        || submission.relays.len() != relays
         || submission.consensus.is_some() != states_consensus
     {
         return Err(SubmissionRejection::AnotherShape {
@@ -553,9 +581,35 @@ pub fn check_procedure_kind(
 /// inference. One equality covers the model and every parameter; the other
 /// two cover the output.
 ///
-/// Every inference's statement is recomputed over the submission's one input
-/// hash and source digest, so a claim of several inferences that passes this
-/// for each ran them all on one input.
+/// The record of the relay that gives this inference its prompt, when one
+/// does: the relay records are in the order of the inferences they feed.
+pub fn relay_record(
+    submission: &ClaimSubmission,
+    inference: usize,
+) -> std::result::Result<Option<&source_core::SourceRecord>, SubmissionRejection> {
+    let procedure_kind = submission.procedure_kind;
+    if procedure_kind.relayed_from(inference).is_none() {
+        return Ok(None);
+    }
+    let at = (0..inference)
+        .filter(|earlier| procedure_kind.relayed_from(*earlier).is_some())
+        .count();
+    submission
+        .relays
+        .get(at)
+        .map(Some)
+        .ok_or(SubmissionRejection::AnotherShape {
+            procedure_kind,
+            inferences: submission.inferences.len(),
+            consensus: submission.consensus.is_some(),
+        })
+}
+
+/// An inference's statement is recomputed over the submission's input hash
+/// and source digest, so the inferences that pass this on the claim's own
+/// input ran one input. An inference a relay gives its prompt is recomputed
+/// over that relay's record: the text it states, and its digest.
+/// [`check_origin`] holds the record to the inference it relays.
 pub fn check_submission(
     model: &ModelPins,
     required: RequiredParameters,
@@ -574,13 +628,14 @@ pub fn check_submission(
                 inferences: submission.inferences.len(),
                 consensus: submission.consensus.is_some(),
             })?;
-    let expected = expected_statement(
-        model,
-        required,
-        &submission.input_text_sha256,
-        &submission.source_sha256,
-    )
-    .ok_or(SubmissionRejection::MalformedInputCommitment)?;
+    let relay = relay_record(submission, inference)?;
+    let relayed_source = relay.map(source_record_id);
+    let (input_text_sha256, source_sha256) = match (relay, &relayed_source) {
+        (Some(record), Some(digest)) => (&record.text_sha256, digest),
+        _ => (&submission.input_text_sha256, &submission.source_sha256),
+    };
+    let expected = expected_statement(model, required, input_text_sha256, source_sha256)
+        .ok_or(SubmissionRejection::MalformedInputCommitment)?;
     let expected = hex::encode(expected);
     if claimed.record.statement_sha256 != expected {
         return Err(SubmissionRejection::StatementMismatch {
@@ -649,10 +704,61 @@ pub fn check_origin(
             }
         }
     }
+    // A relay's record has no fault, is built with the recipe the contract
+    // requires, and names the claim record of the inference it relays, as
+    // submitted. The statement of the inference it feeds names the record, so
+    // that inference ran on the earlier one's output.
+    for inference in 0..submission.inferences.len() {
+        let (Some(earlier), Some(record)) = (
+            submission.procedure_kind.relayed_from(inference),
+            relay_record(submission, inference)?,
+        ) else {
+            continue;
+        };
+        if !record.present || record.fault != 0 {
+            return Err(SubmissionRejection::SourceFault {
+                fault: record.fault,
+            });
+        }
+        let relayed = submission
+            .inferences
+            .get(earlier)
+            .ok_or(SubmissionRejection::AnotherRelayed { inference })?;
+        let hash = |text: &str| hex::decode(text).unwrap_or_default();
+        // The relay step's own function over the earlier record's values.
+        let named = source_core::relay::fold_relayed(
+            source_core::relay::begin_relay_fold(),
+            "",
+            &hash(&relayed.record.statement_sha256),
+            &hash(&relayed.record.output_text_sha256),
+            true,
+        )
+        .relayed;
+        if record.documents != 1 || record.documents_sha256 != hex::encode(named.as_slice()) {
+            return Err(SubmissionRejection::AnotherRelayed { inference });
+        }
+        if let Some(recipe) = &required.relay_recipe_sha256 {
+            if record.recipe_sha256 != *recipe {
+                return Err(SubmissionRejection::AnotherRecipe {
+                    expected: recipe.clone(),
+                    submitted: record.recipe_sha256.clone(),
+                });
+            }
+        }
+    }
     // Each output text is held to its record by `check_submission`, so the
-    // result taken on it here is the one the claim's own output has.
-    for claimed in &submission.inferences {
-        let expected = required.result_of(&claimed.output_text);
+    // result taken on it here is the one the claim's own output has. An
+    // inference the result stage does not read has no result.
+    for (inference, claimed) in submission.inferences.iter().enumerate() {
+        let expected = if submission
+            .procedure_kind
+            .result_input_of(inference)
+            .is_some()
+        {
+            required.result_of(&claimed.output_text)
+        } else {
+            SubmittedResult::default()
+        };
         if claimed.result.forms_sha256 != expected.forms_sha256 {
             return Err(SubmissionRejection::AnotherForms {
                 expected: expected.forms_sha256,
@@ -712,10 +818,15 @@ pub fn check_stated_records(
         return Err(SubmissionRejection::AnotherStatedResult);
     }
     for (inference, claimed) in submission.inferences.iter().enumerate() {
-        let check = submission
-            .procedure_kind
-            .result_input_of(inference)
-            .and_then(|input| stated.result_inputs.get(input))
+        // An inference the result stage does not read is held by the relay
+        // that reads it: `check_origin` holds that relay's record to this
+        // inference's, and the inference it feeds names the record.
+        let Some(input) = submission.procedure_kind.result_input_of(inference) else {
+            continue;
+        };
+        let check = stated
+            .result_inputs
+            .get(input)
             .and_then(|position| {
                 stated
                     .checks

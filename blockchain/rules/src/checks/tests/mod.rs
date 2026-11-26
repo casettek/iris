@@ -196,6 +196,7 @@ impl Claim {
             input_text_sha256: input,
             source_sha256: "00".repeat(32),
             source: None,
+            relays: Vec::new(),
             checkpoint_count: list.checkpoints.len() as u32,
             checkpoints_root: checkpoints_root(
                 &procedure_definition::checkpoint::checkpoint_hashes(&list).unwrap(),
@@ -428,5 +429,6 @@ fn no_source(forms: Vec<result_core::Form>) -> RequiredOrigin {
     RequiredOrigin {
         source: None,
         forms,
+        relay_recipe_sha256: None,
     }
 }

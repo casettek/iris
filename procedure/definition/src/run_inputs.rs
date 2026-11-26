@@ -19,6 +19,9 @@ pub struct PostedRun {
     pub forms: result_core::ResultForms,
     /// One per inference, in the order the procedure kind runs them.
     pub inferences: Vec<PostedInference>,
+    /// The relay stage's recipe, in a run of a procedure kind that relays an
+    /// output.
+    pub relay: Option<source_core::relay::RelayRecipe>,
 }
 
 /// What the source stage is given: the key attestations are checked against,
@@ -58,6 +61,7 @@ pub enum RunInput<'a> {
     Text(&'a prompt_core::PromptText),
     Marks(&'a [u32]),
     Claimed(&'a [u32]),
+    RelayRecipe(&'a source_core::relay::RelayRecipe),
 }
 
 impl RunInput<'_> {
@@ -74,6 +78,7 @@ impl RunInput<'_> {
             Self::Text(_) => "text",
             Self::Marks(_) => "marks",
             Self::Claimed(_) => "claimed",
+            Self::RelayRecipe(_) => "recipe",
         }
     }
 }
@@ -81,7 +86,7 @@ impl RunInput<'_> {
 impl PostedRun {
     /// Every input of the run, in one order: the source's, the forms, then
     /// each inference's procedure, schedule, text digest, text slices,
-    /// marks and claimed ids.
+    /// marks and claimed ids, then the relay's recipe.
     pub fn values(&self) -> Vec<RunInput<'_>> {
         let mut values = Vec::new();
         if let Some(source) = &self.source {
@@ -97,6 +102,9 @@ impl PostedRun {
             values.extend(inference.text.iter().map(RunInput::Text));
             values.extend(inference.marks.iter().map(|marks| RunInput::Marks(marks)));
             values.extend(inference.claimed.iter().map(|ids| RunInput::Claimed(ids)));
+        }
+        if let Some(relay) = &self.relay {
+            values.push(RunInput::RelayRecipe(relay));
         }
         values
     }

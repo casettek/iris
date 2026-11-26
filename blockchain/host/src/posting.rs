@@ -712,6 +712,7 @@ mod tests {
                 marks: vec![vec![1, 0, 1]],
                 claimed: vec![vec![7]],
             }],
+            relay: None,
         }
     }
 

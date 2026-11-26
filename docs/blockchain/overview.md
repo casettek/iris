@@ -149,11 +149,13 @@ replay below compares the two.
 In the order of `iris claim check`. Each error has the name of the Rust
 rejection it is.
 
-1. The procedure is registered, and the claim has the shape of its
-   procedure kind: one inference, or two and an agreement.
+1. The procedure is registered, and the claim has the shape its procedure
+   states: one inference per model, an agreement exactly when the result
+   states one, and a relay record per inference a relay gives its prompt.
 2. Each inference's statement is the procedure's model and parameters
-   over the claimed input; its text is the one its record commits to; its
-   record is valid.
+   over the claimed input, or for an inference a relay gives its prompt, over
+   that relay's record; its text is the one its record commits to; its record
+   is valid.
 3. The source record is the one the statement names and meets what the
    procedure requires; each result code is what the procedure's forms
    give the submitted text; so is the agreement.

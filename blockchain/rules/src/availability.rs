@@ -40,7 +40,7 @@ use crate::checks::{is_address, ClaimSubmission, ResultInOutput, SubmittedRecord
 use procedure_definition::checkpoint::{checkpoint_hash, checkpoints_root, CheckpointList};
 
 /// The first bytes of every blob iris posts.
-pub const BLOB_MAGIC: &[u8] = b"iris/blob/v3\n";
+pub const BLOB_MAGIC: &[u8] = b"iris/blob/v4\n";
 /// A Celestia namespace: one version byte and 28 bytes of id.
 /// Blockchain-specific: the size is Celestia's.
 pub const NAMESPACE_BYTES: usize = 29;
@@ -899,6 +899,7 @@ mod tests {
                 marks: vec![vec![1, 0, 1], vec![1]],
                 claimed: vec![vec![7, 8]],
             }],
+            relay: None,
         }
     }
 

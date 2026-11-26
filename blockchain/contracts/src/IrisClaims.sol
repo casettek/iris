@@ -129,6 +129,7 @@ contract IrisClaims {
     error SourceFault(uint32 fault);
     error AnotherSigner();
     error AnotherRecipe();
+    error AnotherRelayed(uint256 inference);
     error AnotherForms(uint256 inference);
     error AnotherResult(uint256 inference);
     error AnotherConsensus();
@@ -213,18 +214,17 @@ contract IrisClaims {
         if (!registry.isRegistered(claim.procedure)) revert UnregisteredProcedure(claim.procedure);
         Procedure memory procedure = registry.procedure(claim.procedure);
 
-        bool consensus = IrisEncoding.sameText(procedure.procedureKind, "consensus");
-        uint256 inferences = consensus ? 2 : 1;
-        if (
-            claim.inferences.length != inferences || procedure.models.length != inferences
-                || claim.hasConsensus != consensus
-        ) revert AnotherShape();
+        // One inference per model the procedure pins, and an agreement
+        // exactly when its result states one.
+        if (claim.inferences.length != procedure.models.length || claim.hasConsensus != procedure.agreement) {
+            revert AnotherShape();
+        }
 
         _checkInferences(procedure, claim);
         _checkOrigin(procedure, claim);
         _checkPosted(claim.availability, claim.claimer, uint64(block.timestamp) + challengePeriod);
         bytes32 postedInputs = _checkHolds(claim);
-        _checkStatedRecords(consensus, claim);
+        _checkStatedRecords(procedure, claim);
 
         claims[claimId] = Accepted({
             procedure: claim.procedure,
@@ -239,13 +239,24 @@ contract IrisClaims {
 
     /// `check_submission`: each inference's statement is the procedure's
     /// model and parameters over the claimed input and source, its text is
-    /// the one its record commits to, and its record is valid.
+    /// the one its record commits to, and its record is valid. An inference
+    /// a relay gives its prompt is over that relay's text and record, and
+    /// the claim holds one such record for each (`check_procedure_kind`).
     function _checkInferences(Procedure memory procedure, Claim memory claim) private pure {
+        uint256 relay;
         for (uint256 i = 0; i < claim.inferences.length; i++) {
             Inference memory inference = claim.inferences[i];
+            bytes32 input = claim.inputTextSha256;
+            bytes32 source = claim.sourceSha256;
+            if (procedure.relayedFrom[i] != 0) {
+                if (relay == claim.relays.length) revert AnotherShape();
+                input = claim.relays[relay].inputTextSha256;
+                source = IrisEncoding.sourceId(claim.relays[relay].record);
+                relay++;
+            }
             bytes32 statement = IrisEncoding.statement(
-                claim.inputTextSha256,
-                claim.sourceSha256,
+                input,
+                source,
                 procedure.models[i].modelId,
                 procedure.rawPrompt,
                 procedure.maxNewTokens,
@@ -255,6 +266,7 @@ contract IrisClaims {
             if (sha256(bytes(inference.outputText)) != inference.record.outputTextSha256) revert OutputMismatch(i);
             if (!inference.record.valid) revert NotValid(i);
         }
+        if (relay != claim.relays.length) revert AnotherShape();
     }
 
     /// `check_origin`: the source record is the one the statement names and
@@ -276,9 +288,37 @@ contract IrisClaims {
             ) revert AnotherRecipe();
         }
 
-        uint32[2] memory codes;
+        // A relay's record has no fault, is of the text its inference's
+        // statement is over, names the claim record of the inference it
+        // relays, and is built with the recipe the procedure pins.
+        uint256 relay;
         for (uint256 i = 0; i < claim.inferences.length; i++) {
-            (uint32 code, bytes32 forms) = IrisEncoding.runForms(procedure.forms, claim.inferences[i].outputText);
+            uint32 earlier = procedure.relayedFrom[i];
+            if (earlier == 0) continue;
+            Relay memory relayed = claim.relays[relay++];
+            if (!relayed.record.present || relayed.record.fault != 0) revert SourceFault(relayed.record.fault);
+            if (
+                relayed.record.documents != 1
+                    || !IrisEncoding.sameText(relayed.record.textSha256, IrisEncoding.hexText(relayed.inputTextSha256))
+                    || !IrisEncoding.sameText(
+                        relayed.record.documentsSha256,
+                        IrisEncoding.hexText(IrisEncoding.relayed(claim.inferences[earlier - 1].record))
+                    )
+            ) revert AnotherRelayed(i);
+            if (
+                procedure.hasRelayRecipe
+                    && !IrisEncoding.sameText(relayed.record.recipeSha256, IrisEncoding.hexText(procedure.relayRecipe))
+            ) revert AnotherRecipe();
+        }
+
+        // An inference the result stage does not read has no result.
+        uint32[] memory codes = new uint32[](claim.inferences.length);
+        for (uint256 i = 0; i < claim.inferences.length; i++) {
+            uint32 code;
+            bytes32 forms;
+            if (bytes(procedure.resultInputs[i]).length != 0) {
+                (code, forms) = IrisEncoding.runForms(procedure.forms, claim.inferences[i].outputText);
+            }
             if (claim.inferences[i].result.formsSha256 != forms) revert AnotherForms(i);
             if (claim.inferences[i].result.code != code) revert AnotherResult(i);
             codes[i] = code;
@@ -361,11 +401,13 @@ contract IrisClaims {
         return a.statement == b.statement && a.outputTextSha256 == b.outputTextSha256 && a.valid == b.valid;
     }
 
-    /// `check_stated_records`: the claim ends in its procedure kind's result stage,
-    /// each record is the one in the check that stage read, and the results
-    /// are what that stage states. The records were read out of the stages'
-    /// outputs by the claim's proof; nothing is decoded here.
-    function _checkStatedRecords(bool consensus, Claim memory claim) private view {
+    /// `check_stated_records`: the claim ends in its procedure's result stage,
+    /// each record that stage read is the one in the check it read it from,
+    /// and the results are what that stage states. The records were read out
+    /// of the stages' outputs by the claim's proof; nothing is decoded here.
+    /// An inference the result stage does not read is held by the relay that
+    /// reads it (`_checkOrigin`).
+    function _checkStatedRecords(Procedure memory procedure, Claim memory claim) private view {
         // The entry the claim gives in full is one a posted blob lists, and
         // is of the claim's own checkpoint list.
         StatedRecords memory stated = claim.stated;
@@ -376,19 +418,24 @@ contract IrisClaims {
         }
         if (!listed || stated.checkpointsRoot != claim.checkpointsRoot) revert RecordsNotStated();
 
-        bytes32 resultStage = keccak256(consensus ? bytes("consensus-result") : bytes("claim-result"));
-        if (registry.stageOf(claim.procedure, stated.resultProgram) != resultStage) revert NotTheResultStage();
-
-        if (stated.results.length != claim.inferences.length || stated.hasConsensus != claim.hasConsensus) {
-            revert AnotherStatedResult();
+        if (registry.stageOf(claim.procedure, stated.resultProgram) != keccak256(bytes(procedure.resultProgram))) {
+            revert NotTheResultStage();
         }
+
+        // The stage states the inferences it read, in order.
+        if (stated.hasConsensus != claim.hasConsensus) revert AnotherStatedResult();
+        uint256 read;
         for (uint256 i = 0; i < claim.inferences.length; i++) {
+            if (bytes(procedure.resultInputs[i]).length == 0) continue;
+            if (read == stated.results.length) revert AnotherStatedResult();
+            StatedInference memory result = stated.results[read++];
             if (
-                !_sameRecord(stated.results[i].record, claim.inferences[i].record)
-                    || stated.results[i].result.code != claim.inferences[i].result.code
-                    || stated.results[i].result.formsSha256 != claim.inferences[i].result.formsSha256
+                !_sameRecord(result.record, claim.inferences[i].record)
+                    || result.result.code != claim.inferences[i].result.code
+                    || result.result.formsSha256 != claim.inferences[i].result.formsSha256
             ) revert AnotherStatedResult();
         }
+        if (read != stated.results.length) revert AnotherStatedResult();
         if (
             claim.hasConsensus
                 && (
@@ -400,8 +447,8 @@ contract IrisClaims {
 
         bytes32 checkStage = keccak256("sequence-check");
         for (uint256 i = 0; i < claim.inferences.length; i++) {
-            string memory input = consensus ? (i == 0 ? "first" : "second") : "check";
-            (bool named, StatedCheck memory check) = _checkRead(stated, input);
+            if (bytes(procedure.resultInputs[i]).length == 0) continue;
+            (bool named, StatedCheck memory check) = _checkRead(stated, procedure.resultInputs[i]);
             if (!named) revert NoCheck(i);
             if (registry.stageOf(claim.procedure, check.program) != checkStage) revert NotACheck(i);
             if (!_sameRecord(check.record, claim.inferences[i].record)) revert AnotherStatedRecord(i);

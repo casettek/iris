@@ -30,9 +30,6 @@ pub fn prepare_prompt(
     model: &ModelManifest,
     relayed: Option<&procedure_definition::InferenceResult>,
 ) -> Result<PreparedPrompt> {
-    // The template is the tokenizer profile's, which is what the prompt stages
-    // render the text with, whatever the model's family.
-    let profile = tokenizer_profile(tokenizer)?;
     let (prompt, source, forms) = match relayed {
         Some(earlier) => {
             let run = relayed_run(specification, earlier)?;
@@ -40,6 +37,22 @@ pub fn prepare_prompt(
         }
         None => resolve_prompt(specification, case_dir, case)?,
     };
+    rendered_prompt(tokenizer, specification, model, prompt, source, forms)
+}
+
+/// A prompt of this text as a model's tokenizer prepares it, with the record
+/// of what the text was built from and the forms its output is read by.
+pub fn rendered_prompt(
+    tokenizer: &serde_json::Value,
+    specification: &Specification,
+    model: &ModelManifest,
+    prompt: String,
+    source: Option<source::SourceRecord>,
+    forms: Vec<source::Form>,
+) -> Result<PreparedPrompt> {
+    // The template is the tokenizer profile's, which is what the prompt stages
+    // render the text with, whatever the model's family.
+    let profile = tokenizer_profile(tokenizer)?;
     let rendered_prompt = if !specification.raw_prompt && profile.templated() {
         format!(
             "{}{}{}",
@@ -206,6 +219,7 @@ fn with_run_input<R>(
         RunInput::Claimed(ids) => encode(&ClaimedOutput {
             token_ids: List::from(ids.to_vec()),
         }),
+        RunInput::RelayRecipe(value) => encode(value),
     }
 }
 

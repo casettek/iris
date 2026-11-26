@@ -362,6 +362,29 @@ pub fn procedure_token(procedure: &Procedure) -> Result<Token> {
                 })
                 .collect(),
         ),
+        Token::text(&procedure.arrangement.result_program),
+        Token::Array(
+            procedure
+                .arrangement
+                .result_inputs
+                .iter()
+                .map(|input| Token::text(input))
+                .collect(),
+        ),
+        Token::flag(procedure.arrangement.agreement),
+        Token::Array(
+            procedure
+                .arrangement
+                .relayed_from
+                .iter()
+                .map(|earlier| Token::number(u64::from(*earlier)))
+                .collect(),
+        ),
+        Token::flag(procedure.relay_recipe_sha256.is_some()),
+        match &procedure.relay_recipe_sha256 {
+            Some(recipe) => Token::hash(recipe)?,
+            None => Token::Word([0; 32]),
+        },
     ]))
 }
 
@@ -460,8 +483,28 @@ fn record_token(record: &SubmittedRecord) -> Result<Token> {
 fn result_token(result: &SubmittedResult) -> Result<Token> {
     Ok(Token::Tuple(vec![
         Token::number(u64::from(result.code)),
-        Token::hash(&result.forms_sha256)?,
+        // An inference the result stage did not read has no forms hash.
+        if result.forms_sha256.is_empty() {
+            Token::Word([0; 32])
+        } else {
+            Token::hash(&result.forms_sha256)?
+        },
     ]))
+}
+
+/// A source record, with its hashes as the hex text the stages hash.
+fn source_token(source: &source_core::SourceRecord) -> Token {
+    Token::Tuple(vec![
+        Token::flag(source.present),
+        Token::text(&source.text_sha256),
+        Token::number(source.text_total),
+        Token::text(&source.recipe_sha256),
+        Token::number(u64::from(source.documents)),
+        Token::text(&source.documents_sha256),
+        Token::text(&source.signer),
+        Token::number(u64::from(source.fault)),
+        Token::number(source.fault_position),
+    ])
 }
 
 fn consensus_token(consensus: Option<&SubmittedConsensus>) -> Token {
@@ -606,17 +649,19 @@ pub fn claim_token(submission: &ClaimSubmission) -> Result<Token> {
         Token::hash(&submission.input_text_sha256)?,
         Token::hash(&submission.source_sha256)?,
         Token::flag(submission.source.is_some()),
-        Token::Tuple(vec![
-            Token::flag(source.present),
-            Token::text(&source.text_sha256),
-            Token::number(source.text_total),
-            Token::text(&source.recipe_sha256),
-            Token::number(u64::from(source.documents)),
-            Token::text(&source.documents_sha256),
-            Token::text(&source.signer),
-            Token::number(u64::from(source.fault)),
-            Token::number(source.fault_position),
-        ]),
+        source_token(&source),
+        Token::Array(
+            submission
+                .relays
+                .iter()
+                .map(|record| {
+                    Ok(Token::Tuple(vec![
+                        Token::hash(&record.text_sha256)?,
+                        source_token(record),
+                    ]))
+                })
+                .collect::<Result<_>>()?,
+        ),
         Token::Array(
             submission
                 .inferences

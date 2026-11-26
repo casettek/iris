@@ -209,6 +209,7 @@ mod tests {
             source: None,
             forms: Default::default(),
             inferences: vec![posted],
+            relay: None,
         };
         save(&run, &dir).unwrap();
         assert_eq!(load(&dir).unwrap(), run);

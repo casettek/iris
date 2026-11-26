@@ -42,8 +42,17 @@ contract IrisRegistry {
             return id;
         }
         procedures[id] = encoded;
-        for (uint256 i = 0; i < procedure.models.length; i++) {
-            if (!IrisEncoding.wellFormedCommitments(procedure.models[i].commitments)) {
+        // The arrangement says something of every inference, a prompt holds
+        // the output of an earlier inference only, and an agreement is of two.
+        uint256 inferences = procedure.models.length;
+        if (
+            procedure.resultInputs.length != inferences || procedure.relayedFrom.length != inferences
+                || (procedure.agreement && inferences != 2)
+        ) revert MalformedProcedure();
+        for (uint256 i = 0; i < inferences; i++) {
+            if (
+                procedure.relayedFrom[i] > i || !IrisEncoding.wellFormedCommitments(procedure.models[i].commitments)
+            ) {
                 revert MalformedProcedure();
             }
         }

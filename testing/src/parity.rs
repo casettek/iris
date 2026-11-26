@@ -175,7 +175,7 @@ fn outcomes(report: &Value) -> Value {
         },
         "an_output_is_relayed": {
             "checkpoints": report["relay"]["checkpoints"],
-            "located": report["relay"]["located"],
+            "replayed": report["relay"]["replayed"],
         },
         "cheating_is_caught": caught,
     })
@@ -226,9 +226,15 @@ fn outcome_lines(outcomes: &Value) -> Vec<String> {
     let relayed = &outcomes["an_output_is_relayed"];
     if relayed["checkpoints"].is_u64() {
         lines.push(format!(
-            "an output is relayed: 1 run with this model's output in the other family's prompt, {} checkpoints the same through Raster and natively and its results the same as direct inference; a false checkpoint located in each of {} stages",
+            "an output is relayed: 1 relay claim with this model's output in the other family's prompt, {} checkpoints the same through Raster and natively and its results the same as direct inference; a false checkpoint in each inference found and replayed ({})",
             relayed["checkpoints"],
-            relayed["located"].as_array().map_or(0, Vec::len)
+            relayed["replayed"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .collect::<Vec<_>>()
+                .join(", ")
         ));
     }
     let caught = &outcomes["cheating_is_caught"];
@@ -449,15 +455,17 @@ fn run_suite(
         source::run_source_scenario(root, run_dir, &exe, &raster, &model_path, &model)
             .context("source scenario")?;
     write_json(&run_dir.join("report.json"), report)?;
-    println!("Running the relay scenario...");
-    report["relay"] = relay::run_relay_scenario(root, run_dir, &exe, &raster, &model_path, &model)
-        .context("relay scenario")?;
-    write_json(&run_dir.join("report.json"), report)?;
-    // Its challenger replays a stage through authenticated Raster, as the
+    // Their challengers replay a stage through authenticated Raster, as the
     // challenge scenario does.
     if skip_challenges {
+        report["relay"] = json!("skipped");
         report["consensus"] = json!("skipped");
     } else {
+        println!("Running the relay scenario...");
+        report["relay"] =
+            relay::run_relay_scenario(root, run_dir, &exe, &raster, &model_path, &model)
+                .context("relay scenario")?;
+        write_json(&run_dir.join("report.json"), report)?;
         println!("Running the consensus scenario...");
         report["consensus"] =
             consensus::run_consensus_scenario(root, run_dir, &exe, &raster, &model_path, &model)

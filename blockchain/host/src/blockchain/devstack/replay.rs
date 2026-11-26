@@ -49,6 +49,7 @@ const CHECK_OF: &[(&str, &str)] = &[
     ("SourceFault", "submission: source record"),
     ("AnotherSigner", "submission: source record"),
     ("AnotherRecipe", "submission: source record"),
+    ("AnotherRelayed", "submission: source record"),
     ("AnotherForms", "submission: source record"),
     ("AnotherResult", "submission: source record"),
     ("AnotherConsensus", "submission: source record"),
@@ -97,10 +98,13 @@ fn check_name(check: &str) -> String {
     if check.starts_with("challenge: about the claim's checkpoint") {
         return String::from("challenge: of the claim's checkpoint");
     }
+    // The longest name the check starts with: one name is the start of
+    // another (`submission: procedure` and `submission: procedure kind`).
     CHECK_OF
         .iter()
         .map(|(_, name)| *name)
-        .find(|name| check.starts_with(name))
+        .filter(|name| check.starts_with(name))
+        .max_by_key(|name| name.len())
         .map(String::from)
         .unwrap_or(check)
 }
@@ -406,6 +410,42 @@ pub fn claim(
         case(
             "other-second-output",
             &|s| append(&mut s["inferences"][1]["output_text"], "!"),
+            None,
+            false,
+            None,
+        )?;
+    }
+    if honest["relays"]
+        .as_array()
+        .is_some_and(|relays| !relays.is_empty())
+    {
+        // The first output swapped for another, with a record that commits
+        // to it: the relay's record names the output it was built on, and
+        // this is not it.
+        case(
+            "other-relayed-output",
+            &|s| {
+                use sha2::{Digest, Sha256};
+                let output = "another answer";
+                s["inferences"][0]["output_text"] = json!(output);
+                s["inferences"][0]["record"]["output_text_sha256"] =
+                    json!(hex::encode(Sha256::digest(output.as_bytes())));
+            },
+            None,
+            false,
+            None,
+        )?;
+        // Another relay record than the one the second statement names.
+        case(
+            "other-relay-record",
+            &|s| add(&mut s["relays"][0]["documents"], 1),
+            None,
+            false,
+            None,
+        )?;
+        case(
+            "no-relay-record",
+            &|s| s["relays"] = json!([]),
             None,
             false,
             None,

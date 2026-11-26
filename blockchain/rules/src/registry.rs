@@ -25,8 +25,52 @@ use crate::checks::{
 use procedure_definition::encoding::Encoder;
 use procedure_definition::procedure_kind::ProcedureKind;
 
-pub const PROCEDURE_VERSION: u32 = 3;
-pub const REGISTRY_VERSION: u32 = 3;
+pub const PROCEDURE_VERSION: u32 = 4;
+pub const REGISTRY_VERSION: u32 = 4;
+
+/// How a procedure arranges its inferences into its result: what a contract
+/// reads of the procedure kind, in place of its name.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct Arrangement {
+    /// The stage program that states the result.
+    pub result_program: String,
+    /// For each inference, the result stage's input that reads its last
+    /// check. Empty for an inference the result does not read.
+    pub result_inputs: Vec<String>,
+    /// Whether the result states an agreement of its inferences.
+    pub agreement: bool,
+    /// For each inference, one more than the inference whose output its
+    /// prompt holds. Zero for an inference whose prompt is the claim's own.
+    pub relayed_from: Vec<u32>,
+}
+
+impl Arrangement {
+    /// The arrangement of a procedure kind, from its shape.
+    pub fn of(procedure_kind: ProcedureKind) -> Self {
+        let inferences = 0..procedure_kind.inferences();
+        Self {
+            result_program: procedure_kind.result_program().to_string(),
+            result_inputs: inferences
+                .clone()
+                .map(|inference| {
+                    procedure_kind
+                        .result_input_of(inference)
+                        .unwrap_or_default()
+                        .to_string()
+                })
+                .collect(),
+            agreement: procedure_kind.result().states_agreement(),
+            relayed_from: inferences
+                .map(|inference| {
+                    procedure_kind
+                        .relayed_from(inference)
+                        .map_or(0, |earlier| earlier as u32 + 1)
+                })
+                .collect(),
+        }
+    }
+}
 /// What `iris registry add` writes when given no other file.
 pub const REGISTRY_JSON: &str = "registry.json";
 
@@ -36,6 +80,9 @@ pub const REGISTRY_JSON: &str = "registry.json";
 pub struct Procedure {
     pub version: u32,
     pub procedure_kind: ProcedureKind,
+    /// The kind's arrangement, stated: a contract reads this, and the name
+    /// is a label.
+    pub arrangement: Arrangement,
     pub programs: ProgramPins,
     /// One model per inference, in the order the procedure kind runs them.
     pub models: Vec<ModelPins>,
@@ -48,6 +95,9 @@ pub struct Procedure {
     /// The texts an output is read by, in order. May be empty.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub forms: Vec<result_core::Form>,
+    /// The recipe a relay must build its prompt with, or `None`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub relay_recipe_sha256: Option<String>,
 }
 
 impl Procedure {
@@ -55,12 +105,14 @@ impl Procedure {
         Self {
             version: PROCEDURE_VERSION,
             procedure_kind: pins.procedure_kind,
+            arrangement: Arrangement::of(pins.procedure_kind),
             programs: pins.programs,
             models: pins.models,
             raw_prompt: required.raw_prompt,
             max_new_tokens: required.max_new_tokens,
             source: origin.source,
             forms: origin.forms,
+            relay_recipe_sha256: origin.relay_recipe_sha256,
         }
     }
 
@@ -69,7 +121,7 @@ impl Procedure {
     /// (`procedure_definition::encoding`). Every field is hashed in the order it is
     /// declared, each list after its count.
     pub fn id(&self) -> String {
-        let mut encoder = Encoder::new(b"iris/procedure/v3\0");
+        let mut encoder = Encoder::new(b"iris/procedure/v4\0");
         encoder
             .number(self.version)
             .text(self.procedure_kind.name())
@@ -131,6 +183,23 @@ impl Procedure {
         for form in &self.forms {
             encoder.text(&form.text).number(form.code);
         }
+        let arrangement = &self.arrangement;
+        encoder
+            .text(&arrangement.result_program)
+            .count(arrangement.result_inputs.len());
+        for input in &arrangement.result_inputs {
+            encoder.text(input);
+        }
+        encoder
+            .byte(u8::from(arrangement.agreement))
+            .count(arrangement.relayed_from.len());
+        for earlier in &arrangement.relayed_from {
+            encoder.number(*earlier);
+        }
+        match &self.relay_recipe_sha256 {
+            None => encoder.byte(0),
+            Some(recipe) => encoder.byte(1).hash(recipe),
+        };
         hex::encode(encoder.finish())
     }
 
@@ -145,6 +214,7 @@ impl Procedure {
         RequiredOrigin {
             source: self.source.clone(),
             forms: self.forms.clone(),
+            relay_recipe_sha256: self.relay_recipe_sha256.clone(),
         }
     }
 }
@@ -212,11 +282,18 @@ impl Registry {
     }
 
     /// The procedure registered under this id. An entry whose
-    /// procedure does not hash to its id is no entry.
+    /// procedure does not hash to its id is no entry. Neither is one whose
+    /// arrangement is not its kind's in this build: the checks here follow
+    /// the kind's shape, and a contract follows what was registered.
     pub fn get(&self, id: &str) -> Option<&Procedure> {
         self.procedures
             .iter()
-            .find(|entry| entry.id == id && entry.procedure.id() == id)
+            .find(|entry| {
+                entry.id == id
+                    && entry.procedure.id() == id
+                    && entry.procedure.arrangement
+                        == Arrangement::of(entry.procedure.procedure_kind)
+            })
             .map(|entry| &entry.procedure)
     }
 }
@@ -229,6 +306,7 @@ mod tests {
         Procedure {
             version: PROCEDURE_VERSION,
             procedure_kind: ProcedureKind::single(),
+            arrangement: Arrangement::of(ProcedureKind::single()),
             programs: ProgramPins {
                 family: String::from("gemma-dense"),
                 stage_programs: Vec::new(),
@@ -238,7 +316,47 @@ mod tests {
             max_new_tokens,
             source: None,
             forms: Vec::new(),
+            relay_recipe_sha256: None,
         }
+    }
+
+    #[test]
+    fn an_arrangement_is_what_a_contract_reads_of_a_kind() {
+        let single = Arrangement::of(ProcedureKind::single());
+        assert_eq!(
+            (single.result_program.as_str(), single.agreement),
+            ("claim-result", false)
+        );
+        assert_eq!(single.result_inputs, ["check"]);
+        assert_eq!(single.relayed_from, [0]);
+
+        let consensus = Arrangement::of(ProcedureKind::named("consensus").unwrap());
+        assert_eq!(consensus.result_program, "consensus-result");
+        assert!(consensus.agreement);
+        assert_eq!(consensus.result_inputs, ["first", "second"]);
+        assert_eq!(consensus.relayed_from, [0, 0]);
+
+        // A relay's result reads its second inference, whose prompt holds
+        // the first one's output.
+        let relay = Arrangement::of(ProcedureKind::named("relay").unwrap());
+        assert_eq!(relay.result_program, "claim-result");
+        assert!(!relay.agreement);
+        assert_eq!(relay.result_inputs, ["", "check"]);
+        assert_eq!(relay.relayed_from, [0, 1]);
+
+        // The arrangement and the relay recipe are in the id, and an entry
+        // with another arrangement than its kind's answers to nothing.
+        let mut registry = Registry::default();
+        let id = registry.register(procedure(8));
+        let mut pinned = procedure(8);
+        pinned.relay_recipe_sha256 = Some("ab".repeat(32));
+        assert_ne!(pinned.id(), id);
+        let mut rearranged = procedure(8);
+        rearranged.arrangement = consensus;
+        let other = registry.register(rearranged);
+        assert_ne!(other, id);
+        assert!(registry.get(&id).is_some());
+        assert_eq!(registry.get(&other), None);
     }
 
     #[test]

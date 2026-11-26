@@ -105,7 +105,7 @@ own, which the original submitter is ahead of.
 
 | Entry | What the proof states of it |
 | --- | --- |
-| The run's inputs (`PostedRun`): the source stage's, the forms, and each inference's procedure, schedule, text digest, text slices, marks and claimed ids | The commitment a stage's input list names each one by: the root of the Raster file written from it |
+| The run's inputs (`PostedRun`): the source stage's, the forms, each inference's procedure, schedule, text digest, text slices, marks and claimed ids, and a relay's recipe | The commitment a stage's input list names each one by: the root of the Raster file written from it |
 | The checkpoint hashes, with every checkpoint and every input manifest a checkpoint commits to | The root of the hashes, which is the submission's `checkpoints_root`, and that every checkpoint they name and its manifest are there |
 
 A contract keeps one hash of the run inputs' commitments, in the order the
@@ -114,7 +114,7 @@ run input was not posted presents the commitments, and the contract holds
 them to that hash.
 
 Entries are packed in order into blobs of at most 1 MiB, a stand-in for the
-layer's own limit. A blob is `iris/blob/v3\n` followed by the postcard encoding
+layer's own limit. A blob is `iris/blob/v4\n` followed by the postcard encoding
 of the address it is posted for and its entries; a reader refuses any other
 encoding of the same blob.
 

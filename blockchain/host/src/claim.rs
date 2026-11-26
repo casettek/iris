@@ -297,6 +297,24 @@ fn write_claim_result(
             &results,
             consensus,
             prepared_run.first()?.prompt.source.as_ref(),
+            // The record of each relay, which run preparation computed for
+            // the inference it gives its prompt.
+            prepared_run
+                .inferences
+                .iter()
+                .enumerate()
+                .filter(|(inference, _)| {
+                    prepared_run
+                        .procedure_kind
+                        .relayed_from(*inference)
+                        .is_some()
+                })
+                .map(|(inference, prepared)| {
+                    prepared.prompt.source.clone().with_context(|| {
+                        format!("the prepared run holds no relay record for inference {inference}")
+                    })
+                })
+                .collect::<Result<_>>()?,
             &checkpointed.chain_dir,
         )?;
         let path = checkpointed.chain_dir.join(CLAIM_SUBMISSION_JSON);
@@ -341,15 +359,6 @@ impl ClaimBuildOptions {
 pub fn prepare_claim_run(options: &ClaimBuildOptions) -> Result<PreparedClaimRun> {
     let specification_path = absolute(&options.base_dir, &options.specification_path);
     let specification = read_specification(&specification_path)?;
-    // A claim posts its run's inputs and a contract holds its submission to
-    // rules, and neither is written for a relay: its recipe is not among the
-    // values posted, and its inferences name different inputs.
-    anyhow::ensure!(
-        !specification.procedure_kind.relays(),
-        "no claim is made of the `{}` procedure kind yet; `iris run` runs one directly and as \
-         a pipeline",
-        specification.procedure_kind
-    );
     let (case_path, case) = read_options_case(options)?;
     prepare_run(
         options,
@@ -388,15 +397,6 @@ pub fn prepare_posted_run(
 ) -> Result<PreparedClaimRun> {
     let specification_path = absolute(&options.base_dir, &options.specification_path);
     let specification = read_specification(&specification_path)?;
-    // A claim posts its run's inputs and a contract holds its submission to
-    // rules, and neither is written for a relay: its recipe is not among the
-    // values posted, and its inferences name different inputs.
-    anyhow::ensure!(
-        !specification.procedure_kind.relays(),
-        "no claim is made of the `{}` procedure kind yet; `iris run` runs one directly and as \
-         a pipeline",
-        specification.procedure_kind
-    );
     let (case_path, case) = read_options_case(options)?;
     prepare_run(
         options,
@@ -426,6 +426,7 @@ pub fn prepare_challenge_run(
     source: Option<FrozenSource<'_>>,
     forms: &[run_prep::source::Form],
     ids: &[Vec<u32>],
+    prompts: &[procedure_definition::PreparedPrompt],
 ) -> Result<PreparedClaimRun> {
     let specification_path = absolute(&options.base_dir, &options.specification_path);
     prepare_run(
@@ -433,7 +434,12 @@ pub fn prepare_challenge_run(
         specification_path,
         specification,
         (None, case),
-        Some(Frozen { source, forms, ids }),
+        Some(Frozen {
+            source,
+            forms,
+            ids,
+            prompts,
+        }),
         None,
         false,
     )
@@ -845,7 +851,8 @@ mod tests {
         // one range and the second two.
         let ids = [vec![0, 0, 0], vec![0, 0, 0, 0, 0]];
         let prepared =
-            prepare_challenge_run(&options(None), &specification, &case, None, &[], &ids).unwrap();
+            prepare_challenge_run(&options(None), &specification, &case, None, &[], &ids, &[])
+                .unwrap();
 
         let run = &prepared.prepared_run;
         assert_eq!(
@@ -950,14 +957,21 @@ mod tests {
             None,
             &[],
             &ids,
+            &[],
         )
         .err()
         .unwrap();
         assert!(format!("{error:#}").contains("one inference"), "{error:#}");
-        assert!(
-            prepare_challenge_run(&options(None), &specification, &case, None, &[], &ids[..1])
-                .is_err()
-        );
+        assert!(prepare_challenge_run(
+            &options(None),
+            &specification,
+            &case,
+            None,
+            &[],
+            &ids[..1],
+            &[]
+        )
+        .is_err());
         fs::remove_dir_all(base).unwrap();
     }
 

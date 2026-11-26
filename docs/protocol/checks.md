@@ -125,15 +125,16 @@ tree over those hashes, with their count: `checkpoints_root`. See
 | `procedure_kind` | The [procedure kind](procedure-kinds.md) the claim is of |
 | `procedure` | The id of the registered procedure the claim is of |
 | `claimer` | The address the claim is attributed to: `0x` and 40 hex digits, the claimer's choice (`claim build --claimer`). Every blob the claim posted names it |
-| `input_text_sha256` | The claimer's commitment to the input it ran. The contract takes it as given. Every inference's statement is recomputed over it |
+| `input_text_sha256` | The claimer's commitment to the input it ran. The contract takes it as given. The statement of every inference whose prompt is the claim's own is recomputed over it |
 | `source_sha256` | The digest of the source record the text was built from, or 64 zeros. The statement names it |
 | `source` | The source record itself, for a claim that has one: the text's hash and length, the recipe's hash, the count and chained hash of the documents' attested facts, the signer's key, and the fault, which must be zero |
-| `inferences` | One entry per inference, in the order the procedure kind runs them: one for `single`, two for `consensus`. Each holds the five values below |
+| `relays` | For a claim of a kind that relays an output: the record each relay stage states, one per inference a relay gives its prompt. That inference's statement is recomputed over the record's text hash and digest. Absent otherwise |
+| `inferences` | One entry per inference, in the order the procedure kind runs them: one for `single`, two for `consensus` and `relay`. Each holds the five values below |
 | `output_text` | The inference's plaintext: what the contract acts on |
 | `record.statement_sha256` | `Statement::digest()` over the input text hash, the source digest, model id, raw prompt flag, token budget and range size |
 | `record.output_text_sha256` | SHA-256 of the plaintext's exact UTF-8 bytes |
 | `record.valid` | The chain found nothing wrong with the inference |
-| `result.code` | The code of the first form the plaintext is, or zero |
+| `result.code` | The code of the first form the plaintext is, or zero. Zero, with an empty forms hash, for an inference the result stage does not read |
 | `result.forms_sha256` | A hash chained over the forms the plaintext was compared with |
 | `consensus` | For a `consensus` claim: `same_input`, `agree` and `code`, as its result stage states them. Absent for `single` |
 | `checkpoint_count` | How many checkpoints the claim has |
@@ -163,16 +164,21 @@ in the prompt context, from where it reaches the statement.
 A contract first finds the procedure the claim names, and judges the claim
 by it. It then requires the submission to name that procedure's procedure kind
 and to hold what a claim of it does (`check_procedure_kind`): one inference for
-`single`, and two with their agreement for `consensus`. Checks 1 and 2 are then
-made of each inference, against the model the procedure pins for it
-(`check_submission`).
+`single`, two with their agreement for `consensus`, and two with the relay's
+record for `relay`. A contract reads how many and which from the arrangement
+the procedure states, not from the kind's name
+([procedure kinds](procedure-kinds.md#what-a-contract-reads-of-a-kind)).
+Checks 1 and 2 are then made of each inference, against the model the
+procedure pins for it (`check_submission`).
 
 1. **Statement matches.** Recompute the statement digest from the pinned model id,
    range size and required parameters with the claimed input hash and source
    digest, and compare it with the record's. This one equality covers the model,
-   every parameter and the source the run names. Every inference's statement is
+   every parameter and the source the run names. An inference's statement is
    recomputed over the submission's one input hash and source digest, so two
-   inferences that both pass ran the same input.
+   such inferences that both pass ran the same input. An inference a relay
+   gives its prompt is recomputed over that relay's record in place of them:
+   the text hash the record states, and the record's digest.
 2. **Output matches.** The plaintext hashes to the record's output text hash, and
    the valid flag is set. A claim with an invalid record in any inference is not
    accepted.
@@ -180,11 +186,16 @@ made of each inference, against the model the procedure pins for it
    the digest the statement names. A contract that requires a source rejects a
    claim without the record, a record with a fault, another signer or another
    recipe. A contract that requires none rejects a claim that names one.
+   A relay's record is held too: it has no fault, is built with the relay
+   recipe the procedure pins, and names the claim record of the inference
+   whose output it relays, as submitted
+   ([a relay claim](procedure-kinds.md#what-a-contract-checks-of-a-relay-claim)).
 4. **Result matches.** The contract compares the submitted plaintext with its
    own forms, as the result stage does, and rejects a claim whose forms hash or
    code is not what that gives. The result stage is a step per form, so a
    contract can afford this, and it means a false result is refused at
-   submission and needs no dispute. It does this for each inference.
+   submission and needs no dispute. It does this for each inference the
+   result stage reads. An inference it does not read has no result.
 5. **Agreement matches**, for a `consensus` claim. The contract reads both
    submitted plaintexts by its forms and works out whether they agree, as the
    consensus result stage does, and rejects a claim that states another
@@ -201,8 +212,9 @@ made of each inference, against the model the procedure pins for it
    its procedure kind's result stage: its last checkpoint's program must be that
    procedure kind's result program. That checkpoint names, for each inference, the
    earlier checkpoint whose output it read as that inference's check (`check`
-   in a `single` claim, `first` and `second` in a `consensus` one), whose
-   program must be the check. The record submitted for an inference must be
+   in a `single` claim, `first` and `second` in a `consensus` one, `check`
+   for the second inference of a `relay` one), whose program must be the
+   check. The record submitted for an inference must be
    the one in that check's output, and what the last stage's output states,
    every record with its result and the agreement, must be what was
    submitted. The contract decodes none of it: the claim's availability proof
@@ -278,8 +290,11 @@ when the field is empty. Everything is SHA-256. The code is
   One checkpoint opens at its position with 20 hashes
   (`verify_checkpoint_opening`); the host's `CheckpointHashes` makes the same
   comparison with the whole list in hand.
-- **A procedure's id** (`Procedure::id`): tag `iris/procedure/v3`
-  and every field in the order it is declared.
+- **A procedure's id** (`Procedure::id`): tag `iris/procedure/v4`
+  and every field in the order it is declared, then the kind's arrangement
+  (the result program, each inference's result input, whether the result
+  states an agreement, each inference's relay) and the relay recipe the
+  procedure pins.
 
 A stage's input manifest stays Raster's canonical JSON, which a contract
 cannot read as JSON. The contract reads it byte by byte in its one canonical

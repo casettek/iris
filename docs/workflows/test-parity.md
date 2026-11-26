@@ -218,7 +218,7 @@ and no replay is asked for.
 
 ## Relay scenario
 
-After the source scenario the gate makes one run of the `relay`
+After the source scenario the gate builds one claim of the `relay`
 [procedure kind](../protocol/procedure-kinds.md#the-relay-procedure-kind)
 (`testing/src/parity/relay.rs`). Its first model is the gate's own and its
 second the other family's bundle, imported into the run. The first prompt is
@@ -226,10 +226,10 @@ the source scenario's, built from its two signed documents, so the chain has
 both source programs: `prompt-source` before the first inference and
 `prompt-relay` between the two.
 
-The run is made directly, natively and through Raster:
+The claim is run directly, natively and through Raster:
 
-- The native run is made on what the direct run generated, and fails unless it
-  states every field of both inferences' results as the direct run did.
+- The claim states every field of both inferences' results as direct
+  inference does, and `iris run` leaves the same checkpoints.
 - The second inference ran the recipe's text around the first output, exactly.
 - The chain is the `source` stage, the first model's stages, the `relay` stage,
   the second model's and the `result` stage, and every stage's output is the
@@ -238,11 +238,19 @@ The run is made directly, natively and through Raster:
   prompt the second inference ran, and is the record the second statement
   names. The first statement names the run's source.
 - The result stage is of the second inference alone.
-- A false checkpoint in `m0_prompt_check_p0`, `relay`, `m1_prompt_check_p0` or
-  `result` is where the list first differs from honest execution.
+- A contract's checks pass, with every native checkpoint held to the Raster
+  run's boundary. A copy of the submission with another first output is
+  refused at the source-record check: the relay's record names the output it
+  was built on.
+- `challenge build` finds nothing to dispute in the honest claim, and finds a
+  falsified `m0_prompt_check_p0` and a falsified `m1_prompt_check_p0` and
+  replays each through authenticated Raster. The challenger's run is rebuilt
+  from what the claim fixed: the first prompt, and the second prompt's text.
+- A false `relay` or `result` checkpoint is where the list first differs from
+  honest execution. Both stages are under the replay window on these models.
 
-No claim is built and no stage is replayed: a claim of a relay is not written
-yet. The stage ladder runs `prompt-relay` on this scenario's `relay` stage.
+The scenario is skipped with the challenge scenario, because it replays a
+stage. The stage ladder runs `prompt-relay` on this scenario's `relay` stage.
 
 ## Consensus scenario
 
