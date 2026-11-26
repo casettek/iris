@@ -1,4 +1,4 @@
-//! Celestia's commitment to a blob, computed here so that iris can name a
+//! Celestia's commitment to a blob, computed here so that IWEBS can name a
 //! blob before it posts it and check the one it reads back.
 //!
 //! A blob is cut into 512-byte shares under its namespace. The shares are
@@ -179,7 +179,7 @@ pub fn blob_commitment(namespace: &[u8; NAMESPACE_SIZE], data: &[u8]) -> [u8; 32
 mod tests {
     use super::*;
 
-    /// The namespace iris posts claims under: version 0, and `iris-claim` as
+    /// The namespace IWEBS posts claims under: version 0, and `iris-claim` as
     /// the last ten bytes of the id.
     fn namespace() -> [u8; NAMESPACE_SIZE] {
         let mut namespace = [0; NAMESPACE_SIZE];

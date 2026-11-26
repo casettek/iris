@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
-import "./IrisTypes.sol";
+import "./IwebsTypes.sol";
 
-/// The byte encodings iris hashes, as `procedure_definition::encoding` and the
+/// The byte encodings IWEBS hashes, as `procedure_definition::encoding` and the
 /// stages' own digests write them: a tag ending in a zero byte, fields in
 /// order, numbers little-endian, text and lists after a 32-bit count, a hash
 /// as a byte 1 and its 32 bytes. Everything is SHA-256.
-library IrisEncoding {
+library IwebsEncoding {
     function le32(uint32 value) internal pure returns (bytes4) {
         return bytes4(
             ((value & 0x000000FF) << 24) | ((value & 0x0000FF00) << 8) | ((value & 0x00FF0000) >> 8)

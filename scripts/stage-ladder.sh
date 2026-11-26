@@ -11,7 +11,7 @@
 # with a window small enough for the short ones.
 #
 # usage: stage-ladder.sh [program ...]
-# Reads the newest parity run under target/parity, or the one IRIS_PARITY_RUN
+# Reads the newest parity run under target/parity, or the one IWEBS_PARITY_RUN
 # names. Without arguments every program of the run's family is run.
 # See docs/workflows/testing.md.
 source "$(dirname "${BASH_SOURCE[0]}")/test-env.sh"
@@ -55,7 +55,7 @@ inputs_of() {
 window_of() {
     case $1 in
     claim-result | consensus-result | prompt-relay) echo 2 ;;
-    *) echo "${IRIS_LADDER_WINDOW:-32}" ;;
+    *) echo "${IWEBS_LADDER_WINDOW:-32}" ;;
     esac
 }
 

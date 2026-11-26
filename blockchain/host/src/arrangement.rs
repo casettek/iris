@@ -40,7 +40,8 @@ pub struct Rearranged {
 
 /// What an audit of the claim settles, said wherever a claim names something
 /// no run can be made of.
-const AUDIT: &str = "Audit the claim (`iris claim audit`): a program outside the approved set, or \
+const AUDIT: &str =
+    "Audit the claim (`iwebs claim audit`): a program outside the approved set, or \
                      an input that is not an earlier stage's output, a pinned commitment or a \
                      posted value, voids it with no replay";
 
@@ -244,7 +245,7 @@ mod tests {
     use procedure_definition::Checkpoint;
 
     const RUN: &str = r#"[pipeline]
-name = "iris"
+name = "iwebs"
 version = "0.1.0"
 
 [pipeline.input.weights]
@@ -277,7 +278,7 @@ inputs.state = { from = "layer_l{l-1}", first = "first" }
         lists: &[(&str, &[(&str, &str)], &[(&str, u32)])],
     ) -> (std::path::PathBuf, CheckpointList, std::path::PathBuf) {
         let dir = std::env::temp_dir().join(format!(
-            "iris-arrangement-{name}-{}-{}",
+            "iwebs-arrangement-{name}-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -324,7 +325,7 @@ inputs.state = { from = "layer_l{l-1}", first = "first" }
 
     fn written(name: &str, arranged: &Arranged) -> Vec<ExpandedStage> {
         let path = std::env::temp_dir().join(format!(
-            "iris-arrangement-{name}-{}.toml",
+            "iwebs-arrangement-{name}-{}.toml",
             std::process::id()
         ));
         fs::write(&path, &arranged.manifest).unwrap();

@@ -1,4 +1,4 @@
-//! The procedure kinds of this build: `iris procedure`.
+//! The procedure kinds of this build: `iwebs procedure`.
 //!
 //! A caller that runs procedures holds no list of kinds. It asks here which
 //! exist and what each is: how many models it runs, which inference its

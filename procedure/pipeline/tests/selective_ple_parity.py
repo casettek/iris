@@ -1,6 +1,6 @@
 """Release parity gate against unchanged authenticated Raster stage binaries.
 
-Requires a built iris, procedure-pipeline, and every stage binary in --bin-dir.
+Requires a built iwebs, procedure-pipeline, and every stage binary in --bin-dir.
 Writes only to a new --output directory. Uses the pinned parity-gemma bundle.
 """
 import argparse
@@ -97,7 +97,7 @@ def main():
     binaries, output = args.bin_dir.resolve(), args.output.resolve()
     output.mkdir(parents=True, exist_ok=False)
     suffix = ".exe" if os.name == "nt" else ""
-    iris = binaries / f"iris{suffix}"
+    iwebs = binaries / f"iwebs{suffix}"
     bundle = root / "model-bundles/parity-gemma"
     env = os.environ.copy()
     for key in ["RASTER_AUTH", "RASTER_TRACE_PATH", "RASTER_TRACE_FORMAT", "RASTER_OUTPUT_DIR",
@@ -105,12 +105,12 @@ def main():
         env.pop(key, None)
     env.update(RISC0_SKIP_BUILD="1", RAYON_NUM_THREADS="4")
     artifacts = output / "model-artifacts"
-    invoke([iris, "model", "import", "--model", bundle, "--artifact-root", artifacts,
+    invoke([iwebs, "model", "import", "--model", bundle, "--artifact-root", artifacts,
             "--model-id", "parity-gemma", "--no-stage-fixtures"], root, env, output / "import.log")
     model = artifacts / "parity-gemma/manifest.json"
     report = {"authenticated_raster": True, "cases": [], "binary_sha256": {},
               "timing_note": "Informational single runs, eager first; eager/selective use the same cache budget and worker count."}
-    for binary in ["iris", "procedure-pipeline", *STAGES]:
+    for binary in ["iwebs", "procedure-pipeline", *STAGES]:
         report["binary_sha256"][binary] = sha((binaries / f"{binary}{suffix}").read_bytes())
     for case in read(bundle / "cases.json"):
         print(f"Running {case['name']}", flush=True)
@@ -130,7 +130,7 @@ def main():
             ("selective-small", "selective", 32768, 2),
         ]:
             child_env = env | {"IWEBS_PIPELINE_PLE_LOADING": mode, "IWEBS_PIPELINE_WEIGHT_CACHE_BYTES": str(budget), "IWEBS_PIPELINE_AUX_PARALLELISM": str(workers)}
-            seconds = invoke([iris, "parity-worker", "--specification", spec, "--case", case_file, "--output", directory / label], root, child_env, directory / f"{label}.log")
+            seconds = invoke([iwebs, "parity-worker", "--specification", spec, "--case", case_file, "--output", directory / label], root, child_env, directory / f"{label}.log")
             pipeline = Path(read(directory / label / "result.json")["pipeline_dir"])
             pipelines[label] = pipeline
             perf = read(pipeline / "pipeline-performance.json")

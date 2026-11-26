@@ -65,7 +65,7 @@ decided. The last is what Raster would have to change.
   challenger stated for it (`TerminalMatch`). The contract does not take it,
   so such a challenge cannot be dismissed on chain. It needs the stated
   output compared with the one the window ends in.
-- **Raster's admission of a challenge.** `iris challenge check` asks Raster
+- **Raster's admission of a challenge.** `iwebs challenge check` asks Raster
   whether it admits the challenge (`verify_challenge`). The contract makes
   the trace-shape checks of that admission and not the rest, and the attester
   signs only that the posted body is a well-formed trace with the header the
@@ -94,14 +94,14 @@ decided. The last is what Raster would have to change.
 - **No fault proof of a full-size stage.** The proofs made so far are of a
   small fixture and of the small test case. How long a window of a real stage
   takes to prove is not measured.
-- **`iris fault prove` and the contract ask slightly different things.**
+- **`iwebs fault prove` and the contract ask slightly different things.**
   `fault prove` holds its proof to the checkpoint of the claim bundle it is
   given, which in a pipeline dispute is the honest claim's, while the challenge
   on chain is of the lying claim's checkpoint. The two have the same program
   and inputs, which is all a fault proof names, so the proof serves both.
   `fault prove` also does not ask which authorization program the journal
-  names; `iris evm fault-proof` and the contract do.
-- **The forged verdict is built for one inference.** `iris test
+  names; `iwebs evm fault-proof` and the contract do.
+- **The forged verdict is built for one inference.** `iwebs test
   corrupt-claim --fault verdict` refuses a consensus claim.
 - **A consensus claim posts its text once per inference.** Each model cuts
   the text into its own slices, and the slices are what is posted.
@@ -117,4 +117,4 @@ decided. The last is what Raster would have to change.
 ## What Raster would have to change
 
 [`docs/issues/`](../issues/README.md) holds the gaps that are Raster's to
-close, each with what iris does in the meantime.
+close, each with what IWEBS does in the meantime.

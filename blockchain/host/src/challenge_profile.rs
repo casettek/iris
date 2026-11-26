@@ -461,7 +461,7 @@ fn profile_progress(phase: &str) -> Result<()> {
         .duration_since(std::time::UNIX_EPOCH)?
         .as_millis();
     println!(
-        "IRIS_PROFILE_PROGRESS {}",
+        "IWEBS_PROFILE_PROGRESS {}",
         json!({"version":1,"phase":phase,"started_at_ms":now})
     );
     Ok(())

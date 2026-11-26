@@ -9,7 +9,7 @@ use sha2::{Digest, Sha256};
 pub const MODEL_ARTIFACTS_DIR: &str = "runtime/model-artifacts";
 pub const MODEL_MANIFEST_JSON: &str = "manifest.json";
 
-pub const MODEL_MANIFEST_VERSION: u32 = 20;
+pub const MODEL_MANIFEST_VERSION: u32 = 21;
 
 /// Which layer mathematics, tokenizer rules and stage programs a model uses.
 ///
@@ -136,7 +136,7 @@ impl ModelManifest {
         let manifest: Self = crate::read_json(path)?;
         if manifest.version != MODEL_MANIFEST_VERSION {
             bail!(
-                "unsupported model manifest v{}, expected v{MODEL_MANIFEST_VERSION}; rerun a full `iris model import --model <bundle-dir>`",
+                "unsupported model manifest v{}, expected v{MODEL_MANIFEST_VERSION}; rerun a full `iwebs model import --model <bundle-dir>`",
                 manifest.version
             );
         }
@@ -179,7 +179,7 @@ impl ModelManifest {
     /// Claims and challenges must use the template tied to this model import.
     pub fn verified_raster_template(&self, manifest_path: &Path) -> Result<(PathBuf, String)> {
         let provenance = self.provenance.as_ref().context(
-            "model manifest has no Raster template provenance; run a full `iris model import --model <bundle-dir>` before building claims or challenges",
+            "model manifest has no Raster template provenance; run a full `iwebs model import --model <bundle-dir>` before building claims or challenges",
         )?;
         let dir = manifest_path
             .parent()

@@ -6,11 +6,11 @@
 //! This module posts a claim's data and a challenger's trace body, and answers
 //! the two questions a contract asks of the layer. Every function a real
 //! network replaces is here and behind `AvailabilityLayer`; nothing else in
-//! iris knows the layer is a directory.
+//! IWEBS knows the layer is a directory.
 //!
-//! The directory is `IRIS_DA_DIR`, or `.cache/iris/stub-celestia` in the home
+//! The directory is `IWEBS_DA_DIR`, or `.cache/iwebs/stub-celestia` in the home
 //! directory: one directory is one network, so a claimer and a challenger
-//! working in different places see the same blobs. `IRIS_DA_NOW` (Unix
+//! working in different places see the same blobs. `IWEBS_DA_NOW` (Unix
 //! seconds) fixes the clock new blocks are stamped with, for tests.
 
 use std::collections::BTreeSet;
@@ -32,10 +32,10 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 /// Where the stand-in layer keeps its blocks, under the home directory.
-pub const STUB_DA_DIR: &str = ".cache/iris/stub-celestia";
+pub const STUB_DA_DIR: &str = ".cache/iwebs/stub-celestia";
 /// The stand-in Blobstream's attested data roots, in the layer's directory.
 const BLOBSTREAM_JSON: &str = "blobstream.json";
-/// The most iris puts in one blob. A stand-in for the layer's own limit.
+/// The most IWEBS puts in one blob. A stand-in for the layer's own limit.
 const MAX_BLOB_BYTES: usize = 1 << 20;
 
 /// A version-0 namespace with this 10-byte id: 19 zero bytes, then the id.
@@ -56,7 +56,7 @@ pub const CHALLENGE_NAMESPACE: [u8; NAMESPACE_BYTES] = namespace(b"iris-chall");
 
 /// The stand-in layer's directory, when none is given.
 fn da_dir_default() -> PathBuf {
-    std::env::var_os("IRIS_DA_DIR")
+    std::env::var_os("IWEBS_DA_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|| {
             std::env::var_os("HOME")
@@ -66,13 +66,13 @@ fn da_dir_default() -> PathBuf {
         })
 }
 
-/// Unix seconds now, or `IRIS_DA_NOW` when it is set.
+/// Unix seconds now, or `IWEBS_DA_NOW` when it is set.
 pub fn now() -> Result<u64> {
-    if let Some(value) = std::env::var_os("IRIS_DA_NOW") {
+    if let Some(value) = std::env::var_os("IWEBS_DA_NOW") {
         let value = value.to_string_lossy();
         return value
             .parse()
-            .with_context(|| format!("IRIS_DA_NOW is not a number of seconds: {value}"));
+            .with_context(|| format!("IWEBS_DA_NOW is not a number of seconds: {value}"));
     }
     Ok(SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -130,7 +130,7 @@ impl Drop for Lock {
 }
 
 /// A layer blobs are posted to and read from, besides what a contract asks
-/// of it. Everything in iris that posts or reads takes one of these, so it
+/// of it. Everything in IWEBS that posts or reads takes one of these, so it
 /// does not know which layer it has.
 pub trait PostingLayer: AvailabilityLayer {
     /// Include these blobs and say where each one is.
@@ -157,7 +157,7 @@ pub struct BlockRoot {
 }
 
 /// The layer this process posts to and reads from. A directory given names
-/// the stand-in there. Otherwise it is the Celestia node `IRIS_CELESTIA_RPC`
+/// the stand-in there. Otherwise it is the Celestia node `IWEBS_CELESTIA_RPC`
 /// names, and with none named, the stand-in in its default directory.
 pub fn open_layer(da_dir: Option<&Path>) -> Result<Box<dyn PostingLayer>> {
     if let Some(dir) = da_dir {
@@ -686,7 +686,7 @@ mod tests {
 
     fn layer(label: &str) -> StubLayer {
         let dir = std::env::temp_dir().join(format!(
-            "iris-stub-celestia-{label}-{}-{}",
+            "iwebs-stub-celestia-{label}-{}-{}",
             std::process::id(),
             SystemTime::now()
                 .duration_since(UNIX_EPOCH)

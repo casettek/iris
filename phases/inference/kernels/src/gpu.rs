@@ -14,10 +14,10 @@
 //! error, not a fallback: it would mean wrong activations had been produced.
 //!
 //! Environment:
-//! - `IRIS_GPU_KERNELS=off` keeps every product on the CPU.
-//! - `IRIS_GPU_MIN_WORK` is the smallest product, in weight-activation
+//! - `IWEBS_GPU_KERNELS=off` keeps every product on the CPU.
+//! - `IWEBS_GPU_MIN_WORK` is the smallest product, in weight-activation
 //!   multiplications, sent to the device (default 2^28).
-//! - `IRIS_GPU_WEIGHT_BYTES` bounds the weights kept on the device (default 4 GiB).
+//! - `IWEBS_GPU_WEIGHT_BYTES` bounds the weights kept on the device (default 4 GiB).
 
 use std::collections::HashMap;
 use std::ffi::CStr;
@@ -84,10 +84,10 @@ fn settings() -> &'static Settings {
                 .unwrap_or(default)
         };
         Settings {
-            enabled: !std::env::var("IRIS_GPU_KERNELS")
+            enabled: !std::env::var("IWEBS_GPU_KERNELS")
                 .is_ok_and(|value| value.eq_ignore_ascii_case("off")),
-            min_work: number("IRIS_GPU_MIN_WORK", DEFAULT_MIN_WORK),
-            weight_bytes: number("IRIS_GPU_WEIGHT_BYTES", DEFAULT_WEIGHT_BYTES),
+            min_work: number("IWEBS_GPU_MIN_WORK", DEFAULT_MIN_WORK),
+            weight_bytes: number("IWEBS_GPU_WEIGHT_BYTES", DEFAULT_WEIGHT_BYTES),
         }
     })
 }
@@ -126,7 +126,7 @@ impl Device {
     fn fail(&mut self, what: &str, code: c_int) {
         if !self.failed {
             eprintln!(
-                "iris: GPU kernels disabled, continuing on the CPU: {what} failed: {}",
+                "iwebs: GPU kernels disabled, continuing on the CPU: {what} failed: {}",
                 device_error(code)
             );
         }
@@ -303,7 +303,7 @@ fn device_product<M: MatrixSource + ?Sized>(input: &Slab, matrix: &M) -> Result<
         }
     }
     if PRODUCTS.fetch_add(1, Ordering::Relaxed) == 0 {
-        eprintln!("iris: running Q8_0 layer products on the GPU");
+        eprintln!("iwebs: running Q8_0 layer products on the GPU");
     }
     Ok(Some(output))
 }

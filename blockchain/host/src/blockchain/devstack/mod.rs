@@ -1,8 +1,8 @@
-//! The local blockchains, as a test drives them: iris sending its own calls to
+//! The local blockchains, as a test drives them: IWEBS sending its own calls to
 //! the contracts `blockchain/devstack/deploy.sh` deployed, and holding the
 //! contracts' answers to its own.
 //!
-//! Everywhere else iris sends nothing and holds no wallet: it writes the
+//! Everywhere else IWEBS sends nothing and holds no wallet: it writes the
 //! calldata of a call and whoever runs it sends that. Here it sends, through
 //! an account the local EVM node keeps unlocked, so it still holds no key.
 //! That works against a development node and nothing else, which is the
@@ -21,7 +21,7 @@ use serde_json::{json, Value};
 
 /// Names the file `blockchain/devstack/deploy.sh` wrote: where the contracts
 /// are.
-pub const DEPLOYMENT_ENV: &str = "IRIS_BLOCKCHAIN_DEPLOYMENT";
+pub const DEPLOYMENT_ENV: &str = "IWEBS_BLOCKCHAIN_DEPLOYMENT";
 /// That file, from the repository's root.
 pub const DEFAULT_DEPLOYMENT: &str = "blockchain/devstack/deployment.json";
 

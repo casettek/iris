@@ -54,7 +54,7 @@ use commands::stage::*;
 use commands::testing::TestCommand;
 
 #[derive(Debug, Parser)]
-#[command(name = "iris")]
+#[command(name = "iwebs")]
 struct Cli {
     /// Persistent auxiliary worker; value is its retained-weight byte budget.
     #[arg(long, hide = true)]
@@ -148,7 +148,7 @@ enum Commands {
         #[command(subcommand)]
         command: DaCommand,
     },
-    /// The calldata of the calls iris's contracts take. Nothing is sent.
+    /// The calldata of the calls IWEBS's contracts take. Nothing is sent.
     Evm {
         #[command(subcommand)]
         command: EvmCommand,
@@ -191,8 +191,8 @@ where
 #[cfg(debug_assertions)]
 fn warn_if_debug_build(workflow: &str) {
     eprintln!(
-        "warning: iris {workflow} is running from a debug build; \
-         use `cargo run --release -p iris-cli -- {workflow}` \
+        "warning: iwebs {workflow} is running from a debug build; \
+         use `cargo run --release -p iwebs-cli -- {workflow}` \
          for the optimized build"
     );
 }
@@ -297,7 +297,9 @@ fn execute(cli: Cli) -> Result<ExitCode> {
         Some(Commands::Procedure { command }) => commands::procedure::run(command),
         Some(Commands::Fault { command }) => commands::fault::run(command),
         None => {
-            bail!("iris requires a workflow command; try `model import`, `claim build`, or `infer`")
+            bail!(
+                "iwebs requires a workflow command; try `model import`, `claim build`, or `infer`"
+            )
         }
     }
 }
@@ -311,9 +313,9 @@ mod tests {
 
     #[test]
     fn parses_phase_one_workflows() {
-        parse_for_test(["iris", "model", "import", "--model", "model-bundles/model"]).unwrap();
+        parse_for_test(["iwebs", "model", "import", "--model", "model-bundles/model"]).unwrap();
         parse_for_test([
-            "iris",
+            "iwebs",
             "claim",
             "build",
             "--specification",
@@ -323,7 +325,7 @@ mod tests {
         ])
         .unwrap();
         parse_for_test([
-            "iris",
+            "iwebs",
             "test",
             "corrupt-checkpoints",
             "--checkpoints",
@@ -333,7 +335,7 @@ mod tests {
         ])
         .unwrap();
         parse_for_test([
-            "iris",
+            "iwebs",
             "test",
             "corrupt-claim",
             "--submission",
@@ -346,25 +348,31 @@ mod tests {
             "arrangement",
         ])
         .unwrap();
-        parse_for_test(["iris", "test", "claim", "--ids", "1,2,3"]).unwrap();
-        parse_for_test(["iris", "test", "parity", "--skip-challenges"]).unwrap();
-        // The test tools are under `iris test` and nowhere else.
+        parse_for_test(["iwebs", "test", "claim", "--ids", "1,2,3"]).unwrap();
+        parse_for_test(["iwebs", "test", "parity", "--skip-challenges"]).unwrap();
+        // The test tools are under `iwebs test` and nowhere else.
         for moved in [
             vec![
-                "iris",
+                "iwebs",
                 "claim",
                 "corrupt",
                 "--checkpoints",
                 "checkpoints.txt",
             ],
-            vec!["iris", "challenge", "corrupt", "--challenge", "bundle.json"],
-            vec!["iris", "test-parity"],
-            vec!["iris", "claim", "build", "--claimed-ids", "1,2,3"],
+            vec![
+                "iwebs",
+                "challenge",
+                "corrupt",
+                "--challenge",
+                "bundle.json",
+            ],
+            vec!["iwebs", "test-parity"],
+            vec!["iwebs", "claim", "build", "--claimed-ids", "1,2,3"],
         ] {
             assert!(parse_for_test(moved).is_err());
         }
         parse_for_test([
-            "iris",
+            "iwebs",
             "challenge",
             "build",
             "--submission",
@@ -373,11 +381,11 @@ mod tests {
         .unwrap();
         // The inputs that read a claimer's own trace or bundle are gone.
         for removed in ["--trace", "--claim"] {
-            assert!(parse_for_test(["iris", "challenge", "build", removed, "file.json"]).is_err());
+            assert!(parse_for_test(["iwebs", "challenge", "build", removed, "file.json"]).is_err());
         }
-        assert!(parse_for_test(["iris", "challenge", "locate"]).is_err());
+        assert!(parse_for_test(["iwebs", "challenge", "locate"]).is_err());
         parse_for_test([
-            "iris",
+            "iwebs",
             "challenge",
             "build",
             "--checkpoints",
@@ -387,7 +395,7 @@ mod tests {
         ])
         .unwrap();
         parse_for_test([
-            "iris",
+            "iwebs",
             "infer",
             "--specification",
             "specification.toml",
@@ -396,7 +404,7 @@ mod tests {
         ])
         .unwrap();
         parse_for_test([
-            "iris",
+            "iwebs",
             "run",
             "--specification",
             "specification.toml",
@@ -407,9 +415,9 @@ mod tests {
         ])
         .unwrap();
         // The flag the two replaced is no flag any more.
-        assert!(parse_for_test(["iris", "infer", "--run", "inference.toml"]).is_err());
+        assert!(parse_for_test(["iwebs", "infer", "--run", "inference.toml"]).is_err());
         parse_for_test([
-            "iris",
+            "iwebs",
             "model",
             "import",
             "--model",
@@ -423,7 +431,7 @@ mod tests {
     fn challenge_specification_defaults_and_overrides_reach_options() {
         for specification in [None, Some("specs/model-b.toml")] {
             let mut argv = vec![
-                "iris",
+                "iwebs",
                 "challenge",
                 "build",
                 "--submission",
@@ -449,7 +457,7 @@ mod tests {
 
     #[test]
     fn infer_requires_an_imported_workspace() {
-        let error = execute_from(["iris", "infer"]).unwrap_err();
+        let error = execute_from(["iwebs", "infer"]).unwrap_err();
 
         assert!(format!("{error:#}").contains("failed to load specification"));
     }

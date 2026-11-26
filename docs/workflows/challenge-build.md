@@ -3,7 +3,7 @@
 `challenge build` consumes a compact claimed checkpoint hash list plus frozen run context, recomputes the checkpointed run, stops at the first observed divergent hash, and replays that one divergent stage through Raster.
 
 ```bash
-cargo run --release -p iris-cli -- challenge build \
+cargo run --release -p iwebs-cli -- challenge build \
   --specification specification.toml \
   --claim-context target/procedure-pipeline/runs/.../claim_bundle.json \
   --checkpoints target/procedure-pipeline/runs/.../checkpoints.txt
@@ -78,7 +78,7 @@ trace publication. `raster_replay_duration_ms` covers the selected stage's
 seeding and final parity/artifact checks are outside these phase timers and remain
 part of the caller's overall challenge duration.
 
-During execution, stdout also includes `IRIS_CHALLENGE_PROGRESS` followed by a
+During execution, stdout also includes `IWEBS_CHALLENGE_PROGRESS` followed by a
 version-1 JSON record at each phase transition: `checkpoint-list`,
 `replay-preparing`, `raster-replay`, and `validating`. Each record includes the
 phase's `started_at_ms` Unix timestamp and the completed phase durations (or
@@ -101,8 +101,8 @@ The inputs above come from the claimer's own directory. A challenger of a
 submitted claim has none of it, and starts from the data-availability layer:
 
 ```bash
-iris claim fetch --submission <claim_submission.json> --specification specification.toml --out fetched
-iris challenge build --specification specification.toml --submission fetched/claim_submission.json
+iwebs claim fetch --submission <claim_submission.json> --specification specification.toml --out fetched
+iwebs challenge build --specification specification.toml --submission fetched/claim_submission.json
 ```
 
 `claim fetch` writes the claim's checkpoint hashes, checkpoints and input
@@ -122,7 +122,7 @@ does`). It compares the run with the posted list hash by hash, prints `stage
 to replay: <stage>` for the first that differs, and replays that stage on the
 same inputs. From there the flow and the outputs are the ones above. It
 stops when a checkpoint names a value nobody holds or another program than
-the pipeline's, which is a claim for `iris claim audit`.
+the pipeline's, which is a claim for `iwebs claim audit`.
 
 See [Fault proving](fault-prove.md) for `test corrupt-challenge` and `fault prove`.
 

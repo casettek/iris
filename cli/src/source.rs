@@ -1,4 +1,4 @@
-//! `iris attest` and `iris source`: the host signer, and a run's source read
+//! `iwebs attest` and `iwebs source`: the host signer, and a run's source read
 //! without running the model.
 //!
 //! The signer stands in for a notary. It signs whatever hash it is given, so
@@ -188,7 +188,7 @@ pub fn render(specification: &Path, case: &Path, text_out: Option<&Path>) -> Res
     println!("{}", serde_json::to_string_pretty(&run.record)?);
     if run.record.fault != FAULT_NONE {
         eprintln!(
-            "iris: source fault {} at {}: {}",
+            "iwebs: source fault {} at {}: {}",
             run.record.fault,
             run.record.fault_position,
             fault_description(run.record.fault)
@@ -240,7 +240,7 @@ pub fn stage_inputs(specification: &Path, case: &Path, out: &Path) -> Result<()>
     Ok(())
 }
 
-/// The lines `iris infer` prints for a run with a source, before the result.
+/// The lines `iwebs infer` prints for a run with a source, before the result.
 pub fn print_source_lines(source: &LoadedSource) {
     let record = source.run().record;
     for (index, document) in source.documents.iter().enumerate() {
@@ -312,7 +312,7 @@ code = 2
 "#;
 
     fn scratch(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("iris-source-{name}-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("iwebs-source-{name}-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         dir

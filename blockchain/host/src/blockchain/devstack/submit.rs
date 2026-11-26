@@ -143,7 +143,7 @@ pub fn challenge(
     send(node, &call, outcome)
 }
 
-/// Answer a challenge with a fault proof. `expected_rejection` is what iris
+/// Answer a challenge with a fault proof. `expected_rejection` is what IWEBS
 /// expects the contract to say of the proof's journal.
 pub fn fault_proof(
     node: &Node,
@@ -159,7 +159,7 @@ pub fn fault_proof(
     send(node, &call, outcome)
 }
 
-/// Send one of the calls `iris claim audit --calls` wrote: point the
+/// Send one of the calls `iwebs claim audit --calls` wrote: point the
 /// contract at a fault.
 pub fn fault(node: &Node, calls: &Path, index: usize) -> Result<Value> {
     let calls: Vec<Value> = procedure_definition::read_json(calls)?;

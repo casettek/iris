@@ -1,6 +1,6 @@
-# iris
+# IWEBS
 
-iris makes a language model's answer something a contract can act on. A
+IWEBS makes a language model's answer something a contract can act on. A
 claimer runs a model on a prompt and submits what it answered. Anyone can
 check that claim by running the model themselves, and a claim that is wrong
 is caught: either the contract voids it on the spot, or a challenger replays
@@ -12,63 +12,63 @@ Celestia, and is submitted to contracts on an EVM blockchain.
 
 ## The commands
 
-Every command is `iris <group> <command>`. They are grouped here by who runs
-them. `iris <group> --help` lists a group, and each command says what it
+Every command is `iwebs <group> <command>`. They are grouped here by who runs
+them. `iwebs <group> --help` lists a group, and each command says what it
 takes.
 
 ### Set up a model
 
 | Command | What it does |
 | --- | --- |
-| `iris model convert` | Turn a GGUF model with Q8_0 weights into a model bundle. |
-| `iris model import` | Turn a bundle into the committed files every stage reads, a model manifest, and the pins a contract would hold for it. |
+| `iwebs model convert` | Turn a GGUF model with Q8_0 weights into a model bundle. |
+| `iwebs model import` | Turn a bundle into the committed files every stage reads, a model manifest, and the pins a contract would hold for it. |
 
 ### Run it
 
 | Command | What it does |
 | --- | --- |
-| `iris infer` | Fast deterministic inference of a case under a specification. This is the only path that generates: it finds the output a claim then states. |
-| `iris run` | Run a procedure with no blockchain: the result of its native run, then a pipeline run of it with a checkpoint per stage. `--compare` names the first stage where it differs from another run. |
+| `iwebs infer` | Fast deterministic inference of a case under a specification. This is the only path that generates: it finds the output a claim then states. |
+| `iwebs run` | Run a procedure with no blockchain: the result of its native run, then a pipeline run of it with a checkpoint per stage. `--compare` names the first stage where it differs from another run. |
 
 ### Claim
 
 | Command | What it does |
 | --- | --- |
-| `iris claim build` | Run the model stage by stage, write a checkpoint per stage, and write the claim and the data it has to post. Posts nothing. |
-| `iris claim post` | Post the claim's run inputs, checkpoint hashes and checkpoints to the data-availability layer. |
-| `iris claim check` | Make the checks a contract makes when a claim arrives. |
-| `iris evm claim` | Write the contract call that submits the claim. |
+| `iwebs claim build` | Run the model stage by stage, write a checkpoint per stage, and write the claim and the data it has to post. Posts nothing. |
+| `iwebs claim post` | Post the claim's run inputs, checkpoint hashes and checkpoints to the data-availability layer. |
+| `iwebs claim check` | Make the checks a contract makes when a claim arrives. |
+| `iwebs evm claim` | Write the contract call that submits the claim. |
 
 ### Challenge
 
 | Command | What it does |
 | --- | --- |
-| `iris claim fetch` | Read a submitted claim back from the layer into a new directory, with the case it posted. A challenger starts here. |
-| `iris claim audit` | Ask of a fetched claim what no replay shows: that every stage names an approved program and every input is an earlier stage's output, a pinned commitment or a posted value. Nothing is run. A fault found voids the claim on the spot. |
-| `iris challenge build` | Run every stage on the inputs the claim names, and replay through Raster the first stage whose output differs. |
-| `iris challenge post` | Post the replay's trace and write the challenge's submission. |
-| `iris challenge check` | Make the checks a contract makes when a challenge arrives. |
-| `iris evm challenge` | Write the contract call that submits the challenge. |
+| `iwebs claim fetch` | Read a submitted claim back from the layer into a new directory, with the case it posted. A challenger starts here. |
+| `iwebs claim audit` | Ask of a fetched claim what no replay shows: that every stage names an approved program and every input is an earlier stage's output, a pinned commitment or a posted value. Nothing is run. A fault found voids the claim on the spot. |
+| `iwebs challenge build` | Run every stage on the inputs the claim names, and replay through Raster the first stage whose output differs. |
+| `iwebs challenge post` | Post the replay's trace and write the challenge's submission. |
+| `iwebs challenge check` | Make the checks a contract makes when a challenge arrives. |
+| `iwebs evm challenge` | Write the contract call that submits the challenge. |
 
 ### Defend
 
 | Command | What it does |
 | --- | --- |
-| `iris challenge fetch` | Read the trace a challenge names back from the layer. |
-| `iris fault prove` | Prove that a challenger's trace gets a step wrong: a Raster fault proof. |
-| `iris fault check` | Check that this binary can prove. |
-| `iris evm fault-proof` | Write the contract call that answers a challenge with the proof. |
+| `iwebs challenge fetch` | Read the trace a challenge names back from the layer. |
+| `iwebs fault prove` | Prove that a challenger's trace gets a step wrong: a Raster fault proof. |
+| `iwebs fault check` | Check that this binary can prove. |
+| `iwebs evm fault-proof` | Write the contract call that answers a challenge with the proof. |
 
 ### Configure a contract
 
 | Command | What it does |
 | --- | --- |
-| `iris claim pins` | Write what a contract would pin for a run's procedure kind over its models. |
-| `iris registry add` | Register a procedure in a registry file. |
-| `iris procedure list` | The procedure kinds of this build. |
-| `iris procedure describe` | One procedure kind: its steps, how many models it runs and which inference its result is of. `--json` for a caller. |
-| `iris evm procedure` | Write the contract call that registers a procedure. |
-| `iris evm proof-programs` | Print the ids of Raster's proof programs, which a contract pins. |
+| `iwebs claim pins` | Write what a contract would pin for a run's procedure kind over its models. |
+| `iwebs registry add` | Register a procedure in a registry file. |
+| `iwebs procedure list` | The procedure kinds of this build. |
+| `iwebs procedure describe` | One procedure kind: its steps, how many models it runs and which inference its result is of. `--json` for a caller. |
+| `iwebs evm procedure` | Write the contract call that registers a procedure. |
+| `iwebs evm proof-programs` | Print the ids of Raster's proof programs, which a contract pins. |
 
 ### Stand in for a proof
 
@@ -76,44 +76,44 @@ Three parties are trusted today where a proof belongs.
 
 | Command | What it does |
 | --- | --- |
-| `iris attest keygen`, `iris attest sign` | The host that signs that a server answered a request with a document: a stand-in for a notary. |
-| `iris da attest` | The host that signs what each posted blob holds: a stand-in for an inclusion proof. |
-| `iris da block-root` | A block's height, data root and time, as a relayer posts them to the contract's oracle. |
+| `iwebs attest keygen`, `iwebs attest sign` | The host that signs that a server answered a request with a document: a stand-in for a notary. |
+| `iwebs da attest` | The host that signs what each posted blob holds: a stand-in for an inclusion proof. |
+| `iwebs da block-root` | A block's height, data root and time, as a relayer posts them to the contract's oracle. |
 
 ### Look
 
 | Command | What it does |
 | --- | --- |
-| `iris source render` | Check a run's source and print its record, without running the model. |
-| `iris source inputs` | Write the source stage's inputs, to run that stage on its own. |
-| `iris da contents` | What a submission put on the layer, measured there. |
+| `iwebs source render` | Check a run's source and print its record, without running the model. |
+| `iwebs source inputs` | Write the source stage's inputs, to run that stage on its own. |
+| `iwebs da contents` | What a submission put on the layer, measured there. |
 
 ### Test
 
-Nothing under `iris test` is anything an honest party runs.
+Nothing under `iwebs test` is anything an honest party runs.
 
 | Command | What it does |
 | --- | --- |
-| `iris test parity` | The parity gate: three implementations agree byte for byte, and cheating is caught. |
-| `iris test claim --ids` | Build a claim of output ids that are not the model's. |
-| `iris test corrupt-claim` | Write the claim a lying claimer would submit: another output, an unapproved program, an input from nowhere, a held value in the wrong place, or a forged verdict. |
-| `iris test corrupt-checkpoints` | Copy a checkpoint hash list with one hash changed. |
-| `iris test corrupt-challenge` | Flip a bit in a copy of a challenge's trace: the challenge a defender can refute. |
-| `iris test profile` | Measure guest cycles in a completed challenge and pick a heavy window to prove. |
-| `iris test devstack submit`, `replay`, `deployment` | Drive the local blockchains: send iris's calls to the contracts there, and hold the contracts to iris. |
+| `iwebs test parity` | The parity gate: three implementations agree byte for byte, and cheating is caught. |
+| `iwebs test claim --ids` | Build a claim of output ids that are not the model's. |
+| `iwebs test corrupt-claim` | Write the claim a lying claimer would submit: another output, an unapproved program, an input from nowhere, a held value in the wrong place, or a forged verdict. |
+| `iwebs test corrupt-checkpoints` | Copy a checkpoint hash list with one hash changed. |
+| `iwebs test corrupt-challenge` | Flip a bit in a copy of a challenge's trace: the challenge a defender can refute. |
+| `iwebs test profile` | Measure guest cycles in a completed challenge and pick a heavy window to prove. |
+| `iwebs test devstack submit`, `replay`, `deployment` | Drive the local blockchains: send IWEBS's calls to the contracts there, and hold the contracts to IWEBS. |
 
 ## Quick start
 
 ```bash
 # Import a model: the small one checked in here, or your own bundle.
-cargo run --release -p iris-cli -- model import --model model-bundles/parity-gemma
+cargo run --release -p iwebs-cli -- model import --model model-bundles/parity-gemma
 
 # Run it. `specification.toml` names the model manifest and the token budget,
 # and `case.toml` the prompt. These two files are the defaults.
-cargo run --release -p iris-cli -- infer --specification specification.toml --case case.toml
+cargo run --release -p iwebs-cli -- infer --specification specification.toml --case case.toml
 
 # Build a claim of what it answered.
-cargo run --release -p iris-cli -- claim build --specification specification.toml --case case.toml
+cargo run --release -p iwebs-cli -- claim build --specification specification.toml --case case.toml
 ```
 
 The local blockchains, and a claim and a challenge taken through them, are in
@@ -164,13 +164,13 @@ procedure/                  # a procedure and the ways to run it
                             # the runner, and each native stage under segments/{source,inference,result}
   run/                      # a procedure run with no blockchain: native, then pipeline, held equal
 testing/                    # the parity gate, the lying claims, the stage schema check
-cli/                        # the `iris` binary: one module per command group under src/commands/
+cli/                        # the `iwebs` binary: one module per command group under src/commands/
 raster-stages/              # one Raster program per kind of stage, each with its Raster.lock
 blockchain/
   rules/                    # what a claim, a challenge and a contract hold, and the contract's rules in Rust
   host/                     # what a claimer, a challenger and a defender do: build, post, fetch, audit, prove
-  evm/                      # what iris sends to its contracts: the ABI encoding and the calldata
-  celestia/                 # Celestia's commitment to a blob, as iris computes it
+  evm/                      # what iwebs sends to its contracts: the ABI encoding and the calldata
+  celestia/                 # Celestia's commitment to a blob, as iwebs computes it
   contracts/                # the Solidity contracts and their tests
   devstack/                 # the local Celestia and EVM blockchains
 model-bundles/              # the small models the tests run

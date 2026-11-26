@@ -1,4 +1,4 @@
-//! A challenge: `iris challenge`.
+//! A challenge: `iwebs challenge`.
 
 use crate::*;
 
@@ -17,16 +17,16 @@ pub(crate) struct ChallengePostArgs {
     #[arg(long, default_value = procedure_definition::SPECIFICATION_TOML)]
     specification: PathBuf,
 
-    /// The pins the contract holds. As for `iris claim check`.
+    /// The pins the contract holds. As for `iwebs claim check`.
     #[arg(long)]
     pins: Option<PathBuf>,
 
     /// The address the challenge is attributed to, as `claim build
-    /// --claimer`. Default: `IRIS_CHALLENGER`, or the zero address.
+    /// --claimer`. Default: `IWEBS_CHALLENGER`, or the zero address.
     #[arg(long)]
     challenger: Option<String>,
 
-    /// The stand-in data-availability layer's directory. As for `iris claim
+    /// The stand-in data-availability layer's directory. As for `iwebs claim
     /// check`.
     #[arg(long = "da-dir")]
     da_dir: Option<PathBuf>,
@@ -37,7 +37,7 @@ pub(crate) struct ChallengePostArgs {
     submitted_at: Option<u64>,
 
     /// Post this trace commitment in place of the bundle's own: the copy
-    /// `iris test corrupt-challenge` wrote, for a challenge a defender can refute.
+    /// `iwebs test corrupt-challenge` wrote, for a challenge a defender can refute.
     #[arg(long)]
     commitment: Option<PathBuf>,
 
@@ -54,7 +54,7 @@ pub(crate) struct ChallengeFetchArgs {
     #[arg(long)]
     challenge: PathBuf,
 
-    /// The stand-in data-availability layer's directory. As for `iris claim
+    /// The stand-in data-availability layer's directory. As for `iwebs claim
     /// check`.
     #[arg(long = "da-dir")]
     da_dir: Option<PathBuf>,
@@ -78,11 +78,11 @@ pub(crate) struct ChallengeCheckArgs {
     #[arg(long, default_value = procedure_definition::SPECIFICATION_TOML)]
     specification: PathBuf,
 
-    /// The pins the contract holds. As for `iris claim check`.
+    /// The pins the contract holds. As for `iwebs claim check`.
     #[arg(long)]
     pins: Option<PathBuf>,
 
-    /// The stand-in data-availability layer's directory. As for `iris claim
+    /// The stand-in data-availability layer's directory. As for `iwebs claim
     /// check`.
     #[arg(long = "da-dir")]
     da_dir: Option<PathBuf>,
@@ -127,14 +127,14 @@ pub(crate) struct ChallengeBuildArgs {
     #[arg(long = "claim-context", requires = "checkpoint_hashes")]
     claim_context: Option<PathBuf>,
 
-    /// A submitted claim as `iris claim fetch` wrote it: its
+    /// A submitted claim as `iwebs claim fetch` wrote it: its
     /// `claim_submission.json`, with its checkpoint list and the `case.toml`
     /// that command wrote beside it. Nothing of the claimer's own run is
     /// read.
     #[arg(long, conflicts_with_all = ["checkpoint_hashes", "claim_context"])]
     submission: Option<PathBuf>,
 
-    /// With `--submission`: the comma-separated output ids your own `iris
+    /// With `--submission`: the comma-separated output ids your own `iwebs
     /// infer` printed for your specification and the fetched case, taken in
     /// place of running the native run again.
     #[arg(
@@ -267,7 +267,7 @@ pub(crate) fn run(command: ChallengeCommand) -> Result<ExitCode> {
                 submission_path: absolute(&base_dir, &args.submission),
                 challenger: args
                     .challenger
-                    .or_else(|| std::env::var("IRIS_CHALLENGER").ok()),
+                    .or_else(|| std::env::var("IWEBS_CHALLENGER").ok()),
                 da_dir: args.da_dir.map(|path| absolute(&base_dir, &path)),
                 submitted_at: args.submitted_at,
                 commitment_path: args.commitment.map(|path| absolute(&base_dir, &path)),

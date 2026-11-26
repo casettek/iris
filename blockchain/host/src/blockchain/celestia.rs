@@ -3,7 +3,7 @@
 //!
 //! The node is the local one of `blockchain/devstack/` (or any node whose
 //! key can pay for blobs). A blob is named by the block it was included in,
-//! its namespace and Celestia's own commitment to its bytes, which iris
+//! its namespace and Celestia's own commitment to its bytes, which IWEBS
 //! computes itself (`blockchain_celestia`) before it posts and checks on what it
 //! reads back.
 //!
@@ -25,9 +25,9 @@ use serde_json::{json, Value};
 
 use crate::posting::{contents_of, BlockRoot, PostingLayer};
 
-/// The node's JSON-RPC address, as `http://host:port`. When set, iris posts
+/// The node's JSON-RPC address, as `http://host:port`. When set, IWEBS posts
 /// to and reads from that node instead of the stand-in directory.
-pub const CELESTIA_RPC_ENV: &str = "IRIS_CELESTIA_RPC";
+pub const CELESTIA_RPC_ENV: &str = "IWEBS_CELESTIA_RPC";
 
 /// A celestia-node's blob API.
 pub struct CelestiaLayer {
@@ -366,13 +366,13 @@ mod tests {
         );
     }
 
-    /// Against a running node: `IRIS_CELESTIA_RPC=http://127.0.0.1:26658`,
+    /// Against a running node: `IWEBS_CELESTIA_RPC=http://127.0.0.1:26658`,
     /// with the stack of `blockchain/devstack/` up.
     #[test]
     #[ignore = "needs the local Celestia node of blockchain/devstack/"]
     fn a_blob_is_posted_read_back_and_found_in_its_block() {
         let layer = CelestiaLayer::open(&std::env::var(CELESTIA_RPC_ENV).unwrap()).unwrap();
-        let blobs = vec![b"a blob of iris's".to_vec(), vec![7u8; 5_000]];
+        let blobs = vec![b"a blob of iwebs's".to_vec(), vec![7u8; 5_000]];
         let pointers = layer
             .post(&crate::posting::CLAIM_NAMESPACE, &blobs)
             .unwrap();

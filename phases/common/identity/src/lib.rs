@@ -1,4 +1,4 @@
-//! Iris model descriptors and verification of consumed values.
+//! IWEBS model descriptors and verification of consumed values.
 //! These checks supplement Raster authentication with the expected model root.
 #![no_std]
 extern crate alloc;
@@ -60,7 +60,7 @@ impl ModelDescriptor {
         Ok(())
     }
 
-    /// Matches the existing Iris role/NUL/lowercase-hex/newline preimage.
+    /// Matches the existing IWEBS role/NUL/lowercase-hex/newline preimage.
     pub fn model_id(&self) -> Result<Hash32, ModelFault> {
         self.validate()?;
         let mut hash = Sha256::new();
@@ -383,7 +383,7 @@ mod wire_tests {
     }
 }
 
-/// Raster's root folding is reused, but Iris additionally pins sibling geometry
+/// Raster's root folding is reused, but IWEBS additionally pins sibling geometry
 /// to each list index. A matching path string alone cannot establish position.
 fn verify_list_positions(proof: &SelectionProof) -> Result<(), ModelFault> {
     use raster_core::input::{ListProofDirection, SelectionProofStep};

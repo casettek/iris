@@ -107,11 +107,11 @@ What exists:
 
 | Part | Where |
 | --- | --- |
-| Conversion from GGUF | `iris model convert`, unchanged: every tensor name was already mapped |
+| Conversion from GGUF | `iwebs model convert`, unchanged: every tensor name was already mapped |
 | Import | `inference-import`'s `mistral.rs`: the shape, the tensors a bundle may hold and the layer externals. The tokenizer, the embedding table, the head and the pipeline template are the shared code's, told by `PipelineLayers` that this family has no auxiliary stage and no donor caches |
 | Layer stage program | `raster-stages/layer-mistral`: three inputs, the activations, the layer and its own cache from the range before |
 | Native stage | `inference-kernels`' `mistral::stage`, run by `procedure-pipeline`'s `layer_mistral` native stage. It reads the committed weight pages in place, and a `gpu-kernels` build sends its larger matrix products to the GPU from those pages |
-| Parity bundle | `model-bundles/parity-mistral`: four layers, a tekken-style vocabulary of 512 with a forty-byte token, three cases. `iris test parity --bundle parity-mistral` runs the gate on it |
+| Parity bundle | `model-bundles/parity-mistral`: four layers, a tekken-style vocabulary of 512 with a forty-byte token, three cases. `iwebs test parity --bundle parity-mistral` runs the gate on it |
 | Layer | `inference-kernels`' `mistral::layer`, and in `inference-numerics`'s `mistral.rs` the integer SiLU, rotation and score scale that only this family uses |
 | Tokenizer, reference | `inference-prompt`'s `tekken.rs`: the pattern as a backtracking matcher and the merge, which the native run runs |
 | Tokenizer, prompt stages | `inference-tokenizer`'s `tekken.rs`: the same split as a scanner that takes one character at a time, with the Unicode categories in `unicode_classes.rs` (written by `scripts/gen-unicode-classes.py`) |

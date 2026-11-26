@@ -3,14 +3,14 @@
 `infer` is the fast deterministic path. For a run of the `consensus` [procedure kind](../protocol/procedure-kinds.md) it makes each model's inference in turn and then states whether they agree. It uses `inference-generation`, reads a specification and a case (`specification.toml` and `case.toml` when no flag names them), loads the referenced `runtime/model-artifacts/<model-id>/manifest.json`, and does not write pipeline checkpoint artifacts.
 
 ```bash
-cargo run --release -p iris-cli -- infer --specification specification.toml --case case.toml
+cargo run --release -p iwebs-cli -- infer --specification specification.toml --case case.toml
 # or
 just infer specification.toml case.toml
 ```
 
 Flow:
 
-1. `iris-cli` dispatches `infer` to `procedure_native::run_infer`, which runs `procedure_native::NativeInferenceExecutor` once per inference of the procedure kind.
+1. `iwebs-cli` dispatches `infer` to `procedure_native::run_infer`, which runs `procedure_native::NativeInferenceExecutor` once per inference of the procedure kind.
 2. `procedure-native` reads the specification and the case. `inference-generation` loads the model manifest, verifies the recorded weight, config, and tokenizer hashes once, then loads tokenizer metadata and mmap-backed DETWGT weights.
 3. The executor resolves the run's text and prepares its pieces with the model's tokenizer. `inference_generation::generate` then runs embedding, prefill layers, decode, and output finalization in host memory, and the executor matches the output against the result forms.
 4. The command prints an `InferenceResult` and timing summary.

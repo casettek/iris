@@ -2,7 +2,7 @@
 pragma solidity ^0.8.28;
 
 // RISC Zero's verifier of a Groth16 proof, unchanged, from lib/risc0-ethereum.
-// Imported here so that it is built with iris's contracts and can be deployed
+// Imported here so that it is built with IWEBS's contracts and can be deployed
 // beside them.
 import {RiscZeroGroth16Verifier} from "risc0/groth16/RiscZeroGroth16Verifier.sol";
 import {ControlID} from "risc0/groth16/ControlID.sol";

@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
-import "./IrisTypes.sol";
-import "./IrisEncoding.sol";
-import "./IrisRegistry.sol";
+import "./IwebsTypes.sol";
+import "./IwebsEncoding.sol";
+import "./IwebsRegistry.sol";
 import "./DataRootOracle.sol";
 import "./RasterJournal.sol";
 import "./InputManifest.sol";
@@ -11,7 +11,7 @@ import {IRiscZeroVerifier} from "risc0/IRiscZeroVerifier.sol";
 
 /// Where a claim and a challenge arrive, and the checks made of each on
 /// arrival: `blockchain_rules::checks` and `::availability`, in the
-/// order `iris claim check` makes them. Every error is the Rust rejection of
+/// order `iwebs claim check` makes them. Every error is the Rust rejection of
 /// the same name.
 ///
 /// Two things stand in for proofs here. A blob's availability proof is the
@@ -27,8 +27,8 @@ import {IRiscZeroVerifier} from "risc0/IRiscZeroVerifier.sol";
 /// What follows from any of it is not here: the clocks that close a claim or
 /// a challenge, bonds, how several challenges of one claim are settled, and
 /// what a contract does with a claim nobody successfully challenged.
-contract IrisClaims {
-    IrisRegistry public immutable registry;
+contract IwebsClaims {
+    IwebsRegistry public immutable registry;
     DataRootOracle public immutable oracle;
     /// Whose signature stands for a blob's availability proof.
     address public immutable attester;
@@ -179,7 +179,7 @@ contract IrisClaims {
     error ProofNotVerified();
 
     constructor(
-        IrisRegistry registry_,
+        IwebsRegistry registry_,
         DataRootOracle oracle_,
         address attester_,
         uint64 retention_,
@@ -251,10 +251,10 @@ contract IrisClaims {
             if (procedure.relayedFrom[i] != 0) {
                 if (relay == claim.relays.length) revert AnotherShape();
                 input = claim.relays[relay].inputTextSha256;
-                source = IrisEncoding.sourceId(claim.relays[relay].record);
+                source = IwebsEncoding.sourceId(claim.relays[relay].record);
                 relay++;
             }
-            bytes32 statement = IrisEncoding.statement(
+            bytes32 statement = IwebsEncoding.statement(
                 input,
                 source,
                 procedure.models[i].modelId,
@@ -273,7 +273,7 @@ contract IrisClaims {
     /// meets what the procedure requires, each result is what the
     /// procedure's forms give the submitted text, and so is the agreement.
     function _checkOrigin(Procedure memory procedure, Claim memory claim) private pure {
-        if (claim.hasSource && IrisEncoding.sourceId(claim.source) != claim.sourceSha256) {
+        if (claim.hasSource && IwebsEncoding.sourceId(claim.source) != claim.sourceSha256) {
             revert AnotherSourceRecord();
         }
         if (!procedure.hasSource) {
@@ -281,10 +281,10 @@ contract IrisClaims {
         } else {
             if (!claim.hasSource) revert MissingSource();
             if (!claim.source.present || claim.source.fault != 0) revert SourceFault(claim.source.fault);
-            if (!IrisEncoding.sameText(claim.source.signer, procedure.signer)) revert AnotherSigner();
+            if (!IwebsEncoding.sameText(claim.source.signer, procedure.signer)) revert AnotherSigner();
             if (
                 procedure.hasRecipe
-                    && !IrisEncoding.sameText(claim.source.recipeSha256, IrisEncoding.hexText(procedure.recipe))
+                    && !IwebsEncoding.sameText(claim.source.recipeSha256, IwebsEncoding.hexText(procedure.recipe))
             ) revert AnotherRecipe();
         }
 
@@ -299,15 +299,15 @@ contract IrisClaims {
             if (!relayed.record.present || relayed.record.fault != 0) revert SourceFault(relayed.record.fault);
             if (
                 relayed.record.documents != 1
-                    || !IrisEncoding.sameText(relayed.record.textSha256, IrisEncoding.hexText(relayed.inputTextSha256))
-                    || !IrisEncoding.sameText(
+                    || !IwebsEncoding.sameText(relayed.record.textSha256, IwebsEncoding.hexText(relayed.inputTextSha256))
+                    || !IwebsEncoding.sameText(
                         relayed.record.documentsSha256,
-                        IrisEncoding.hexText(IrisEncoding.relayed(claim.inferences[earlier - 1].record))
+                        IwebsEncoding.hexText(IwebsEncoding.relayed(claim.inferences[earlier - 1].record))
                     )
             ) revert AnotherRelayed(i);
             if (
                 procedure.hasRelayRecipe
-                    && !IrisEncoding.sameText(relayed.record.recipeSha256, IrisEncoding.hexText(procedure.relayRecipe))
+                    && !IwebsEncoding.sameText(relayed.record.recipeSha256, IwebsEncoding.hexText(procedure.relayRecipe))
             ) revert AnotherRecipe();
         }
 
@@ -317,7 +317,7 @@ contract IrisClaims {
             uint32 code;
             bytes32 forms;
             if (bytes(procedure.resultInputs[i]).length != 0) {
-                (code, forms) = IrisEncoding.runForms(procedure.forms, claim.inferences[i].outputText);
+                (code, forms) = IwebsEncoding.runForms(procedure.forms, claim.inferences[i].outputText);
             }
             if (claim.inferences[i].result.formsSha256 != forms) revert AnotherForms(i);
             if (claim.inferences[i].result.code != code) revert AnotherResult(i);
@@ -328,8 +328,8 @@ contract IrisClaims {
             // forms, the same form. Both records are valid and of one input,
             // which the checks above held.
             bool agree = procedure.forms.length == 0
-                ? keccak256(IrisEncoding.trim(bytes(claim.inferences[0].outputText)))
-                    == keccak256(IrisEncoding.trim(bytes(claim.inferences[1].outputText)))
+                ? keccak256(IwebsEncoding.trim(bytes(claim.inferences[0].outputText)))
+                    == keccak256(IwebsEncoding.trim(bytes(claim.inferences[1].outputText)))
                 : codes[0] != 0 && codes[0] == codes[1];
             uint32 code = agree ? codes[0] : 0;
             if (!claim.consensus.sameInput || claim.consensus.agree != agree || claim.consensus.code != code) {
@@ -349,7 +349,7 @@ contract IrisClaims {
             (bytes32 dataRoot, uint64 time) = oracle.blockOf(blobs[i].height);
             if (time == 0 || dataRoot != blobs[i].dataRoot) revert NotIncluded(i);
             if (time + retention < neededUntil) revert ExpiresTooSoon(i);
-            if (_signer(IrisEncoding.attestationDigest(blobs[i]), blobs[i].signature) != attester) {
+            if (_signer(IwebsEncoding.attestationDigest(blobs[i]), blobs[i].signature) != attester) {
                 revert NotProven(i);
             }
             if (blobs[i].contents.submitter != submitter) revert AnotherSubmitter(i);
@@ -411,7 +411,7 @@ contract IrisClaims {
         // The entry the claim gives in full is one a posted blob lists, and
         // is of the claim's own checkpoint list.
         StatedRecords memory stated = claim.stated;
-        bytes32 digest = IrisEncoding.statedRecordsDigest(stated);
+        bytes32 digest = IwebsEncoding.statedRecordsDigest(stated);
         bool listed;
         for (uint256 i = 0; i < claim.availability.length; i++) {
             listed = listed || _has(claim.availability[i].contents.records, digest);
@@ -463,7 +463,7 @@ contract IrisClaims {
         returns (bool named, StatedCheck memory check)
     {
         for (uint256 i = 0; i < stated.resultInputs.length; i++) {
-            if (!IrisEncoding.sameText(stated.resultInputs[i].name, input)) continue;
+            if (!IwebsEncoding.sameText(stated.resultInputs[i].name, input)) continue;
             for (uint256 j = 0; j < stated.checks.length; j++) {
                 if (stated.checks[j].checkpoint == stated.resultInputs[i].position) {
                     return (true, stated.checks[j]);
@@ -496,13 +496,13 @@ contract IrisClaims {
         // The trace is in the one shape the protocol fixes for its length. A
         // window the challenger chose, or another packing of the fingerprint,
         // is a trace no defender is held to answer.
-        uint64 window = IrisEncoding.protocolWindow(challenge.header.fingerprintLen);
+        uint64 window = IwebsEncoding.protocolWindow(challenge.header.fingerprintLen);
         if (window == 0) revert TraceTooShort();
         if (challenge.header.windowSize != window) revert WindowSizeNotProtocol();
-        if (challenge.header.bitsPerItem != IrisEncoding.protocolBitsPerItem(window)) {
+        if (challenge.header.bitsPerItem != IwebsEncoding.protocolBitsPerItem(window)) {
             revert NonCanonicalBitsPerItem();
         }
-        bytes32 traceHeaderDigest = IrisEncoding.traceHeaderDigest(challenge.header);
+        bytes32 traceHeaderDigest = IwebsEncoding.traceHeaderDigest(challenge.header);
 
         _checkPosted(challenge.availability, challenge.challenger, uint64(block.timestamp) + faultProofPeriod);
         bool body;
@@ -532,9 +532,9 @@ contract IrisClaims {
         private
         pure
     {
-        if (path.length != IrisEncoding.TREE_DEPTH || stage >= claim.checkpointCount) revert NotTheCheckpoint();
+        if (path.length != IwebsEncoding.TREE_DEPTH || stage >= claim.checkpointCount) revert NotTheCheckpoint();
         bytes32 root =
-            IrisEncoding.listRoot(IrisEncoding.checkpointHash(checkpoint), stage, claim.checkpointCount, path);
+            IwebsEncoding.listRoot(IwebsEncoding.checkpointHash(checkpoint), stage, claim.checkpointCount, path);
         if (root != claim.checkpointsRoot) revert NotTheCheckpoint();
     }
 
@@ -639,7 +639,7 @@ contract IrisClaims {
     /// of its inputs.
     function _producerOf(Checkpoint memory checkpoint, string memory input) private pure returns (bool, uint32) {
         for (uint256 i = 0; i < checkpoint.inputSources.length; i++) {
-            if (IrisEncoding.sameText(checkpoint.inputSources[i].name, input)) {
+            if (IwebsEncoding.sameText(checkpoint.inputSources[i].name, input)) {
                 return (true, checkpoint.inputSources[i].position);
             }
         }
@@ -651,7 +651,7 @@ contract IrisClaims {
     // -----------------------------------------------------------------------
 
     /// Show a challenger's trace false: `encoded` is a `FaultProof`, a Raster
-    /// fault proof as `iris fault prove` writes it.
+    /// fault proof as `iwebs fault prove` writes it.
     ///
     /// A challenge states that honest execution of the disputed checkpoint's
     /// program on its inputs gives another output, and posts the trace of

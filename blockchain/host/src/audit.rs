@@ -33,7 +33,7 @@ pub struct AuditFault {
     pub stage: String,
     /// The input, for a fault of an input.
     pub input: Option<String>,
-    /// The fault a contract records: `IrisClaims.ClaimFault`.
+    /// The fault a contract records: `IwebsClaims.ClaimFault`.
     pub fault: String,
 }
 
@@ -169,7 +169,7 @@ pub fn audit_claim(options: AuditClaimOptions) -> Result<ClaimAudit> {
             .join(INPUT_MANIFEST_JSON);
         let manifest = fs::read(&manifest_path).with_context(|| {
             format!(
-                "failed to read {}: audit the directory `iris claim fetch` wrote",
+                "failed to read {}: audit the directory `iwebs claim fetch` wrote",
                 manifest_path.display()
             )
         })?;

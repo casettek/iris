@@ -3,8 +3,8 @@
 This page is the rules a contract holds a claim to: what it pins, what a
 claimer submits, and each check it makes, as `blockchain_rules::checks`
 states them in Rust. The contracts in `blockchain/contracts/src` make the same checks on
-pipeline ([the blockchains](../blockchain/overview.md)), and `iris claim check` runs them on the host.
-[How iris works](overview.md) is the short version.
+pipeline ([the blockchains](../blockchain/overview.md)), and `iwebs claim check` runs them on the host.
+[How IWEBS works](overview.md) is the short version.
 
 The contract verifies no proof and runs no stage. It makes one statement about a
 claim:
@@ -34,7 +34,7 @@ three are the pins, a file, `contract_pins.json` (version 5):
 | `models` | One model entry per inference, in the order the procedure kind runs them |
 
 A model import writes the pins of the `single` procedure kind over that model beside
-the import's `manifest.json`. `iris claim pins --specification <file> --out <file>` writes
+the import's `manifest.json`. `iwebs claim pins --specification <file> --out <file>` writes
 those of the specification's procedure kind over the models it names, from their imports and
 the stage projects' locks as they are when it runs.
 
@@ -67,7 +67,7 @@ and what it requires of the claim's origin (`RequiredOrigin`):
 | The source, or none | The signer's key, and optionally the recipe's hash. With none, the claim must name no source. A procedure made from a specification does not pin the recipe: the base prompt and the documents' domains are not pinned yet |
 | The forms | The texts the output is read by and the code of each, in order. May be empty |
 
-`iris claim check` reads all of them from the specification: the signer and the
+`iwebs claim check` reads all of them from the specification: the signer and the
 recipe from its `[source]` table, and the forms from its `[[form]]` tables.
 A contract holds the forms themselves and not only their hash, because it takes
 the result step on the submitted output itself (below).
@@ -81,11 +81,11 @@ and the procedure kind's result program in place of `claim-result`. Each model e
 is read from its import's manifest, and the program entry from the procedure kind's
 pipeline template over the imports.
 
-`iris claim check --pins <file>` checks a claim against a pins file, and refuses
+`iwebs claim check --pins <file>` checks a claim against a pins file, and refuses
 one that is of another procedure kind, of other models or of the same models in another
 order. Without `--pins`, a `single` claim is checked against its model's import's
 file, and a claim of several models against pins made from the imports at that
-moment, as `iris claim pins` would make them.
+moment, as `iwebs claim pins` would make them.
 
 The approved programs are a set, not a map from position to program. Which stage
 runs where is the stage schedule's to enforce, inside the programs: the first
@@ -345,7 +345,7 @@ names. Two rules follow:
   program or other inputs dismisses nothing: any trace diverges from a run it is
   not a trace of.
 
-`iris fault prove` holds its proof to the second rule and records the dispute
+`iwebs fault prove` holds its proof to the second rule and records the dispute
 digest in `fault_bundle.json`.
 
 Only a differing output is a matter for a replay (`settlement`). A replay runs
@@ -360,7 +360,7 @@ claimed output follows from the claimer's inputs.
 ## Running the checks
 
 ```bash
-cargo run --release -p iris-cli -- claim check \
+cargo run --release -p iwebs-cli -- claim check \
   --specification specification.toml \
   --submission target/procedure-pipeline/runs/.../claim_submission.json
 ```
@@ -369,8 +369,8 @@ The command reads the checkpoint files, every stage's input list and the
 outputs of each inference's last check and of the result stage from the
 directory the submission is in, and the posted blobs from the
 data-availability layer: the stand-in directory (`--da-dir`, default
-`IRIS_DA_DIR` or `~/.cache/iris/stub-celestia`), or a Celestia node when
-`IRIS_CELESTIA_RPC` is set and no directory is given. It makes the procedure and procedure kind checks,
+`IWEBS_DA_DIR` or `~/.cache/iwebs/stub-celestia`), or a Celestia node when
+`IWEBS_CELESTIA_RPC` is set and no directory is given. It makes the procedure and procedure kind checks,
 the submission checks, the availability check and the challenge-time
 comparisons, the link comparison for every piped input of every stage. It
 prints eight lines for a `single` claim and nine for a `consensus` one, which
@@ -381,12 +381,12 @@ to be submitted.
 `claim build` names its procedure, prepares the blobs it has to post, and
 makes the same checks on its own claim before it reports success, when the
 imports have pins. It makes them against what the prepared blobs hold, and
-posts nothing: `iris claim post` posts them, and the claim passes the
+posts nothing: `iwebs claim post` posts them, and the claim passes the
 availability check from then on.
 
-`iris challenge check --challenge <challenge_submission.json> --submission
+`iwebs challenge check --challenge <challenge_submission.json> --submission
 <claim_submission.json>` makes the checks of a challenge the same way, on the
-submission `iris challenge post` wrote.
+submission `iwebs challenge post` wrote.
 
 The contracts on a local EVM blockchain make these checks too, and are tested
 against these two commands case by case ([the blockchains](../blockchain/overview.md)).

@@ -1,4 +1,4 @@
-//! The local blockchains: `iris test devstack`, under the test tools.
+//! The local blockchains: `iwebs test devstack`, under the test tools.
 
 use crate::blockchain::devstack;
 use crate::*;
@@ -12,7 +12,7 @@ pub(crate) enum SubmitWhat {
     Fault,
 }
 
-/// What a `devstack replay` holds the contracts to iris on.
+/// What a `devstack replay` holds the contracts to IWEBS on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub(crate) enum ReplayWhat {
     Claim,
@@ -56,7 +56,7 @@ pub(crate) enum DevstackCommand {
         /// The `fault.receipt` that `fault prove` wrote.
         #[arg(long)]
         receipt: Option<PathBuf>,
-        /// The calls `iris claim audit --calls` wrote.
+        /// The calls `iwebs claim audit --calls` wrote.
         #[arg(long)]
         calls: Option<PathBuf>,
         /// Which of those calls to send.
@@ -69,7 +69,7 @@ pub(crate) enum DevstackCommand {
         #[arg(long)]
         no_register: bool,
     },
-    /// Hold the contracts to iris's own verdict, case by case: on a posted
+    /// Hold the contracts to IWEBS's own verdict, case by case: on a posted
     /// claim and changed copies of it, on a posted challenge and changed
     /// copies of it, or on every on-the-spot question of a fetched claim.
     /// The claim or challenge itself is then submitted. Exits nonzero when

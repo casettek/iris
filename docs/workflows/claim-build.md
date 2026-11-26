@@ -3,7 +3,7 @@
 `claim build` reruns inference through the checkpointed pipeline path and writes the phase-two claim artifacts.
 
 ```bash
-cargo run --release -p iris-cli -- claim build --specification specification.toml --case case.toml
+cargo run --release -p iwebs-cli -- claim build --specification specification.toml --case case.toml
 # or
 just claim specification.toml case.toml
 ```
@@ -13,7 +13,7 @@ Flow:
 1. The CLI loads the specification, the case and the specification's model manifest, then verifies the weight, config, tokenizer, and model-specific template hashes once before preparing the run. Missing template provenance is an error. The run's [procedure kind](../protocol/procedure-kinds.md) makes the pipeline template from the model's segment: the `source` stage in front and its result stage behind.
 2. The native run discovers the output ids. They must fill `max_new_tokens` unless the last one is EOS.
 3. The prompt's pieces are tokenized natively and the tokens cut into ranges of at most the model's range size, and the ids into ranges of the same size. A prompt range may end between any two tokens. The text is cut to match: slice `j` is the bytes whose scan yields range `j`'s pieces, so each range's bind stage reads only its own part of the prompt.
-4. Each prompt range's slice of the original text (`text_{j}`), the text digest (`text_digest`: the whole text's SHA-256, its length, and the first and last bytes the template's trim keeps), the run's configuration (`config`), its stage schedule (`schedule`), each prompt range's token marks (`marks_{j}`: one number per piece, 1 where a token starts) and each claimed range (`claimed_{k}`) are written as externals under `target/iris/runs/<run>/prompt/`, and a run-specific `Raster.toml` beside it commits to them. The configuration holds the model id, `raw_prompt`, `max_new_tokens` and the range size. The model id comes from the model manifest, which recomputes it from its commitments by role when it is loaded.
+4. Each prompt range's slice of the original text (`text_{j}`), the text digest (`text_digest`: the whole text's SHA-256, its length, and the first and last bytes the template's trim keeps), the run's configuration (`config`), its stage schedule (`schedule`), each prompt range's token marks (`marks_{j}`: one number per piece, 1 where a token starts) and each claimed range (`claimed_{k}`) are written as externals under `target/iwebs/runs/<run>/prompt/`, and a run-specific `Raster.toml` beside it commits to them. The configuration holds the model id, `raw_prompt`, `max_new_tokens` and the range size. The model id comes from the model manifest, which recomputes it from its commitments by role when it is loaded.
 5. `procedure-pipeline` reads the run manifest and expands the [pipeline](../protocol/raster-pipeline.md).
 6. Each stage synthesizes `input.json` and `input_manifest.json`, runs the host implementation, and writes Raster-compatible output artifacts.
 7. Claim build applies the rule a challenger will. If the final record's committed verdict counts any claimed id that is not the greedy selection, claim build fails: native and teacher-forced inference are not in parity, and the claim would refute itself.
@@ -21,13 +21,13 @@ Flow:
 
 `prepared_run.json` holds no copy of the ids: the claim's output is the record the last range's check states with its edge, which also holds the input text's SHA-256, the model id and the output text's SHA-256.
 
-When `iris infer` has already run this specification and case, pass the ids it printed with
+When `iwebs infer` has already run this specification and case, pass the ids it printed with
 `--native-output-ids 1,2,3` and step 2 is skipped: the claim is built from them
 without a second native pass. Nothing else changes. The ids must still fill
 `max_new_tokens` unless the last is EOS, the pipeline re-derives every token, and ids that
 are not the run's greedy output fail the build at step 7.
 
-`iris test claim --ids 1,2,3` builds a claim of the given
+`iwebs test claim --ids 1,2,3` builds a claim of the given
 ids instead of discovering them. A rejection is then a warning, and the claim is
 written anyway. This builds deliberately false claims for challenge tests.
 
@@ -45,13 +45,13 @@ Claim files live beside the generated checkpoint tree:
 - `checkpoint_list.json`: ordered checkpoint records.
 - `checkpoints.txt`: one SHA-256 per checkpoint record.
 - `claim_bundle.json`: whole-claim input/output commitments plus the checkpoint list and prepared-run metadata references.
-- `claim_submission.json`: what a claimer would submit to a [contract](../protocol/checks.md): the input text hash, the source record of a run that has one, for each inference its plaintext, its claim record and its result code with the hash of the forms it was read by, for a consensus the agreement, the address the claim is attributed to, and the root of the checkpoint list. Claim build fails if a contract holding the import's pins would not accept the claim: its statement, its output, its source and result against what the specification names, the program every checkpoint names, every input a stage takes from an earlier stage, each record in its inference's last check's output and the results in the last stage's. `iris claim check --specification <file> --submission <file>` makes the same checks afterwards. Before the checks, claim build names the run's procedure in the submission and prepares the data the claim has to post: the new information the run was given (its source's documents, attestations and recipe, or the prompt text of a run with no source) and the checkpoint list with every checkpoint and input manifest. Every blob names the claimer's address (`--claimer`, or `IRIS_CLAIMER`). No file a stage loads is posted ([availability](../protocol/availability.md)).
-- `posting-blob-<n>.bin` and `posting-outputs.json`: the blobs to post, and the stage outputs their proof is given. Claim build posts nothing. `iris claim post --submission <file>` posts the blobs to the data-availability layer and lists where they are under the submission's `availability`; it can be run again if a post fails. The layer is the stand-in directory, or a Celestia node when `IRIS_CELESTIA_RPC` is set ([the blockchains](../blockchain/overview.md)).
+- `claim_submission.json`: what a claimer would submit to a [contract](../protocol/checks.md): the input text hash, the source record of a run that has one, for each inference its plaintext, its claim record and its result code with the hash of the forms it was read by, for a consensus the agreement, the address the claim is attributed to, and the root of the checkpoint list. Claim build fails if a contract holding the import's pins would not accept the claim: its statement, its output, its source and result against what the specification names, the program every checkpoint names, every input a stage takes from an earlier stage, each record in its inference's last check's output and the results in the last stage's. `iwebs claim check --specification <file> --submission <file>` makes the same checks afterwards. Before the checks, claim build names the run's procedure in the submission and prepares the data the claim has to post: the new information the run was given (its source's documents, attestations and recipe, or the prompt text of a run with no source) and the checkpoint list with every checkpoint and input manifest. Every blob names the claimer's address (`--claimer`, or `IWEBS_CLAIMER`). No file a stage loads is posted ([availability](../protocol/availability.md)).
+- `posting-blob-<n>.bin` and `posting-outputs.json`: the blobs to post, and the stage outputs their proof is given. Claim build posts nothing. `iwebs claim post --submission <file>` posts the blobs to the data-availability layer and lists where they are under the submission's `availability`; it can be run again if a post fails. The layer is the stand-in directory, or a Celestia node when `IWEBS_CELESTIA_RPC` is set ([the blockchains](../blockchain/overview.md)).
 
 `checkpoints.txt` is the compact public checkpoint reference used by the hash-based challenge flow. For manual challenge testing, copy and corrupt one hash:
 
 ```bash
-cargo run --release -p iris-cli -- test corrupt-checkpoints \
+cargo run --release -p iwebs-cli -- test corrupt-checkpoints \
   --checkpoints target/procedure-pipeline/runs/.../checkpoints.txt \
   --random
 # or
@@ -61,7 +61,7 @@ just corrupt target/procedure-pipeline/runs/.../checkpoints.txt
 The helper writes a corrupted hash list plus a local `*.corruption.json` manifest that records the selected checkpoint for debugging. Stage-based selection is also available when `checkpoint_list.json` is beside the hash list:
 
 ```bash
-cargo run --release -p iris-cli -- test corrupt-checkpoints \
+cargo run --release -p iwebs-cli -- test corrupt-checkpoints \
   --checkpoints target/procedure-pipeline/runs/.../checkpoints.txt \
   --stage range_p0_l3
 ```
@@ -108,7 +108,7 @@ from unauthenticated native checkpoint generation.
 
 ## Validation and benchmarking
 
-`cargo test -p procedure-pipeline -p inference-kernels -p blockchain-host -p iris-cli` includes a two-layer,
+`cargo test -p procedure-pipeline -p inference-kernels -p blockchain-host -p iwebs-cli` includes a two-layer,
 three-claimed-range fixture that compares every checkpoint across cache
 budgets, worker counts, and the diagnostic backend. To compare the same fixture
 against actual authenticated Raster stage execution:
@@ -126,7 +126,7 @@ Keep the model artifacts, the specification and the case identical:
 
 ```bash
 python scripts/benchmark-pipeline-reuse.py --baseline /path/to/old/iris \
-  --candidate target/release/iris \
+  --candidate target/release/iwebs \
   --specification /path/to/specification.toml --case /path/to/300-in-128-out.toml \
   --output target/pipeline-benchmark
 ```

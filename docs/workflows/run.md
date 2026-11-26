@@ -3,7 +3,7 @@
 `run` runs a procedure with no blockchain. It makes no claim, posts nothing and reads no contract's pins.
 
 ```bash
-cargo run --release -p iris-cli -- run --specification specification.toml --case case.toml
+cargo run --release -p iwebs-cli -- run --specification specification.toml --case case.toml
 # or
 just run specification.toml case.toml
 ```

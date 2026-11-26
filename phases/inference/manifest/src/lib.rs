@@ -44,7 +44,7 @@ mod tests {
     #[test]
     fn a_model_id_that_does_not_match_its_commitments_is_refused() {
         let dir = std::env::temp_dir().join(format!(
-            "iris-model-id-{}-{:?}",
+            "iwebs-model-id-{}-{:?}",
             std::process::id(),
             std::thread::current().id()
         ));

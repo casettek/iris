@@ -1,7 +1,7 @@
 # Blockchain: Celestia and the EVM contracts
 
 A claim's data goes to Celestia, and the claim itself to a contract on an EVM
-blockchain. This page says what iris does on each, what the contracts check, and
+blockchain. This page says what IWEBS does on each, what the contracts check, and
 which parts are still a trusted host in place of a proof.
 
 What is built: a claim arrives and is accepted or refused, a claim with a
@@ -16,28 +16,28 @@ Both blockchains run locally from [`blockchain/devstack/`](../../blockchain/devs
 
 | Step | Who | Command |
 | --- | --- | --- |
-| Build the claim and the blobs to post | iris | `iris claim build` |
-| Post the blobs to Celestia | iris | `iris claim post` |
-| Sign what each blob holds, as the attester | iris, with the attester's key | `iris da attest` |
-| Read a block's root for the relayer | iris | `iris da block-root` |
-| Write the bytes of each contract call | iris | `iris evm procedure`, `iris evm claim`, `iris evm challenge`, `iris evm fault-proof` |
-| Name Raster's proof programs for a deployment | iris | `iris evm proof-programs` |
-| Measure what a submission put on Celestia | iris | `iris da contents` |
-| Read a submitted claim's data back, as a challenger | iris | `iris claim fetch` |
-| Ask of a claim what no replay shows, and write the call for each fault | iris | `iris claim audit` |
-| Read a submitted challenge's trace back, as a defender | iris | `iris challenge fetch` |
-| Send the transactions, relay the roots, keep the results | the caller | `iris test devstack submit`, or iris-backend |
+| Build the claim and the blobs to post | IWEBS | `iwebs claim build` |
+| Post the blobs to Celestia | IWEBS | `iwebs claim post` |
+| Sign what each blob holds, as the attester | IWEBS, with the attester's key | `iwebs da attest` |
+| Read a block's root for the relayer | IWEBS | `iwebs da block-root` |
+| Write the bytes of each contract call | IWEBS | `iwebs evm procedure`, `iwebs evm claim`, `iwebs evm challenge`, `iwebs evm fault-proof` |
+| Name Raster's proof programs for a deployment | IWEBS | `iwebs evm proof-programs` |
+| Measure what a submission put on Celestia | IWEBS | `iwebs da contents` |
+| Read a submitted claim's data back, as a challenger | IWEBS | `iwebs claim fetch` |
+| Ask of a claim what no replay shows, and write the call for each fault | IWEBS | `iwebs claim audit` |
+| Read a submitted challenge's trace back, as a defender | IWEBS | `iwebs challenge fetch` |
+| Send the transactions, relay the roots, keep the results | the caller | `iwebs test devstack submit`, or iris-backend |
 
-iris holds no account and sends nothing to the EVM. Each command does one
+IWEBS holds no account and sends nothing to the EVM. Each command does one
 thing, given the addresses it needs, and can be run again. Keys for sending,
 waiting for receipts, retries and records are the caller's.
 
 ## Posting is its own step
 
-`iris claim build` no longer posts. It writes the blobs beside the submission
+`iwebs claim build` no longer posts. It writes the blobs beside the submission
 (`posting-blob-<n>.bin`) with the outputs their proof is given
 (`posting-outputs.json`), and makes every check a contract would on the claim
-as it will be once they are posted. `iris claim post --submission <file>`
+as it will be once they are posted. `iwebs claim post --submission <file>`
 posts them and writes where they are into the submission's `availability`.
 A post that fails is run again without building the claim again.
 
@@ -46,11 +46,11 @@ there is a stage.
 
 ## The layer
 
-iris reaches a data-availability layer through one interface (`PostingLayer`):
+IWEBS reaches a data-availability layer through one interface (`PostingLayer`):
 post a blob, read it back, read a block's root and time. Which one is used:
 
 1. `--da-dir <dir>`: the stand-in directory.
-2. Otherwise, `IRIS_CELESTIA_RPC=http://host:port`: a celestia-node, through
+2. Otherwise, `IWEBS_CELESTIA_RPC=http://host:port`: a celestia-node, through
    its JSON-RPC (`blob.Submit`, `blob.Get`, `header.GetByHeight`).
 3. Otherwise the default stand-in directory.
 
@@ -59,14 +59,14 @@ parity gate.
 
 A blob is named by its height, namespace and commitment. The commitment is
 Celestia's own: the blob split into 512-byte shares, a namespaced Merkle tree
-over them in subtrees, and a Merkle root over the subtree roots. iris computes
+over them in subtrees, and a Merkle root over the subtree roots. IWEBS computes
 it itself (`blockchain_celestia::blob_commitment`), so a pointer can
 be checked before anything is posted. The tests reproduce seven commitments
 the local node gave.
 
 ### What a submission posts
 
-`iris da contents --submission <claim or challenge submission>` reads every
+`iwebs da contents --submission <claim or challenge submission>` reads every
 blob the submission names back from the layer and says what each holds:
 
 ```json
@@ -125,13 +125,13 @@ Four contracts, in [`blockchain/contracts/src`](../../blockchain/contracts/src):
 
 | Contract | Holds | Entry points |
 | --- | --- | --- |
-| `IrisRegistry` | Each registered procedure, under its id | `register(bytes)`, by the owner |
+| `IwebsRegistry` | Each registered procedure, under its id | `register(bytes)`, by the owner |
 | `DataRootOracle` | Each Celestia block's data root and time, by height | `post(height, dataRoot, time)`, by the relayer |
-| `IrisClaims` | Each accepted claim, whether a challenger showed it void, each admitted challenge, and whether a fault proof dismissed it | `submitClaim(bytes)`, `voidClaim(bytes)`, `submitChallenge(bytes)`, `submitFaultProof(bytes)` |
-| `RasterVerifier` | Nothing: RISC Zero's verifier of a Groth16 proof | `verify(seal, imageId, journalDigest)`, called by `IrisClaims` |
+| `IwebsClaims` | Each accepted claim, whether a challenger showed it void, each admitted challenge, and whether a fault proof dismissed it | `submitClaim(bytes)`, `voidClaim(bytes)`, `submitChallenge(bytes)`, `submitFaultProof(bytes)` |
+| `RasterVerifier` | Nothing: RISC Zero's verifier of a Groth16 proof | `verify(seal, imageId, journalDigest)`, called by `IwebsClaims` |
 
 Each entry point takes one `bytes` argument, the ABI encoding of one struct
-(`IrisTypes.sol`), and decodes it itself. iris writes that encoding
+(`IwebsTypes.sol`), and decodes it itself. IWEBS writes that encoding
 (`blockchain_evm`), with its own ABI encoder: no ABI library is
 involved on either side of the format.
 
@@ -141,12 +141,12 @@ claim names an id; the contract judges it by what is stored there.
 
 **A claim's id** is the SHA-256 of its ABI encoding. The contract encodes the
 claim again after decoding it, so the same claim has one id however the bytes
-it arrived in were laid out. `iris evm claim` prints the same id, and the
+it arrived in were laid out. `iwebs evm claim` prints the same id, and the
 replay below compares the two.
 
 ### What `submitClaim` checks
 
-In the order of `iris claim check`. Each error has the name of the Rust
+In the order of `iwebs claim check`. Each error has the name of the Rust
 rejection it is.
 
 1. The procedure is registered, and the claim has the shape its procedure
@@ -171,19 +171,19 @@ source record's digest, the forms and their result, the stated records.
 
 ### The ways to challenge a claim
 
-[How iris works](../protocol/overview.md#what-catches-each-way-a-claim-can-be-wrong) has
+[How IWEBS works](../protocol/overview.md#what-catches-each-way-a-claim-can-be-wrong) has
 the table: a claim that names an unapproved program or an input nobody else
 holds is void on the spot (`voidClaim`), and a claim whose stage output is
 wrong is challenged with a replay (`submitChallenge`), which the claimer can
 answer with a fault proof (`submitFaultProof`). The sections below say what
 each call checks.
 
-`iris claim audit --submission <fetched>/claim_submission.json --specification <file>`
+`iwebs claim audit --submission <fetched>/claim_submission.json --specification <file>`
 asks these of every checkpoint of a claim and every input its program has,
 from its files and the procedure alone, with nothing run. A challenger does this first. With
 `--calls <file>` it writes every call a contract can be asked, each with what
 the contract is expected to answer, and the ones that point at a fault are
-the ones to send (`iris test devstack submit fault --calls <file> --call <n>`).
+the ones to send (`iwebs test devstack submit fault --calls <file> --call <n>`).
 
 ### What `voidClaim` checks
 
@@ -219,7 +219,7 @@ producer. The checks and their order are `CheckpointHashes::check_link`'s:
    names as the producer, which must be an earlier one whose program may
    produce this input. Otherwise the claim is void (`NotAnEarlierOutput`).
 
-`iris claim audit` says more than the contract records: for an input that is
+`iwebs claim audit` says more than the contract records: for an input that is
 not an earlier output, whether no producer was named, it was not earlier, it
 was of the wrong kind, or it produced something else.
 
@@ -282,7 +282,7 @@ The body is on Celestia.
 
 On chain a challenge is of the checkpoint it opens. It carries no commitment
 of its own that could name another one: Raster's one-stage commitment is made
-from the checkpoint, not submitted. `iris evm challenge` refuses to encode a
+from the checkpoint, not submitted. `iwebs evm challenge` refuses to encode a
 challenge that was built about another checkpoint, since those bytes would
 state a challenge nobody made. Whether the trace is a run of that
 checkpoint's program on its inputs is what a fault proof settles.
@@ -294,7 +294,7 @@ The same claim, or the same challenge, is refused a second time.
 A challenge says that honest execution of the disputed checkpoint's program
 on its inputs gives another output, and posts the trace of that execution. A
 Raster fault proof answers it: a window of that trace re-executed in RISC
-Zero, ending at a step the trace gets wrong. `iris fault prove` writes it as
+Zero, ending at a step the trace gets wrong. `iwebs fault prove` writes it as
 a Groth16 proof of Raster's transition program, and that proof, as it is, is
 what the contract takes. Nothing else is proven for the blockchain.
 
@@ -324,7 +324,7 @@ follows from a dismissal yet (see [what is open](../protocol/open.md)).
 **The journal.** A fault proof's journal is Raster's `TransitionJournal` as
 RISC Zero wrote it, and it begins with the window's opening state, whose size
 depends on where the window opens. `RasterJournal.sol` finds the fields above
-by walking it. `iris evm fault-proof` makes the same reading of the bytes
+by walking it. `iwebs evm fault-proof` makes the same reading of the bytes
 (`blockchain_evm::read_fault_journal`) and holds it to the decoded
 journal every time it writes a call, and a unit test holds it to RISC Zero's
 own encoding, so a change of Raster's journal is caught before a contract
@@ -334,8 +334,8 @@ reads one wrongly.
 unchanged, from `risc0-ethereum` v3.0.1 (`blockchain/contracts/lib`, with the one
 OpenZeppelin file it imports). That release takes proofs of the RISC Zero
 circuits Raster is built with. A deployment also pins the ids of Raster's two
-proof programs, which `iris evm proof-programs` prints, so it takes fault
-proofs of one build of Raster: after a Raster update, build iris and deploy
+proof programs, which `iwebs evm proof-programs` prints, so it takes fault
+proofs of one build of Raster: after a Raster update, build IWEBS and deploy
 again.
 
 ## Starting from the blockchains
@@ -344,7 +344,7 @@ A challenger has the procedure and the models, and nothing of the
 claimer's. A defender has its own run of the disputed stage, and nothing of
 the challenger's. Each reads the rest back from Celestia.
 
-**`iris claim fetch --submission <claim_submission.json> --specification <file> --out <dir>`**
+**`iwebs claim fetch --submission <claim_submission.json> --specification <file> --out <dir>`**
 reads every blob the submission names and writes a new directory:
 
 | File | What it is |
@@ -372,7 +372,7 @@ The submission's bytes are the ones of the transaction. The command takes
 them as a file, and whoever runs it asks the contract whether it holds a
 claim with that id (`claims(bytes32)`), as iris-backend does.
 
-**`iris challenge build --specification <file> --submission <dir>/claim_submission.json`**
+**`iwebs challenge build --specification <file> --submission <dir>/claim_submission.json`**
 builds the challenge from that directory and the challenger's own
 specification. The case is the `case.toml` beside the submission. Every stage is run on the
 inputs the claim's checkpoint names for it: nothing is tokenized and no
@@ -386,20 +386,20 @@ inputs; the command checks that the replay ran on the input list the
 checkpoint commits to and ended in another output. It stops when a
 checkpoint names a value that is no earlier stage's output and none the pipeline
 holds, or another program than the pipeline runs that stage with: such a claim
-is one `iris claim audit` rules on. `iris challenge post` and `iris evm
+is one `iwebs claim audit` rules on. `iwebs challenge post` and `iwebs evm
 challenge` then take the same directory as the claim's.
 
-**`iris challenge fetch --challenge <challenge_submission.json> --out <commit.bin>`**
+**`iwebs challenge fetch --challenge <challenge_submission.json> --out <commit.bin>`**
 reads the trace the challenge names. It is written only when it was posted
 for the challenger and its header is the one the challenge names, and it is
-the file `iris fault prove --commitment` takes.
+the file `iwebs fault prove --commitment` takes.
 
 ### Staging a dispute
 
 Two commands make the wrong submissions a test needs. Neither is anything an
 honest party runs.
 
-- `iris test corrupt-claim --submission <claim_submission.json> --stage <stage> --claimer <address> --output <dir>`
+- `iwebs test corrupt-claim --submission <claim_submission.json> --stage <stage> --claimer <address> --output <dir>`
   writes the claim a lying claimer submits: the honest claim with another
   output stated for one checkpoint, under its own list and root, with the
   honest claim's blobs carrying that list. A changed hash alone is no claim,
@@ -425,19 +425,19 @@ honest party runs.
   claimed token differing, and the result stage is run on that record. The
   claim arrives with a valid record, and a replay of the check shows it.
   Built for a procedure kind of one inference.
-- `iris challenge post --commitment <corrupted_commit.bin> --out <file>` posts
-  a challenge over the copy of a trace that `iris test corrupt-challenge` changed,
+- `iwebs challenge post --commitment <corrupted_commit.bin> --out <file>` posts
+  a challenge over the copy of a trace that `iwebs test corrupt-challenge` changed,
   in place of the bundle's own.
 
 A contract takes both, as it must: nothing at arrival tells them from honest
 ones.
 
-The pipeline dispute then ends as a real one would. `iris fault prove` proves a
-window of the corrupted trace, read back from Celestia, and `iris evm
+The pipeline dispute then ends as a real one would. `iwebs fault prove` proves a
+window of the corrupted trace, read back from Celestia, and `iwebs evm
 fault-proof --receipt <fault.receipt> --challenge <challenge_submission.json>
 --submission <claim_submission.json>` writes the call that answers the
 corrupted challenge with it. The call also carries `rejection`: the contract
-error iris expects from the journal, or null.
+error IWEBS expects from the journal, or null.
 
 ## What a trusted host does in place of a proof
 
@@ -446,14 +446,14 @@ error iris expects from the journal, or null.
 | The attester | Reads each blob back from Celestia, works out what it holds, and signs where it is, its block's root, who submitted it and what it holds. The contract checks the signature | A receipt of a program that does the same, checked against its pinned id |
 | The relayer | Posts each block's height, data root and time to `DataRootOracle` | A bridge that proves the roots. The oracle has the shape of a Blobstream contract. Celestia's own Blobstream deployments are reported as no longer maintained, so which bridge is open |
 
-The attester's key is `IRIS_ATTESTER_KEY`. `iris da attest` signs nothing it
+The attester's key is `IWEBS_ATTESTER_KEY`. `iwebs da attest` signs nothing it
 has not read from the layer itself: a submission that states other contents
 than its blob holds is refused, not signed.
 
-## The contracts are held to iris
+## The contracts are held to IWEBS
 
-`iris test devstack replay` is the contracts' test. It asks `iris claim check` (or
-`iris challenge check`) and the contract about the same submission, then
+`iwebs test devstack replay` is the contracts' test. It asks `iwebs claim check` (or
+`iwebs challenge check`) and the contract about the same submission, then
 about one changed copy after another, and fails unless the two give the same
 answer: both take it, or both refuse it at the same check.
 
@@ -464,7 +464,7 @@ A few cases are the contract's alone, and the replay prints them as such:
 - A claim or a challenge submitted twice, a challenge of a claim the contract
   does not hold, and a challenge after the challenge period. The Rust model
   keeps no earlier submissions and no clock.
-- A claim that names another checkpoint root. `iris claim check` reads the
+- A claim that names another checkpoint root. `iwebs claim check` reads the
   claim's directory and stops before its checks when the list there is not
   the one the submission names.
 
@@ -478,12 +478,12 @@ program or other inputs, under other pinned programs, and with its journal or
 its seal changed. The proof names its own programs, so it stays one whatever
 Raster's current programs are.
 
-`iris test devstack replay faults` holds the two on-the-spot calls to iris. It takes a claim
-in the directory `iris claim fetch` wrote, asks the contract every question
-`iris claim audit` asks (of each checkpoint whether its program is approved,
+`iwebs test devstack replay faults` holds the two on-the-spot calls to IWEBS. It takes a claim
+in the directory `iwebs claim fetch` wrote, asks the contract every question
+`iwebs claim audit` asks (of each checkpoint whether its program is approved,
 of each piped input whether it is its producer's output), and fails unless
-the contract answers each as iris does: it refuses to void an honest stage
-with the same error, and takes a fault iris found. A fault found is then
+the contract answers each as IWEBS does: it refuses to void an honest stage
+with the same error, and takes a fault IWEBS found. A fault found is then
 sent, and the claim must read as void of that fault. An honest claim is the
 case that matters most: a rule a little stricter than what honest claims do
 would let anyone void one. `blockchain/contracts/test/InputManifest.t.sol` holds the
@@ -491,7 +491,7 @@ input list's form, and the trace's shape, to the same cases as the Rust
 tests.
 
 The claims and challenges to replay come from the parity gate run against
-Celestia (`IRIS_CELESTIA_RPC=... just test-parity`), which leaves them posted:
+Celestia (`IWEBS_CELESTIA_RPC=... just test-parity`), which leaves them posted:
 a claim with a source, a consensus claim, and for each falsified checkpoint a
 lying claim with the challenge of it
 (`over-window/challenges/falsified-*/contract`). The lying claim posts its own

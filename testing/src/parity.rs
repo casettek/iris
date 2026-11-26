@@ -54,8 +54,8 @@ pub fn run(skip_challenges: bool, bundle: &str) -> Result<()> {
     println!("Three-path parity artifacts: {}", run_dir.display());
     // Claims and challenges post to a stand-in layer of the gate's own, which
     // every command it starts inherits.
-    if std::env::var_os("IRIS_DA_DIR").is_none() {
-        std::env::set_var("IRIS_DA_DIR", run_dir.join("stub-celestia"));
+    if std::env::var_os("IWEBS_DA_DIR").is_none() {
+        std::env::set_var("IWEBS_DA_DIR", run_dir.join("stub-celestia"));
     }
     let started = Instant::now();
     let mut report = json!({"version": 1, "mode": "host_no_auth", "passed": false, "cases": []});
@@ -2181,7 +2181,7 @@ pub fn worker(specification: &Path, case: &Path, output: &Path, native_run: bool
     Ok(())
 }
 
-/// `iris run` on a claim's specification and case, in a directory of its
+/// `iwebs run` on a claim's specification and case, in a directory of its
 /// own: a procedure run with no blockchain. The command fails unless its
 /// pipeline run states the result its native run did, and unless every one of
 /// its checkpoints is the one the claim's pipeline run left in `claim_pipeline`.
@@ -2202,7 +2202,7 @@ fn run_with_no_blockchain(
         .arg(case_beside(specification))
         .arg("--compare")
         .arg(claim_pipeline.join(procedure_definition::CHECKPOINT_LIST_JSON));
-    logged(run, &dir.join("run.log")).context("`iris run`, held to the claim's checkpoints")
+    logged(run, &dir.join("run.log")).context("`iwebs run`, held to the claim's checkpoints")
 }
 
 /// The case file of a gate run: `case.toml` beside its specification.
@@ -2250,7 +2250,7 @@ fn command(program: impl AsRef<std::ffi::OsStr>, root: &Path) -> Command {
     // Do not inherit debugging instrumentation or cache-disable settings into
     // the canonical gate. Each worker installs its own stage input environment.
     for name in [
-        "NATIVE_RUN_TRACE_COMMITMENTS",
+        "IWEBS_NATIVE_RUN_TRACE_COMMITMENTS",
         "IWEBS_PIPELINE_MATERIALIZATION_CACHE_ENTRIES",
         "IWEBS_PIPELINE_PREFILL_WEIGHT_CACHE_ENTRIES",
         "IWEBS_PIPELINE_AUX_PARALLELISM",

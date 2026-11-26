@@ -1,7 +1,7 @@
-//! The tools a test stages a dispute with: `iris test`.
+//! The tools a test stages a dispute with: `iwebs test`.
 //!
-//! Nothing here is anything an honest party runs. A claimer runs `iris claim`,
-//! a challenger `iris claim fetch` and `iris challenge`, a defender `iris
+//! Nothing here is anything an honest party runs. A claimer runs `iwebs claim`,
+//! a challenger `iwebs claim fetch` and `iwebs challenge`, a defender `iwebs
 //! fault`. These make the wrong claims and challenges those commands must
 //! catch, measure what catching them costs, and drive the local blockchains.
 
@@ -22,7 +22,7 @@ pub(crate) enum TestCommand {
         bundle: String,
     },
     /// Build a claim of the output ids given, whatever the model's own
-    /// output is: a claim that should be refuted. Otherwise as `iris claim
+    /// output is: a claim that should be refuted. Otherwise as `iwebs claim
     /// build`.
     Claim {
         /// The comma-separated output ids to claim.
@@ -32,7 +32,7 @@ pub(crate) enum TestCommand {
         build: ClaimBuildArgs,
     },
     /// Write the claim a lying claimer would submit: an honest claim with one
-    /// checkpoint false, under its own checkpoint list, ready for `iris
+    /// checkpoint false, under its own checkpoint list, ready for `iwebs
     /// claim post`.
     CorruptClaim(CorruptClaimArgs),
     /// Copy a checkpoint hash list with one hash changed, for a challenge
@@ -46,8 +46,8 @@ pub(crate) enum TestCommand {
     /// Measure guest cycles and select a heavy fault window from a completed challenge.
     Profile(challenge_profile::ProfileArgs),
     /// Drive the local blockchains (blockchain/devstack/README.md): send
-    /// iris's calls to the contracts deployed there, and hold the contracts
-    /// to iris.
+    /// IWEBS's calls to the contracts deployed there, and hold the contracts
+    /// to IWEBS.
     /// Transactions go out through an account the development node keeps
     /// unlocked, so this works against a development node and nothing else.
     Devstack {
@@ -110,7 +110,7 @@ pub(crate) enum ClaimFaultArg {
     Arrangement,
     /// The check's record stated valid where the check does not find it so,
     /// with the result stage run on that record. Of a claim whose claimed
-    /// output is not the model's (`iris test claim --ids`).
+    /// output is not the model's (`iwebs test claim --ids`).
     Verdict,
 }
 
@@ -131,7 +131,7 @@ pub(crate) struct CorruptClaimArgs {
 
     /// What the lying claim says falsely of the checkpoint. An output, an
     /// arrangement or a verdict is a lie a replay shows. A program or an
-    /// input is one a challenger points at (`iris claim audit`).
+    /// input is one a challenger points at (`iwebs claim audit`).
     #[arg(long, value_enum, default_value = "output")]
     fault: ClaimFaultArg,
 

@@ -2443,7 +2443,7 @@ inputs.edge = { from = "claimed.edge" }
         let index = build_stage_index(&manifest.pipeline.stage).unwrap();
 
         // A repeat that does not run exports its entry: a stage bound to the
-        // export reads the stage before the repeat. The iris pipeline has no
+        // export reads the stage before the repeat. The IWEBS pipeline has no
         // such binding now; the mechanism is the manifest format's.
         assert!(!index.contains_key("check_c1"));
         let output = manifest.pipeline.stage.last().unwrap();

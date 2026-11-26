@@ -71,7 +71,7 @@ impl Arrangement {
         }
     }
 }
-/// What `iris registry add` writes when given no other file.
+/// What `iwebs registry add` writes when given no other file.
 pub const REGISTRY_JSON: &str = "registry.json";
 
 /// One procedure a contract may accept claims of.

@@ -15,7 +15,7 @@
 #     challenge the contract admits.
 #
 # Before those, the contracts' own tests run (a real fault proof against
-# `submitFaultProof`), and the contract is held to iris on changed copies of
+# `submitFaultProof`), and the contract is held to IWEBS on changed copies of
 # the honest claim and of the first challenge.
 #
 # Last, a claim of the `relay` procedure kind, on the run the gate's relay
@@ -33,7 +33,7 @@
 # Needs the local blockchains up (`just devstack-up`), the contracts deployed, and
 # a parity run of the gemma family's small model for the small claims (`just
 # test-parity`); reads the newest such run under target/parity, or the one
-# IRIS_PARITY_RUN names. The cases are written for that model: on the other
+# IWEBS_PARITY_RUN names. The cases are written for that model: on the other
 # family's small model a layer stage given another layer's weights is under
 # the replay window, which `--real-model` covers at full size. Every run
 # makes its claims for fresh addresses, so it can be repeated on one
@@ -63,16 +63,16 @@ echo "== blockchain tier"
 
 rpc_answers() {
     curl -s -m 5 -o /dev/null -X POST -H 'content-type: application/json' \
-        --data '{"jsonrpc":"2.0","id":1,"method":"eth_chainId","params":[]}' "$IRIS_EVM_RPC" &&
-        curl -s -m 5 -o /dev/null "$IRIS_CELESTIA_RPC"
+        --data '{"jsonrpc":"2.0","id":1,"method":"eth_chainId","params":[]}' "$IWEBS_EVM_RPC" &&
+        curl -s -m 5 -o /dev/null "$IWEBS_CELESTIA_RPC"
 }
 if ! rpc_answers; then
-    echo "the local blockchains do not answer at $IRIS_EVM_RPC and $IRIS_CELESTIA_RPC: run \`just devstack-up\`" >&2
+    echo "the local blockchains do not answer at $IWEBS_EVM_RPC and $IWEBS_CELESTIA_RPC: run \`just devstack-up\`" >&2
     exit 1
 fi
 # The deployment file is written by the binary, so it is built first.
 step blockchain-build "release binary built" \
-    cargo build --release --locked -p iris-cli --bin iris "${features[@]}"
+    cargo build --release --locked -p iwebs-cli --bin iwebs "${features[@]}"
 if [ $deploy -eq 1 ]; then
     step blockchain-deploy "contracts built and deployed" bash "$repo_root/blockchain/devstack/deploy.sh"
 fi
@@ -84,7 +84,7 @@ deployed() {
     [ -n "$claims" ] || return 1
     code=$(curl -s -m 5 -X POST -H 'content-type: application/json' \
         --data "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"eth_getCode\",\"params\":[\"$claims\",\"latest\"]}" \
-        "$IRIS_EVM_RPC")
+        "$IWEBS_EVM_RPC")
     [[ "$code" == *'"result":"0x'[0-9a-f]* ]]
 }
 if ! deployed; then
@@ -93,7 +93,7 @@ if ! deployed; then
 fi
 
 # The newest parity run of the gemma family's small model.
-parity_run="${IRIS_PARITY_RUN:-}"
+parity_run="${IWEBS_PARITY_RUN:-}"
 if [ -z "$parity_run" ]; then
     for run in $(ls -td "$repo_root"/target/parity/*/ 2> /dev/null); do
         if [ -d "$run/model-artifacts/parity-gemma" ]; then
@@ -113,10 +113,10 @@ run_id=$(date +%s)
 out="$repo_root/target/blockchain-test/$run_id"
 mkdir -p "$out"
 echo "   kept under target/blockchain-test/$run_id"
-iris="$repo_root/target/release/iris"
-export IRIS_BINARY="$iris"
+iwebs="$repo_root/target/release/iwebs"
+export IWEBS_BINARY="$iwebs"
 # The cases run in directories of their own.
-export IRIS_BLOCKCHAIN_DEPLOYMENT="$repo_root/blockchain/devstack/deployment.json"
+export IWEBS_BLOCKCHAIN_DEPLOYMENT="$repo_root/blockchain/devstack/deployment.json"
 
 # A fresh address per run and name: twenty bytes of the hash of both.
 address() {
@@ -157,7 +157,7 @@ build_claim() (
     [ -n "$ids" ] && build=(test claim --ids "$ids")
     mkdir -p "$out/$name"
     cd "$out/$name"
-    "$iris" "${build[@]}" --specification "$specification" --case "$(case_of "$specification")" --claimer "$(address "$name")" > build.log 2>&1 || {
+    "$iwebs" "${build[@]}" --specification "$specification" --case "$(case_of "$specification")" --claimer "$(address "$name")" > build.log 2>&1 || {
         tail -5 build.log >&2
         exit 1
     }
@@ -181,16 +181,16 @@ last_check() {
 # submitted <claim_submission.json> <specification>: posted, and taken by the
 # contract.
 submitted() {
-    "$iris" claim post --submission "$1"
-    "$iris" test devstack submit claim --specification "$2" --submission "$1" > "$1.arrival.json"
+    "$iwebs" claim post --submission "$1"
+    "$iwebs" test devstack submit claim --specification "$2" --submission "$1" > "$1.arrival.json"
     expect "$1.arrival.json" '"accepted": true'
 }
 
 # audited <fetched dir> <specification> <faults>: every on-the-spot question
-# asked of the contract, which answers each as iris does and holds this many
+# asked of the contract, which answers each as IWEBS does and holds this many
 # faults.
 audited() {
-    "$iris" test devstack replay faults --specification "$2" \
+    "$iwebs" test devstack replay faults --specification "$2" \
         --submission "$1/claim_submission.json" | tee "$1.faults.log"
     if [ "$3" = none ]; then
         expect "$1.faults.log" '"faults": 0}'
@@ -204,11 +204,11 @@ honest_claim() (
     set -euo pipefail
     local claim specification=$2
     claim=$(cat "$out/$1.submission")
-    "$iris" claim post --submission "$claim"
-    # iris and the contract on the claim and on changed copies of it, then
+    "$iwebs" claim post --submission "$claim"
+    # IWEBS and the contract on the claim and on changed copies of it, then
     # the claim itself submitted.
-    "$iris" test devstack replay claim --specification "$specification" --submission "$claim"
-    "$iris" claim fetch --submission "$claim" --specification "$specification" --out "$out/$1-fetched"
+    "$iwebs" test devstack replay claim --specification "$specification" --submission "$claim"
+    "$iwebs" claim fetch --submission "$claim" --specification "$specification" --out "$out/$1-fetched"
     audited "$out/$1-fetched" "$specification" none
 )
 
@@ -218,26 +218,26 @@ voided_lie() (
     local name=$1 claim specification=$3 fault=$4
     claim=$(cat "$out/$2.submission")
     shift 4
-    "$iris" test corrupt-claim --submission "$claim" --claimer "$(address "$name")" --output "$out/$name-lie" "$@"
+    "$iwebs" test corrupt-claim --submission "$claim" --claimer "$(address "$name")" --output "$out/$name-lie" "$@"
     submitted "$out/$name-lie/claim_submission.json" "$specification"
-    "$iris" claim fetch --submission "$out/$name-lie/claim_submission.json" --specification "$specification" --out "$out/$name"
+    "$iwebs" claim fetch --submission "$out/$name-lie/claim_submission.json" --specification "$specification" --out "$out/$name"
     audited "$out/$name" "$specification" "$fault"
 )
 
 # replayed_lie <name> <source claim> <specification> <stage> <must replay: yes|no>
-#              <hold the challenge to iris: yes|no> <corrupt arguments>
+#              <hold the challenge to IWEBS: yes|no> <corrupt arguments>
 replayed_lie() (
     set -euo pipefail
     local name=$1 claim specification=$3 stage=$4 must_replay=$5 held=$6
     claim=$(cat "$out/$2.submission")
     shift 6
-    "$iris" test corrupt-claim --submission "$claim" --claimer "$(address "$name")" --output "$out/$name-lie" \
+    "$iwebs" test corrupt-claim --submission "$claim" --claimer "$(address "$name")" --output "$out/$name-lie" \
         --stage "$stage" "$@"
     # A lie a replay shows arrives as any claim does, here with a valid record.
     expect "$out/$name-lie/claim_submission.json" '"valid": true'
     absent "$out/$name-lie/claim_submission.json" '"valid": false'
     submitted "$out/$name-lie/claim_submission.json" "$specification"
-    "$iris" claim fetch --submission "$out/$name-lie/claim_submission.json" --specification "$specification" --out "$out/$name"
+    "$iwebs" claim fetch --submission "$out/$name-lie/claim_submission.json" --specification "$specification" --out "$out/$name"
     audited "$out/$name" "$specification" none
 
     mkdir -p "$out/$name-challenge"
@@ -245,9 +245,9 @@ replayed_lie() (
     local built=0
     # The challenger's own specification. The case is the one `claim fetch`
     # wrote beside the submission.
-    "$iris" challenge build --specification "$specification" \
+    "$iwebs" challenge build --specification "$specification" \
         --submission "$out/$name/claim_submission.json" > build.log 2>&1 || built=$?
-    grep -v '^IRIS_CHALLENGE_PROGRESS' build.log | tail -12
+    grep -v '^IWEBS_CHALLENGE_PROGRESS' build.log | tail -12
     expect build.log "stage to replay: $stage"
     if [ $built -ne 0 ]; then
         # The one reason a replay may not be built here: the stage is under
@@ -264,17 +264,17 @@ replayed_lie() (
     expect build.log "divergence found: $stage"
     local bundle
     bundle=$(sed -n 's/^challenge bundle: //p' build.log | tail -1)
-    "$iris" challenge post --challenge "$bundle" --submission "$out/$name/claim_submission.json" \
+    "$iwebs" challenge post --challenge "$bundle" --submission "$out/$name/claim_submission.json" \
         --specification "$specification" --challenger "$(address "$name challenger")"
     local challenge
     challenge="$(dirname "$bundle")/challenge_submission.json"
     if [ "$held" = yes ]; then
-        # iris and the contract on the challenge and on changed copies of
+        # IWEBS and the contract on the challenge and on changed copies of
         # it, then the challenge itself submitted.
-        "$iris" test devstack replay challenge --specification "$specification" \
+        "$iwebs" test devstack replay challenge --specification "$specification" \
             --submission "$out/$name/claim_submission.json" --challenge "$challenge"
     else
-        "$iris" test devstack submit challenge \
+        "$iwebs" test devstack submit challenge \
             --submission "$out/$name/claim_submission.json" --challenge "$challenge" | tee challenge.json
         expect challenge.json '"accepted": true'
     fi

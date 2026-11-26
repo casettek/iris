@@ -1,4 +1,4 @@
-# How iris works
+# How IWEBS works
 
 A claimer says what a model answered. Anyone can check it, and a contract acts
 on it if nobody shows it wrong. This page is the whole of that from the top:

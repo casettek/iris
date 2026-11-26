@@ -71,7 +71,7 @@ for Q16.16 values, or 8 for `Q8_0` rows of blocks. A `Q8_0` tensor's rows must
 be whole blocks. Readers keep the two kinds separate: `Q8_0` tensors are read
 as block rows, never as Q16.16 values.
 
-`iris model convert` writes a v3 bundle from a GGUF file
+`iwebs model convert` writes a v3 bundle from a GGUF file
 ([model import](../workflows/model-import.md#converting-a-gguf-model)). It
 copies `Q8_0` blocks byte for byte and converts float tensors to Q16.16 with
 `inference_numerics`'s exact conversion.

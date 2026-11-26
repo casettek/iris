@@ -32,8 +32,8 @@ try {
     # Windows headers must not replace std::min/std::max. The pinned generated
     # kernels also use designated initializers, which MSVC requires C++20 for.
     $env:CXXFLAGS_x86_64_pc_windows_msvc = "$previousCxxFlags /DNOMINMAX /std:c++20 /EHsc".Trim()
-    & cargo "+$toolchain" build --release --locked -p iris-cli --bin iris --target-dir $targetDir -j $Jobs
-    if ($LASTEXITCODE -ne 0) { throw 'Windows Iris build failed.' }
+    & cargo "+$toolchain" build --release --locked -p iwebs-cli --bin iwebs --target-dir $targetDir -j $Jobs
+    if ($LASTEXITCODE -ne 0) { throw 'Windows IWEBS build failed.' }
 
     if ($Test) {
         & cargo "+$toolchain" test --release --locked -p risc0-zkvm-platform --test host_link --target-dir $targetDir -j $Jobs
@@ -45,7 +45,7 @@ try {
         & cargo "+$toolchain" test --release --locked -p procedure-pipeline --test infer_parity --test worker_parity --target-dir $targetDir -j $Jobs
         if ($LASTEXITCODE -ne 0) { throw 'The pipeline run parity test failed.' }
     }
-    Write-Host "Windows executable: $(Join-Path $targetDir 'release/iris.exe')"
+    Write-Host "Windows executable: $(Join-Path $targetDir 'release/iwebs.exe')"
 }
 finally {
     Pop-Location

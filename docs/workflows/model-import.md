@@ -13,7 +13,7 @@ not a constant-memory streaming serializer. Keep the bundle unchanged during
 import, as with the native run's memory-mapped reader.
 
 ```bash
-cargo run --release -p iris-cli -- model import \
+cargo run --release -p iwebs-cli -- model import \
   --model ../iris/assets/tiny-gemma-dev
 ```
 
@@ -21,7 +21,7 @@ Inputs:
 
 - `model.detwgt`: deterministic weights, detwgt v3. The embedding tables, head,
   and attention and MLP matrices are `Q8_0` blocks; the rest is Q16.16 (see
-  [numerics](../protocol/numerics.md)). Write one with `iris model convert`.
+  [numerics](../protocol/numerics.md)). Write one with `iwebs model convert`.
 - `config.json`: model shape, attention/window settings, softcap, and normalization parameters.
 - `tokenizer.json`: vocabulary, merges, added tokens, and EOS metadata.
 
@@ -48,7 +48,7 @@ Outputs:
 `model import` reads:
 
 ```bash
-iris model convert --gguf ../models/gemma-4-E2B-it/gemma-4-E2B-it-Q8_0.gguf \
+iwebs model convert --gguf ../models/gemma-4-E2B-it/gemma-4-E2B-it-Q8_0.gguf \
   --metadata ../models/gemma-4-E2B-detwgt --out ../models/gemma-4-E2B-q8
 ```
 
@@ -101,7 +101,7 @@ derived model ID retain their previous encoding. Decoder proofs are separate
 from that package and do not change the decoder's root.
 
 Reimport models and prepare new runs after this schema change. v4 model/run
-artifacts are rejected; replay historical claims with their original Iris
+artifacts are rejected; replay historical claims with their original IWEBS
 revision and Raster identities. Native-only imports still support discovery,
 but cannot produce a verified claim package.
 

@@ -75,7 +75,7 @@ pub fn write_model_manifest(
 
 pub fn warn_partial_native_manifest_not_refreshed(args: &ImportConfig) {
     eprintln!(
-        "model manifest not refreshed; run a full `iris model import ...` \
+        "model manifest not refreshed; run a full `iwebs model import ...` \
          to regenerate {}",
         args.artifact_dir().join(MODEL_MANIFEST_JSON).display()
     );

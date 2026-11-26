@@ -33,7 +33,7 @@ pub enum ChallengeInput {
         claim_context_path: PathBuf,
         checkpoint_hashes_path: PathBuf,
     },
-    /// A submitted claim as `iris claim fetch` read it back from the layer:
+    /// A submitted claim as `iwebs claim fetch` read it back from the layer:
     /// its `claim_submission.json`, with its `checkpoints.txt`, its
     /// checkpoints and the inputs its run was given beside it. Nothing of
     /// the claimer's own run is read. Every stage is run on the inputs the
@@ -210,7 +210,7 @@ pub fn build_challenge(options: ChallengeBuildOptions) -> Result<ChallengeBuildR
             bail!(
                 "checkpoint {} (`{}`) of the claim names {differs} than a run of that stage on \
                  the inputs its checkpoint names, so a replay of the stage here would dispute \
-                 nothing the claimer did. Audit the claim (`iris claim audit`): a program \
+                 nothing the claimer did. Audit the claim (`iwebs claim audit`): a program \
                  outside the approved set voids it with no replay",
                 divergence.checkpoint_index,
                 divergence.stage
@@ -360,7 +360,7 @@ fn challenge_progress(
         "raster_replay_duration_ms": raster_replay_duration.map(|d| d.as_secs_f64() * 1000.0),
     });
     let mut stdout = std::io::stdout().lock();
-    writeln!(stdout, "IRIS_CHALLENGE_PROGRESS {progress}")?;
+    writeln!(stdout, "IWEBS_CHALLENGE_PROGRESS {progress}")?;
     stdout.flush()?;
     Ok(())
 }
@@ -402,7 +402,7 @@ fn challenge_run(
         .context("the claim submission has no parent directory")?;
     let posted = crate::run_inputs::load(claim_dir).with_context(|| {
         format!(
-            "{} holds no inputs of the claim's run: challenge the directory `iris claim fetch` \
+            "{} holds no inputs of the claim's run: challenge the directory `iwebs claim fetch` \
              wrote",
             claim_dir.display()
         )
@@ -1396,7 +1396,7 @@ mod tests {
             .unwrap()
             .as_nanos();
         std::env::temp_dir().join(format!(
-            "iris-cli-challenge-{label}-{}-{nanos}",
+            "iwebs-cli-challenge-{label}-{}-{nanos}",
             std::process::id()
         ))
     }

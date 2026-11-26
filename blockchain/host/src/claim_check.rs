@@ -1,4 +1,4 @@
-//! `iris claim check`: the checks a contract would make on a claim, run on the
+//! `iwebs claim check`: the checks a contract would make on a claim, run on the
 //! host against the files a claimer and a challenger would post.
 //!
 //! The rules themselves are in `blockchain_rules::checks`. This module
@@ -41,11 +41,11 @@ pub struct ClaimCheckOptions {
     /// A Raster pipeline run of the same claim. With it, every checkpoint is held
     /// to the boundary that run committed.
     pub raster_run: Option<PathBuf>,
-    /// The pins the contract holds, as `iris claim pins` wrote them. Without
+    /// The pins the contract holds, as `iwebs claim pins` wrote them. Without
     /// it a `single` contract's are the model import's, and those of a
     /// procedure kind over several models are made from the imports now.
     pub pins_path: Option<PathBuf>,
-    /// The registry the claim's procedure is looked up in, as `iris
+    /// The registry the claim's procedure is looked up in, as `iwebs
     /// registry add` writes it. Without it the contract's procedure is
     /// the one the specification and the pins describe.
     pub registry_path: Option<PathBuf>,
@@ -101,13 +101,13 @@ fn load_pins(
 ) -> Result<ContractPins> {
     ensure!(
         path.exists(),
-        "{} does not exist: write it with `iris claim pins`, or import the model again from \
-         the iris root, where the stage projects and their Raster.lock files are",
+        "{} does not exist: write it with `iwebs claim pins`, or import the model again from \
+         the iwebs root, where the stage projects and their Raster.lock files are",
         path.display()
     );
     let pins: ContractPins = read_json(path).with_context(|| {
         format!(
-            "{} is not a contract pins file of this build: write it again with `iris claim \
+            "{} is not a contract pins file of this build: write it again with `iwebs claim \
              pins`, or import the model again",
             path.display()
         )
@@ -275,7 +275,7 @@ pub fn claim_rejection(
     .rejection())
 }
 
-/// What `iris claim post` did: where each blob is, and whether a contract
+/// What `iwebs claim post` did: where each blob is, and whether a contract
 /// would take them as the claim's data.
 pub struct ClaimPosted {
     pub blobs: Vec<blockchain_rules::availability::PostedBlob>,
@@ -326,7 +326,7 @@ pub fn check_claim(options: ClaimCheckOptions) -> Result<ClaimCheckReport> {
     let contract = contract_of(&specification_path, &specification, pins_path.as_deref())?
         .with_context(|| {
             format!(
-            "a model {} names has no {CONTRACT_PINS_JSON}: import it again from the iris root, \
+            "a model {} names has no {CONTRACT_PINS_JSON}: import it again from the iwebs root, \
              where the stage projects and their Raster.lock files are",
             specification_path.display()
         )
@@ -588,12 +588,12 @@ fn check_claim_dir(
 }
 
 /// The procedure a specification describes, with the pins of this file or,
-/// without one, as `iris claim check` finds them.
+/// without one, as `iwebs claim check` finds them.
 pub fn spec_procedure(specification_path: &Path, pins_path: Option<&Path>) -> Result<Procedure> {
     let specification = read_specification(specification_path)?;
     contract_of(specification_path, &specification, pins_path)?.with_context(|| {
         format!(
-            "a model {} names has no {CONTRACT_PINS_JSON}: import it again from the iris root, \
+            "a model {} names has no {CONTRACT_PINS_JSON}: import it again from the iwebs root, \
              where the stage projects and their Raster.lock files are",
             specification_path.display()
         )

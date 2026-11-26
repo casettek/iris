@@ -1,4 +1,4 @@
-//! `iris model convert`: a GGUF model into a model bundle `model import` reads.
+//! `iwebs model convert`: a GGUF model into a model bundle `model import` reads.
 
 use std::fs;
 use std::path::Path;

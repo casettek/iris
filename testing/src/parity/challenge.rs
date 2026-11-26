@@ -1904,14 +1904,14 @@ mod tests {
     use super::*;
 
     #[test]
-    #[ignore = "requires retained three-path parity fixtures; set IRIS_PARITY_RUN"]
+    #[ignore = "requires retained three-path parity fixtures; set IWEBS_PARITY_RUN"]
     fn decoder_self_replay_rejects_matching_dishonest_execution() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("..")
             .canonicalize()
             .unwrap();
         let base = std::path::PathBuf::from(
-            std::env::var_os("IRIS_PARITY_RUN").expect("set IRIS_PARITY_RUN"),
+            std::env::var_os("IWEBS_PARITY_RUN").expect("set IWEBS_PARITY_RUN"),
         );
         let model: inference_manifest::ModelManifest = procedure_definition::read_json(
             &base.join("model-artifacts/parity-gemma/manifest.json"),
@@ -1934,7 +1934,7 @@ mod tests {
             let result = super::replay_semantic_rejection(
                 &root,
                 dir,
-                &root.join("target/release/iris"),
+                &root.join("target/release/iwebs"),
                 &root.join("target/parity-tools/release/cargo-raster"),
                 &model.model_id,
                 name,
@@ -1946,13 +1946,14 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "replays retained pipeline attacks through native and Raster; set IRIS_PARITY_RUN"]
+    #[ignore = "replays retained pipeline attacks through native and Raster; set IWEBS_PARITY_RUN"]
     fn pipeline_wiring_self_replays_reject_matching_execution() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("..")
             .canonicalize()
             .unwrap();
-        let base = PathBuf::from(std::env::var_os("IRIS_PARITY_RUN").expect("set IRIS_PARITY_RUN"));
+        let base =
+            PathBuf::from(std::env::var_os("IWEBS_PARITY_RUN").expect("set IWEBS_PARITY_RUN"));
         let model: ModelManifest =
             read_json(&base.join("model-artifacts/parity-gemma/manifest.json")).unwrap();
         for case in [
@@ -1976,7 +1977,7 @@ mod tests {
             let result = replay_semantic_rejection(
                 &root,
                 base.join(format!("binding-{case}-{}", std::process::id())),
-                &root.join("target/release/iris"),
+                &root.join("target/release/iwebs"),
                 &root.join("target/parity-tools/release/cargo-raster"),
                 &model.model_id,
                 &name,
@@ -1988,18 +1989,19 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "requires retained parity fixtures; set IRIS_PARITY_RUN"]
+    #[ignore = "requires retained parity fixtures; set IWEBS_PARITY_RUN"]
     fn tokenizer_substitutions_touch_consumed_buckets() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("..")
             .canonicalize()
             .unwrap();
-        let base = PathBuf::from(std::env::var_os("IRIS_PARITY_RUN").expect("set IRIS_PARITY_RUN"))
-            .canonicalize()
-            .unwrap();
+        let base =
+            PathBuf::from(std::env::var_os("IWEBS_PARITY_RUN").expect("set IWEBS_PARITY_RUN"))
+                .canonicalize()
+                .unwrap();
         let model: ModelManifest =
             read_json(&base.join("model-artifacts/parity-gemma/manifest.json")).unwrap();
-        let runs = base.join("over-window/target/iris/runs");
+        let runs = base.join("over-window/target/iwebs/runs");
         let prepared = fs::read_dir(runs).unwrap().next().unwrap().unwrap().path();
         let manifest = fs::read_to_string(prepared.join("Raster.toml")).unwrap();
         let work = base.join(format!("sparse-tokenizer-native-{}", std::process::id()));
@@ -2017,7 +2019,7 @@ mod tests {
                 .run(CheckpointedInferenceConfig {
                     base_dir: dir,
                     manifest_path: path,
-                    current_exe: root.join("target/release/iris"),
+                    current_exe: root.join("target/release/iwebs"),
                     native_stage_backend: NativeStageBackend::InProcess,
                     parity_policy: ParityPolicy::Skip,
                 })
@@ -2031,7 +2033,7 @@ mod tests {
         }
     }
 
-    const MANIFEST: &str = "[pipeline]\nname = \"iris\"\n\n[pipeline.input.layers]\nindex = \"l\"\npath = \"a/layer{l}.rastered\"\ncommitments = [\n  \"one\", # l0\n  \"two\", # l1\n]\n\n[[pipeline.stage]]\nname = \"first\"\ninputs.value = { from = \"source\" }\n\n[[pipeline.repeat]]\nname = \"more\"\n\n  [[pipeline.repeat.stage]]\nname = \"later_{j}\"\ninputs.value = { from = \"first\" }\ninputs.other = { from = \"first\" }\n";
+    const MANIFEST: &str = "[pipeline]\nname = \"iwebs\"\n\n[pipeline.input.layers]\nindex = \"l\"\npath = \"a/layer{l}.rastered\"\ncommitments = [\n  \"one\", # l0\n  \"two\", # l1\n]\n\n[[pipeline.stage]]\nname = \"first\"\ninputs.value = { from = \"source\" }\n\n[[pipeline.repeat]]\nname = \"more\"\n\n  [[pipeline.repeat.stage]]\nname = \"later_{j}\"\ninputs.value = { from = \"first\" }\ninputs.other = { from = \"first\" }\n";
 
     #[test]
     fn a_binding_changes_in_the_named_stage_only() {

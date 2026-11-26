@@ -258,7 +258,7 @@ pub fn check_defence(
 }
 
 /// Why a Raster fault proof does not dismiss a challenge a contract holds.
-/// Each is the error of the same name in `IrisClaims.submitFaultProof`, which
+/// Each is the error of the same name in `IwebsClaims.submitFaultProof`, which
 /// makes these checks in this order.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FaultProofRejection {
@@ -315,7 +315,7 @@ impl std::fmt::Display for FaultProofRejection {
 }
 
 /// Whether a Raster fault proof dismisses a challenge, as a contract decides
-/// it (`IrisClaims.submitFaultProof`).
+/// it (`IwebsClaims.submitFaultProof`).
 ///
 /// `journal` is the journal of a receipt the caller has verified against the
 /// transition program. The two image ids are the ones a contract pins: the

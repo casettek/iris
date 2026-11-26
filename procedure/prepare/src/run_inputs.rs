@@ -156,7 +156,7 @@ mod tests {
     #[test]
     fn posted_values_have_the_commitments_run_preparation_binds() {
         let dir = std::env::temp_dir().join(format!(
-            "iris-run-inputs-{}-{:?}",
+            "iwebs-run-inputs-{}-{:?}",
             std::process::id(),
             std::thread::current().id()
         ));

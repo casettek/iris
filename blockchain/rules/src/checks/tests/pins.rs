@@ -34,7 +34,7 @@ fn pins_are_of_one_procedure_kind_over_its_models_in_order() {
     assert_eq!(single.mismatch(ProcedureKind::single(), &[&first]), None);
     // The file says which procedure kind it is of and which models, in order.
     let written = serde_json::to_value(&single).unwrap();
-    assert_eq!(written["version"], 6);
+    assert_eq!(written["version"], 7);
     assert_eq!(written["procedure_kind"], "single");
     assert_eq!(written["models"].as_array().unwrap().len(), 1);
     assert!(written["programs"]["stage_programs"].is_array());
@@ -97,11 +97,11 @@ fn pins_are_of_one_procedure_kind_over_its_models_in_order() {
 #[test]
 fn a_templates_run_inputs_are_what_a_run_writes() {
     let template = r#"[pipeline]
-name = "iris"
+name = "iwebs"
 
 [pipeline.input.prompt_text]
 index = "j"
-path = "/repo/target/iris/run-prompt-placeholder/text_{j}.rastered"
+path = "/repo/target/iwebs/run-prompt-placeholder/text_{j}.rastered"
 commitments = []
 
 [pipeline.input.transformer_layer]
@@ -118,7 +118,7 @@ inputs.recipe = { run = "source_recipe" }
 name = "prompt_bind_p0"
 project = "raster-stages/prompt-bind"
 inputs.text = { input = "prompt_text_0" }
-inputs.config = { external = { path = "/repo/target/iris/run-prompt-placeholder/config.rastered", index_path = "x", commitment = "0" } }
+inputs.config = { external = { path = "/repo/target/iwebs/run-prompt-placeholder/config.rastered", index_path = "x", commitment = "0" } }
 inputs.tokenizer = { external = { path = "/repo/model/tokenizer.rastered", index_path = "x", commitment = "t" } }
 inputs.source = { from = "source" }
 
@@ -151,7 +151,7 @@ inputs.layer = { input = "transformer_layer_{l}" }
 fn the_wiring_is_read_from_the_pipeline_template() {
     let template = r#"
 [pipeline]
-name = "iris"
+name = "iwebs"
 
 [[pipeline.stage]]
 name = "prompt_bind_p0"
@@ -261,7 +261,7 @@ inputs.first = { from = "m0_check_c@m0_LAST_CLAIMED_RANGE@" }
 inputs.second = { from = "m1_check_c@m1_LAST_CLAIMED_RANGE@" }
 "#;
     let template = format!(
-        "[pipeline]\nname = \"iris\"\n{}{}{result}",
+        "[pipeline]\nname = \"iwebs\"\n{}{}{result}",
         segment("m0_", "prefill-range"),
         segment("m1_", "layer-mistral")
     );

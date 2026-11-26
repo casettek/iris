@@ -1,4 +1,4 @@
-//! The calldata of the contracts' calls: `iris evm`.
+//! The calldata of the contracts' calls: `iwebs evm`.
 
 use crate::blockchain::evm;
 use crate::*;

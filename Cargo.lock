@@ -2746,39 +2746,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6a756c3fac73139e83f14c2d742155dd2b78d3ee56597b419a0579b7bdd6dd78"
 
 [[package]]
-name = "iris-cli"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "blockchain-host",
- "blockchain-rules",
- "clap",
- "common-identity",
- "hex",
- "inference-generation",
- "inference-import",
- "inference-manifest",
- "postcard",
- "procedure-definition",
- "procedure-native",
- "procedure-pipeline",
- "procedure-prepare",
- "procedure-run",
- "raster",
- "raster-analysis",
- "raster-backend",
- "raster-backend-risc0",
- "raster-compiler",
- "raster-runtime",
- "sequence-check",
- "serde",
- "serde_json",
- "source-phase",
- "testing",
- "toml",
-]
-
-[[package]]
 name = "is_terminal_polyfill"
 version = "1.70.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2825,6 +2792,39 @@ name = "itoa"
 version = "1.0.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
+
+[[package]]
+name = "iwebs-cli"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "blockchain-host",
+ "blockchain-rules",
+ "clap",
+ "common-identity",
+ "hex",
+ "inference-generation",
+ "inference-import",
+ "inference-manifest",
+ "postcard",
+ "procedure-definition",
+ "procedure-native",
+ "procedure-pipeline",
+ "procedure-prepare",
+ "procedure-run",
+ "raster",
+ "raster-analysis",
+ "raster-backend",
+ "raster-backend-risc0",
+ "raster-compiler",
+ "raster-runtime",
+ "sequence-check",
+ "serde",
+ "serde_json",
+ "source-phase",
+ "testing",
+ "toml",
+]
 
 [[package]]
 name = "jiff"

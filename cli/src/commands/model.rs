@@ -1,4 +1,4 @@
-//! Model preparation: `iris model`.
+//! Model preparation: `iwebs model`.
 
 use crate::*;
 

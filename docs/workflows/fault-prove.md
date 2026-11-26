@@ -1,14 +1,14 @@
 # Fault proving
 
 The app automatically follows each completed challenge with a synthetic fault
-proof. Iris already knows the disputed stage and invokes its program directly
+proof. IWEBS already knows the disputed stage and invokes its program directly
 with `cargo raster run --audit`. Raster compares live events against the supplied
 commitment, stops at the first detected divergence, and generates a verified
 fault proof. No additional commitment or raw trace is written.
 
-Build Iris with the RISC0 proving toolchain available and **without**
+Build IWEBS with the RISC0 proving toolchain available and **without**
 `RISC0_SKIP_BUILD`. Native-only binaries built with that variable cannot prove.
-`iris fault check` rejects missing embedded guests and development mode before
+`iwebs fault check` rejects missing embedded guests and development mode before
 the app starts inference. RISC0 3.0's guest builder rejects native Windows
 (`UnsupportedPlatform("unknown OS: windows")`). Use WSL/Linux for the complete
 proving workflow. `scripts/build-windows.ps1` builds native inference only and
@@ -19,8 +19,8 @@ From a WSL shell with the RISC0 toolchain installed:
 ```sh
 cd /home/amcas/Development/iris
 unset RISC0_SKIP_BUILD RISC0_DEV_MODE
-cargo build --release --locked -p iris-cli --bin iris
-./target/release/iris fault check
+cargo build --release --locked -p iwebs-cli --bin iwebs
+./target/release/iwebs fault check
 ```
 
 For NVIDIA GPU proving in the Linux checkout, use:
@@ -29,7 +29,7 @@ For NVIDIA GPU proving in the Linux checkout, use:
 ./scripts/build-linux-cuda.sh
 ```
 
-The script builds Iris with `--features cuda` and installs the sibling Raster
+The script builds IWEBS with `--features cuda` and installs the sibling Raster
 CLI with its existing `cuda` feature. Both must be rebuilt for this change. This machine
 uses CUDA 13.3 and `g++-13`; the build also needs `libclang-dev` and
 `protobuf-compiler`. Install the WSL CUDA compiler/development packages without
@@ -37,8 +37,8 @@ Linux display drivers. `CUDA_HOME`, `NVCC_CCBIN`, and `JOBS` can override the
 script defaults. CUDA kernels target the GPU visible during the build.
 
 CUDA accelerates RISC0 proof generation; native stage replay still uses the CPU.
-Rebuilding Iris without `--features cuda` returns it to CPU proving. The backend
-and frontend do not need rebuilding to use the updated Iris executable.
+Rebuilding IWEBS without `--features cuda` returns it to CPU proving. The backend
+and frontend do not need rebuilding to use the updated IWEBS executable.
 
 The backend worker must also run under Linux Node with Linux paths for
 `IRIS_BINARY_PATH`, `IRIS_MODEL_MANIFEST`, and `FEED_STORAGE_DIR`. The current
@@ -49,8 +49,8 @@ Windows paths and cannot simply be reused by the Linux worker. Raster's Linux
 CLI (`cargo raster`) must be installed in the worker's PATH as well.
 
 ```sh
-iris test corrupt-challenge --challenge /path/to/challenge_bundle.json --output /path/to/fault-attempt
-iris fault prove --claim-context /path/to/claim_bundle.json \
+iwebs test corrupt-challenge --challenge /path/to/challenge_bundle.json --output /path/to/fault-attempt
+iwebs fault prove --claim-context /path/to/claim_bundle.json \
   --challenge /path/to/challenge_bundle.json \
   --commitment /path/to/fault-attempt/corrupted_commit.bin \
   --output /path/to/fault-attempt
@@ -69,10 +69,10 @@ stage inputs. Native execution stops at divergence, so there is no final replay
 checkpoint check. Earlier claim/challenge checkpoint checks remain in place.
 Receipt verification checks the guest identity, Finished verdict, and the
 refuted commitment **header digest**. File SHA-256 is a separate artifact check.
-An honest Raster audit reports `no-fault`; Iris rejects that result as an
+An honest Raster audit reports `no-fault`; IWEBS rejects that result as an
 unsuccessful fault-proof attempt rather than claiming a proof exists.
 
-`IRIS_FAULT_PROGRESS` version 1 records include `phase`, `started_at_ms`,
+`IWEBS_FAULT_PROGRESS` version 1 records include `phase`, `started_at_ms`,
 `stage_replay_duration_ms`, and `proof_duration_ms`. Durations are null until
 complete. Phases are `preparing`, `stage-replay`, `proving`, and `validating`.
 
@@ -149,7 +149,7 @@ cargo raster trace commit --project /path/to/stage-project \
 
 Use the original run's window size. This command does not execute the stage or
 change backend job status. It prints trace-processing progress and scratch bytes.
-A recovered commitment alone is not a complete IRIS challenge bundle.
+A recovered commitment alone is not a complete IWEBS challenge bundle.
 
 ### Compatibility checked for this implementation
 
@@ -166,7 +166,7 @@ The transition guest image ID changed because its empty storage-index root
 uses the shared coordinate-index implementation whose storage access was
 refactored. No guest verification source or commitment encoding changed; all
 160 existing transition guest verification tests passed. Authorization and
-pipeline-fault guest IDs stayed unchanged. Iris and Raster were rebuilt together
+pipeline-fault guest IDs stayed unchanged. IWEBS and Raster were rebuilt together
 with the existing CUDA script. Previously generated transition receipts still
 require their original verifier/image ID; this change does not migrate them.
 
@@ -182,5 +182,5 @@ and this change preserved all three currently installed guest image IDs.
 The recovered commitment is
 `/home/amcas/Development/raster/target/stream-commit-recovery/commit.bin`.
 The same directory contains `processing.log` and `validation.json`. This is a
-commitment-only check; it does not publish an IRIS challenge bundle or validate
+commitment-only check; it does not publish an IWEBS challenge bundle or validate
 Gemma4 fault proving.

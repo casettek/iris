@@ -1,6 +1,6 @@
 # Glossary
 
-The words iris uses, each with one meaning. Where the code still says
+The words IWEBS uses, each with one meaning. Where the code still says
 something else, the last column gives it: the docs change first and the code
 follows, so this page says which is which until they agree.
 
@@ -19,8 +19,8 @@ follows, so this page says which is which until they agree.
 | Segment | The stages that share one purpose: what a phase becomes in a pipeline. A procedure's pipeline has a source segment, one inference segment per model, and a result segment. Raster's word | |
 | Stage | One program's place in a pipeline | |
 | Native stage | A stage's code as an ordinary host program runs it. It must give, byte for byte, what the stage's Raster program gives. The native stages are under `procedure/pipeline/src/segments/` | |
-| Native run | A procedure run the ordinary way, with nothing shaped for stages: every phase in turn, with inference generating its output. It gives the result as fast as possible, and it is the only run that generates. `iris infer` makes one | |
-| Pipeline run | A procedure run as its Raster pipeline: stage by stage, each verifying its part of an output that was stated beforehand, with a checkpoint per stage. Its stages run as native stages or as Raster programs. A claim, a challenge and `iris run` each make one | |
+| Native run | A procedure run the ordinary way, with nothing shaped for stages: every phase in turn, with inference generating its output. It gives the result as fast as possible, and it is the only run that generates. `iwebs infer` makes one | |
+| Pipeline run | A procedure run as its Raster pipeline: stage by stage, each verifying its part of an output that was stated beforehand, with a checkpoint per stage. Its stages run as native stages or as Raster programs. A claim, a challenge and `iwebs run` each make one | |
 | Checkpoint | What a claim commits to for one stage: its program, its inputs and its output | |
 | Checkpoint list | A claim's checkpoints, one per stage, in order | |
 | Checkpoint hashes | One hash per checkpoint of the list, in order (`checkpoints.txt`). A claim commits to its checkpoint list by the root of the tree over them | |
@@ -37,17 +37,17 @@ Each of these had two meanings. It now has the one given here.
 | --- | --- | --- |
 | Pipeline | A procedure's stage programs in order, each output linked to the next input. Raster's word. `procedure/pipeline/` holds the run of one | A procedure kind |
 | Piped input | An input a stage takes from an earlier stage's output. Raster's word | |
-| Chain | A hash chain: each hash taken over the one before it and one more item | A pipeline, which Raster and iris used to call a chain. Nor Celestia or an EVM network: those are blockchains. "On chain" stays, for where a contract runs |
+| Chain | A hash chain: each hash taken over the one before it and one more item | A pipeline, which Raster and IWEBS used to call a chain. Nor Celestia or an EVM network: those are blockchains. "On chain" stays, for where a contract runs |
 | Blockchain | Celestia, or the EVM network the contracts are on | |
 | Fault | What a claim has when a stage of it is wrong, and what a fault proof proves. Raster's word, which used to be fraud | |
 | Segment | Stages that share one purpose | A piece of a prompt's text. The tokenizer's code says segment for that, and keeps it |
 | Native | Ordinary compiled code, as opposed to a Raster program: the native run, a native stage | Without a blockchain. A native run and a pipeline run are each made with one or without |
 | Contract | Code on a blockchain | A file format |
-| Format | The layout of a file or a record iris writes. [Formats and versions](protocol/formats.md) lists them | |
+| Format | The layout of a file or a record IWEBS writes. [Formats and versions](protocol/formats.md) lists them | |
 | Window | A span of trace items, as Raster proves them | A span of time. That is a period |
 | Trace | The events one run of a program emits. Raster's word | A claim's checkpoints. That is the checkpoint list |
 
-## The words for what iris is used for
+## The words for what IWEBS is used for
 
 A second set of words describes a procedure by what it does for the people who
 rely on it. They are for this page and for pages written for users. The code

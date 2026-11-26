@@ -25,7 +25,7 @@
 //!
 //! Here are the formats and the rules. The layer itself, Blobstream and the
 //! proof are behind [`AvailabilityLayer`]; today the host stands in for all
-//! three (`iris` CLI, `availability` module).
+//! three (`iwebs` CLI, `availability` module).
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -39,7 +39,7 @@ pub use procedure_definition::run_inputs::{
 use crate::checks::{is_address, ClaimSubmission, ResultInOutput, SubmittedRecord};
 use procedure_definition::checkpoint::{checkpoint_hash, checkpoints_root, CheckpointList};
 
-/// The first bytes of every blob iris posts.
+/// The first bytes of every blob IWEBS posts.
 pub const BLOB_MAGIC: &[u8] = b"iris/blob/v4\n";
 /// A Celestia namespace: one version byte and 28 bytes of id.
 /// Blockchain-specific: the size is Celestia's.
@@ -279,7 +279,7 @@ pub struct CheckpointPackage {
     pub input_manifests: Vec<Vec<u8>>,
 }
 
-/// Why a blob's bytes are not a blob of iris's, or do not hold what they
+/// Why a blob's bytes are not a blob of IWEBS's, or do not hold what they
 /// should.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BlobFault {
@@ -304,7 +304,7 @@ pub enum BlobFault {
 impl std::fmt::Display for BlobFault {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::NotABlob => write!(f, "the bytes are not an iris blob"),
+            Self::NotABlob => write!(f, "the bytes are not an iwebs blob"),
             Self::NoSubmitter => write!(f, "the blob names no address it was posted for"),
             Self::MalformedCheckpoints(why) => write!(f, "the checkpoint package {why}"),
             Self::MalformedTraceBody => {

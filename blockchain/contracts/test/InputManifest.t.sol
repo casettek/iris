@@ -2,7 +2,7 @@
 pragma solidity ^0.8.28;
 
 import "../src/InputManifest.sol";
-import "../src/IrisEncoding.sol";
+import "../src/IwebsEncoding.sol";
 
 /// A stage's input list is read one way only: the canonical form, and
 /// nothing else. `read_input_manifest` in `blockchain_rules::checks`
@@ -47,9 +47,9 @@ contract InputManifestTest {
 
     function test_a_canonical_list_gives_each_input_its_commitment() public pure {
         (bool readable, bool found, string memory commitment) = _read(LIST, "activations");
-        require(readable && found && IrisEncoding.sameText(commitment, "aa11"), "activations");
+        require(readable && found && IwebsEncoding.sameText(commitment, "aa11"), "activations");
         (readable, found, commitment) = _read(LIST, "ple");
-        require(readable && found && IrisEncoding.sameText(commitment, "bb22"), "ple");
+        require(readable && found && IwebsEncoding.sameText(commitment, "bb22"), "ple");
         (readable, found,) = _read(LIST, "prior_kv");
         require(readable && !found, "an input the list does not hold");
         // A name that another begins with is another name.
@@ -151,15 +151,15 @@ contract InputManifestTest {
 /// `FaultProofConfig::from_window_size` in Raster.
 contract TraceShapeTest {
     function test_the_window_is_128_or_the_largest_power_of_two_below_the_length() public pure {
-        require(IrisEncoding.protocolWindow(0) == 0 && IrisEncoding.protocolWindow(2) == 0, "too short");
-        require(IrisEncoding.protocolWindow(3) == 2 && IrisEncoding.protocolWindow(4) == 2, "3 and 4");
-        require(IrisEncoding.protocolWindow(5) == 4 && IrisEncoding.protocolWindow(9) == 8, "5 and 9");
-        require(IrisEncoding.protocolWindow(128) == 64 && IrisEncoding.protocolWindow(129) == 128, "128 and 129");
-        require(IrisEncoding.protocolWindow(1 << 40) == 128, "long");
+        require(IwebsEncoding.protocolWindow(0) == 0 && IwebsEncoding.protocolWindow(2) == 0, "too short");
+        require(IwebsEncoding.protocolWindow(3) == 2 && IwebsEncoding.protocolWindow(4) == 2, "3 and 4");
+        require(IwebsEncoding.protocolWindow(5) == 4 && IwebsEncoding.protocolWindow(9) == 8, "5 and 9");
+        require(IwebsEncoding.protocolWindow(128) == 64 && IwebsEncoding.protocolWindow(129) == 128, "128 and 129");
+        require(IwebsEncoding.protocolWindow(1 << 40) == 128, "long");
     }
 
     function test_a_window_reveals_128_fingerprint_bits() public pure {
-        require(IrisEncoding.protocolBitsPerItem(128) == 1 && IrisEncoding.protocolBitsPerItem(64) == 2, "128 and 64");
-        require(IrisEncoding.protocolBitsPerItem(4) == 32 && IrisEncoding.protocolBitsPerItem(2) == 64, "4 and 2");
+        require(IwebsEncoding.protocolBitsPerItem(128) == 1 && IwebsEncoding.protocolBitsPerItem(64) == 2, "128 and 64");
+        require(IwebsEncoding.protocolBitsPerItem(4) == 32 && IwebsEncoding.protocolBitsPerItem(2) == 64, "4 and 2");
     }
 }

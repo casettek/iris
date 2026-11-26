@@ -10,7 +10,7 @@ use inference_kernels::tensor::{MatrixSource, Q8Key, Q8Source};
 use inference_weights::{DetwgtMatrixView, DetwgtSlice, MmapDetwgt, Q8MatrixView};
 
 const ONE: i32 = 1 << 16;
-pub const MISSING_NATIVE_MANIFEST: &str = "run iris model import ... to generate a model manifest";
+pub const MISSING_NATIVE_MANIFEST: &str = "run iwebs model import ... to generate a model manifest";
 
 pub struct NativeInferenceModel {
     pub manifest: ModelManifest,

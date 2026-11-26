@@ -11,7 +11,7 @@ rustup toolchain install 1.91.1 --profile minimal
 
 The script initializes the x64 Visual Studio environment, defines `NOMINMAX`
 and selects C++20 with exception unwinding for Windows C++ compilation, and builds the release executable at
-`target/windows/release/iris.exe`. Its separate target directory preserves the
+`target/windows/release/iwebs.exe`. Its separate target directory preserves the
 WSL build under `target/release`. `-Test` runs host linkage and prover selection
 regressions, native executor tests, and the pipeline parity test.
 
@@ -34,7 +34,7 @@ WSL manifests contain `/mnt/c/...` paths. Import into a separate Windows
 artifact directory rather than replacing a manifest used by an active WSL run:
 
 ```powershell
-.\target\windows\release\iris.exe model import `
+.\target\windows\release\iwebs.exe model import `
   --model ..\models\gemma-4-E2B-q8 `
   --artifact-root runtime/windows-model-artifacts `
   --no-stage-fixtures
@@ -44,11 +44,11 @@ Name `runtime/windows-model-artifacts/gemma-4-E2B-q8/manifest.json` as the
 `[[model]]` `manifest` of a separate specification, then run:
 
 ```powershell
-.\target\windows\release\iris.exe infer --specification specification-windows.toml --case case.toml
-.\target\windows\release\iris.exe claim build --specification specification-windows.toml --case case.toml
+.\target\windows\release\iwebs.exe infer --specification specification-windows.toml --case case.toml
+.\target\windows\release\iwebs.exe claim build --specification specification-windows.toml --case case.toml
 ```
 
 For a backend running with Windows Node, set `IRIS_BINARY_PATH` to the absolute
-Windows path of `target/windows/release/iris.exe` and `IRIS_MODEL_MANIFEST` to
+Windows path of `target/windows/release/iwebs.exe` and `IRIS_MODEL_MANIFEST` to
 the Windows import's manifest. Keep Windows and WSL dependency installations
 and execution storage separate.

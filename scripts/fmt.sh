@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Format iris's host code with rustfmt, and nothing else.
+# Format IWEBS's host code with rustfmt, and nothing else.
 #
 # usage: fmt.sh [--check]
 #

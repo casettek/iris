@@ -28,7 +28,7 @@ fn main() {
     let host_compiler = env::var("NVCC_CCBIN").unwrap_or_else(|_| "g++".into());
     let out = PathBuf::from(env::var("OUT_DIR").unwrap());
     let object = out.join("q8_product.o");
-    let archive = out.join("libiris_q8gpu.a");
+    let archive = out.join("libiwebs_q8gpu.a");
 
     run(Command::new(format!("{cuda}/bin/nvcc"))
         .args(["-O3", "-std=c++17", "-ccbin", &host_compiler])
@@ -40,7 +40,7 @@ fn main() {
     // The CUDA runtime is linked statically so the binary needs no library
     // path at run time, only the NVIDIA driver.
     println!("cargo:rustc-link-search=native={}", out.display());
-    println!("cargo:rustc-link-lib=static=iris_q8gpu");
+    println!("cargo:rustc-link-lib=static=iwebs_q8gpu");
     println!("cargo:rustc-link-search=native={cuda}/lib64");
     println!("cargo:rustc-link-lib=static=cudart_static");
     for library in ["stdc++", "dl", "rt", "pthread"] {

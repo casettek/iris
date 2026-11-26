@@ -1,10 +1,10 @@
-//! What iris hands to whoever sends transactions: the calldata of the calls
+//! What IWEBS hands to whoever sends transactions: the calldata of the calls
 //! its contracts take, and the attester's signature over each posted blob.
 //!
-//! iris holds no wallet. Every command here reads files and prints bytes;
-//! iris-backend sends them, or `iris test devstack submit` on the local stack,
+//! IWEBS holds no wallet. Every command here reads files and prints bytes;
+//! iris-backend sends them, or `iwebs test devstack submit` on the local stack,
 //! through an account the development node keeps unlocked.
-//! The one key iris uses is the attester's, read from `IRIS_ATTESTER_KEY`: the
+//! The one key IWEBS uses is the attester's, read from `IWEBS_ATTESTER_KEY`: the
 //! trusted host's, standing in for an availability proof.
 
 use std::path::Path;
@@ -25,7 +25,7 @@ use serde_json::{json, Value};
 use crate::posting::PostingLayer;
 
 /// The attester's secret key: 32 bytes of hex, with or without `0x`.
-pub const ATTESTER_KEY_ENV: &str = "IRIS_ATTESTER_KEY";
+pub const ATTESTER_KEY_ENV: &str = "IWEBS_ATTESTER_KEY";
 
 pub fn hex0x(bytes: &[u8]) -> String {
     format!("0x{}", hex::encode(bytes))
@@ -229,7 +229,7 @@ pub fn fault_proof_parts(receipt_path: &Path) -> Result<Value> {
 /// The call that answers a challenge with a fault proof of its trace.
 ///
 /// `rejection` is the contract error the proof would be refused with, by the
-/// checks `IrisClaims.submitFaultProof` makes of the journal, or null. The
+/// checks `IwebsClaims.submitFaultProof` makes of the journal, or null. The
 /// call is written either way: whether a contract agrees is the contract's to
 /// say.
 pub fn fault_proof_call(

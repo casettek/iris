@@ -43,7 +43,7 @@ const INITIAL_PIECES_PLACEHOLDER_COMMITMENT: &str =
 
 /// Run preparation replaces every external under this directory with the
 /// run's own prompt pieces and, for teacher-forced runs, claimed output.
-const RUN_PLACEHOLDER_DIR: &str = "target/iris/run-prompt-placeholder";
+const RUN_PLACEHOLDER_DIR: &str = "target/iwebs/run-prompt-placeholder";
 
 /// What the pipeline template needs to know of a model's layers: how many, which
 /// program runs one, and what a layer takes besides the layer below and its
@@ -796,7 +796,7 @@ fn pipeline_template(
         .into());
     }
 
-    let mut out = String::from("[pipeline]\nname = \"iris\"\nversion = \"0.1.0\"\n");
+    let mut out = String::from("[pipeline]\nname = \"iwebs\"\nversion = \"0.1.0\"\n");
     out.push_str(&indexed_model_inputs(pipeline, layout, prefill_stages)?);
     out.push_str(&range_input("prompt_text", "text", "j"));
     out.push_str(&range_input("prompt_marks", "marks", "j"));
@@ -1672,14 +1672,13 @@ mod tests {
         let line = external_line(
             "initial_pieces",
             &layout,
-            "target/iris/run-prompt-placeholder",
+            "target/iwebs/run-prompt-placeholder",
             "initial_pieces",
             "abc",
         );
 
-        assert!(
-            line.contains(r#"path = "target/iris/run-prompt-placeholder/initial_pieces.rastered""#)
-        );
+        assert!(line
+            .contains(r#"path = "target/iwebs/run-prompt-placeholder/initial_pieces.rastered""#));
         assert!(!line.contains("runtime/model-artifacts"));
     }
 

@@ -21,29 +21,29 @@ name = "{name}"
 
 [pipeline.input.prompt_marks]
 index = "j"
-path = "target/iris/run-prompt-placeholder/marks_{{j}}.rastered"
-index_path = "target/iris/run-prompt-placeholder/marks_{{j}}.rindex"
+path = "target/iwebs/run-prompt-placeholder/marks_{{j}}.rastered"
+index_path = "target/iwebs/run-prompt-placeholder/marks_{{j}}.rindex"
 commitments = []
 
 [pipeline.input.prompt_text]
 index = "j"
-path = "target/iris/run-prompt-placeholder/text_{{j}}.rastered"
-index_path = "target/iris/run-prompt-placeholder/text_{{j}}.rindex"
+path = "target/iwebs/run-prompt-placeholder/text_{{j}}.rastered"
+index_path = "target/iwebs/run-prompt-placeholder/text_{{j}}.rindex"
 commitments = []
 
 [pipeline.input.claimed_ids]
 index = "k"
-path = "target/iris/run-prompt-placeholder/claimed_{{k}}.rastered"
-index_path = "target/iris/run-prompt-placeholder/claimed_{{k}}.rindex"
+path = "target/iwebs/run-prompt-placeholder/claimed_{{k}}.rastered"
+index_path = "target/iwebs/run-prompt-placeholder/claimed_{{k}}.rindex"
 commitments = []
 
 [[pipeline.stage]]
 name = "prompt_bind_p0"
 project = "raster-stages/prompt-bind"
 inputs.text = {{ input = "prompt_text_0" }}
-inputs.config = {{ external = {{ path = "target/iris/run-prompt-placeholder/config.rastered", index_path = "target/iris/run-prompt-placeholder/config.rindex", commitment = "0" }} }}
-inputs.schedule = {{ external = {{ path = "target/iris/run-prompt-placeholder/schedule.rastered", index_path = "target/iris/run-prompt-placeholder/schedule.rindex", commitment = "0" }} }}
-inputs.text_digest = {{ external = {{ path = "target/iris/run-prompt-placeholder/text_digest.rastered", index_path = "target/iris/run-prompt-placeholder/text_digest.rindex", commitment = "0" }} }}
+inputs.config = {{ external = {{ path = "target/iwebs/run-prompt-placeholder/config.rastered", index_path = "target/iwebs/run-prompt-placeholder/config.rindex", commitment = "0" }} }}
+inputs.schedule = {{ external = {{ path = "target/iwebs/run-prompt-placeholder/schedule.rastered", index_path = "target/iwebs/run-prompt-placeholder/schedule.rindex", commitment = "0" }} }}
+inputs.text_digest = {{ external = {{ path = "target/iwebs/run-prompt-placeholder/text_digest.rastered", index_path = "target/iwebs/run-prompt-placeholder/text_digest.rindex", commitment = "0" }} }}
 inputs.source = {{ external = {{ path = "model/prompt-bind/no_source.rastered", index_path = "model/prompt-bind/no_source.rindex", commitment = "n0" }} }}
 inputs.previous = {{ external = {{ path = "empty_prompt.rastered", index_path = "empty_prompt.rindex", commitment = "0" }} }}
 
@@ -64,9 +64,9 @@ count = 0
 name = "prompt_bind_p{{j}}"
 project = "raster-stages/prompt-bind"
 inputs.text = {{ input = "prompt_text_{{j}}" }}
-inputs.config = {{ external = {{ path = "target/iris/run-prompt-placeholder/config.rastered", index_path = "target/iris/run-prompt-placeholder/config.rindex", commitment = "0" }} }}
-inputs.schedule = {{ external = {{ path = "target/iris/run-prompt-placeholder/schedule.rastered", index_path = "target/iris/run-prompt-placeholder/schedule.rindex", commitment = "0" }} }}
-inputs.text_digest = {{ external = {{ path = "target/iris/run-prompt-placeholder/text_digest.rastered", index_path = "target/iris/run-prompt-placeholder/text_digest.rindex", commitment = "0" }} }}
+inputs.config = {{ external = {{ path = "target/iwebs/run-prompt-placeholder/config.rastered", index_path = "target/iwebs/run-prompt-placeholder/config.rindex", commitment = "0" }} }}
+inputs.schedule = {{ external = {{ path = "target/iwebs/run-prompt-placeholder/schedule.rastered", index_path = "target/iwebs/run-prompt-placeholder/schedule.rindex", commitment = "0" }} }}
+inputs.text_digest = {{ external = {{ path = "target/iwebs/run-prompt-placeholder/text_digest.rastered", index_path = "target/iwebs/run-prompt-placeholder/text_digest.rindex", commitment = "0" }} }}
 inputs.source = {{ external = {{ path = "model/prompt-bind/no_source.rastered", index_path = "model/prompt-bind/no_source.rindex", commitment = "n0" }} }}
 inputs.previous = {{ from = "prompt_bind_p{{j-1}}", first = "prompt_bind_p0" }}
 

@@ -1,18 +1,18 @@
-//! Hold the local contracts to iris's own verdict, case by case.
+//! Hold the local contracts to IWEBS's own verdict, case by case.
 //!
-//! [`claim`] takes a claim that `iris claim post` has posted. It asks iris's
+//! [`claim`] takes a claim that `iwebs claim post` has posted. It asks IWEBS's
 //! own checks and the contract about the claim as it is, then about one
 //! changed copy after another, and compares the two answers: both take it, or
 //! both refuse it at the same check. The claim itself is then submitted.
 //!
-//! [`challenge`] does the same for a challenge that `iris challenge post` has
+//! [`challenge`] does the same for a challenge that `iwebs challenge post` has
 //! posted. The claim it disputes is submitted first if the contract does not
 //! hold it.
 //!
-//! [`faults`] takes a claim in the directory `iris claim fetch` wrote, and
-//! asks the contract everything `iris claim audit` asks of it with no replay.
-//! The contract must answer each as iris does: refuse to void an honest
-//! stage, with the same error, and take a fault iris found. A fault found is
+//! [`faults`] takes a claim in the directory `iwebs claim fetch` wrote, and
+//! asks the contract everything `iwebs claim audit` asks of it with no replay.
+//! The contract must answer each as IWEBS does: refuse to void an honest
+//! stage, with the same error, and take a fault IWEBS found. A fault found is
 //! then sent, and the claim must read as void of that fault.
 //!
 //! A changed copy is only ever called, never sent, so nothing but the claim
@@ -35,7 +35,7 @@ use crate::claim_check::{
 };
 use crate::posting::PostingLayer;
 
-/// The check of iris's that each contract error belongs to: the start of the
+/// The check of IWEBS's that each contract error belongs to: the start of the
 /// check's name in a [`ClaimCheckReport`].
 const CHECK_OF: &[(&str, &str)] = &[
     ("UnregisteredProcedure", "submission: procedure"),
@@ -109,7 +109,7 @@ fn check_name(check: &str) -> String {
         .unwrap_or(check)
 }
 
-/// What iris decides: `None` when it takes the submission, otherwise the
+/// What IWEBS decides: `None` when it takes the submission, otherwise the
 /// first check it refuses it at.
 fn refused_at(report: &ClaimCheckReport) -> Option<String> {
     report
@@ -129,24 +129,24 @@ struct Replay {
 }
 
 impl Replay {
-    fn row(&mut self, name: &str, iris: &str, contract: &str, agree: bool) {
+    fn row(&mut self, name: &str, iwebs: &str, contract: &str, agree: bool) {
         println!(
-            "{}  {name:24} iris: {iris:58} contract: {contract}",
+            "{}  {name:24} iwebs: {iwebs:58} contract: {contract}",
             if agree { "ok  " } else { "DIFF" }
         );
         self.rows.push((name.to_string(), agree));
     }
 
     /// One case: the two verdicts, and whether they are the same. A case
-    /// that is the contract's alone has no verdict of iris's.
+    /// that is the contract's alone has no verdict of IWEBS's.
     fn record(
         &mut self,
         name: &str,
-        iris: Option<&Option<String>>,
+        iwebs: Option<&Option<String>>,
         contract: &Option<String>,
         contract_only: Option<&str>,
     ) {
-        let (iris_text, agree) = match (contract_only, iris) {
+        let (iwebs_text, agree) = match (contract_only, iwebs) {
             (Some(expected), _) => (
                 String::from("(no part)"),
                 contract.as_deref() == Some(expected),
@@ -162,7 +162,7 @@ impl Replay {
         };
         self.row(
             name,
-            &iris_text,
+            &iwebs_text,
             contract.as_deref().unwrap_or("accepted"),
             agree,
         );
@@ -182,7 +182,7 @@ impl Replay {
         );
         ensure!(
             differing.is_empty(),
-            "the contract and iris differ on: {}",
+            "the contract and iwebs differ on: {}",
             differing.join(", ")
         );
         Ok(())
@@ -283,7 +283,7 @@ fn voided(node: &Node, claim_id: &str) -> Result<Option<&'static str>> {
     let fault = returned_u64(&held, 0)? as usize;
     ensure!(
         fault < CLAIM_FAULTS.len(),
-        "the contract holds claim {claim_id} void of fault {fault}, which iris has no name for"
+        "the contract holds claim {claim_id} void of fault {fault}, which iwebs has no name for"
     );
     Ok((fault != 0).then(|| CLAIM_FAULTS[fault]))
 }
@@ -295,7 +295,7 @@ fn id_of(call: &Value, field: &str) -> Result<String> {
         .with_context(|| format!("the call has no {field}"))
 }
 
-/// Hold the contract to iris on a posted claim and changed copies of it,
+/// Hold the contract to IWEBS on a posted claim and changed copies of it,
 /// then submit the claim.
 pub fn claim(
     node: &Node,
@@ -312,8 +312,8 @@ pub fn claim(
     register(node, specification)?;
     relay(node, layer, &heights_of(&built))?;
 
-    let verdicts = |submission: &Path, at: Option<u64>, ask_iris: bool| -> Result<_> {
-        let iris = if ask_iris {
+    let verdicts = |submission: &Path, at: Option<u64>, ask_iwebs: bool| -> Result<_> {
+        let iwebs = if ask_iwebs {
             Some(refused_at(&check_claim(ClaimCheckOptions {
                 base_dir: base_dir.clone(),
                 specification_path: specification.to_path_buf(),
@@ -329,19 +329,19 @@ pub fn claim(
         };
         let contract =
             contract_verdict(node, &crate::blockchain::evm::claim_call(submission)?, at)?;
-        Ok((iris, contract))
+        Ok((iwebs, contract))
     };
 
-    let (iris, contract) = verdicts(path, None, true)?;
+    let (iwebs, contract) = verdicts(path, None, true)?;
     let already = contract.as_deref() == Some("AlreadySubmitted");
     replay.record(
         "as built",
-        iris.as_ref(),
+        iwebs.as_ref(),
         if already { &None } else { &contract },
         None,
     );
     if contract.is_none() {
-        // The id iris works out for a claim is the one the contract gives it.
+        // The id IWEBS works out for a claim is the one the contract gives it.
         let given = node
             .call(
                 &node.deployment.claims,
@@ -367,8 +367,8 @@ pub fn claim(
         if attest {
             crate::blockchain::evm::attest_submission(&copy, layer)?;
         }
-        let (iris, contract) = verdicts(&copy, at, contract_only.is_none())?;
-        replay.record(name, iris.as_ref(), &contract, contract_only);
+        let (iwebs, contract) = verdicts(&copy, at, contract_only.is_none())?;
+        replay.record(name, iwebs.as_ref(), &contract, contract_only);
         Ok(())
     };
     case(
@@ -525,7 +525,7 @@ pub fn claim(
         false,
         None,
     )?;
-    // The contract's alone: iris reads the claim's directory, and stops
+    // The contract's alone: IWEBS reads the claim's directory, and stops
     // before its checks when the list there is not the one the submission
     // names.
     case(
@@ -584,7 +584,7 @@ pub fn claim(
     replay.finish()
 }
 
-/// Hold the contract to iris on a posted challenge and changed copies of
+/// Hold the contract to IWEBS on a posted challenge and changed copies of
 /// it, then submit the challenge.
 pub fn challenge(
     node: &Node,
@@ -608,8 +608,8 @@ pub fn challenge(
     let built = crate::blockchain::evm::challenge_call(path, claim_path)?;
     relay(node, layer, &heights_of(&built))?;
 
-    let verdicts = |submission: &Path, at: Option<u64>, ask_iris: bool| -> Result<_> {
-        let iris = if ask_iris {
+    let verdicts = |submission: &Path, at: Option<u64>, ask_iwebs: bool| -> Result<_> {
+        let iwebs = if ask_iwebs {
             Some(refused_at(&check_challenge_submission(
                 ChallengeCheckOptions {
                     specification_path: specification.to_path_buf(),
@@ -628,14 +628,14 @@ pub fn challenge(
             &crate::blockchain::evm::challenge_call(submission, claim_path)?,
             at,
         )?;
-        Ok((iris, contract))
+        Ok((iwebs, contract))
     };
 
-    let (iris, contract) = verdicts(path, None, true)?;
+    let (iwebs, contract) = verdicts(path, None, true)?;
     let already = contract.as_deref() == Some("AlreadySubmitted");
     replay.record(
         "as built",
-        iris.as_ref(),
+        iwebs.as_ref(),
         if already { &None } else { &contract },
         None,
     );
@@ -646,8 +646,8 @@ pub fn challenge(
                     contract_only: Option<&str>|
      -> Result<()> {
         let copy = changed(path, name, &honest, change)?;
-        let (iris, contract) = verdicts(&copy, at, contract_only.is_none())?;
-        replay.record(name, iris.as_ref(), &contract, contract_only);
+        let (iwebs, contract) = verdicts(&copy, at, contract_only.is_none())?;
+        replay.record(name, iwebs.as_ref(), &contract, contract_only);
         Ok(())
     };
 
@@ -751,8 +751,8 @@ pub fn challenge(
                     contract_only: Option<&str>|
      -> Result<()> {
         let copy = changed(path, name, &honest, change)?;
-        let (iris, contract) = verdicts(&copy, at, contract_only.is_none())?;
-        replay.record(name, iris.as_ref(), &contract, contract_only);
+        let (iwebs, contract) = verdicts(&copy, at, contract_only.is_none())?;
+        replay.record(name, iwebs.as_ref(), &contract, contract_only);
         Ok(())
     };
     case(
@@ -785,7 +785,7 @@ pub fn challenge(
     replay.finish()
 }
 
-/// Ask the contract every on-the-spot question `iris claim audit` asks of a
+/// Ask the contract every on-the-spot question `iwebs claim audit` asks of a
 /// fetched claim, and send the first fault found.
 pub fn faults(
     node: &Node,
@@ -875,7 +875,7 @@ pub fn faults(
         replay.row("differs", &format!("{place}: {expected}"), got, false);
     }
 
-    // A fault iris found is one the contract takes, and records as iris
+    // A fault IWEBS found is one the contract takes, and records as IWEBS
     // named it.
     match found.first() {
         Some(fault) => {

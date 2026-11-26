@@ -1,4 +1,4 @@
-//! The commands of the `iris` binary: for each group, its arguments and
+//! The commands of the `iwebs` binary: for each group, its arguments and
 //! what it does with them. `crate::execute` dispatches here.
 
 pub(crate) mod challenge;

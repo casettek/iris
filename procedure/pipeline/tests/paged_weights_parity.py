@@ -1,6 +1,6 @@
 """Compare preserved baseline, embedding-only, and current builds with authenticated Raster.
 
-The three bin directories must contain iris and procedure-pipeline. The baseline and
+The three bin directories must contain iwebs and procedure-pipeline. The baseline and
 current directories must also contain the unchanged Raster stage binaries.
 No production eager switch is needed or introduced.
 """
@@ -32,7 +32,7 @@ def main():
         env.pop(key, None)
     env.update(RISC0_SKIP_BUILD="1", RAYON_NUM_THREADS="4", IWEBS_PIPELINE_PLE_LOADING="selective")
     artifacts = output / "model-artifacts"
-    invoke([current / f"iris{suffix}", "model", "import", "--model", bundle, "--artifact-root", artifacts,
+    invoke([current / f"iwebs{suffix}", "model", "import", "--model", bundle, "--artifact-root", artifacts,
             "--model-id", "parity-gemma", "--no-stage-fixtures"], root, env, output / "import.log")
     model = artifacts / "parity-gemma/manifest.json"
     report = {"cases": [], "unchanged_raster_binaries": {}, "build_sha256": {},
@@ -43,7 +43,7 @@ def main():
         report["unchanged_raster_binaries"][name] = a
     for label, binaries in [("baseline", baseline), ("embedding-only", embedding), ("updated", current)]:
         report["build_sha256"][label] = {name: sha((binaries / f"{name}{suffix}").read_bytes())
-                                        for name in ["iris", "procedure-pipeline"]}
+                                        for name in ["iwebs", "procedure-pipeline"]}
     for case in read(bundle / "cases.json"):
         print(f"Running {case['name']}", flush=True)
         directory = output / case["name"]
@@ -65,7 +65,7 @@ def main():
         ]:
             child_env = env | {"IWEBS_PIPELINE_WEIGHT_CACHE_BYTES": str(budget),
                                "IWEBS_PIPELINE_AUX_PARALLELISM": str(workers), "RASTER_PARALLELISM": parallel}
-            seconds = invoke([binaries / f"iris{suffix}", "parity-worker", "--specification", spec, "--case", case_file,
+            seconds = invoke([binaries / f"iwebs{suffix}", "parity-worker", "--specification", spec, "--case", case_file,
                               "--output", directory / label], root, child_env, directory / f"{label}.log")
             pipeline = Path(read(directory / label / "result.json")["pipeline_dir"])
             pipelines[label] = pipeline

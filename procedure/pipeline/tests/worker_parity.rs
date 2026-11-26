@@ -88,7 +88,7 @@ struct Fixture {
 impl Fixture {
     fn new() -> Self {
         let base = std::env::temp_dir().join(format!(
-            "iris-worker-parity-{}-{}",
+            "iwebs-worker-parity-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -744,8 +744,8 @@ fn early_checkpoint_divergence_stops_and_reaps_workers() {
             "--ignored",
             "--nocapture",
         ])
-        .env("IRIS_WORKER_TEST_BASE", &f.base)
-        .env("IRIS_WORKER_TEST_STOP", stop.to_string())
+        .env("IWEBS_WORKER_TEST_BASE", &f.base)
+        .env("IWEBS_WORKER_TEST_STOP", stop.to_string())
         .env("IWEBS_PIPELINE_WEIGHT_CACHE_BYTES", "1048576")
         .env("IWEBS_PIPELINE_AUX_PARALLELISM", "2")
         .output()
@@ -762,11 +762,11 @@ fn early_checkpoint_divergence_stops_and_reaps_workers() {
 #[ignore = "subprocess helper for early-divergence test"]
 fn challenge_cleanup_child() {
     // The parent invokes this in isolation because the executor scopes process cwd/env.
-    let Some(base) = std::env::var_os("IRIS_WORKER_TEST_BASE") else {
+    let Some(base) = std::env::var_os("IWEBS_WORKER_TEST_BASE") else {
         return;
     };
     let base = PathBuf::from(base);
-    let stop: usize = std::env::var("IRIS_WORKER_TEST_STOP")
+    let stop: usize = std::env::var("IWEBS_WORKER_TEST_STOP")
         .unwrap()
         .parse()
         .unwrap();

@@ -1,10 +1,10 @@
 use std::process::ExitCode;
 
 fn main() -> ExitCode {
-    match iris_cli::run_from_env() {
+    match iwebs_cli::run_from_env() {
         Ok(code) => code,
         Err(error) => {
-            eprintln!("iris: {error:#}");
+            eprintln!("iwebs: {error:#}");
             ExitCode::from(1)
         }
     }

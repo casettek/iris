@@ -1,4 +1,4 @@
-# The local blockchains iris integrates against: a single-validator Celestia with a
+# The local blockchains IWEBS integrates against: a single-validator Celestia with a
 # bridge node, and an EVM node. See README.md in this directory.
 name: iris-devstack
 
@@ -11,8 +11,8 @@ services:
       - ./celestia:/devstack:ro
       - validator:/home/celestia
     ports:
-      - "127.0.0.1:${IRIS_CELESTIA_RPC_PORT:-26657}:26657"
-      - "127.0.0.1:${IRIS_CELESTIA_GRPC_PORT:-9090}:9090"
+      - "127.0.0.1:${IWEBS_CELESTIA_RPC_PORT:-26657}:26657"
+      - "127.0.0.1:${IWEBS_CELESTIA_GRPC_PORT:-9090}:9090"
     healthcheck:
       # The latest block, and not a fixed early one: the validator prunes old
       # blocks, and a check of one of those fails on a blockchain that is running.
@@ -33,7 +33,7 @@ services:
       - validator:/validator:ro
       - bridge:/home/celestia
     ports:
-      - "127.0.0.1:${IRIS_CELESTIA_NODE_PORT:-26658}:26658"
+      - "127.0.0.1:${IWEBS_CELESTIA_NODE_PORT:-26658}:26658"
     healthcheck:
       test: ["CMD-SHELL", "curl -sf -X POST -H \"Content-Type: application/json\" -d \"{\\\"jsonrpc\\\":\\\"2.0\\\",\\\"id\\\":1,\\\"method\\\":\\\"header.LocalHead\\\",\\\"params\\\":[]}\" http://localhost:26658 | jq -e .result.header.height > /dev/null"]
       interval: 2s
@@ -45,7 +45,7 @@ services:
     image: ghcr.io/foundry-rs/foundry@sha256:3a392c18f9b16e665e932de159fb6fa9ed972c4b4352f2f76a1a8c7ca9b57d39
     entrypoint: ["anvil", "--host", "0.0.0.0", "--chain-id", "31337"]
     ports:
-      - "127.0.0.1:${IRIS_EVM_PORT:-8545}:8545"
+      - "127.0.0.1:${IWEBS_EVM_PORT:-8545}:8545"
     healthcheck:
       test: ["CMD-SHELL", "cast block-number --rpc-url http://localhost:8545 > /dev/null"]
       interval: 2s

@@ -67,7 +67,7 @@ struct WrittenInference {
 
 /// What a pipeline run is prepared from.
 pub struct PipelineRun<'a> {
-    /// Where the run's directory is made, under `target/iris/runs`.
+    /// Where the run's directory is made, under `target/iwebs/runs`.
     pub base_dir: &'a Path,
     pub specification_path: PathBuf,
     pub specification: &'a Specification,
@@ -241,7 +241,7 @@ pub fn prepare_run(run: PipelineRun<'_>) -> Result<PreparedPipelineRun> {
 
     let run_dir = base_dir
         .join("target")
-        .join("iris")
+        .join("iwebs")
         .join("runs")
         .join(run_id(
             &specification_path,
@@ -496,7 +496,7 @@ pub fn prepare_run(run: PipelineRun<'_>) -> Result<PreparedPipelineRun> {
     })
 }
 
-const RUN_PLACEHOLDER_DIR: &str = "target/iris/run-prompt-placeholder/";
+const RUN_PLACEHOLDER_DIR: &str = "target/iwebs/run-prompt-placeholder/";
 
 /// The name the relay stage's recipe goes by among a run's files.
 const RELAY_RECIPE: &str = "relay_recipe";

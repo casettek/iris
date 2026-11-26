@@ -3,7 +3,7 @@
 # it, so its stages are written out and bound to the empty values, and each
 # repeat starts at range 1. Nothing here is executed.
 [pipeline]
-name = "iris"
+name = "iwebs"
 version = "0.1.0"
 
 [pipeline.input.aux_layer]

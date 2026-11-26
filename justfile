@@ -4,25 +4,25 @@ default:
     just --list
 
 import model:
-    cargo run --release -p iris-cli -- model import --model "{{model}}"
+    cargo run --release -p iwebs-cli -- model import --model "{{model}}"
 
 infer specification="specification.toml" case="case.toml":
-    cargo run --release -p iris-cli -- infer --specification "{{specification}}" --case "{{case}}"
+    cargo run --release -p iwebs-cli -- infer --specification "{{specification}}" --case "{{case}}"
 
 run specification="specification.toml" case="case.toml":
-    cargo run --release -p iris-cli -- run --specification "{{specification}}" --case "{{case}}"
+    cargo run --release -p iwebs-cli -- run --specification "{{specification}}" --case "{{case}}"
 
 claim specification="specification.toml" case="case.toml":
-    cargo run --release -p iris-cli -- claim build --specification "{{specification}}" --case "{{case}}"
+    cargo run --release -p iwebs-cli -- claim build --specification "{{specification}}" --case "{{case}}"
 
 replay-profile stage top_n="3" specification="specification.toml" case="case.toml":
-    cargo run --release -p iris-cli --features replay-profile -- replay-profile --specification "{{specification}}" --case "{{case}}" --stage "{{stage}}" --top-n "{{top_n}}"
+    cargo run --release -p iwebs-cli --features replay-profile -- replay-profile --specification "{{specification}}" --case "{{case}}" --stage "{{stage}}" --top-n "{{top_n}}"
 
 corrupt checkpoints:
-    cargo run --release -p iris-cli -- test corrupt-checkpoints --checkpoints "{{checkpoints}}"
+    cargo run --release -p iwebs-cli -- test corrupt-checkpoints --checkpoints "{{checkpoints}}"
 
 challenge claim_context checkpoints specification="specification.toml":
-    cargo run --release -p iris-cli -- challenge build --claim-context "{{claim_context}}" --checkpoints "{{checkpoints}}" --specification "{{specification}}"
+    cargo run --release -p iwebs-cli -- challenge build --claim-context "{{claim_context}}" --checkpoints "{{checkpoints}}" --specification "{{specification}}"
 
 test-workspace:
     cargo test --workspace
@@ -34,7 +34,7 @@ test-pipeline:
     cargo test -p procedure-pipeline
 
 test-cli:
-    cargo test -p iris-cli
+    cargo test -p iwebs-cli
 
 test-artifacts:
     cargo test -p inference-manifest -p procedure-definition -p blockchain-rules
@@ -103,6 +103,6 @@ devstack-deploy:
 contracts-test:
     bash blockchain/devstack/foundry.sh forge test
 
-# Hold the contracts to iris on one posted claim: <specification> <claim_submission.json>
+# Hold the contracts to IWEBS on one posted claim: <specification> <claim_submission.json>
 devstack-replay specification submission:
-    cargo run --release -p iris-cli -- test devstack replay claim --specification "{{specification}}" --submission "{{submission}}"
+    cargo run --release -p iwebs-cli -- test devstack replay claim --specification "{{specification}}" --submission "{{submission}}"

@@ -11,13 +11,13 @@ mkdir -p "$RASTER_SCRATCH_DIR"
 # These would skip the proof guests or accept fake receipts.
 unset RISC0_SKIP_BUILD RISC0_SKIP_BUILD_KERNELS RISC0_DEV_MODE
 
-# IRIS_FEATURES names the `iris-cli` features every release build here uses,
-# for example `cuda,gpu-kernels`. Without it a tier rebuilds target/release/iris
+# IWEBS_FEATURES names the `iwebs-cli` features every release build here uses,
+# for example `cuda,gpu-kernels`. Without it a tier rebuilds target/release/iwebs
 # as a CPU binary. GPU builds take the same compiler settings as
 # scripts/build-linux-cuda.sh.
 features=()
-if [ -n "${IRIS_FEATURES:-}" ]; then
-    features=(--features "$IRIS_FEATURES")
+if [ -n "${IWEBS_FEATURES:-}" ]; then
+    features=(--features "$IWEBS_FEATURES")
     export CUDA_HOME="${CUDA_HOME:-/usr/local/cuda-13.3}"
     export PATH="$CUDA_HOME/bin:$PATH"
     export LD_LIBRARY_PATH="$CUDA_HOME/lib64:${LD_LIBRARY_PATH:-}"
@@ -25,12 +25,12 @@ if [ -n "${IRIS_FEATURES:-}" ]; then
     export NVCC_PREPEND_FLAGS="${NVCC_PREPEND_FLAGS:--include $CUDA_HOME/include/cuda.h -arch=native}"
 fi
 
-# IRIS_TEST_CELESTIA=1 has every tier post to the local Celestia node
+# IWEBS_TEST_CELESTIA=1 has every tier post to the local Celestia node
 # (blockchain/devstack/README.md) in place of the stand-in directory. Only
 # the node is named here: no tier but the blockchain tier sends a transaction.
-if [ -n "${IRIS_TEST_CELESTIA:-}" ]; then
-    IRIS_CELESTIA_RPC="$(source "$repo_root/blockchain/devstack/env.sh" && echo "$IRIS_CELESTIA_RPC")"
-    export IRIS_CELESTIA_RPC
+if [ -n "${IWEBS_TEST_CELESTIA:-}" ]; then
+    IWEBS_CELESTIA_RPC="$(source "$repo_root/blockchain/devstack/env.sh" && echo "$IWEBS_CELESTIA_RPC")"
+    export IWEBS_CELESTIA_RPC
 fi
 
 logs="$repo_root/target/test-logs"
@@ -58,10 +58,10 @@ step() {
     return 0
 }
 
-# The newest retained parity run, or the one IRIS_PARITY_RUN names.
+# The newest retained parity run, or the one IWEBS_PARITY_RUN names.
 latest_parity_run() {
-    if [ -n "${IRIS_PARITY_RUN:-}" ]; then
-        echo "$IRIS_PARITY_RUN"
+    if [ -n "${IWEBS_PARITY_RUN:-}" ]; then
+        echo "$IWEBS_PARITY_RUN"
     else
         ls -td "$repo_root"/target/parity/*/ 2>/dev/null | head -1 | sed 's:/$::'
     fi

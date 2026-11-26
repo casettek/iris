@@ -24,7 +24,7 @@ program = "claim-result"
 inputs.check = "inference"
 ```
 
-The files are compiled into `iris`. To add a kind, add its file and build;
+The files are compiled into `iwebs`. To add a kind, add its file and build;
 `cargo test -p procedure-definition` reads every file and refuses one a
 pipeline cannot be made of. The segment kinds, their programs and what each
 takes are declared in `procedure/definition/src/segment_kind.rs`.

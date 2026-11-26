@@ -216,7 +216,7 @@ pub(super) fn run_consensus_scenario(
         .clone()
         .context("the consensus claim wrote no submission")?;
     // The contract's pins are a file: the consensus procedure kind's programs and
-    // both models, as `iris claim pins` writes them.
+    // both models, as `iwebs claim pins` writes them.
     let pins_path = claim_dir.join(blockchain_rules::checks::CONTRACT_PINS_JSON);
     let pins = blockchain_host::claim_check::run_pins(&claim_dir, &specification)
         .context("the contract's pins")?;

@@ -136,7 +136,7 @@ pub fn build_claim(options: ClaimBuildOptions) -> Result<ClaimBuildResult> {
             // bit-identical: an honest claimer would convict itself.
             anyhow::bail!("{reason}; native and teacher-forced inference are not in parity");
         }
-        eprintln!("warning: {reason}; writing the claim anyway because its ids were given (`iris test claim`)");
+        eprintln!("warning: {reason}; writing the claim anyway because its ids were given (`iwebs test claim`)");
     }
     let result = write_claim_result(
         checkpointed,
@@ -149,7 +149,7 @@ pub fn build_claim(options: ClaimBuildOptions) -> Result<ClaimBuildResult> {
     // stage's.
     //
     // The claim names its procedure and its claimer, and prepares what
-    // it has to post: the inputs its run was given and its checkpoints. Posting is `iris claim post`'s, so that a post that fails
+    // it has to post: the inputs its run was given and its checkpoints. Posting is `iwebs claim post`'s, so that a post that fails
     // is tried again without the claim being built again.
     // Without pins there is no procedure to name, and nothing to check.
     if let Some(path) = result.claim_submission_path.as_ref() {
@@ -181,7 +181,7 @@ pub fn build_claim(options: ClaimBuildOptions) -> Result<ClaimBuildResult> {
             }
             eprintln!(
                 "warning: a contract would not accept this claim: {reason}; it was written \
-                 anyway because its ids were given (`iris test claim`)"
+                 anyway because its ids were given (`iwebs test claim`)"
             );
         }
     }
@@ -581,7 +581,7 @@ mod tests {
         std::env::set_current_dir(&base).unwrap();
 
         let options = ClaimBuildOptions::from_current_dir(
-            PathBuf::from("iris"),
+            PathBuf::from("iwebs"),
             NativeStageBackend::InProcess,
             PathBuf::from("specification.toml"),
             PathBuf::from("case.toml"),
@@ -597,7 +597,7 @@ mod tests {
             PathBuf::from("specification.toml")
         );
         assert_eq!(options.case_path, Some(PathBuf::from("case.toml")));
-        assert_eq!(options.current_exe, PathBuf::from("iris"));
+        assert_eq!(options.current_exe, PathBuf::from("iwebs"));
         assert_eq!(options.native_stage_backend, NativeStageBackend::InProcess);
     }
 
@@ -978,38 +978,38 @@ mod tests {
     #[test]
     fn ranged_manifest_fills_counts_inputs_and_last_prompt_range() {
         let template = r#"[pipeline]
-name = "iris"
+name = "iwebs"
 
 [pipeline.input.prompt_marks]
 index = "j"
-path = "/repo/target/iris/run-prompt-placeholder/marks_{j}.rastered"
-index_path = "/repo/target/iris/run-prompt-placeholder/marks_{j}.rindex"
+path = "/repo/target/iwebs/run-prompt-placeholder/marks_{j}.rastered"
+index_path = "/repo/target/iwebs/run-prompt-placeholder/marks_{j}.rindex"
 commitments = []
 
 [pipeline.input.prompt_text]
 index = "j"
-path = "/repo/target/iris/run-prompt-placeholder/text_{j}.rastered"
-index_path = "/repo/target/iris/run-prompt-placeholder/text_{j}.rindex"
+path = "/repo/target/iwebs/run-prompt-placeholder/text_{j}.rastered"
+index_path = "/repo/target/iwebs/run-prompt-placeholder/text_{j}.rindex"
 commitments = []
 
 [pipeline.input.claimed_ids]
 index = "k"
-path = "/repo/target/iris/run-prompt-placeholder/claimed_{k}.rastered"
-index_path = "/repo/target/iris/run-prompt-placeholder/claimed_{k}.rindex"
+path = "/repo/target/iwebs/run-prompt-placeholder/claimed_{k}.rastered"
+index_path = "/repo/target/iwebs/run-prompt-placeholder/claimed_{k}.rindex"
 commitments = []
 
 [[pipeline.stage]]
 name = "source"
-inputs.signer = { external = { path = "/repo/target/iris/run-prompt-placeholder/source_signer.rastered", index_path = "/repo/target/iris/run-prompt-placeholder/source_signer.rindex", commitment = "0" } }
-inputs.recipe = { external = { path = "/repo/target/iris/run-prompt-placeholder/source_recipe.rastered", index_path = "/repo/target/iris/run-prompt-placeholder/source_recipe.rindex", commitment = "0" } }
-inputs.documents = { external = { path = "/repo/target/iris/run-prompt-placeholder/source_documents.rastered", index_path = "/repo/target/iris/run-prompt-placeholder/source_documents.rindex", commitment = "0" } }
+inputs.signer = { external = { path = "/repo/target/iwebs/run-prompt-placeholder/source_signer.rastered", index_path = "/repo/target/iwebs/run-prompt-placeholder/source_signer.rindex", commitment = "0" } }
+inputs.recipe = { external = { path = "/repo/target/iwebs/run-prompt-placeholder/source_recipe.rastered", index_path = "/repo/target/iwebs/run-prompt-placeholder/source_recipe.rindex", commitment = "0" } }
+inputs.documents = { external = { path = "/repo/target/iwebs/run-prompt-placeholder/source_documents.rastered", index_path = "/repo/target/iwebs/run-prompt-placeholder/source_documents.rindex", commitment = "0" } }
 
 [[pipeline.stage]]
 name = "prompt_bind_p0"
 inputs.text = { input = "prompt_text_0" }
-inputs.config = { external = { path = "/repo/target/iris/run-prompt-placeholder/config.rastered", index_path = "/repo/target/iris/run-prompt-placeholder/config.rindex", commitment = "0" } }
-inputs.schedule = { external = { path = "/repo/target/iris/run-prompt-placeholder/schedule.rastered", index_path = "/repo/target/iris/run-prompt-placeholder/schedule.rindex", commitment = "0" } }
-inputs.text_digest = { external = { path = "/repo/target/iris/run-prompt-placeholder/text_digest.rastered", index_path = "/repo/target/iris/run-prompt-placeholder/text_digest.rindex", commitment = "0" } }
+inputs.config = { external = { path = "/repo/target/iwebs/run-prompt-placeholder/config.rastered", index_path = "/repo/target/iwebs/run-prompt-placeholder/config.rindex", commitment = "0" } }
+inputs.schedule = { external = { path = "/repo/target/iwebs/run-prompt-placeholder/schedule.rastered", index_path = "/repo/target/iwebs/run-prompt-placeholder/schedule.rindex", commitment = "0" } }
+inputs.text_digest = { external = { path = "/repo/target/iwebs/run-prompt-placeholder/text_digest.rastered", index_path = "/repo/target/iwebs/run-prompt-placeholder/text_digest.rindex", commitment = "0" } }
 inputs.source = { from = "source" }
 inputs.previous = { external = { path = "/repo/model/empty_prompt.rastered", index_path = "/repo/model/empty_prompt.rindex", commitment = "e0" } }
 
@@ -1028,9 +1028,9 @@ count = 0
   [[pipeline.repeat.stage]]
 name = "prompt_bind_p{j}"
 inputs.text = { input = "prompt_text_{j}" }
-inputs.config = { external = { path = "/repo/target/iris/run-prompt-placeholder/config.rastered", index_path = "/repo/target/iris/run-prompt-placeholder/config.rindex", commitment = "0" } }
-inputs.schedule = { external = { path = "/repo/target/iris/run-prompt-placeholder/schedule.rastered", index_path = "/repo/target/iris/run-prompt-placeholder/schedule.rindex", commitment = "0" } }
-inputs.text_digest = { external = { path = "/repo/target/iris/run-prompt-placeholder/text_digest.rastered", index_path = "/repo/target/iris/run-prompt-placeholder/text_digest.rindex", commitment = "0" } }
+inputs.config = { external = { path = "/repo/target/iwebs/run-prompt-placeholder/config.rastered", index_path = "/repo/target/iwebs/run-prompt-placeholder/config.rindex", commitment = "0" } }
+inputs.schedule = { external = { path = "/repo/target/iwebs/run-prompt-placeholder/schedule.rastered", index_path = "/repo/target/iwebs/run-prompt-placeholder/schedule.rindex", commitment = "0" } }
+inputs.text_digest = { external = { path = "/repo/target/iwebs/run-prompt-placeholder/text_digest.rastered", index_path = "/repo/target/iwebs/run-prompt-placeholder/text_digest.rindex", commitment = "0" } }
 inputs.source = { external = { path = "/repo/model/prompt-bind/no_source.rastered", index_path = "/repo/model/prompt-bind/no_source.rindex", commitment = "n0" } }
 inputs.previous = { from = "prompt_bind_p{j-1}", first = "prompt_bind_p0" }
 
@@ -1091,7 +1091,7 @@ count = 0
 [[pipeline.stage]]
 name = "result"
 inputs.check = { from = "check_c@LAST_CLAIMED_RANGE@" }
-inputs.forms = { external = { path = "/repo/target/iris/run-prompt-placeholder/result_forms.rastered", index_path = "/repo/target/iris/run-prompt-placeholder/result_forms.rindex", commitment = "0" } }
+inputs.forms = { external = { path = "/repo/target/iwebs/run-prompt-placeholder/result_forms.rastered", index_path = "/repo/target/iwebs/run-prompt-placeholder/result_forms.rindex", commitment = "0" } }
 "#;
         let file = |name: &str, commitment: &str| procedure_prepare::RunFile {
             path: PathBuf::from(format!("/tmp/run/prompt/{name}.rastered")),
@@ -1263,6 +1263,6 @@ inputs.forms = { external = { path = "/repo/target/iris/run-prompt-placeholder/r
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        std::env::temp_dir().join(format!("iris-cli-{label}-{}-{nanos}", std::process::id()))
+        std::env::temp_dir().join(format!("iwebs-cli-{label}-{}-{nanos}", std::process::id()))
     }
 }

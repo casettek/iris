@@ -1,4 +1,4 @@
-//! A procedure run with no blockchain, `iris run`.
+//! A procedure run with no blockchain, `iwebs run`.
 
 use super::infer::print_native_run;
 use crate::*;

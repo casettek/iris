@@ -1,4 +1,4 @@
-//! The native run, `iris infer`, and how a result is printed.
+//! The native run, `iwebs infer`, and how a result is printed.
 
 use crate::*;
 

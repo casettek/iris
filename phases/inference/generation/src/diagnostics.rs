@@ -57,7 +57,7 @@ pub(crate) struct NativeTrace {
 
 impl NativeTrace {
     pub fn new(collect: bool) -> Result<Self> {
-        let print = std::env::var("NATIVE_RUN_TRACE_COMMITMENTS")
+        let print = std::env::var("IWEBS_NATIVE_RUN_TRACE_COMMITMENTS")
             .map(|value| !value.eq_ignore_ascii_case("off") && value != "0")
             .unwrap_or(false);
         if print || collect {

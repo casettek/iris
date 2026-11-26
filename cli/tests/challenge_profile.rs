@@ -160,9 +160,9 @@ risc0-zkvm={{path={:?}}}
     let challenge = dir.join("challenge.json");
     write_json(&challenge,&json!({"version":2,"stage":stage,"recomputed_list_path":checkpoints,
         "divergence_path":dir.join("unused.json"),"challenge_trace_path":dir.join("unused.json"),"replay_package_path":package,"raster_commit_path":original})).unwrap();
-    let iris = env!("CARGO_BIN_EXE_iris");
+    let iwebs = env!("CARGO_BIN_EXE_iwebs");
     let profile_dir = dir.join("profile");
-    let mut profile = Command::new(iris);
+    let mut profile = Command::new(iwebs);
     profile
         .args(["test", "profile", "--challenge"])
         .arg(&challenge)
@@ -258,7 +258,7 @@ risc0-zkvm={{path={:?}}}
     }
     assert!(!measurement["target"].is_null());
     let proof_dir = dir.join("fault");
-    let mut corrupt = Command::new(iris);
+    let mut corrupt = Command::new(iwebs);
     corrupt
         .args(["test", "corrupt-challenge", "--challenge"])
         .arg(&challenge)
@@ -268,7 +268,7 @@ risc0-zkvm={{path={:?}}}
         .arg(&proof_dir);
     logged(&mut corrupt, &dir, "corrupt");
     let before = file_sha256(&original).unwrap();
-    let mut proof = Command::new(iris);
+    let mut proof = Command::new(iwebs);
     proof
         .args(["fault", "prove", "--challenge"])
         .arg(&challenge)

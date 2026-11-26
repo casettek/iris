@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
-import "./IrisTypes.sol";
-import "./IrisEncoding.sol";
+import "./IwebsTypes.sol";
+import "./IwebsEncoding.sol";
 
 /// The procedures claims are made of, each registered before any claim
 /// arrives and named by its id: `blockchain_rules::registry`.
@@ -10,7 +10,7 @@ import "./IrisEncoding.sol";
 /// A procedure's id is computed here from the procedure itself, in
 /// the encoding `Procedure::id` uses, so the id a claim names stands for
 /// exactly one set of programs, models, parameters and requirements.
-contract IrisRegistry {
+contract IwebsRegistry {
     address public immutable owner;
     mapping(bytes32 => bytes) private procedures;
     /// For a procedure, the stage project each approved program is of, as
@@ -37,7 +37,7 @@ contract IrisRegistry {
     function register(bytes calldata encoded) external returns (bytes32 id) {
         if (msg.sender != owner) revert NotTheOwner();
         Procedure memory procedure = abi.decode(encoded, (Procedure));
-        id = IrisEncoding.procedureId(procedure);
+        id = IwebsEncoding.procedureId(procedure);
         if (procedures[id].length != 0) {
             return id;
         }
@@ -51,7 +51,7 @@ contract IrisRegistry {
         ) revert MalformedProcedure();
         for (uint256 i = 0; i < inferences; i++) {
             if (
-                procedure.relayedFrom[i] > i || !IrisEncoding.wellFormedCommitments(procedure.models[i].commitments)
+                procedure.relayedFrom[i] > i || !IwebsEncoding.wellFormedCommitments(procedure.models[i].commitments)
             ) {
                 revert MalformedProcedure();
             }
@@ -65,12 +65,12 @@ contract IrisRegistry {
     /// of programs: the id is a hash over them, so what is read here is what
     /// the id stands for.
     function _approve(bytes32 id, bytes memory programs) private {
-        (uint256 items, uint256 at) = IrisEncoding.readCount(programs, 0);
+        (uint256 items, uint256 at) = IwebsEncoding.readCount(programs, 0);
         for (uint256 i = 0; i < items; i++) {
             bytes memory stage;
             bytes32 program;
-            (stage, at) = IrisEncoding.readText(programs, at);
-            (program, at) = IrisEncoding.readHash(programs, at);
+            (stage, at) = IwebsEncoding.readText(programs, at);
+            (program, at) = IwebsEncoding.readHash(programs, at);
             uint256 inputs = at;
             at = _skipInputs(programs, at);
             stageOf[id][program] = keccak256(stage);
@@ -89,28 +89,28 @@ contract IrisRegistry {
     function _skipInputs(bytes memory programs, uint256 at) private pure returns (uint256) {
         uint256 inputs;
         uint256 listed;
-        (inputs, at) = IrisEncoding.readCount(programs, at);
+        (inputs, at) = IwebsEncoding.readCount(programs, at);
         for (uint256 i = 0; i < inputs; i++) {
-            (, at) = IrisEncoding.readText(programs, at);
-            (listed, at) = IrisEncoding.readCount(programs, at);
+            (, at) = IwebsEncoding.readText(programs, at);
+            (listed, at) = IwebsEncoding.readCount(programs, at);
             for (uint256 j = 0; j < listed; j++) {
-                (, at) = IrisEncoding.readText(programs, at);
+                (, at) = IwebsEncoding.readText(programs, at);
             }
-            (listed, at) = IrisEncoding.readCount(programs, at);
+            (listed, at) = IwebsEncoding.readCount(programs, at);
             for (uint256 j = 0; j < listed; j++) {
-                (, at) = IrisEncoding.readHash(programs, at);
+                (, at) = IwebsEncoding.readHash(programs, at);
             }
         }
-        (inputs, at) = IrisEncoding.readCount(programs, at);
+        (inputs, at) = IwebsEncoding.readCount(programs, at);
         for (uint256 i = 0; i < inputs; i++) {
-            (, at) = IrisEncoding.readText(programs, at);
+            (, at) = IwebsEncoding.readText(programs, at);
         }
-        (inputs, at) = IrisEncoding.readCount(programs, at);
+        (inputs, at) = IwebsEncoding.readCount(programs, at);
         for (uint256 i = 0; i < inputs; i++) {
-            (, at) = IrisEncoding.readText(programs, at);
-            (listed, at) = IrisEncoding.readCount(programs, at);
+            (, at) = IwebsEncoding.readText(programs, at);
+            (listed, at) = IwebsEncoding.readCount(programs, at);
             for (uint256 j = 0; j < listed; j++) {
-                (, at) = IrisEncoding.readHash(programs, at);
+                (, at) = IwebsEncoding.readHash(programs, at);
             }
         }
         return at;
@@ -131,21 +131,21 @@ contract IrisRegistry {
         uint256 listed;
         uint256 at;
         bytes memory name;
-        (inputs, at) = IrisEncoding.readCount(entry, 0);
+        (inputs, at) = IwebsEncoding.readCount(entry, 0);
         for (uint256 i = 0; i < inputs; i++) {
-            (name, at) = IrisEncoding.readText(entry, at);
+            (name, at) = IwebsEncoding.readText(entry, at);
             bool here = keccak256(name) == wanted;
-            (listed, at) = IrisEncoding.readCount(entry, at);
+            (listed, at) = IwebsEncoding.readCount(entry, at);
             bytes32[] memory producers = new bytes32[](listed);
             for (uint256 j = 0; j < listed; j++) {
                 bytes memory producer;
-                (producer, at) = IrisEncoding.readText(entry, at);
+                (producer, at) = IwebsEncoding.readText(entry, at);
                 producers[j] = keccak256(producer);
             }
-            (listed, at) = IrisEncoding.readCount(entry, at);
+            (listed, at) = IwebsEncoding.readCount(entry, at);
             bytes32[] memory emptyValues = new bytes32[](listed);
             for (uint256 j = 0; j < listed; j++) {
-                (emptyValues[j], at) = IrisEncoding.readHash(entry, at);
+                (emptyValues[j], at) = IwebsEncoding.readHash(entry, at);
             }
             if (here) {
                 rule.piped = true;
@@ -153,18 +153,18 @@ contract IrisRegistry {
                 rule.emptyValues = emptyValues;
             }
         }
-        (inputs, at) = IrisEncoding.readCount(entry, at);
+        (inputs, at) = IwebsEncoding.readCount(entry, at);
         for (uint256 i = 0; i < inputs; i++) {
-            (name, at) = IrisEncoding.readText(entry, at);
+            (name, at) = IwebsEncoding.readText(entry, at);
             if (keccak256(name) == wanted) rule.run = true;
         }
-        (inputs, at) = IrisEncoding.readCount(entry, at);
+        (inputs, at) = IwebsEncoding.readCount(entry, at);
         for (uint256 i = 0; i < inputs; i++) {
-            (name, at) = IrisEncoding.readText(entry, at);
-            (listed, at) = IrisEncoding.readCount(entry, at);
+            (name, at) = IwebsEncoding.readText(entry, at);
+            (listed, at) = IwebsEncoding.readCount(entry, at);
             bytes32[] memory values = new bytes32[](listed);
             for (uint256 j = 0; j < listed; j++) {
-                (values[j], at) = IrisEncoding.readHash(entry, at);
+                (values[j], at) = IwebsEncoding.readHash(entry, at);
             }
             if (keccak256(name) == wanted) {
                 rule.pinned = true;
@@ -185,6 +185,6 @@ contract IrisRegistry {
 
     /// The id of a procedure, registered or not.
     function idOf(bytes calldata encoded) external pure returns (bytes32) {
-        return IrisEncoding.procedureId(abi.decode(encoded, (Procedure)));
+        return IwebsEncoding.procedureId(abi.decode(encoded, (Procedure)));
     }
 }

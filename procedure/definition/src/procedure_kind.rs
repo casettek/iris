@@ -1,4 +1,4 @@
-//! The procedure kinds iris runs.
+//! The procedure kinds IWEBS runs.
 //!
 //! A procedure kind is a named arrangement of the segments a claim is made of: an
 //! optional source, one or more inferences, and the stage program that turns

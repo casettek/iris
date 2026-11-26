@@ -92,8 +92,8 @@ held to its producers, since the link comparison reads the manifest. One
 withheld manifest would put a claim beyond every dispute.
 
 Every blob names the **address it was posted for**: the claimer's, which the
-submission states (`claim build --claimer`, or `IRIS_CLAIMER`), or the
-challenger's (`challenge post --challenger`, or `IRIS_CHALLENGER`). A contract
+submission states (`claim build --claimer`, or `IWEBS_CLAIMER`), or the
+challenger's (`challenge post --challenger`, or `IWEBS_CHALLENGER`). A contract
 refuses a submission whose blobs name another address, so nobody can submit
 someone else's posted data as their own. Copying a claim or a challenge then
 means posting its data again under one's own address, with a proof of one's
@@ -148,7 +148,7 @@ its proof.
 
 ## What a challenge posts
 
-`iris challenge post` posts the challenger's trace body in the namespace
+`iwebs challenge post` posts the challenger's trace body in the namespace
 `iris-chall`: the trace commitment of its own run of the stage, in the encoding
 Raster's admission decodes (`raster_prover::challenge::admit_body`). The proof
 states the digest of its header, which is what a Raster stage challenge names
@@ -156,7 +156,7 @@ the trace by. This is the body Raster's settlement design puts on the
 data-availability layer (`raster/docs/proposals/settlement-layer.md`, section 3);
 the challenge itself carries only the header.
 
-`iris challenge post --challenge <challenge_bundle.json> --submission <claim_submission.json>`
+`iwebs challenge post --challenge <challenge_bundle.json> --submission <claim_submission.json>`
 builds the stage challenge from the claimer's checkpoint and the challenger's
 replay, posts the body, writes `challenge_submission.json` beside the bundle,
 and prints the checks a contract makes on arrival.
@@ -189,9 +189,9 @@ fault-proof period, 2 days.
 A procedure (`Procedure`) is everything a contract judges a claim by:
 the procedure kind and its approved programs, one model per inference, the raw prompt
 flag and token budget, the signer a source must be signed by, and the forms the
-output is read by. Its id is a hash over all of it. `iris registry add --specification
+output is read by. Its id is a hash over all of it. `iwebs registry add --specification
 <file> --registry <file>` registers the specification's procedure and prints the id;
-`claim build` writes the id into the submission; `iris claim check --registry
+`claim build` writes the id into the submission; `iwebs claim check --registry
 <file>` judges a claim by the procedure it names there.
 
 Not pinned yet, by decision: the base prompt and the domains a source's
@@ -204,14 +204,14 @@ claim states.
 
 | Real system | Stand-in |
 | --- | --- |
-| Celestia | A directory: `IRIS_DA_DIR`, or `~/.cache/iris/stub-celestia`. Each post makes one block. One directory is one network, so a claimer and a challenger working in different places see the same blobs. The parity gate uses its own, under its run directory |
+| Celestia | A directory: `IWEBS_DA_DIR`, or `~/.cache/iwebs/stub-celestia`. Each post makes one block. One directory is one network, so a claimer and a challenger working in different places see the same blobs. The parity gate uses its own, under its run directory |
 | The blob commitment | `stub_blob_commitment`: SHA-256 over a domain, the namespace and the bytes. Celestia's is a Merkle root over the blob's shares |
 | Blobstream | `blobstream.json` in the directory: each block's height, time and a data root over its blobs, all attested |
 | The availability proof | `AvailabilityProof::HostChecked`: the host reads the blob and recomputes what it holds. A real one is a receipt of a program that does the same, verified against its pinned image id |
 
-`IRIS_DA_NOW` fixes the time new blocks are stamped with, for tests.
+`IWEBS_DA_NOW` fixes the time new blocks are stamped with, for tests.
 
-With `IRIS_CELESTIA_RPC` set and no `--da-dir`, the first two rows are the
+With `IWEBS_CELESTIA_RPC` set and no `--da-dir`, the first two rows are the
 real thing: blobs go to a Celestia node and are named by Celestia's own
 commitment. The last two rows stay stand-ins there, in another form: a trusted
 relayer posts block roots to a contract, and a trusted attester signs what

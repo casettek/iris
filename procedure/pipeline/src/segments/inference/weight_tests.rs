@@ -27,7 +27,7 @@ struct Fixture {
 impl Fixture {
     fn new() -> Self {
         let dir = std::env::temp_dir().join(format!(
-            "iris-weight-pages-{}-{}",
+            "iwebs-weight-pages-{}-{}",
             std::process::id(),
             SystemTime::now()
                 .duration_since(UNIX_EPOCH)

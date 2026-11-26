@@ -81,7 +81,7 @@ keeps its files in `prompt/`.
 | Specification | `procedure_kind = "consensus"` | Optional. A specification that names none is of `single`. A name that is no procedure kind is an error |
 | `prepared_run.json` | `procedure_kind` | The claim's frozen run, which its claim bundle points at. Required, version 20 |
 | `claim_submission.json` | `procedure_kind` | Required. It holds one entry per inference, for `consensus` the agreement, and for `relay` the relay's record |
-| `iris infer`, `iris claim build` | a `procedure_kind:` line | Printed before the result |
+| `iwebs infer`, `iwebs claim build` | a `procedure_kind:` line | Printed before the result |
 
 A specification names its models as `[[model]]` tables, in the order the
 procedure kind runs them: one for `single`, two for `consensus`.
@@ -107,8 +107,8 @@ chat template, so the inferences have different prompt tokens, range counts and
 statements. In `consensus` both statements name the same input text hash and
 source digest.
 
-A caller that runs procedures need hold no list of kinds. `iris procedure
-list` names the kinds of this build, and `iris procedure describe <kind>`
+A caller that runs procedures need hold no list of kinds. `iwebs procedure
+list` names the kinds of this build, and `IWEBS procedure describe <kind>`
 says what one is: its steps in order, how many models it runs, which
 inference its result is of (`answer`), whether its result states an
 agreement, which inference relays from which, and whether its specification
@@ -119,11 +119,11 @@ there is naming it for all of them:
 
 | Command | What it does with the name |
 | --- | --- |
-| `iris infer` | Runs the procedure kind directly: each inference in turn, then the result |
-| `iris claim build` | Builds the procedure kind's pipeline and records the name in the frozen run and the submission |
-| `iris claim pins` | Writes what a contract of the specification's procedure kind over its models pins |
-| `iris claim check` | Requires the submission to be of the specification's procedure kind and to hold what a claim of it does, each inference to be of the model the specification names for it, and the claim's last stage to run that procedure kind's result program |
-| `iris challenge build` | Refuses a specification that names another procedure kind than the claim's, then rebuilds the claim's arrangement from what the claim froze: the text, the source inputs, the forms and each inference's claimed ids |
+| `iwebs infer` | Runs the procedure kind directly: each inference in turn, then the result |
+| `iwebs claim build` | Builds the procedure kind's pipeline and records the name in the frozen run and the submission |
+| `iwebs claim pins` | Writes what a contract of the specification's procedure kind over its models pins |
+| `iwebs claim check` | Requires the submission to be of the specification's procedure kind and to hold what a claim of it does, each inference to be of the model the specification names for it, and the claim's last stage to run that procedure kind's result program |
+| `iwebs challenge build` | Refuses a specification that names another procedure kind than the claim's, then rebuilds the claim's arrangement from what the claim froze: the text, the source inputs, the forms and each inference's claimed ids |
 
 ## The consensus procedure kind
 
@@ -155,7 +155,7 @@ A run in which the models disagree is still a claim. What makes it not one is
 an invalid claim record in either inference: `claim build` refuses to write
 such a claim, and a challenger rejects it on that record.
 
-`iris infer` and `iris claim build` print the answer first, then each
+`iwebs infer` and `iwebs claim build` print the answer first, then each
 inference's result under an `inference:` line:
 
 ```text
@@ -223,14 +223,14 @@ built on, and no stage of the inference segment differs for a relay.
 
 A first inference with no valid claim record gives a relay record with a
 fault, which the second inference's bind publishes as a prompt fault. Nothing
-aborts. `iris infer` refuses such a run before the second inference, as it
+aborts. `iwebs infer` refuses such a run before the second inference, as it
 refuses a source with a fault.
 
 `result` runs `claim-result` on the second inference's last check. The first
 output is in the run as the first inference's result, which has no code: the
 result stage did not read it.
 
-`iris infer`, `iris run` and `iris claim build` print which inference the
+`iwebs infer`, `iwebs run` and `iwebs claim build` print which inference the
 result is of, then each inference's result under an `inference:` line, in
 the order they were made:
 
@@ -280,8 +280,8 @@ of the procedure's id. The registry refuses one that says nothing of some
 inference, relays from a later inference, or states an agreement of other
 than two.
 
-The checks iris makes itself follow the kind's shape, which is compiled in.
-So iris takes no registered procedure whose arrangement is not its kind's in
+The checks IWEBS makes itself follow the kind's shape, which is compiled in.
+So IWEBS takes no registered procedure whose arrangement is not its kind's in
 this build (`Registry::get`).
 
 ### What a contract checks of a consensus claim
@@ -329,8 +329,8 @@ builds one relay claim, and the blockchain tier submits one to the contracts.
 
 For `consensus`:
 
-Nothing in iris itself. `iris claim pins` writes a consensus contract's pins as
-a file, and `iris claim check --pins` checks a claim against it.
+Nothing in IWEBS itself. `iwebs claim pins` writes a consensus contract's pins as
+a file, and `iwebs claim check --pins` checks a claim against it.
 
 For `relay`:
 
@@ -372,7 +372,7 @@ inputs.first = "first"
 inputs.second = "second"
 ```
 
-The files are compiled into `iris`, and a specification names one by its file
+The files are compiled into `iwebs`, and a specification names one by its file
 name. A shape is held to what the segment kinds declare when it is read
 (`procedure/definition/src/shape.rs`): an input from a later step, a program
 its segment does not have, or three inferences into the result of two is
@@ -383,7 +383,7 @@ What a new kind needs depends on what it is made of:
 | The kind uses | What to add |
 | --- | --- |
 | Existing segments and programs, arranged another way | Its file in `procedures/`, and its registration on the contract |
-| A new program of an existing segment | The stage project under `raster-stages/`, its logic under `phases/`, its native stage in the segment's folder under `procedure/pipeline/src/segments/` with its entry in that segment's `Stage`, and the program's entry in `procedure/definition/src/segment_kind.rs`. A new result program also needs what `iris infer` and `iris claim build` print for it and how a claim of it is judged when every checkpoint matches |
+| A new program of an existing segment | The stage project under `raster-stages/`, its logic under `phases/`, its native stage in the segment's folder under `procedure/pipeline/src/segments/` with its entry in that segment's `Stage`, and the program's entry in `procedure/definition/src/segment_kind.rs`. A new result program also needs what `iwebs infer` and `iwebs claim build` print for it and how a claim of it is judged when every checkpoint matches |
 | A new segment kind | As a new program, with a folder of its own under `segments/` and the kind's entry in `segment_kind.rs` |
 
 A registration on the contract is a call, not a change to it: the registered

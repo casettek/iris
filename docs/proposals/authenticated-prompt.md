@@ -175,12 +175,12 @@ the native stages call it and the native run calls it, as with `inference-tokeni
 
 | Where | What it gains |
 | --- | --- |
-| `iris attest sign` | Host only. Signs a document's hash, length, server and target with a key file. This is the trusted stand-in for the notary |
+| `iwebs attest sign` | Host only. Signs a document's hash, length, server and target with a key file. This is the trusted stand-in for the notary |
 | Specification and case | A `[source]` table in the specification holds the recipe and the signer's key, and `[[form]]` tables the forms. The case names each document and its attestation, and gives no `prompt` or `prompt_file` |
 | Native | Verifies the attestation, renders the prompt, runs the model, matches the forms. The rendered text is what the claim's binds are given |
 | Pipeline, native | `source` and `result` routines with checkpoints, like every other stage |
 | Raster | `raster-stages/source`, `raster-stages/result` |
-| Backend | Fetches as it does now, calls `iris attest sign`, and writes a recipe where it wrote `prompt.txt` |
+| Backend | Fetches as it does now, calls `iwebs attest sign`, and writes a recipe where it wrote `prompt.txt` |
 
 The backend's earthquake prompt keeps its wording. Two things change in the data lines:
 strings carry their JSON quotes, and times are the document's epoch milliseconds until a
@@ -232,7 +232,7 @@ until the notary replaces it.
 
 ## Build order
 
-1. `source-phase`, `iris attest sign`, the `[source]` table and the native path. The
+1. `source-phase`, `iwebs attest sign`, the `[source]` table and the native path. The
    backend's earthquake case runs through it. No pipeline change.
 2. The native `source` and `result` routines, the bind's new input, checkpoints, and a
    parity case for each row of the table above.
@@ -251,19 +251,19 @@ test tier's lock check passes.
   the standard library. It is a workspace member through `procedure-prepare`'s dependency on it and
   is not yet listed in the root `Cargo.toml`, because Raster's lock check reads that file
   and listing it would make every stage lock stale before step 3 re-locks them anyway.
-- `iris attest keygen` and `iris attest sign`.
+- `iwebs attest keygen` and `iwebs attest sign`.
 - A `[source]` table in what is now the specification, with the recipe and the signer's
   key, and in the case a list of documents, each with its attestation. When this step
   was built the recipe and the key were files a run spec named.
-- `iris source render`, which prints the record and can write the prompt text.
-- `iris infer` and `iris claim build` on such a specification use the prompt the source gives. A
-  source with a fault gives none, and the run stops there. `iris infer` also prints the
+- `iwebs source render`, which prints the record and can write the prompt text.
+- `iwebs infer` and `iwebs claim build` on such a specification use the prompt the source gives. A
+  source with a fault gives none, and the run stops there. `iwebs infer` also prints the
   source's facts and the result code. They are computed by the host from the same
   functions, and no pipeline states them yet.
 - In iris-backend, on its own `authenticated-data` branch: the impact claim (now version
-  4) builds a recipe from the three documents it already fetches, has IRIS sign them and
-  render the prompt at preparation, and gives IRIS the source files at execution. It
-  fails the run if IRIS's prompt hash is not the prepared input's.
+  4) builds a recipe from the three documents it already fetches, has IWEBS sign them and
+  render the prompt at preparation, and gives IWEBS the source files at execution. It
+  fails the run if IWEBS's prompt hash is not the prepared input's.
 
 The impact claim by hand on Gemma 4 E2B, with the real documents of one event: an event
 record of 34,108 bytes, `comments.json` of 833 and `alerts.json` of 1,456; eleven fields; a
@@ -370,7 +370,7 @@ lock, at manifest version 18.
   forms hash are what the contract's own forms give the submitted output. At a
   challenge: the claim record is in the output of the checkpoint before the last, which
   must run the check, and the result is in the last, which must run the result stage.
-  `iris claim check` takes the signer, the recipe and the forms from the specification.
+  `iwebs claim check` takes the signer, the recipe and the forms from the specification.
 - **Challenges are unchanged.** `source` and `result` are stages with approved programs
   and piped inputs. A challenger recomputes, finds the first checkpoint that differs
   and replays that stage.

@@ -1,4 +1,4 @@
-//! The data-availability layer: `iris da`.
+//! The data-availability layer: `iwebs da`.
 
 use crate::blockchain::evm;
 use crate::*;
@@ -10,14 +10,14 @@ pub(crate) enum DaCommand {
     BlockRoot {
         #[arg(long)]
         height: u64,
-        /// The stand-in layer's directory. Default: `IRIS_CELESTIA_RPC`'s
+        /// The stand-in layer's directory. Default: `IWEBS_CELESTIA_RPC`'s
         /// node, or the default stand-in.
         #[arg(long = "da-dir")]
         da_dir: Option<PathBuf>,
     },
     /// As the trusted host, check each blob a submission posted and sign
     /// where it is, its block's root and what it holds, with the key in
-    /// `IRIS_ATTESTER_KEY`. The signatures are written into the submission.
+    /// `IWEBS_ATTESTER_KEY`. The signatures are written into the submission.
     Attest {
         /// A claim's or a challenge's submission.
         #[arg(long)]

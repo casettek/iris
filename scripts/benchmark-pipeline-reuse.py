@@ -1,4 +1,4 @@
-"""Compare two built iris binaries on one unchanged specification, case and checkpoint list.
+"""Compare two built iwebs binaries on one unchanged specification, case and checkpoint list.
 
 Use an actual pre-change binary for --baseline, not --native-stage-subprocess: changing
 the main-process backend would confound the comparison. No tracked files change.

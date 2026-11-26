@@ -595,7 +595,7 @@ mod tests {
         assert!(StageKind::from_stage_name("range_p3").is_err());
 
         let dir = std::env::temp_dir().join(format!(
-            "iris-stage-kind-{}-{:?}",
+            "iwebs-stage-kind-{}-{:?}",
             std::process::id(),
             std::thread::current().id()
         ));

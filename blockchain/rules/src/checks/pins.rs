@@ -17,14 +17,14 @@ use procedure_definition::procedure_kind::ProcedureKind;
 /// Written beside a model import's `manifest.json`.
 pub const CONTRACT_PINS_JSON: &str = "contract_pins.json";
 
-pub const CONTRACT_PINS_VERSION: u32 = 6;
+pub const CONTRACT_PINS_VERSION: u32 = 7;
 
 /// What a contract pins before any claim arrives: the procedure kind it accepts
 /// claims of, that procedure kind's stage programs, and the model of each inference
 /// the procedure kind makes, in order.
 ///
 /// A model import writes the pins of the `single` procedure kind over that model.
-/// `iris claim pins` writes those of any procedure kind over the models a specification
+/// `iwebs claim pins` writes those of any procedure kind over the models a specification
 /// names.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]

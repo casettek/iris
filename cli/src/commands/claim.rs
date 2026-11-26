@@ -1,4 +1,4 @@
-//! A claim: `iris claim`.
+//! A claim: `iwebs claim`.
 
 use super::infer::{print_consensus, print_infer_result};
 use crate::*;
@@ -32,14 +32,14 @@ pub(crate) struct ClaimPostArgs {
     submission: PathBuf,
 
     /// The stand-in data-availability layer's directory. Default:
-    /// `IRIS_DA_DIR`, or `~/.cache/iris/stub-celestia`.
+    /// `IWEBS_DA_DIR`, or `~/.cache/iwebs/stub-celestia`.
     #[arg(long = "da-dir")]
     da_dir: Option<PathBuf>,
 }
 
 #[derive(Debug, Args)]
 pub(crate) struct ClaimAuditArgs {
-    /// The claim's `claim_submission.json`, in the directory `iris claim
+    /// The claim's `claim_submission.json`, in the directory `iwebs claim
     /// fetch` wrote: with its checkpoint list, checkpoints and input lists.
     #[arg(long)]
     submission: PathBuf,
@@ -48,7 +48,7 @@ pub(crate) struct ClaimAuditArgs {
     #[arg(long, default_value = procedure_definition::SPECIFICATION_TOML)]
     specification: PathBuf,
 
-    /// The pins the contract holds. As for `iris claim check`.
+    /// The pins the contract holds. As for `iwebs claim check`.
     #[arg(long)]
     pins: Option<PathBuf>,
 
@@ -75,11 +75,11 @@ pub(crate) struct ClaimFetchArgs {
     #[arg(long, default_value = procedure_definition::SPECIFICATION_TOML)]
     specification: PathBuf,
 
-    /// The pins the contract holds. As for `iris claim check`.
+    /// The pins the contract holds. As for `iwebs claim check`.
     #[arg(long)]
     pins: Option<PathBuf>,
 
-    /// The stand-in data-availability layer's directory. As for `iris claim
+    /// The stand-in data-availability layer's directory. As for `iwebs claim
     /// check`.
     #[arg(long = "da-dir")]
     da_dir: Option<PathBuf>,
@@ -96,7 +96,7 @@ pub(crate) struct ClaimPinsArgs {
     specification: PathBuf,
 
     /// Where to write the pins. They are made from the models' imports and
-    /// the stage projects' locks as they are now, so run this from the iris
+    /// the stage projects' locks as they are now, so run this from the IWEBS
     /// root.
     #[arg(long)]
     out: PathBuf,
@@ -118,20 +118,20 @@ pub(crate) struct ClaimCheckArgs {
     #[arg(long = "raster-run")]
     raster_run: Option<PathBuf>,
 
-    /// The pins the contract holds, as `iris claim pins` wrote them. Without
+    /// The pins the contract holds, as `iwebs claim pins` wrote them. Without
     /// it a `single` contract's are the model import's, and those of a
     /// procedure kind over several models are made from the imports now.
     #[arg(long)]
     pins: Option<PathBuf>,
 
-    /// The registry of procedures, as `iris registry add` writes it. The
+    /// The registry of procedures, as `iwebs registry add` writes it. The
     /// claim is judged by the procedure it names there. Without it, by
     /// the one the specification and the pins describe.
     #[arg(long)]
     registry: Option<PathBuf>,
 
     /// The stand-in data-availability layer's directory. Default:
-    /// `IRIS_DA_DIR`, or `~/.cache/iris/stub-celestia`.
+    /// `IWEBS_DA_DIR`, or `~/.cache/iwebs/stub-celestia`.
     #[arg(long = "da-dir")]
     da_dir: Option<PathBuf>,
 
@@ -151,7 +151,7 @@ pub(crate) struct ClaimBuildArgs {
     #[arg(long, default_value = procedure_definition::CASE_TOML)]
     pub(crate) case: PathBuf,
 
-    /// The comma-separated output ids `iris infer` printed for this same
+    /// The comma-separated output ids `iwebs infer` printed for this same
     /// specification and case. The claim is built from them without running the native run
     /// again; the pipeline still re-derives every token and rejects any other ids.
     #[arg(long = "native-output-ids", value_delimiter = ',')]
@@ -162,7 +162,7 @@ pub(crate) struct ClaimBuildArgs {
     native_stage_subprocess: bool,
 
     /// The address the claim is attributed to: `0x` and 40 lowercase hex
-    /// digits. Every blob the claim posts names it. Default: `IRIS_CLAIMER`,
+    /// digits. Every blob the claim posts names it. Default: `IWEBS_CLAIMER`,
     /// or the zero address.
     #[arg(long)]
     claimer: Option<String>,
@@ -183,7 +183,7 @@ impl ClaimBuildArgs {
             self.case,
         )?;
         options.native_output_ids = self.native_output_ids;
-        options.claimer = self.claimer.or_else(|| std::env::var("IRIS_CLAIMER").ok());
+        options.claimer = self.claimer.or_else(|| std::env::var("IWEBS_CLAIMER").ok());
         Ok(options)
     }
 }
@@ -218,7 +218,7 @@ pub(crate) fn build(options: ClaimBuildOptions, specification_path: PathBuf) -> 
     if let Some(path) = result.claim_submission_path.as_ref() {
         println!("claim submission: {}", path.display());
         if path.with_file_name(posting::POSTING_OUTPUTS_JSON).exists() {
-            println!("posting: prepared, not posted (`iris claim post`)");
+            println!("posting: prepared, not posted (`iwebs claim post`)");
         }
     }
     Ok(ExitCode::SUCCESS)

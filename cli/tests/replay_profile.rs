@@ -217,7 +217,7 @@ fn replay_profile_tokenizer_smoke() {
     let root = repo_root();
     let dir = unique_dir(&root.join("target/replay-profile-smoke"));
     println!("Replay profile smoke artifacts: {}", dir.display());
-    let exe = env!("CARGO_BIN_EXE_iris");
+    let exe = env!("CARGO_BIN_EXE_iwebs");
     let mut import = Command::new(exe);
     import
         .current_dir(&root)

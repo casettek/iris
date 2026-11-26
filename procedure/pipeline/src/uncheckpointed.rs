@@ -532,7 +532,7 @@ impl InferenceTempDir {
             .duration_since(UNIX_EPOCH)
             .context("system clock is before UNIX_EPOCH")?
             .as_nanos();
-        let path = std::env::temp_dir().join(format!("iris-infer-{}-{nanos}", std::process::id()));
+        let path = std::env::temp_dir().join(format!("iwebs-infer-{}-{nanos}", std::process::id()));
         fs::create_dir_all(&path)
             .with_context(|| format!("failed to create {}", path.display()))?;
         Ok(Self { path })

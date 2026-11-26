@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
-import "../src/IrisClaims.sol";
+import "../src/IwebsClaims.sol";
 import "../src/RasterVerifier.sol";
 
 /// The part of Foundry's test host this file uses.
@@ -15,10 +15,10 @@ interface Vm {
 
 /// The claims contract with a way to hold a challenge that never arrived, so
 /// that a fault proof can be judged against it without a claim behind it.
-contract HeldChallenges is IrisClaims {
+contract HeldChallenges is IwebsClaims {
     constructor(IRiscZeroVerifier verifier_, bytes32 transition, bytes32 authorization)
-        IrisClaims(
-            IrisRegistry(address(1)), DataRootOracle(address(1)), address(1), 0, 0, 0, verifier_, transition, authorization
+        IwebsClaims(
+            IwebsRegistry(address(1)), DataRootOracle(address(1)), address(1), 0, 0, 0, verifier_, transition, authorization
         )
     {}
 
@@ -38,7 +38,7 @@ contract HeldChallenges is IrisClaims {
 }
 
 /// `submitFaultProof` on a real proof: `test/fault_proof.json` is a Raster
-/// fault proof of a small stage, as `iris evm fault-proof --receipt` prints
+/// fault proof of a small stage, as `iwebs evm fault-proof --receipt` prints
 /// it. The proof names its own programs, so it stays a proof whatever
 /// Raster's current ones are; what would break it is a change of RISC Zero's
 /// circuits, which is a change of the vendored verifier.
@@ -84,7 +84,7 @@ contract FaultProofTest {
         verifier.verify(seal, transition, sha256(journal));
     }
 
-    function test_the_journal_is_read_as_iris_reads_it() public view {
+    function test_the_journal_is_read_as_iwebs_reads_it() public view {
         FaultVerdict memory verdict = RasterJournal.read(journal);
         require(verdict.finished, "not finished");
         require(verdict.transitionImageId == transition, "transition");
@@ -99,20 +99,20 @@ contract FaultProofTest {
         require(_dismissedAt(claims) == 0, "dismissed before the proof");
         claims.submitFaultProof(_proof(journal, seal));
         require(_dismissedAt(claims) == uint64(block.timestamp), "not dismissed");
-        vm.expectRevert(abi.encodeWithSelector(IrisClaims.AlreadyDismissed.selector, ID));
+        vm.expectRevert(abi.encodeWithSelector(IwebsClaims.AlreadyDismissed.selector, ID));
         claims.submitFaultProof(_proof(journal, seal));
     }
 
     function test_a_challenge_never_admitted_is_unknown() public {
         HeldChallenges claims = new HeldChallenges(verifier, transition, authorization);
-        vm.expectRevert(abi.encodeWithSelector(IrisClaims.UnknownChallenge.selector, ID));
+        vm.expectRevert(abi.encodeWithSelector(IwebsClaims.UnknownChallenge.selector, ID));
         claims.submitFaultProof(_proof(journal, seal));
     }
 
     // The cheat: a real proof that some other trace is false.
     function test_a_proof_of_another_trace_is_refused() public {
         HeldChallenges claims = _held(~trace, program, inputs);
-        vm.expectRevert(IrisClaims.AnotherTraceCommitment.selector);
+        vm.expectRevert(IwebsClaims.AnotherTraceCommitment.selector);
         claims.submitFaultProof(_proof(journal, seal));
         require(_dismissedAt(claims) == 0, "dismissed");
     }
@@ -121,25 +121,25 @@ contract FaultProofTest {
     // other inputs, which is true of every trace.
     function test_a_proof_over_another_program_is_refused() public {
         HeldChallenges claims = _held(trace, ~program, inputs);
-        vm.expectRevert(IrisClaims.AnotherProgram.selector);
+        vm.expectRevert(IwebsClaims.AnotherProgram.selector);
         claims.submitFaultProof(_proof(journal, seal));
     }
 
     function test_a_proof_over_other_inputs_is_refused() public {
         HeldChallenges claims = _held(trace, program, ~inputs);
-        vm.expectRevert(IrisClaims.AnotherInputManifest.selector);
+        vm.expectRevert(IwebsClaims.AnotherInputManifest.selector);
         claims.submitFaultProof(_proof(journal, seal));
     }
 
     function test_a_proof_checked_by_programs_not_pinned_is_refused() public {
         HeldChallenges claims = new HeldChallenges(verifier, ~transition, authorization);
         claims.hold(ID, trace, program, inputs);
-        vm.expectRevert(IrisClaims.TransitionImageIdMismatch.selector);
+        vm.expectRevert(IwebsClaims.TransitionImageIdMismatch.selector);
         claims.submitFaultProof(_proof(journal, seal));
 
         claims = new HeldChallenges(verifier, transition, ~authorization);
         claims.hold(ID, trace, program, inputs);
-        vm.expectRevert(IrisClaims.AuthorizationImageIdMismatch.selector);
+        vm.expectRevert(IwebsClaims.AuthorizationImageIdMismatch.selector);
         claims.submitFaultProof(_proof(journal, seal));
     }
 
@@ -150,20 +150,20 @@ contract FaultProofTest {
 
         bytes memory changed = journal;
         changed[changed.length - 1] ^= 0x01;
-        vm.expectRevert(IrisClaims.ProofNotVerified.selector);
+        vm.expectRevert(IwebsClaims.ProofNotVerified.selector);
         claims.submitFaultProof(_proof(changed, seal));
 
         changed = seal;
         changed[changed.length - 1] ^= 0x01;
-        vm.expectRevert(IrisClaims.ProofNotVerified.selector);
+        vm.expectRevert(IwebsClaims.ProofNotVerified.selector);
         claims.submitFaultProof(_proof(journal, changed));
 
         // Another verifier's selector, and no seal at all.
         changed = seal;
         changed[0] ^= 0x01;
-        vm.expectRevert(IrisClaims.ProofNotVerified.selector);
+        vm.expectRevert(IwebsClaims.ProofNotVerified.selector);
         claims.submitFaultProof(_proof(journal, changed));
-        vm.expectRevert(IrisClaims.ProofNotVerified.selector);
+        vm.expectRevert(IwebsClaims.ProofNotVerified.selector);
         claims.submitFaultProof(_proof(journal, ""));
 
         require(_dismissedAt(claims) == 0, "dismissed");

@@ -1,11 +1,11 @@
 [package]
-name = "iris-cli"
+name = "iwebs-cli"
 version = "0.1.0"
 edition = "2021"
-default-run = "iris"
+default-run = "iwebs"
 
 [[bin]]
-name = "iris"
+name = "iwebs"
 path = "src/main.rs"
 
 [features]

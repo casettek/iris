@@ -21,8 +21,8 @@ external `path` / `index_path` entries in the model artifact directory.
 
 Run-specific inputs are not model artifacts. The original text, the configuration,
 each range's cut and each claimed range are written under
-`target/iris/runs/<run-id>/prompt/`, and prompt-free pipeline templates use a
-`target/iris/run-prompt-placeholder/` binding that run preparation replaces.
+`target/iwebs/runs/<run-id>/prompt/`, and prompt-free pipeline templates use a
+`target/iwebs/run-prompt-placeholder/` binding that run preparation replaces.
 
 A run is described by two files. `specification.toml` defines the procedure:
 
@@ -74,7 +74,7 @@ code = 1
 A field's `document` is which of the source's documents its value is in, the
 first when absent. In its `path` a quoted step is a key and a bare number an
 index into an array. `[source.signer]` holds the two values of the
-`signer.json` that `iris attest keygen` writes.
+`signer.json` that `iwebs attest keygen` writes.
 
 `case.toml` holds one case's own inputs. For a specification with no source,
 exactly one of `prompt` or `prompt_file`:
@@ -132,7 +132,7 @@ Every checkpointed stage directory must include:
 
 The claim bundle records the first checkpoint input commitment, final checkpoint output commitment, checkpoint list path, and prepared-run metadata path.
 
-The claim submission is what a claimer would post to a [contract](checks.md): the procedure kind, the input text hash, the source record of a run that has one, for each inference its output text, its last check's claim record (statement digest, output text hash, valid flag) and its result code, for a consensus the agreement, the claimer's address, and the root of the checkpoint list, which commits to every stage boundary. A model import's `contract_pins.json` is the other side: what a contract of the `single` procedure kind over that model pins, as the procedure kind's name, a program entry (the stage programs and the inputs each takes from earlier stages) and a model entry. `iris claim pins` writes the same file for any procedure kind over the models a specification names.
+The claim submission is what a claimer would post to a [contract](checks.md): the procedure kind, the input text hash, the source record of a run that has one, for each inference its output text, its last check's claim record (statement digest, output text hash, valid flag) and its result code, for a consensus the agreement, the claimer's address, and the root of the checkpoint list, which commits to every stage boundary. A model import's `contract_pins.json` is the other side: what a contract of the `single` procedure kind over that model pins, as the procedure kind's name, a program entry (the stage programs and the inputs each takes from earlier stages) and a model entry. `iwebs claim pins` writes the same file for any procedure kind over the models a specification names.
 
 ## Challenges
 

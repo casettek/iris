@@ -187,7 +187,7 @@ pub enum LinkFault {
 }
 
 impl LinkFault {
-    /// The fault a contract records for the claim: `IrisClaims.ClaimFault`,
+    /// The fault a contract records for the claim: `IwebsClaims.ClaimFault`,
     /// one of [`CLAIM_FAULTS`]. A contract keeps one fault for each place an
     /// input may come from, and one for a list it cannot read. The variants
     /// here say more, for whoever reads the audit.
@@ -514,7 +514,7 @@ pub fn first_unapproved_stage(pins: &ProgramPins, list: &CheckpointList) -> Opti
         .map(|index| index as u32)
 }
 
-/// `IrisClaims.ClaimFault` in the contract's order: the number the contract
+/// `IwebsClaims.ClaimFault` in the contract's order: the number the contract
 /// holds for a void claim names the fault at that place. The first is no
 /// fault. The second is [`StageAdmission::UnapprovedProgram`], and the rest
 /// are what [`LinkFault::name`] gives.

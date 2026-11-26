@@ -40,7 +40,7 @@ raster_samples="prompt-bind:prompt_bind_p0 prompt-check:prompt_check_p0 input-em
 
 claim() {
     local reference=$1 out=$2
-    "$repo_root/target/release/iris" claim build --specification "$reference/specification.toml" \
+    "$repo_root/target/release/iwebs" claim build --specification "$reference/specification.toml" \
         --case "$reference/case.toml" > "$out/claim.log" 2>&1 \
         || { tail -20 "$out/claim.log"; return 1; }
     grep -E "^faults:|^stop reason:" "$out/claim.log"
@@ -94,8 +94,8 @@ raster_stage() {
     echo "$stage: Raster output matches native ($(stat -c %s "$produced") bytes)"
 }
 
-step real-model-build "the iris binary builds" \
-    cargo build --release --locked -p iris-cli --bin iris "${features[@]}"
+step real-model-build "the iwebs binary builds" \
+    cargo build --release --locked -p iwebs-cli --bin iwebs "${features[@]}"
 
 for reference in "${references[@]}"; do
     name=$(basename "$reference")

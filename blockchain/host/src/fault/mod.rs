@@ -164,7 +164,7 @@ fn emit_progress(
     let mut stdout = std::io::stdout().lock();
     writeln!(
         stdout,
-        "IRIS_FAULT_PROGRESS {}",
+        "IWEBS_FAULT_PROGRESS {}",
         json!({"version": 1, "phase": phase,
         "started_at_ms": SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis(),
         "stage_replay_duration_ms": replay, "proof_duration_ms": proving, "estimation_duration_ms": estimation})
@@ -586,7 +586,7 @@ fn check_runtime_for(estimate: bool) -> Result<()> {
     );
     ensure!(
         !raster_prover::TRANSITION_GUEST_ELF.is_empty(),
-        "Iris was built without proving guests; rebuild without RISC0_SKIP_BUILD"
+        "IWEBS was built without proving guests; rebuild without RISC0_SKIP_BUILD"
     );
     let help = Command::new("cargo")
         .args(["raster", "run", "--help"])

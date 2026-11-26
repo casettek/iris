@@ -216,7 +216,7 @@ pub(super) fn run_relay_scenario(
 
     // What a contract would check, and every native checkpoint against the
     // boundary the Raster run committed. The contract's pins are a file: the
-    // relay procedure kind's programs and both models, as `iris claim pins`
+    // relay procedure kind's programs and both models, as `iwebs claim pins`
     // writes them.
     let submission_path = built
         .claim_submission_path

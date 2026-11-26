@@ -491,12 +491,12 @@ pub(crate) mod tests {
     /// What an import writes, cut down: one pipeline input, range 0's bind and
     /// check, the repeat over later ranges, and the checks.
     pub(crate) const PART: &str = r#"[pipeline]
-name = "iris"
+name = "iwebs"
 version = "0.1.0"
 
 [pipeline.input.prompt_text]
 index = "j"
-path = "target/iris/run-prompt-placeholder/text_{j}.rastered"
+path = "target/iwebs/run-prompt-placeholder/text_{j}.rastered"
 commitments = []
 
 [[pipeline.stage]]
@@ -715,7 +715,7 @@ inputs.prompt = { from = "prompt_bind_p@LAST_PROMPT_RANGE@" }
         let pipeline: toml::Value = toml::from_str(&template).unwrap();
         // One `[pipeline]` table, and each inference's own inputs.
         assert_eq!(template.matches("[pipeline]\n").count(), 1);
-        assert_eq!(pipeline["pipeline"]["name"].as_str(), Some("iris"));
+        assert_eq!(pipeline["pipeline"]["name"].as_str(), Some("iwebs"));
         let inputs = pipeline["pipeline"]["input"].as_table().unwrap();
         assert_eq!(
             inputs.keys().collect::<Vec<_>>(),

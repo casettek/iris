@@ -1,11 +1,11 @@
 # Documentation
 
-Three kinds of page. Start with [how iris works](protocol/overview.md). The
+Three kinds of page. Start with [how IWEBS works](protocol/overview.md). The
 [glossary](glossary.md) gives each word its one meaning.
 
 ## How it works
 
-- [How iris works](protocol/overview.md): the whole of it from the top: what
+- [How IWEBS works](protocol/overview.md): the whole of it from the top: what
   is pinned, what a claim is, the one rule, and what catches each way a claim
   can be wrong.
 - [The pipeline](protocol/raster-pipeline.md): the stages a run is made of,

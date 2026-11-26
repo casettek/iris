@@ -380,6 +380,6 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        std::env::temp_dir().join(format!("iris-cli-{label}-{}-{nanos}", std::process::id()))
+        std::env::temp_dir().join(format!("iwebs-cli-{label}-{}-{nanos}", std::process::id()))
     }
 }

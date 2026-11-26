@@ -10,7 +10,7 @@ cargo test --workspace
 cargo test -p inference-generation
 cargo test -p procedure-pipeline
 cargo test -p inference-manifest -p procedure-definition -p blockchain-rules
-cargo test -p iris-cli
+cargo test -p iwebs-cli
 ```
 
 Equivalent shortcuts:
@@ -61,7 +61,7 @@ Do not hand-edit `Raster.lock`. Commit lock updates only when they are an expect
 
 A lock also goes stale without a stage edit. Since Raster's path-independent guest builds (version 14 here) a tile's image id depends on the stage's sources, the local crates it reaches, this repository's `Cargo.lock`, the Raster checkout's sources, the position of that checkout relative to this one (`../raster`) and the RISC Zero Rust toolchain; it no longer depends on where the two checkouts live or what their folders are called. The lock records the toolchain and a digest of those inputs, and `cargo raster run --commit` and `pipeline run` refuse a stale lock before they run anything. After updating Raster, reinstall its CLI and re-lock every stage (`just build-raster-stages`).
 
-The ladder does not show a value that no proof pins. A literal passed to a tile, sequence or recur is one (`{"Native": "Inline"}` in `target/raster/cfs.json`, outside the slot of an output a recur creates), and so is a recur `state = …` seed that is a `select!` into a larger value. Return the constant or the seed from a tile and pass the whole result. `cargo test -p iris-cli --lib stage_bindings` reads every stage's schema and fails on either; the parity gate runs the same check first.
+The ladder does not show a value that no proof pins. A literal passed to a tile, sequence or recur is one (`{"Native": "Inline"}` in `target/raster/cfs.json`, outside the slot of an output a recur creates), and so is a recur `state = …` seed that is a `select!` into a larger value. Return the constant or the seed from a tile and pass the whole result. `cargo test -p iwebs-cli --lib stage_bindings` reads every stage's schema and fails on either; the parity gate runs the same check first.
 
 ## GPU Kernels
 
@@ -73,27 +73,27 @@ runtime is linked statically, so running needs only the NVIDIA driver.
 
 ```bash
 export CUDA_HOME=/usr/local/cuda-13.3 NVCC_CCBIN=/usr/bin/g++-13
-cargo build --release -p iris-cli --bin iris --features gpu-kernels
+cargo build --release -p iwebs-cli --bin iwebs --features gpu-kernels
 cargo test -p inference-kernels --features gpu-kernels
 ```
 
 `CUDA_HOME` defaults to `/usr/local/cuda` and `NVCC_CCBIN` to `g++`. Both builds
-write `target/release/iris`; a build without the feature restores the CPU-only
+write `target/release/iwebs`; a build without the feature restores the CPU-only
 binary.
 
 | Variable | Effect |
 | --- | --- |
-| `IRIS_GPU_KERNELS=off` | Keep every product on the CPU. |
-| `IRIS_GPU_MIN_WORK` | Smallest product, in multiplications, sent to the GPU. Default `2^28`; `0` sends every `Q8_0` layer product, which is how tests and `test-parity` exercise the GPU on small models. |
-| `IRIS_GPU_WEIGHT_BYTES` | Weights kept on the device before the least recently used matrix is dropped. Default 4 GiB. |
+| `IWEBS_GPU_KERNELS=off` | Keep every product on the CPU. |
+| `IWEBS_GPU_MIN_WORK` | Smallest product, in multiplications, sent to the GPU. Default `2^28`; `0` sends every `Q8_0` layer product, which is how tests and `test-parity` exercise the GPU on small models. |
+| `IWEBS_GPU_WEIGHT_BYTES` | Weights kept on the device before the least recently used matrix is dropped. Default 4 GiB. |
 
-The first product on the device prints `iris: running Q8_0 layer products on the
+The first product on the device prints `iwebs: running Q8_0 layer products on the
 GPU` to stderr. To check a change to the GPU path, compare `checkpoints.txt` of
 the same claim built with and without the feature, then run the gate with the
 GPU forced on:
 
 ```bash
-IRIS_GPU_MIN_WORK=0 cargo run --release --locked -p iris-cli --features gpu-kernels -- test parity --skip-challenges
+IWEBS_GPU_MIN_WORK=0 cargo run --release --locked -p iwebs-cli --features gpu-kernels -- test parity --skip-challenges
 ```
 
 ## Lower-Level Surfaces
@@ -106,4 +106,4 @@ cargo raster pipeline run --no-auth --show-output
 cargo raster show target/raster/pipelines-no-auth/latest/check_c0/output.bin
 ```
 
-`target/`, `*.rastered`, and `*.rindex` are generated artifacts. A pipeline manifest comes from `model import` (the template) and `claim build` (filled in for one run, under `target/iris/runs/<run>/`); run the commands above from that directory or pass it as the manifest.
+`target/`, `*.rastered`, and `*.rindex` are generated artifacts. A pipeline manifest comes from `model import` (the template) and `claim build` (filled in for one run, under `target/iwebs/runs/<run>/`); run the commands above from that directory or pass it as the manifest.

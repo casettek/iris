@@ -5,7 +5,7 @@ not tell you.
 
 ## What has to hold
 
-Iris makes four promises, and every check here is about one of them.
+IWEBS makes four promises, and every check here is about one of them.
 
 1. **An honest claimer is never convicted.** The fast native code that builds a
    claim and the Raster stage programs that judge it give the same bytes at every
@@ -15,9 +15,9 @@ Iris makes four promises, and every check here is about one of them.
    through authenticated Raster.
 3. **The catch can be proven.** The stage runs in the zkVM guest as it does
    natively, and a fault proof of it verifies.
-4. **The contracts say what iris says.** A claim iris would take the contracts
+4. **The contracts say what IWEBS says.** A claim IWEBS would take the contracts
    take, a claim that lies is void or challenged on the blockchains as the Rust
-   rules say it is, and a challenge iris would refuse the contracts refuse.
+   rules say it is, and a challenge IWEBS would refuse the contracts refuse.
 
 ## The tiers
 
@@ -34,7 +34,7 @@ Every check prints one line, `PASS` or `FAIL` with what a pass means and how
 long it took, and keeps its log under `target/test-logs/`. A tier runs all of
 its checks even after a failure and exits nonzero if any failed.
 
-Set `IRIS_FEATURES=cuda,gpu-kernels` to keep `target/release/iris` a GPU build;
+Set `IWEBS_FEATURES=cuda,gpu-kernels` to keep `target/release/iwebs` a GPU build;
 without it a tier rebuilds that binary for the CPU. Variables such as
 `IWEBS_PIPELINE_WEIGHT_CACHE_BYTES` pass through to the runs.
 
@@ -49,7 +49,7 @@ without it a tier rebuilds that binary for the CPU. Variables such as
 | release | Ignored tests | Native loaders match authenticated Raster stage binaries on multi-page weights; the real tokenizer's references hold; tiles run in the zkVM guest as they do natively; a fault proof of a small fixture is produced and verifies. | 1, 3 |
 | release | Real-model check | On an imported Gemma model: an honest claim builds with no fault, every checkpoint matches the reference in `tests/real-model/`, and one stage of each program gives the native output when run as Raster. | 1 |
 | pipeline | Contracts' own tests | The Solidity tests pass, among them a real fault proof against `submitFaultProof`. | 3, 4 |
-| pipeline | Honest claim | The contract takes it, agrees with `iris claim check` on changed copies of it, and refuses every on-the-spot question as `iris claim audit` does. | 4 |
+| pipeline | Honest claim | The contract takes it, agrees with `iwebs claim check` on changed copies of it, and refuses every on-the-spot question as `iwebs claim audit` does. | 4 |
 | pipeline | Four voided lies | A claim whose checkpoint names an unapproved program, or an input that is not its producer's output, a pinned commitment or a posted value, is taken, and voided with that fault when the contract is pointed at the checkpoint. | 2, 4 |
 | pipeline | Four rearranged lies | A claim that gives a stage a value from the wrong place (another layer's weights, another range's marks, another stage's output, the empty value) is taken and survives every on-the-spot question. The challenger's replay of that stage on the inputs its checkpoint names is a challenge the contract admits. | 2, 4 |
 | pipeline | Forged verdict | A claim of ids that are not the model's, with its check's record stated valid, arrives with a valid record and survives every question, and the challenger goes to replay the last check. | 2, 4 |
@@ -83,7 +83,7 @@ The small model is the gemma family's, from the newest parity run of it. Its
 check stage is under the replay window, so there the forged verdict is
 followed only as far as the replay. The tier also builds a claim of the
 `relay` procedure kind, on the run the gate's relay scenario made: the
-contract must take it and agree with iris on changed copies of it, and a lie
+contract must take it and agree with IWEBS on changed copies of it, and a lie
 in its second inference must be challenged by a replay of a run rebuilt from
 what the claim posted. `--real-model <specification>` adds a
 claim of that specification's model on the `case.toml` beside it, another layer's weights given to one of its
@@ -92,10 +92,10 @@ contract accepts. With a short prompt on a GPU build that adds a few minutes.
 No proof is made.
 
 To have the other tiers post to the local Celestia node in place of the
-stand-in directory, set `IRIS_TEST_CELESTIA=1`:
+stand-in directory, set `IWEBS_TEST_CELESTIA=1`:
 
 ```sh
-IRIS_TEST_CELESTIA=1 just test-parity
+IWEBS_TEST_CELESTIA=1 just test-parity
 ```
 
 ## Formatting
@@ -131,7 +131,7 @@ just test-real-model
 ```
 
 `stage-ladder` and `test-ignored` read a retained parity run: the newest under
-`target/parity/`, or the one `IRIS_PARITY_RUN` names. Run the gate first.
+`target/parity/`, or the one `IWEBS_PARITY_RUN` names. Run the gate first.
 
 `test-ignored` needs the E2B model beside this repository
 (`../models/gemma-4-E2B-q8`) and its import, the RISC Zero guest toolchain, and

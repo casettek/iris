@@ -1,5 +1,5 @@
 //! The code that needs a blockchain: Celestia as the layer a claim's data is
-//! posted to, the calls iris makes to its EVM contracts, and the local
+//! posted to, the calls IWEBS makes to its EVM contracts, and the local
 //! blockchains as a test drives them.
 
 pub mod celestia;

@@ -2,9 +2,9 @@
 """Exercise sparse bucket recursion through Raster's real transition guest.
 
 Requires cargo-raster, RISC Zero, and a retained authenticated stage fixture
-(input.json, input_manifest.json, output.bin), e.g. from `iris test parity`.
+(input.json, input_manifest.json, output.bin), e.g. from `iwebs test parity`.
 Injects a deterministic trace fault; estimates its window without proving.
-All generated artifacts stay under IRIS target/. Raster source is untouched.
+All generated artifacts stay under IWEBS target/. Raster source is untouched.
 """
 import argparse
 import hashlib

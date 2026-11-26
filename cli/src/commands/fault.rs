@@ -1,4 +1,4 @@
-//! A fault proof: `iris fault`.
+//! A fault proof: `iwebs fault`.
 
 use crate::*;
 

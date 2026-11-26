@@ -5,7 +5,7 @@ Run the local regression gate from the repository root:
 ```sh
 just test-parity
 # Equivalent:
-cargo run --release --locked -p iris-cli -- test parity
+cargo run --release --locked -p iwebs-cli -- test parity
 ```
 
 Add `--skip-challenges` to leave out the [challenge scenario](#challenge-scenario), whose
@@ -66,7 +66,7 @@ the pipeline then checks it.
   inherited or its own, equals the native run's entry at the same position. The native run runs no
   pass for its last token, so the pipeline's row for it has no reference. Nothing is
   scored from that row, and it still matches between Raster and pipeline-native.
-- `iris run` and the claim: [a run with no blockchain](run.md) of the same
+- `iwebs run` and the claim: [a run with no blockchain](run.md) of the same
   specification and case leaves the checkpoints the claim's pipeline-native run
   left, at every stage, and its pipeline run states the result its native run did.
   The consensus claim is held to the same.
@@ -108,7 +108,7 @@ the pipeline then checks it.
   one. The challenge, its trace body posted, is admitted against that claim,
   and refused when its body is not posted, expires before the fault-proof
   window ends, or was posted for another address. Each lying claim is then
-  read back from the layer into an empty directory (`iris claim fetch`), and
+  read back from the layer into an empty directory (`iwebs claim fetch`), and
   its list, checkpoints and input manifests must be the posted ones byte for
   byte. For the first of them a challenge is built from that directory alone
   (`challenge build --submission`), and must find and replay the same stage.
@@ -117,7 +117,7 @@ the pipeline then checks it.
   one that names another tokenizer than the procedure pins, and one that
   names token marks the claim did not post: a
   contract takes each claim, and an audit of it read back
-  (`iris claim audit`) must find that fault at that checkpoint. An audit of a
+  (`iwebs claim audit`) must find that fault at that checkpoint. An audit of a
   claim that lies only about an output must find none.
   Four lying claims give a stage a value the claim is allowed to name, in a
   place the pipeline does not give it: another layer's weights
@@ -137,8 +137,8 @@ the pipeline then checks it.
   documents must be the posted ones, and the case written over them must
   give the source record the claim names.
   Run against a Celestia node
-  (`IRIS_CELESTIA_RPC`), the gate leaves both posted there, and
-  `iris test devstack replay` takes them to the contracts
+  (`IWEBS_CELESTIA_RPC`), the gate leaves both posted there, and
+  `iwebs test devstack replay` takes them to the contracts
   ([the blockchains](../blockchain/overview.md)).
 - Over wrong token marks, on the templated case: the prompt stages finish through
   both Raster and pipeline-native, agree byte for byte, and record the expected fault.
@@ -170,7 +170,7 @@ is not required from the current Raster CLI. A malformed commitment fails instea
 of falling back to timing metadata, and the recorded stage order must still match
 the independently expected pipeline.
 
-`iris compare-teacher-forced --teacher-forced <pipeline-dir> --native <parity-worker --native output>`
+`iwebs compare-teacher-forced --teacher-forced <pipeline-dir> --native <parity-worker --native output>`
 (hidden) runs the same position-by-position comparison on any pipeline, reading one
 layer at a time.
 
@@ -229,7 +229,7 @@ both source programs: `prompt-source` before the first inference and
 The claim is run directly, natively and through Raster:
 
 - The claim states every field of both inferences' results as native
-  inference does, and `iris run` leaves the same checkpoints.
+  inference does, and `iwebs run` leaves the same checkpoints.
 - The second inference ran the recipe's text around the first output, exactly.
 - The pipeline is the `source` stage, the first model's stages, the `relay` stage,
   the second model's and the `result` stage, and every stage's output is the
@@ -402,7 +402,7 @@ order to assess OS-cache effects. On PowerShell, set the mode with:
 
 ```powershell
 $env:IWEBS_PIPELINE_PLE_LOADING = 'eager'
-# Run your normal iris claim build command.
+# Run your normal iwebs claim build command.
 $env:IWEBS_PIPELINE_PLE_LOADING = 'selective'
 # Repeat the same command and compare the two pipeline directories.
 ```
@@ -426,7 +426,7 @@ With `IWEBS_PIPELINE_REPLAY_BIN_DIR` pointing at the built stage binaries, also 
 `--test worker_parity -- --ignored --exact`. They cover authenticated multi-page
 and saturation cases, and repeated-range worker execution, respectively.
 
-For a full small-model gate, build `iris-cli`, `procedure-pipeline`, and all Raster
+For a full small-model gate, build `iwebs-cli`, `procedure-pipeline`, and all Raster
 stage binaries in release mode into the same directory, with `RISC0_SKIP_BUILD=1`
 for this host-only test. Then run (use the configured Python executable on Windows):
 
@@ -509,7 +509,7 @@ Use a short specification first (for example four requested output tokens), with
 same case and model manifest for all builds. Invoke the CLI directly so the
 backend request timeout does not obscure whether the pipeline completed. Keep
 cache budget, worker count, Rayon threads, and PLE mode identical. For example,
-from the Iris repository, using the retained budget from the earlier run:
+from the IWEBS repository, using the retained budget from the earlier run:
 
 ```powershell
 $env:IWEBS_PIPELINE_WEIGHT_CACHE_BYTES = '3584417792'
@@ -517,11 +517,11 @@ $env:IWEBS_PIPELINE_AUX_PARALLELISM = '4'
 $env:RAYON_NUM_THREADS = '4'
 $env:IWEBS_PIPELINE_PLE_LOADING = 'selective'
 Remove-Item Env:RASTER_PARALLELISM -ErrorAction SilentlyContinue
-& ./target/pipeline-pages-validation/baseline-bin/iris.exe parity-worker `
+& ./target/pipeline-pages-validation/baseline-bin/iwebs.exe parity-worker `
   --specification ./gemma-short.toml --case ./case.toml --output ./target/gemma-pages-before
-& ./target/pipeline-pages-validation/embedding-bin/iris.exe parity-worker `
+& ./target/pipeline-pages-validation/embedding-bin/iwebs.exe parity-worker `
   --specification ./gemma-short.toml --case ./case.toml --output ./target/gemma-pages-embedding
-& ./target/windows/release/iris.exe parity-worker `
+& ./target/windows/release/iwebs.exe parity-worker `
   --specification ./gemma-short.toml --case ./case.toml --output ./target/gemma-pages-after
 ```
 

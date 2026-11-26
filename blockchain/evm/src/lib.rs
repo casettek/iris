@@ -1,5 +1,5 @@
-//! What iris sends to its contracts: a procedure, a claim and a
-//! challenge in the ABI encoding `blockchain/contracts/src/IrisTypes.sol`
+//! What IWEBS sends to its contracts: a procedure, a claim and a
+//! challenge in the ABI encoding `blockchain/contracts/src/IwebsTypes.sol`
 //! declares, and the calldata of the calls that carry them.
 //!
 //! The contracts take each as one `bytes` argument and decode it themselves,
@@ -305,7 +305,7 @@ fn hash_field(hex_digits: &str) -> Vec<u8> {
     }
 }
 
-/// A procedure as `IrisRegistry.register` takes it.
+/// A procedure as `IwebsRegistry.register` takes it.
 pub fn procedure_token(procedure: &Procedure) -> Result<Token> {
     let models = procedure
         .models
@@ -437,7 +437,7 @@ pub fn stated_records_digest(stated: &StatedRecords) -> [u8; 32] {
 }
 
 /// What the attester signs for a blob: where it is, the root of its block,
-/// and what it holds. `IrisEncoding.attestationDigest` computes the same.
+/// and what it holds. `IwebsEncoding.attestationDigest` computes the same.
 pub fn attestation_digest(blob: &PostedBlob, data_root: &str) -> Result<[u8; 32]> {
     let namespace = hex::decode(&blob.pointer.namespace)
         .ok()
@@ -635,7 +635,7 @@ fn blobs_token(blobs: &[PostedBlob]) -> Result<Token> {
     ))
 }
 
-/// A claim as `IrisClaims.submitClaim` takes it.
+/// A claim as `IwebsClaims.submitClaim` takes it.
 pub fn claim_token(submission: &ClaimSubmission) -> Result<Token> {
     let source = submission.source.clone().unwrap_or_default();
     let stated = submission
@@ -701,7 +701,7 @@ fn checkpoint_token(checkpoint: &Checkpoint) -> Result<Token> {
     ]))
 }
 
-/// A challenge as `IrisClaims.submitChallenge` takes it: of the claim a
+/// A challenge as `IwebsClaims.submitChallenge` takes it: of the claim a
 /// contract knows by `claim_id`, with the claim's checkpoint at the disputed
 /// stage and the path that opens it.
 pub fn challenge_token(
@@ -779,7 +779,7 @@ pub struct InputQuestion<'a> {
 }
 
 /// A checkpoint that is not one the procedure allows, as
-/// `IrisClaims.voidClaim` takes it: the claim's own checkpoint at a stage,
+/// `IwebsClaims.voidClaim` takes it: the claim's own checkpoint at a stage,
 /// with the path that opens it, and what is asked of it. With no question of
 /// an input, the question is the stage's program.
 pub fn checkpoint_fault_token(
@@ -835,7 +835,7 @@ pub fn challenge_id(
 // A fault proof
 // ---------------------------------------------------------------------------
 
-/// A fault proof as `IrisClaims.submitFaultProof` takes it: the challenge it
+/// A fault proof as `IwebsClaims.submitFaultProof` takes it: the challenge it
 /// answers, the journal of Raster's transition program as RISC Zero wrote it,
 /// and the Groth16 seal as RISC Zero's verifier takes it.
 pub fn fault_proof_token(challenge_id: &[u8; 32], journal: &[u8], seal: &[u8]) -> Token {
@@ -865,7 +865,7 @@ pub struct FaultVerdict {
 /// The journal is a run of little-endian 32-bit words. It begins with the
 /// window's opening state, whose size depends on where the window opens, so
 /// the fields are found by walking it. The layout is the transition
-/// program's: `iris evm fault-proof` checks this reading against the decoded
+/// program's: `iwebs evm fault-proof` checks this reading against the decoded
 /// journal every time it writes a call.
 pub fn read_fault_journal(journal: &[u8]) -> Option<Option<FaultVerdict>> {
     struct Cursor<'a>(&'a [u8], usize);

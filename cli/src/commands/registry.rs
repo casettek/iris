@@ -1,4 +1,4 @@
-//! The registry of procedures: `iris registry`.
+//! The registry of procedures: `iwebs registry`.
 
 use crate::*;
 
@@ -16,8 +16,8 @@ pub(crate) struct RegistryAddArgs {
     #[arg(long, default_value = procedure_definition::SPECIFICATION_TOML)]
     specification: PathBuf,
 
-    /// The pins of the procedure kind's programs and models, as `iris claim pins`
-    /// wrote them. Without it, as `iris claim check` finds them.
+    /// The pins of the procedure kind's programs and models, as `iwebs claim pins`
+    /// wrote them. Without it, as `iwebs claim check` finds them.
     #[arg(long)]
     pins: Option<PathBuf>,
 

@@ -1,6 +1,6 @@
 # Formats and versions
 
-Every format iris writes that carries a version, in one place. A test holds
+Every format IWEBS writes that carries a version, in one place. A test holds
 the first table to the constants in the code (`the_formats_table_is_current`
 in `cli/src/lib.rs`), so a version cannot change without
 this page changing with it.
@@ -16,12 +16,12 @@ stops and says which it wants, with one exception noted below.
 | Weight file | `<model>.detwgt` in a model bundle | 3 | `DETWGT_VERSION` | Bundles are converted again. Version 2 is still read. |
 | Deterministic number specification | The weight file's header | 1 | `DET_NUM_SPEC_VERSION` | Bundles are converted again. |
 | Model descriptor | `model-descriptor.bin` in an import, and a stage input | 2 | `DESCRIPTOR_VERSION` | Models are imported again, and every stage that reads it is re-locked. |
-| Model manifest | `manifest.json` in an import | 20 | `MODEL_MANIFEST_VERSION` | Models are imported again. iris-backend pins the same number (`IRIS_MODEL_MANIFEST_VERSION`). |
+| Model manifest | `manifest.json` in an import | 21 | `MODEL_MANIFEST_VERSION` | Models are imported again. iris-backend pins the same number (`IRIS_MODEL_MANIFEST_VERSION`). |
 | Prepared run | `prepared_run.json` beside a claim | 22 | `PREPARED_RUN_VERSION` | A claim built before cannot be challenged from its own directory. |
 | Execution context | Inside every stage's output | 3 | `EXECUTION_VERSION` | Every stage is re-locked, and every checkpoint changes. |
-| Contract pins | `contract_pins.json` in an import | 6 | `CONTRACT_PINS_VERSION` | Pins are written again (`iris claim pins`), which changes the procedure's id. |
+| Contract pins | `contract_pins.json` in an import | 7 | `CONTRACT_PINS_VERSION` | Pins are written again (`iwebs claim pins`), which changes the procedure's id. |
 | Procedure | What a contract registers, by its id | 4 | `PROCEDURE_VERSION` | The contracts' decoding, and every registered procedure. |
-| Registry file | The file `iris registry add` writes | 4 | `REGISTRY_VERSION` | Registry files are written again. |
+| Registry file | The file `iwebs registry add` writes | 4 | `REGISTRY_VERSION` | Registry files are written again. |
 | Claim submission | `claim_submission.json`, and what `submitClaim` takes | 8 | `CLAIM_SUBMISSION_VERSION` | The contracts' decoding, and iris-backend where it reads the file. |
 | Challenge submission | `challenge_submission.json`, and what `submitChallenge` takes | 2 | `CHALLENGE_SUBMISSION_VERSION` | The contracts' decoding, and iris-backend where it reads the file. |
 | Posted blob | Every blob on the data-availability layer | 4 | `BLOB_MAGIC` | Blobs posted before cannot be read: `iris/blob/v4`. |
@@ -45,7 +45,7 @@ same bytes, so a tag that both sides compute changes in both.
 | `iris/attestation/v1` | What a source's signer signs of a document | The `prompt-source` stage |
 | `iris/token/v1`, `iris/token-prefix/v1` | The transcript's tokens, one at a time | The stages |
 | `iris/stub-celestia-blob/v1` | A blob's commitment on the stand-in layer | Nothing else: the real layer has its own |
-| `raster/trace-commitment/v2` | A trace commitment's header. Raster's, not iris's | The contracts |
+| `raster/trace-commitment/v2` | A trace commitment's header. Raster's, not IWEBS's | The contracts |
 
 ## Not versioned
 
