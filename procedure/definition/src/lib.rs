@@ -38,7 +38,7 @@ pub use shape::Shape;
 pub use specification::{
     read_case, read_specification, Case, CaseDocument, PathStep, Specification,
     SpecificationDocument, SpecificationField, SpecificationForm, SpecificationModel,
-    SpecificationSource, CASE_TOML, SPECIFICATION_TOML,
+    SpecificationRelay, SpecificationSource, CASE_TOML, SPECIFICATION_TOML,
 };
 
 #[cfg(test)]
@@ -179,6 +179,7 @@ mod tests {
             }],
             source: None,
             forms: Vec::new(),
+            relay: None,
         };
         let both = Case {
             prompt: Some(String::from("hello")),

@@ -32,6 +32,7 @@ A run is described by two files. `specification.toml` defines the procedure:
 - One `[[model]]` table per model, in the order the procedure kind runs them, each with a `manifest`
 - `[source]`: optional. The recipe a prompt is built by from signed documents, and the signer's key
 - `[[form]]`: optional, only with a `[source]`. The texts the output is read by, each with its `code`
+- `[relay]`: in a specification of a procedure kind that relays an output, and only there. The text `before` and `after` the earlier inference's output in the prompt of the next. See [the relay procedure kind](procedure-kinds.md#the-relay-procedure-kind)
 
 ```toml
 procedure_kind = "consensus"

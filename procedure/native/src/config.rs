@@ -11,6 +11,9 @@ pub struct DirectInferenceConfig {
     /// Which of the run's inferences to make: the index of its model among
     /// those the specification names. A procedure kind of one inference has only 0.
     pub inference: usize,
+    /// The result of the inference whose output this one's prompt holds, for
+    /// an inference a relay gives its prompt.
+    pub relayed: Option<procedure_definition::InferenceResult>,
 }
 
 impl DirectInferenceConfig {
@@ -21,6 +24,7 @@ impl DirectInferenceConfig {
             case_path: base_dir.join(CASE_TOML),
             base_dir,
             inference: 0,
+            relayed: None,
         })
     }
 }

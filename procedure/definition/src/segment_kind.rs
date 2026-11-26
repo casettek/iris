@@ -56,15 +56,24 @@ pub enum SegmentKind {
     Result,
 }
 
-const SOURCE_PROGRAMS: &[StageProgram] = &[StageProgram {
-    name: "prompt-source",
-    takes: &[],
-    run_inputs: &[
-        ("signer", "source_signer"),
-        ("recipe", "source_recipe"),
-        ("documents", "source_documents"),
-    ],
-}];
+const SOURCE_PROGRAMS: &[StageProgram] = &[
+    // A prompt built from documents a signer vouches for.
+    StageProgram {
+        name: "prompt-source",
+        takes: &[],
+        run_inputs: &[
+            ("signer", "source_signer"),
+            ("recipe", "source_recipe"),
+            ("documents", "source_documents"),
+        ],
+    },
+    // A prompt built around an earlier inference's output.
+    StageProgram {
+        name: "prompt-relay",
+        takes: &[("check", Gives::LastCheck)],
+        run_inputs: &[("recipe", "relay_recipe")],
+    },
+];
 
 const RESULT_PROGRAMS: &[StageProgram] = &[
     StageProgram {
@@ -191,6 +200,10 @@ mod tests {
         // An inference's programs are its model family's, so a shape names none.
         assert!(SegmentKind::Inference.programs().is_empty());
         assert!(SegmentKind::Source.program("prompt-source").is_some());
+        // The relay program is the source segment's too: it states the same
+        // record, from an inference's last check.
+        let relay = SegmentKind::Source.program("prompt-relay").unwrap();
+        assert_eq!(relay.takes, [("check", Gives::LastCheck)]);
         assert!(SegmentKind::Source.program("claim-result").is_none());
     }
 }

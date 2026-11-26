@@ -4,6 +4,7 @@
 [[step]]
 name = "source"
 segment = "source"
+program = "prompt-source"
 
 [[step]]
 name = "inference"

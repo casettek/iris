@@ -1,0 +1,30 @@
+# Two inferences, the second on a prompt that holds the first one's output.
+# The specification's `[relay]` table gives the text before and after it.
+# The result is of the second output alone.
+
+[[step]]
+name = "source"
+segment = "source"
+program = "prompt-source"
+
+[[step]]
+name = "first"
+segment = "inference"
+inputs.source = "source"
+
+[[step]]
+name = "relay"
+segment = "source"
+program = "prompt-relay"
+inputs.check = "first"
+
+[[step]]
+name = "second"
+segment = "inference"
+inputs.source = "relay"
+
+[[step]]
+name = "result"
+segment = "result"
+program = "claim-result"
+inputs.check = "second"

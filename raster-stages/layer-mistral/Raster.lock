@@ -192,5 +192,5 @@
     "build_mode": "local",
     "rustc": "rustc 1.97.0-dev (e638c6cfe 2026-07-15)"
   },
-  "guest_inputs": "e0132a8706f454b65783c17c3c0de6ceb30b9f6c823d17b5871f1521fad70f0b"
+  "guest_inputs": "8db91bb0f35b81fc58676d931438036c45bd535ca1542b6eda2319142e2a4b87"
 }

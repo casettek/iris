@@ -3793,6 +3793,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "prompt-relay"
+version = "0.1.0"
+dependencies = [
+ "k256",
+ "model-identity",
+ "raster",
+ "serde",
+ "sha2",
+]
+
+[[package]]
 name = "prompt-source"
 version = "0.1.0"
 dependencies = [
@@ -5540,6 +5551,7 @@ dependencies = [
  "postcard",
  "procedure-definition",
  "procedure-direct",
+ "procedure-run",
  "prompt-prep",
  "raster",
  "raster-compiler",

@@ -44,6 +44,28 @@ pub struct Specification {
     /// table each.
     #[serde(default, rename = "form", skip_serializing_if = "Vec::is_empty")]
     pub forms: Vec<SpecificationForm>,
+    /// The text around an earlier inference's output in the prompt of the
+    /// next, for a procedure kind that relays one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub relay: Option<SpecificationRelay>,
+}
+
+/// The `[relay]` table: the prompt of the inference that reads an earlier
+/// one's output is `before`, that output, `after`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct SpecificationRelay {
+    #[serde(default)]
+    pub before: String,
+    #[serde(default)]
+    pub after: String,
+}
+
+impl SpecificationRelay {
+    /// The recipe as the relay stage takes it.
+    pub fn recipe(&self) -> source_core::relay::RelayRecipe {
+        source_core::relay::relay_recipe(&self.before, &self.after)
+    }
 }
 
 /// One model of a procedure, named by the manifest of its import.
@@ -301,6 +323,18 @@ impl Specification {
         anyhow::ensure!(
             self.forms.is_empty() || self.source.is_some(),
             "a specification lists `[[form]]` tables only with a `[source]`"
+        );
+        anyhow::ensure!(
+            self.relay.is_some() == self.procedure_kind.relays(),
+            "a specification has a `[relay]` table, with the text `before` and `after` an \
+             earlier output, exactly when its procedure kind relays one, and the `{}` procedure \
+             kind {}",
+            self.procedure_kind,
+            if self.procedure_kind.relays() {
+                "does"
+            } else {
+                "does not"
+            }
         );
         Ok(())
     }

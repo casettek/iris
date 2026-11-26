@@ -10,7 +10,7 @@ use anyhow::{Context, Result};
 use model_manifest::{file_sha256 as sha256_file, ModelManifest};
 use procedure_definition::run_inputs::PostedRun;
 use procedure_definition::{
-    read_json, write_json, Case, PreparedRun, Specification, PREPARED_RUN_JSON,
+    read_json, write_json, Case, InferenceResult, PreparedRun, Specification, PREPARED_RUN_JSON,
 };
 use sha2::{Digest, Sha256};
 
@@ -50,6 +50,9 @@ struct RunModel {
     segment: String,
     tokenizer: serde_json::Value,
     prompt: procedure_definition::PreparedPrompt,
+    /// The inference's result as the direct run found it, when its output
+    /// was not given.
+    discovered: Option<InferenceResult>,
 }
 
 /// The files written for one inference of a run.
@@ -78,9 +81,14 @@ pub struct StagedRun<'a> {
     /// Whether an output is held to the run's token budget here.
     pub check_claimed_length: bool,
     /// Finds the output of an inference whose ids no one gave: the direct
-    /// run, which this crate does not make.
-    pub discover: &'a dyn Fn(usize) -> Result<Vec<u32>>,
+    /// run, which this crate does not make. It is given which inference, and
+    /// for one whose prompt holds an earlier inference's output, that
+    /// inference's result.
+    pub discover: &'a Discover<'a>,
 }
+
+/// See [`StagedRun::discover`].
+pub type Discover<'a> = dyn Fn(usize, Option<&InferenceResult>) -> Result<InferenceResult> + 'a;
 
 /// `case` is the case, with the file it was read from when it is one.
 /// `given` is the inputs a claim posted, for a challenger of that claim:
@@ -127,10 +135,16 @@ pub fn prepare_run(run: StagedRun<'_>) -> Result<PreparedClaimRun> {
         );
     }
 
-    // Each inference's model, and the run's prompt as its tokenizer prepares
-    // it. The text, the source record and the forms are the same in all.
-    let mut models = Vec::new();
-    for manifest in specification.model_manifests() {
+    // Each inference's model, and its prompt as its tokenizer prepares it:
+    // the run's own text, or for an inference a relay gives its prompt, the
+    // text built around the earlier inference's output. The forms are the
+    // same in all.
+    //
+    // An output no one gave is found here, in order, because a later
+    // inference's prompt may be made of it.
+    let discovering = frozen.is_none() && given.is_none() && given_ids.is_none();
+    let mut models: Vec<RunModel> = Vec::new();
+    for (inference, manifest) in specification.model_manifests().into_iter().enumerate() {
         let manifest_path = absolute(specification_dir, manifest);
         let manifest = ModelManifest::load_verified(&manifest_path)?;
         let (template_path, segment) = manifest.verified_raster_template(&manifest_path)?;
@@ -139,8 +153,38 @@ pub fn prepare_run(run: StagedRun<'_>) -> Result<PreparedClaimRun> {
             .ok_or_else(|| anyhow::anyhow!("model manifest has no parent directory"))?;
         let tokenizer_path = absolute(model_manifest_dir, &manifest.bundle.tokenizer_path);
         let tokenizer: serde_json::Value = read_json(&tokenizer_path)?;
-        let mut prompt =
-            crate::prepare_prompt(&tokenizer, specification, case_dir, case, &manifest)?;
+        let relayed = match procedure_kind.relayed_from(inference) {
+            None => None,
+            Some(earlier) => {
+                // What a claim of a relay fixes and posts is not written yet,
+                // so one is prepared from its specification and case only.
+                anyhow::ensure!(
+                    discovering,
+                    "a run of the `{procedure_kind}` procedure kind is prepared from its \
+                     specification and case: it cannot yet be rebuilt from a claim or from \
+                     given output ids"
+                );
+                Some(
+                    models[earlier]
+                        .discovered
+                        .clone()
+                        .with_context(|| format!("inference {earlier} has no output yet"))?,
+                )
+            }
+        };
+        let mut prompt = crate::prepare_prompt(
+            &tokenizer,
+            specification,
+            case_dir,
+            case,
+            &manifest,
+            relayed.as_ref(),
+        )?;
+        let discovered = if discovering {
+            Some(discover(inference, relayed.as_ref())?)
+        } else {
+            None
+        };
         if let Some(frozen) = &frozen {
             if let Some((record, _)) = frozen.source {
                 prompt.source = Some(record.clone());
@@ -154,6 +198,7 @@ pub fn prepare_run(run: StagedRun<'_>) -> Result<PreparedClaimRun> {
             segment,
             tokenizer,
             prompt,
+            discovered,
         });
     }
     let first = models.first().context("the run names no model")?;
@@ -196,7 +241,9 @@ pub fn prepare_run(run: StagedRun<'_>) -> Result<PreparedClaimRun> {
         (None, Some((_, inputs))) if given.is_none() => Some(inputs.clone()),
         _ => None,
     };
-    let postable = given.is_some() || source_values.is_some() == source_inputs.is_some();
+    // A relay's recipe is not among the values a claim posts yet.
+    let postable = (given.is_some() || source_values.is_some() == source_inputs.is_some())
+        && !procedure_kind.relays();
     // The imports wrote each model's segment of a chain. The procedure kind makes the
     // chain's template from them.
     let segments: Vec<&str> = models.iter().map(|model| model.segment.as_str()).collect();
@@ -216,6 +263,16 @@ pub fn prepare_run(run: StagedRun<'_>) -> Result<PreparedClaimRun> {
         &prompt_dir,
         "result_forms",
     )?;
+    // The relay stage's recipe, in a procedure kind that relays an output.
+    let relay_recipe = specification
+        .relay
+        .as_ref()
+        .map(|relay| crate::write_run_file(&relay.recipe(), &prompt_dir, RELAY_RECIPE))
+        .transpose()?;
+    let run_files: Vec<(&str, &crate::RunFile)> = relay_recipe
+        .iter()
+        .map(|file| (RELAY_RECIPE, file))
+        .collect();
 
     let mut written = Vec::new();
     let mut values = Vec::new();
@@ -245,7 +302,12 @@ pub fn prepare_run(run: StagedRun<'_>) -> Result<PreparedClaimRun> {
             (None, Some(ids)) => ids.clone(),
             // Discovery is the only autoregression left: the claim posts what
             // direct decode produced and the chain checks it.
-            (None, None) => discover(inference)?,
+            (None, None) => model
+                .discovered
+                .as_ref()
+                .with_context(|| format!("inference {inference} has no output"))?
+                .generated_token_ids
+                .clone(),
         };
         if check_claimed_length {
             prompt_prep::validate_claimed_length(
@@ -321,6 +383,7 @@ pub fn prepare_run(run: StagedRun<'_>) -> Result<PreparedClaimRun> {
         &inferences,
         source_inputs.as_ref(),
         &forms,
+        &run_files,
     )?;
     let manifest_path = run_dir.join("Raster.toml");
     fs::create_dir_all(&run_dir)
@@ -371,6 +434,17 @@ pub fn prepare_run(run: StagedRun<'_>) -> Result<PreparedClaimRun> {
 }
 
 const RUN_PLACEHOLDER_DIR: &str = "target/iris/run-prompt-placeholder/";
+
+/// The name the relay stage's recipe goes by among a run's files.
+const RELAY_RECIPE: &str = "relay_recipe";
+
+/// The parameter and the run's file of a template line a run fills in:
+/// `inputs.recipe = { run = "relay_recipe" }`.
+fn run_input_of(line: &str) -> Option<(&str, &str)> {
+    let (param, value) = line.strip_prefix("inputs.")?.split_once(" = ")?;
+    let file = value.strip_prefix("{ run = \"")?.strip_suffix("\" }")?;
+    Some((param, file))
+}
 
 /// Marks where the template names the last prompt range.
 const LAST_PROMPT_RANGE: &str = "@LAST_PROMPT_RANGE@";
@@ -489,6 +563,7 @@ pub fn render_ranged_manifest(
         }],
         source,
         forms,
+        &[],
     )
 }
 
@@ -497,12 +572,15 @@ pub fn render_ranged_manifest(
 /// and claimed ranges' indexes, and each range's committed text, marks or
 /// claimed ids. For the run: the source stage's inputs and the result stage's
 /// forms. A run without a source gets a chain without the source stage.
+/// `run_files` are the run's other files, each by the name the template asks
+/// for it by: every one is used once.
 pub fn render_chain(
     template: &str,
     template_dir: &Path,
     inferences: &[InferenceFiles<'_>],
     source: Option<&procedure_definition::PreparedSourceInputs>,
     forms: &crate::RunFile,
+    run_files: &[(&str, &crate::RunFile)],
 ) -> Result<String> {
     anyhow::ensure!(!inferences.is_empty(), "a run needs at least one inference");
     for files in inferences {
@@ -534,6 +612,7 @@ pub fn render_chain(
     let mut replaced = vec![[0_usize; 10]; inferences.len()];
     // For the run: the source stage's inputs, the result stage's forms.
     let (mut source_inputs, mut result_forms) = (0_usize, 0_usize);
+    let mut other_inputs = vec![0_usize; run_files.len()];
     let mut out = Vec::new();
     for line in template.lines() {
         let trimmed = line.trim();
@@ -619,6 +698,24 @@ pub fn render_chain(
             out.push(
                 RunExternal::new(&forms.path, &forms.index_path, &forms.commitment)
                     .binding("forms"),
+            );
+            continue;
+        }
+        // Any other input the template leaves to the run, by its file's name.
+        if let Some((param, wanted)) = run_input_of(trimmed) {
+            let at = run_files
+                .iter()
+                .position(|(file, _)| *file == wanted)
+                .with_context(|| {
+                    format!(
+                        "the chain template asks stage `{name}` for the run's `{wanted}`, which \
+                         this run did not write"
+                    )
+                })?;
+            let file = run_files[at].1;
+            other_inputs[at] += 1;
+            out.push(
+                RunExternal::new(&file.path, &file.index_path, &file.commitment).binding(param),
             );
             continue;
         }
@@ -728,6 +825,12 @@ pub fn render_chain(
             && replaced[4] == replaced[5]
             && replaced[6..10] == [1, 2, 2, 2]
     });
+    anyhow::ensure!(
+        other_inputs.iter().all(|filled| *filled == 1),
+        "incompatible chain template: it asks for each of the run's files {:?} {other_inputs:?} \
+         times, not once",
+        run_files.iter().map(|(name, _)| *name).collect::<Vec<_>>()
+    );
     if !filled || source_inputs != if source.is_some() { 3 } else { 0 } || result_forms != 1 {
         anyhow::bail!("incompatible chain template: expected of each inference [prompt repeats, claimed repeats, prompt commitments, claimed commitments] = [1, 2, 1, 1], matching per-layer range fans, one set of text commitments, and a procedure, a schedule and a text digest binding for range 0's bind and for the later ranges'; and of the run three inputs for the source stage when it has a source, and the result stage's forms; found {replaced:?}, {source_inputs} and {result_forms}");
     }

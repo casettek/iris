@@ -195,16 +195,46 @@ impl Shape {
         );
         // A run prepares one source's inputs, and a run without a source
         // removes the stage by this name.
-        let sources: Vec<(usize, &Step)> = of(SegmentKind::Source).collect();
+        let (relays, sources): (Vec<_>, Vec<_>) =
+            of(SegmentKind::Source).partition(|(_, step)| !step.inputs.is_empty());
         ensure!(
             matches!(sources.as_slice(), [] | [(0, _)])
                 && sources
                     .iter()
                     .all(|(_, step)| step.name == crate::procedure_kind::SOURCE_STAGE),
-            "the `{name}` shape has at most one source step, first and named `{}`",
+            "the `{name}` shape has at most one source step that takes nothing from an earlier \
+             step, first and named `{}`",
             crate::procedure_kind::SOURCE_STAGE
         );
+        // A run prepares one relay recipe, and the stage is found by this name.
+        ensure!(
+            relays.len() <= 1
+                && relays
+                    .iter()
+                    .all(|(_, step)| step.name == crate::procedure_kind::RELAY_STAGE),
+            "the `{name}` shape has at most one source step that takes an earlier step's \
+             output, named `{}`",
+            crate::procedure_kind::RELAY_STAGE
+        );
         Ok(())
+    }
+
+    /// Whether a step of the shape runs this stage program.
+    pub fn runs(&self, program: &str) -> bool {
+        self.steps
+            .iter()
+            .any(|step| step.program.is_some_and(|run| run.name == program))
+    }
+
+    /// The inference whose output this inference's prompt holds: its source
+    /// is a step that takes that inference's last check. `None` for an
+    /// inference whose prompt is the run's own.
+    pub fn relayed_from(&self, inference: usize) -> Option<usize> {
+        let (_, step) = self.inference_steps().nth(inference)?;
+        self.steps[step.input("source")?]
+            .inputs
+            .iter()
+            .find_map(|(_, from)| self.inference_at(*from))
     }
 
     /// The steps that are inferences, in the order they run.
@@ -494,7 +524,10 @@ project = "raster-stages/sequence-check"
 inputs.prompt = { from = "prompt_bind_p@LAST_PROMPT_RANGE@" }
 "#;
 
-    const SOURCE: &str = "[[step]]\nname = \"source\"\nsegment = \"source\"\n";
+    const SOURCE: &str =
+        "[[step]]\nname = \"source\"\nsegment = \"source\"\nprogram = \"prompt-source\"\n";
+    const RELAY: &str = "[[step]]\nname = \"relay\"\nsegment = \"source\"\n\
+                         program = \"prompt-relay\"\ninputs.check = \"only\"\n";
     const RESULT: &str = "[[step]]\nname = \"result\"\nsegment = \"result\"\n\
                           program = \"claim-result\"\ninputs.check = \"only\"\n";
 
@@ -522,8 +555,9 @@ inputs.prompt = { from = "prompt_bind_p@LAST_PROMPT_RANGE@" }
         assert_eq!(shape.label(0), "");
         assert_eq!(shape.result(), ResultKind::OneOutput);
         assert_eq!(shape.result_reads(), [("check", 0)]);
-        // The source segment has one program, so a step need not name it.
         assert_eq!(shape.steps[0].program.unwrap().name, "prompt-source");
+        assert!(shape.runs("prompt-source") && !shape.runs("prompt-relay"));
+        assert_eq!(shape.relayed_from(0), None);
         assert_eq!(shape.steps[1].program, None);
         assert_eq!(shape.steps[1].input("source"), Some(0));
         assert_eq!(shape.steps[2].inputs, [("check", 1)]);
@@ -609,7 +643,34 @@ inputs.prompt = { from = "prompt_bind_p@LAST_PROMPT_RANGE@" }
             ),
             (
                 format!("{one}{SOURCE}{RESULT}").replace("inputs.source = \"source\"\n", ""),
-                "at most one source step, first",
+                "at most one source step that takes nothing from an earlier step, first",
+            ),
+            // A relay: one, named for what it is, and after the inference it
+            // reads.
+            (
+                format!(
+                    "{SOURCE}{one}{RELAY}{}{RESULT}",
+                    RELAY.replace("\"relay\"", "\"relay_again\"")
+                ),
+                "at most one source step that takes an earlier step's output, named `relay`",
+            ),
+            (
+                format!("{SOURCE}{RELAY}{one}{RESULT}"),
+                "takes `check` from `only`, which is no earlier step",
+            ),
+            (
+                format!(
+                    "{SOURCE}{one}{}{RESULT}",
+                    RELAY.replace("inputs.check = \"only\"\n", "")
+                ),
+                "is not given its input `check`",
+            ),
+            (
+                format!(
+                    "{SOURCE}{one}{}{RESULT}",
+                    RELAY.replace("inputs.check = \"only\"", "inputs.check = \"source\"")
+                ),
+                "which gives a source record and not an inference's last check",
             ),
             // Names: a kind that is none, a step named twice, a key no step has.
             (
@@ -711,6 +772,74 @@ inputs.prompt = { from = "prompt_bind_p@LAST_PROMPT_RANGE@" }
         // The first inference's stages all come before the second's.
         assert!(
             template.find("m0_check_c0").unwrap() < template.find("m1_prompt_bind_p0").unwrap()
+        );
+    }
+
+    #[test]
+    fn a_relay_puts_one_inferences_output_in_the_next_ones_prompt() {
+        let text = format!(
+            "{SOURCE}{}{}{}{}",
+            inference("first", true),
+            RELAY.replace("\"only\"", "\"first\""),
+            inference("second", true)
+                .replace("inputs.source = \"source\"", "inputs.source = \"relay\""),
+            RESULT.replace("\"only\"", "\"second\"")
+        );
+        let shape = Shape::parse("tried", &text).unwrap();
+        assert_eq!(shape.inferences(), 2);
+        assert!(shape.runs("prompt-relay"));
+        assert_eq!(
+            [shape.relayed_from(0), shape.relayed_from(1)],
+            [None, Some(0)]
+        );
+        // The result reads the second inference only.
+        assert_eq!(shape.result_reads(), [("check", 1)]);
+
+        let template = shape.pipeline_template(&[PART, PART]).unwrap();
+        let chain: toml::Value = toml::from_str(&template).unwrap();
+        let stages = chain["chain"]["stage"].as_array().unwrap();
+        let names: Vec<&str> = stages
+            .iter()
+            .map(|stage| stage["name"].as_str().unwrap())
+            .collect();
+        assert_eq!(
+            names,
+            [
+                "source",
+                "m0_prompt_bind_p0",
+                "m0_check_c0",
+                "relay",
+                "m1_prompt_bind_p0",
+                "m1_check_c0",
+                "result"
+            ]
+        );
+        let relay = &stages[3];
+        assert_eq!(
+            relay["project"].as_str(),
+            Some("raster-stages/prompt-relay")
+        );
+        assert_eq!(
+            relay["inputs"]["check"]["from"].as_str(),
+            Some("m0_check_c@m0_LAST_CLAIMED_RANGE@")
+        );
+        assert_eq!(
+            relay["inputs"]["recipe"]["run"].as_str(),
+            Some("relay_recipe")
+        );
+        // The first inference's first bind takes the run's source, and the
+        // second's takes the relay's record.
+        assert_eq!(
+            stages[1]["inputs"]["source"]["from"].as_str(),
+            Some("source")
+        );
+        assert_eq!(
+            stages[4]["inputs"]["source"]["from"].as_str(),
+            Some("relay")
+        );
+        assert_eq!(
+            stages[6]["inputs"]["check"]["from"].as_str(),
+            Some("m1_check_c@m1_LAST_CLAIMED_RANGE@")
         );
     }
 }

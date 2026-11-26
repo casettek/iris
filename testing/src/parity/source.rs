@@ -146,6 +146,18 @@ pub(super) fn write_run(
     procedure_kind: ProcedureKind,
     models: &[&Path],
 ) -> Result<std::path::PathBuf> {
+    write_run_of(dir, source, procedure_kind, models, None)
+}
+
+/// [`write_run`], with the relay table of a procedure kind that relays an
+/// output.
+pub(super) fn write_run_of(
+    dir: &Path,
+    source: &LoadedSource,
+    procedure_kind: ProcedureKind,
+    models: &[&Path],
+    relay: Option<procedure_definition::SpecificationRelay>,
+) -> Result<std::path::PathBuf> {
     fs::create_dir_all(dir)?;
     let mut documents = Vec::new();
     for (index, document) in source.documents.iter().enumerate() {
@@ -167,6 +179,7 @@ pub(super) fn write_run(
             .collect(),
         source: Some(source.specification.clone()),
         forms: source.forms.clone(),
+        relay,
     };
     let path = dir.join(SPECIFICATION_TOML);
     fs::write(&path, toml::to_string(&specification)?)?;

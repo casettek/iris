@@ -437,10 +437,25 @@ pub(crate) fn print_direct_run(
                 print_infer_timing_summary(&report.timings);
             }
         }
-        _ => anyhow::bail!(
+        ([], _) | (_, Some(_)) => anyhow::bail!(
             "the `{}` procedure kind gave no result to print",
             run.procedure_kind
         ),
+        // Several inferences with nothing stated of them together: each in
+        // the order it was made.
+        (reports, None) => {
+            if let Some(source) = &source {
+                source::print_source_lines(source);
+            }
+            for (inference, report) in reports.iter().enumerate() {
+                println!("inference: {inference}");
+                if let Some(count) = report.input_token_count {
+                    println!("input token count: {count}");
+                }
+                print_infer_result(&report.result, Some(specification_path), inference);
+                print_infer_timing_summary(&report.timings);
+            }
+        }
     }
     Ok(())
 }

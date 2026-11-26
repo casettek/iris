@@ -10,6 +10,7 @@ segment kind, and says which earlier step each of its inputs comes from.
 [[step]]
 name = "source"          # the step's name; a later step takes from it by this
 segment = "source"       # source, inference or result
+program = "prompt-source" # needed where the segment has several programs
 
 [[step]]
 name = "inference"
@@ -19,7 +20,7 @@ inputs.source = "source" # the first bind takes the source step's record
 [[step]]
 name = "result"
 segment = "result"
-program = "claim-result" # needed where the segment has several programs
+program = "claim-result"
 inputs.check = "inference"
 ```
 
@@ -33,7 +34,11 @@ What a shape must hold today:
 - its last step is its one result step, named `result`;
 - it has at least one inference, and one model per inference in the
   specification, in order;
-- it has at most one source step, first and named `source`. A case with no
-  documents runs without it.
+- it has at most one `prompt-source` step, first and named `source`. A case
+  with no documents runs without it;
+- it has at most one `prompt-relay` step, named `relay`, after the inference
+  whose last check it takes. The inference that names it as its source is
+  given a prompt that holds that inference's output, between the two texts of
+  the specification's `[relay]` table.
 
 See `docs/protocol/procedure-kinds.md`.

@@ -37,6 +37,11 @@ include!(concat!(env!("OUT_DIR"), "/catalog.rs"));
 pub const SOURCE_STAGE: &str = "source";
 /// The stage that states a procedure kind's result.
 pub const RESULT_STAGE: &str = "result";
+/// The stage that states what a prompt built around an earlier inference's
+/// output is made of.
+pub const RELAY_STAGE: &str = "relay";
+/// The stage program of that stage.
+pub const RELAY_PROGRAM: &str = "prompt-relay";
 /// The kind a specification that names none is of.
 pub const DEFAULT_KIND: &str = "single";
 
@@ -118,6 +123,17 @@ impl ProcedureKind {
             .into_iter()
             .find(|(_, read)| *read == inference)
             .map(|(input, _)| input)
+    }
+
+    /// The inference whose output this inference's prompt holds, or `None`
+    /// for an inference whose prompt is the run's own.
+    pub fn relayed_from(self, inference: usize) -> Option<usize> {
+        self.0.relayed_from(inference)
+    }
+
+    /// Whether a run of this kind has a relay recipe.
+    pub fn relays(self) -> bool {
+        self.0.runs(RELAY_PROGRAM)
     }
 
     pub fn is_default(&self) -> bool {
@@ -378,5 +394,34 @@ mod tests {
             assert_eq!(bind["inputs"]["source"]["from"].as_str(), Some("source"));
         }
         assert!(consensus.chain_template(&[PART]).is_err());
+        assert!(!consensus.relays());
+        assert_eq!(consensus.relayed_from(1), None);
+    }
+
+    #[test]
+    fn the_relay_procedure_kind_gives_the_second_inference_the_firsts_output() {
+        let relay = ProcedureKind::named("relay").unwrap();
+        assert_eq!(relay.inferences(), 2);
+        assert!(relay.relays());
+        assert_eq!(
+            [relay.relayed_from(0), relay.relayed_from(1)],
+            [None, Some(0)]
+        );
+        // Its result is of the second output alone.
+        assert_eq!(relay.result(), ResultKind::OneOutput);
+        assert_eq!(
+            [relay.result_input_of(0), relay.result_input_of(1)],
+            [None, Some("check")]
+        );
+        let template = relay.chain_template(&[PART, PART]).unwrap();
+        let at = |stage: &str| {
+            template
+                .find(&format!("name = \"{stage}\""))
+                .unwrap_or_else(|| panic!("no stage `{stage}`"))
+        };
+        assert!(at("source") < at("m0_prompt_bind_p0"));
+        assert!(at("m0_check_c0") < at(RELAY_STAGE));
+        assert!(at(RELAY_STAGE) < at("m1_prompt_bind_p0"));
+        assert!(at("m1_check_c0") < at(RESULT_STAGE));
     }
 }

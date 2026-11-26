@@ -1,19 +1,23 @@
 # Procedure kinds
 
-A procedure kind is a named arrangement of the segments a claim is made of. Two exist:
-`single`, one inference on one model, and `consensus`, the same inference on
-two models and whether they agree. Others can be added beside them without
-each command growing its own switch.
+A procedure kind is a named arrangement of the segments a claim is made of. Three exist:
+`single`, one inference on one model; `consensus`, the same inference on
+two models and whether they agree; and `relay`, two inferences with the first
+one's output inside the second one's prompt. Others can be added beside them
+without each command growing its own switch.
 
 `consensus` runs directly, builds a claim with a submission, passes a
 contract's checks, can be challenged, and has a scenario in the parity gate. The
-backend runs either procedure kind.
+backend runs `single` and `consensus`.
+
+`relay` runs directly and as a pipeline (`iris infer`, `iris run`). No claim
+is made of one yet: see [what is not built](#what-is-not-built).
 
 ## What a procedure kind arranges
 
 | Segment | What it is |
 | --- | --- |
-| Source | Optional. The `source` stage, which states what the prompt text was built from |
+| Source | A stage that states what a prompt's text was built from. `prompt-source` states it of signed documents, and is optional: a case with a prompt taken as given runs without it. `prompt-relay` states it of an earlier inference's output |
 | Inferences | One or more. An inference is everything between the source and the result for one model: its binds, prompt checks, embeddings, layers and checks, ending in a check that states a claim record |
 | Result program | The stage program that reads every inference's last check and states the procedure kind's result. Each procedure kind has its own |
 
@@ -21,6 +25,7 @@ backend runs either procedure kind.
 | --- | --- | --- | --- |
 | `single` | 1 | `claim-result` | The code of the first form the output is, or zero |
 | `consensus` | 2, one after the other | `consensus-result` | Each output's code, and whether the two agree |
+| `relay` | 2, the second on the first one's output | `claim-result` | The code of the first form the second output is, or zero |
 
 See [Raster chain](raster-chain.md) for the stages and
 [the contract](checks.md) for what is checked.
@@ -38,17 +43,19 @@ A procedure kind makes the chain template from one segment per model
 file in `procedures/` lists:
 
 1. the `[chain]` table and each segment's chain inputs;
-2. then each step in order. A source step is the `source` stage. An inference
-   step is its model's stages, with its first bind taking the record of the
-   step its `source` input names in place of the constant. The result step is
-   the kind's result stage, reading the last check of each inference its
-   inputs name.
+2. then each step in order. A source step is one stage, named as the step
+   is: `source`, or `relay`, which takes the last check of the inference its
+   `check` input names. An inference step is its model's stages, with its
+   first bind taking the record of the step its `source` input names in place
+   of the constant. The result step is the kind's result stage, reading the
+   last check of each inference its inputs name.
 
 `claim build` then fills the template in for one run, as before. A run whose
 text is taken as given removes the `source` stage again and gives the first bind
 back its constant. The inputs of the `source` and result stages are written in
 the template as `{ run = "..." }`, which is no binding Raster reads: a template a
-run has not filled in is not a chain.
+run has not filled in is not a chain. The `relay` stage's recipe is written
+the same way.
 
 The stage projects are found beside the model's own: the template names the
 directory of `prompt-bind`, and `prompt-source` and the result program are its
@@ -95,10 +102,12 @@ manifest = "runtime/model-artifacts/ministral-3b-q8/manifest.json"
 A `[source]` table and the forms follow, for a prompt built from signed
 documents ([artifacts](artifacts.md#models-specifications-and-cases)).
 
-The prompt, the source, `raw_prompt` and `max_new_tokens` are the run's, and the same
-for every inference. Each model tokenizes the text with its own tokenizer and
+`raw_prompt` and `max_new_tokens` are the run's, and the same for every
+inference. So are the prompt and the source, except for an inference a relay
+gives its prompt. Each model tokenizes its text with its own tokenizer and
 chat template, so the inferences have different prompt tokens, range counts and
-statements. Both statements name the same input text hash and source digest.
+statements. In `consensus` both statements name the same input text hash and
+source digest.
 
 Every command that acts on a run takes the specification, so naming the procedure kind
 there is naming it for all of them:
@@ -161,6 +170,68 @@ Like the single result stage, `consensus-result` is a few steps and one per
 form, so its checkpoint cannot be replayed at the challenge window
 ([short stages](../issues/short-stage-fraud-window.md)).
 
+## The relay procedure kind
+
+The chain is `source`, the first model's stages (`m0_...`), `relay`, the
+second model's (`m1_...`), then `result`.
+
+```text
+source (optional) -> first inference -> relay -> second inference -> result
+```
+
+The specification gives the text around the first output in a `[relay]`
+table. The second prompt is `before`, the first inference's output exactly as
+generated, `after`:
+
+```toml
+procedure_kind = "relay"
+max_new_tokens = 16
+
+[[model]]
+manifest = "runtime/model-artifacts/gemma-4-E2B-q8/manifest.json"
+
+[[model]]
+manifest = "runtime/model-artifacts/ministral-3b-q8/manifest.json"
+
+[relay]
+before = "A student answered: "
+after = "\nIs that answer correct? Reply yes or no."
+```
+
+`relay` runs `prompt-relay` (`phases/source/src/relay.rs`). It reads the first
+inference's last check and the recipe, and states a source record, the record
+`prompt-source` states of signed documents:
+
+| Field | In a relay's record |
+| --- | --- |
+| `text_sha256`, `text_total` | The hash and length of `before`, the output, `after` |
+| `recipe_sha256` | A hash over `before` and `after`, each under its name. Where the text is cut into chunks changes nothing |
+| `documents`, `documents_sha256` | One document, the first output. The hash is over the first inference's claim record: its statement and its output text hash |
+| `signer` | Empty. No signer vouches for the output: the first inference's claim record does |
+| `fault` | `FAULT_RELAYED` (10) when the first inference's claim record is not valid or is not of that output, `FAULT_RECIPE` when a chunk of the recipe is over its limit |
+
+The second inference's first bind takes that record exactly as a first bind
+takes the `source` stage's. It holds the text the run gives the second
+inference to the record's hash and length, and the second statement names the
+record's digest. So the second claim record says which first claim it was
+built on, and no stage of the inference segment differs for a relay.
+
+A first inference with no valid claim record gives a relay record with a
+fault, which the second inference's bind publishes as a prompt fault. Nothing
+aborts. `iris infer` refuses such a run before the second inference, as it
+refuses a source with a fault.
+
+`result` runs `claim-result` on the second inference's last check. The first
+output is in the run as the first inference's result, which has no code: the
+result stage did not read it.
+
+`iris infer` and `iris run` print each inference's result under an
+`inference:` line, in the order they were made.
+
+Like `source` and `result`, `relay` is a few steps and one per chunk of the
+recipe, so on a short recipe its checkpoint cannot be replayed at the
+challenge window ([short stages](../issues/short-stage-fraud-window.md)).
+
 ## What holds a claim to its procedure kind
 
 The name is a label a claimer writes, so nothing rests on it alone. A contract
@@ -190,6 +261,17 @@ For `consensus`:
 Nothing in iris itself. `iris claim pins` writes a consensus contract's pins as
 a file, and `iris claim check --pins` checks a claim against it.
 
+For `relay`:
+
+- A claim. `iris claim build` refuses a relay, because three things a claim
+  needs are not written: the relay recipe among the values a claim posts, the
+  rebuilding of a relay run from a claim, and the rules a contract holds a
+  relay's submission to. Its two inferences name different inputs, and the
+  rules hold every statement of a claim to one.
+- A contract's pin of the relay recipe. The second statement names the recipe
+  through the relay's record, so a claim commits to it, and nothing holds it
+  to the recipe a procedure registered.
+
 ## Adding a procedure kind
 
 A procedure kind is a file, not code: `procedures/<name>.toml`, its shape.
@@ -203,6 +285,7 @@ its kind has several, and the earlier step each of its inputs comes from.
 [[step]]
 name = "source"
 segment = "source"
+program = "prompt-source"
 
 [[step]]
 name = "first"
@@ -237,5 +320,6 @@ What a new kind needs depends on what it is made of:
 | A new segment kind | As a new program, with a folder of its own under `segments/` and the kind's entry in `segment_kind.rs` |
 
 Not yet read from the shape: a contract tells `consensus` from `single` by the
-kind's name (`IrisClaims.sol`), and a run prepares one source's inputs, so a
-shape has at most one source step.
+kind's name (`IrisClaims.sol`). A run prepares one source's inputs and one
+relay recipe, so a shape has at most one `prompt-source` step and one
+`prompt-relay` step.

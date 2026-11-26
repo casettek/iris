@@ -497,6 +497,7 @@ mod tests {
         use inference::Stage as Inference;
         vec![
             (StageKind::Source(source::Stage::PromptSource), "source"),
+            (StageKind::Source(source::Stage::PromptRelay), "relay"),
             (
                 StageKind::Inference(Inference::PromptBind),
                 "prompt_bind_p0",
@@ -556,6 +557,7 @@ mod tests {
                 "prefill-range",
                 "prompt-bind",
                 "prompt-check",
+                "prompt-relay",
                 "prompt-source",
                 "sequence-check",
             ]

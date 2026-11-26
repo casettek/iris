@@ -95,6 +95,7 @@ impl DirectInferenceExecutor {
             case_dir,
             &case,
             model.manifest(),
+            config.relayed.as_ref(),
         )?;
         // What the statement names as the text's source: zeros when the text
         // is taken as given.
@@ -114,9 +115,20 @@ impl DirectInferenceExecutor {
             (generate(&model, &input)?, Vec::new())
         };
         let output = generation.output;
-        // What the chain's result stage states of this output.
-        let matched =
-            run_prep::source::run_forms(prepared_prompt.forms.iter(), &output.generated_text);
+        // What the chain's result stage states of this output, when it reads
+        // this inference's last check. An inference it does not read has no
+        // code, and no forms it was compared with.
+        let (result_code, result_forms_sha256) = if specification
+            .procedure_kind
+            .result_input_of(config.inference)
+            .is_some()
+        {
+            let matched =
+                run_prep::source::run_forms(prepared_prompt.forms.iter(), &output.generated_text);
+            (matched.code, run_prep::source::forms_id(&matched))
+        } else {
+            (0, String::new())
+        };
         let result = InferenceResult {
             model_fault: output.model_fault,
             generated_token_count: output.generated_token_count,
@@ -144,8 +156,8 @@ impl DirectInferenceExecutor {
                 output.claim.statement.as_slice(),
             ),
             valid: output.claim.valid,
-            result_code: matched.code,
-            result_forms_sha256: run_prep::source::forms_id(&matched),
+            result_code,
+            result_forms_sha256,
         };
 
         // The phases a direct run reports: the model's load, then the

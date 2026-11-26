@@ -38,6 +38,7 @@ fn direct_executor_reports_missing_direct_manifest_message() {
             specification_path: dir.join(SPECIFICATION_TOML),
             case_path: dir.join(CASE_TOML),
             inference: 0,
+            relayed: None,
         })
         .expect_err("missing manifest should fail");
 
@@ -60,6 +61,7 @@ fn current_say_ciao_direct_first_token_matches_claim_reference() {
             specification_path: repo.join(SPECIFICATION_TOML),
             case_path: repo.join(CASE_TOML),
             inference: 0,
+            relayed: None,
         })
         .unwrap();
 
@@ -160,6 +162,7 @@ fn direct_executor_runs_from_direct_manifest_without_raster_toml() {
             specification_path: dir.join(SPECIFICATION_TOML),
             case_path: dir.join(CASE_TOML),
             inference: 0,
+            relayed: None,
         })
         .unwrap();
 
@@ -192,6 +195,7 @@ fn direct_executor_stops_at_eos_and_reports_only_selected_tokens() {
                 specification_path,
                 case_path: dir.join(CASE_TOML),
                 inference: 0,
+                relayed: None,
             })
             .unwrap();
         // The tiny model selects 2 first, then 0 after embedding token 2.
@@ -242,6 +246,7 @@ fn direct_executor_keeps_a_maximum_budget_when_no_eos_is_selected() {
             specification_path,
             case_path: dir.join(CASE_TOML),
             inference: 0,
+            relayed: None,
         })
         .unwrap();
     assert_eq!(report.input_token_count, Some(4));
@@ -278,6 +283,7 @@ fn direct_executor_rejects_changed_bundle_before_inference() {
                 specification_path: specification_path.clone(),
                 case_path: dir.join(CASE_TOML),
                 inference: 0,
+                relayed: None,
             })
             .unwrap_err();
         assert!(

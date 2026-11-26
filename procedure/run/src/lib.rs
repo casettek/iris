@@ -38,6 +38,8 @@ pub struct RunOptions {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CheckpointedRun {
     pub procedure_kind: ProcedureKind,
+    /// The pipeline the run was made from: its `Raster.toml`.
+    pub manifest_path: PathBuf,
     pub chain_dir: PathBuf,
     pub checkpoint_list_path: PathBuf,
     pub checkpoint_hashes_path: PathBuf,
@@ -88,13 +90,12 @@ pub fn run_staged(options: &RunOptions, direct: &InferRun) -> Result<Checkpointe
         direct.reports.len(),
         direct.procedure_kind
     );
-    let generated = |inference: usize| -> Result<Vec<u32>> {
+    let generated = |inference: usize, _: Option<&InferenceResult>| -> Result<InferenceResult> {
         Ok(direct
             .reports
             .get(inference)
             .with_context(|| format!("the direct run made no inference {inference}"))?
             .result
-            .generated_token_ids
             .clone())
     };
     let prepared = run_prep::staged::prepare_run(StagedRun {
@@ -149,6 +150,7 @@ pub fn run_staged(options: &RunOptions, direct: &InferRun) -> Result<Checkpointe
     );
     Ok(CheckpointedRun {
         procedure_kind,
+        manifest_path: prepared.manifest_path,
         chain_dir: staged.chain_dir,
         checkpoint_list_path,
         checkpoint_hashes_path,
@@ -200,14 +202,15 @@ pub fn first_difference(
 }
 
 /// The function a staged run's preparation asks for the output of an
-/// inference whose ids no one gave: the direct run of that one inference.
+/// inference whose ids no one gave: the direct run of that one inference, on
+/// the prompt an earlier inference's output makes when there is one.
 pub fn direct_output<'a>(
     base_dir: &'a Path,
     specification_path: &'a Path,
     case_path: Option<&'a Path>,
-) -> impl Fn(usize) -> Result<Vec<u32>> + 'a {
-    move |inference| {
-        Ok(DirectInferenceExecutor
+) -> impl Fn(usize, Option<&InferenceResult>) -> Result<InferenceResult> + 'a {
+    move |inference, relayed| {
+        DirectInferenceExecutor
             .run(DirectInferenceConfig {
                 base_dir: base_dir.to_path_buf(),
                 specification_path: specification_path.to_path_buf(),
@@ -215,9 +218,9 @@ pub fn direct_output<'a>(
                     .context("direct inference runs a case, and none is named")?
                     .to_path_buf(),
                 inference,
+                relayed: relayed.cloned(),
             })
-            .context("direct inference to discover the claimed output failed")?
-            .generated_token_ids)
+            .context("direct inference to discover the claimed output failed")
     }
 }
 
@@ -247,7 +250,7 @@ mod tests {
     #[test]
     fn the_direct_output_of_no_case_is_an_error() {
         let discover = direct_output(Path::new("."), Path::new("specification.toml"), None);
-        let error = discover(0).unwrap_err();
+        let error = discover(0, None).unwrap_err();
         assert!(format!("{error:#}").contains("none is named"));
     }
 }

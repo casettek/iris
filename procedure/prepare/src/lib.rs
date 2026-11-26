@@ -18,18 +18,28 @@ pub mod run_inputs;
 pub mod source;
 pub mod staged;
 
-/// `case_dir` is the directory the case's paths are relative to.
+/// One inference's prompt. `case_dir` is the directory the case's paths are
+/// relative to. `relayed` is the result of the inference whose output this
+/// one's prompt holds, for an inference a relay gives its prompt; for any
+/// other the prompt is the run's own.
 pub fn prepare_prompt(
     tokenizer: &serde_json::Value,
     specification: &Specification,
     case_dir: &Path,
     case: &Case,
     model: &ModelManifest,
+    relayed: Option<&procedure_definition::InferenceResult>,
 ) -> Result<PreparedPrompt> {
     // The template is the tokenizer profile's, which is what the prompt stages
     // render the text with, whatever the model's family.
     let profile = tokenizer_profile(tokenizer)?;
-    let (prompt, source, forms) = resolve_prompt(specification, case_dir, case)?;
+    let (prompt, source, forms) = match relayed {
+        Some(earlier) => {
+            let run = relayed_run(specification, earlier)?;
+            (run.text, Some(run.record), specification.forms())
+        }
+        None => resolve_prompt(specification, case_dir, case)?,
+    };
     let rendered_prompt = if !specification.raw_prompt && profile.templated() {
         format!(
             "{}{}{}",
@@ -50,6 +60,37 @@ pub fn prepare_prompt(
         source,
         forms,
     })
+}
+
+/// The prompt built around an earlier inference's output, and the record the
+/// relay stage states of it. A relay with a fault gives no prompt: direct
+/// inference is the gate, and no claim is built on such a run.
+pub fn relayed_run(
+    specification: &Specification,
+    earlier: &procedure_definition::InferenceResult,
+) -> Result<source_core::relay::RelayRun> {
+    use source_core::relay::{relay_fault_description, run_relay_steps};
+    let relay = specification.relay.as_ref().context(
+        "the specification has no `[relay]` table to build a prompt around an earlier output with",
+    )?;
+    let hash = |text: &str, what: &str| {
+        hex::decode(text).with_context(|| format!("the earlier inference's {what} is not hex"))
+    };
+    let run = run_relay_steps(
+        &relay.recipe(),
+        &earlier.generated_text,
+        &hash(&earlier.statement_sha256, "statement")?,
+        &hash(&earlier.output_text_sha256, "output text hash")?,
+        earlier.valid,
+    );
+    anyhow::ensure!(
+        run.record.fault == source::FAULT_NONE,
+        "the prompt built around the earlier inference's output has fault {} at {}: {}",
+        run.record.fault,
+        run.record.fault_position,
+        relay_fault_description(run.record.fault)
+    );
+    Ok(run)
 }
 
 /// Writes the `claim-result` stage's forms for a run.
@@ -348,6 +389,7 @@ mod tests {
             Path::new("."),
             &case,
             &model_manifest(),
+            None,
         )
         .unwrap();
 
@@ -372,6 +414,7 @@ mod tests {
             Path::new("."),
             &case,
             &model_manifest(),
+            None,
         )
         .unwrap();
 
@@ -391,6 +434,7 @@ mod tests {
                 Path::new("."),
                 &case,
                 &model_manifest(),
+                None,
             )
             .unwrap();
             let whole_pieces = prepared
@@ -658,6 +702,7 @@ mod tests {
             }],
             source: None,
             forms: Vec::new(),
+            relay: None,
         };
         (specification, Case::of_prompt(prompt.to_string()))
     }

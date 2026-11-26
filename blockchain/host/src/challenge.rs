@@ -460,6 +460,7 @@ fn rebuild_teacher_forced_run(
         models: selected.models,
         source: None,
         forms: Vec::new(),
+        relay: None,
     };
     let case = Case::of_prompt(claimed.prompt.resolved_prompt.clone());
     let ids = (0..frozen.inferences.len())

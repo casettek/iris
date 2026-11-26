@@ -39,7 +39,7 @@ const AGREED_CODE: u32 = 7;
 const FALSIFIED_STAGE: &str = "m1_prompt_check_p0";
 
 /// Imports the other family's bundle beside the run's own model.
-fn import_other_family(
+pub(super) fn import_other_family(
     root: &Path,
     dir: &Path,
     exe: &Path,

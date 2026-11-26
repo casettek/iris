@@ -26,10 +26,14 @@ pub fn run_infer(specification_path: PathBuf, case_path: PathBuf) -> Result<Infe
         )
     })?;
     let procedure_kind = specification.procedure_kind;
-    // One inference after the other: each loads its own model.
-    let mut reports = Vec::new();
+    // One inference after the other: each loads its own model. An inference
+    // a relay gives its prompt is made after the one whose output it holds.
+    let mut reports: Vec<InferenceRunReport> = Vec::new();
     for inference in 0..procedure_kind.inferences() {
         config.inference = inference;
+        config.relayed = procedure_kind
+            .relayed_from(inference)
+            .map(|earlier| reports[earlier].result.clone());
         reports.push(
             DirectInferenceExecutor
                 .run_with_report(config.clone())

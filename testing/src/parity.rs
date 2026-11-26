@@ -4,6 +4,7 @@
 mod challenge;
 pub mod compare;
 mod consensus;
+mod relay;
 mod source;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -172,6 +173,10 @@ fn outcomes(report: &Value) -> Value {
             "checkpoints": report["consensus"]["checkpoints"],
             "replayed": report["consensus"]["replayed"],
         },
+        "an_output_is_relayed": {
+            "checkpoints": report["relay"]["checkpoints"],
+            "located": report["relay"]["located"],
+        },
         "cheating_is_caught": caught,
     })
 }
@@ -216,6 +221,14 @@ fn outcome_lines(outcomes: &Value) -> Vec<String> {
             "two models agree: 1 consensus claim with this model and the other family's, {} checkpoints the same through Raster and natively and its results the same as direct inference; a false checkpoint in the second inference found and replayed ({})",
             consensus["checkpoints"],
             consensus["replayed"].as_str().unwrap_or_default()
+        ));
+    }
+    let relayed = &outcomes["an_output_is_relayed"];
+    if relayed["checkpoints"].is_u64() {
+        lines.push(format!(
+            "an output is relayed: 1 run with this model's output in the other family's prompt, {} checkpoints the same through Raster and natively and its results the same as direct inference; a false checkpoint located in each of {} stages",
+            relayed["checkpoints"],
+            relayed["located"].as_array().map_or(0, Vec::len)
         ));
     }
     let caught = &outcomes["cheating_is_caught"];
@@ -435,6 +448,10 @@ fn run_suite(
     report["source"] =
         source::run_source_scenario(root, run_dir, &exe, &raster, &model_path, &model)
             .context("source scenario")?;
+    write_json(&run_dir.join("report.json"), report)?;
+    println!("Running the relay scenario...");
+    report["relay"] = relay::run_relay_scenario(root, run_dir, &exe, &raster, &model_path, &model)
+        .context("relay scenario")?;
     write_json(&run_dir.join("report.json"), report)?;
     // Its challenger replays a stage through authenticated Raster, as the
     // challenge scenario does.
@@ -2097,6 +2114,7 @@ pub fn worker(specification: &Path, case: &Path, output: &Path, direct: bool) ->
             specification_path: specification.to_path_buf(),
             case_path: case.to_path_buf(),
             inference: 0,
+            relayed: None,
         };
         let diagnostic = DirectInferenceExecutor.run_with_diagnostics(config.clone())?;
         let names = diagnostic

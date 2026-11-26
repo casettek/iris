@@ -179,6 +179,7 @@ pub(super) fn validate_errors(stage: &str, value: &Value) -> Result<()> {
     // its empty edge and its final one; no chain stage has them.
     if stage != "prompt_prepare"
         && stage != "source"
+        && stage != procedure_definition::procedure_kind::RELAY_STAGE
         && stage != "result"
         && !stage.starts_with("prompt_bind_p")
         && stage != "decode_init"

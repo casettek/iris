@@ -60,7 +60,8 @@ stage is longer than its replay window. On the synthetic model that is
 The stage ladder is what runs the other programs through authenticated Raster,
 with a smaller window. That includes `prompt-source` and `claim-result`, on the
 claim the gate's source scenario builds, and `consensus-result`, on the claim its
-consensus scenario builds. The two result programs are a handful of steps and are
+consensus scenario builds, and `prompt-relay`, on the run its relay scenario
+makes. The two result programs and the relay program are a handful of steps and are
 committed at a window of two.
 
 ## The blockchain tier

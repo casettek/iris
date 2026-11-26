@@ -32,6 +32,7 @@ members = [
     "raster-stages/prefill-range",
     "raster-stages/prompt-bind",
     "raster-stages/prompt-check",
+    "raster-stages/prompt-relay",
     "raster-stages/prompt-source",
     "raster-stages/sequence-check",
 ]

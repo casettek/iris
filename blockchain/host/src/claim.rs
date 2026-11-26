@@ -341,6 +341,15 @@ impl ClaimBuildOptions {
 pub fn prepare_claim_run(options: &ClaimBuildOptions) -> Result<PreparedClaimRun> {
     let specification_path = absolute(&options.base_dir, &options.specification_path);
     let specification = read_specification(&specification_path)?;
+    // A claim posts its run's inputs and a contract holds its submission to
+    // rules, and neither is written for a relay: its recipe is not among the
+    // values posted, and its inferences name different inputs.
+    anyhow::ensure!(
+        !specification.procedure_kind.relays(),
+        "no claim is made of the `{}` procedure kind yet; `iris run` runs one directly and as \
+         a pipeline",
+        specification.procedure_kind
+    );
     let (case_path, case) = read_options_case(options)?;
     prepare_run(
         options,
@@ -379,6 +388,15 @@ pub fn prepare_posted_run(
 ) -> Result<PreparedClaimRun> {
     let specification_path = absolute(&options.base_dir, &options.specification_path);
     let specification = read_specification(&specification_path)?;
+    // A claim posts its run's inputs and a contract holds its submission to
+    // rules, and neither is written for a relay: its recipe is not among the
+    // values posted, and its inferences name different inputs.
+    anyhow::ensure!(
+        !specification.procedure_kind.relays(),
+        "no claim is made of the `{}` procedure kind yet; `iris run` runs one directly and as \
+         a pipeline",
+        specification.procedure_kind
+    );
     let (case_path, case) = read_options_case(options)?;
     prepare_run(
         options,

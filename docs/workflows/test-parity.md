@@ -216,6 +216,34 @@ shorter than the replay window. It has one for the result stage, which is shorte
 window on any model: a false `result` checkpoint must be where recomputation first differs,
 and no replay is asked for.
 
+## Relay scenario
+
+After the source scenario the gate makes one run of the `relay`
+[procedure kind](../protocol/procedure-kinds.md#the-relay-procedure-kind)
+(`testing/src/parity/relay.rs`). Its first model is the gate's own and its
+second the other family's bundle, imported into the run. The first prompt is
+the source scenario's, built from its two signed documents, so the chain has
+both source programs: `prompt-source` before the first inference and
+`prompt-relay` between the two.
+
+The run is made directly, natively and through Raster:
+
+- The native run is made on what the direct run generated, and fails unless it
+  states every field of both inferences' results as the direct run did.
+- The second inference ran the recipe's text around the first output, exactly.
+- The chain is the `source` stage, the first model's stages, the `relay` stage,
+  the second model's and the `result` stage, and every stage's output is the
+  same bytes through Raster and natively.
+- The relay stage's record is the one direct inference computes, is of the
+  prompt the second inference ran, and is the record the second statement
+  names. The first statement names the run's source.
+- The result stage is of the second inference alone.
+- A false checkpoint in `m0_prompt_check_p0`, `relay`, `m1_prompt_check_p0` or
+  `result` is where the list first differs from honest execution.
+
+No claim is built and no stage is replayed: a claim of a relay is not written
+yet. The stage ladder runs `prompt-relay` on this scenario's `relay` stage.
+
 ## Consensus scenario
 
 After the source scenario the gate builds one claim of the `consensus`
