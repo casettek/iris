@@ -77,7 +77,7 @@ pub fn load_inputs_from_paths_with_cache(
     })
 }
 
-pub fn run_direct(inputs: &Inputs) -> Result<ActivationSequence> {
+pub fn run_native(inputs: &Inputs) -> Result<ActivationSequence> {
     let mut output = run_layer_stage(LayerStageInputs {
         activations: &inputs.activations,
         layer: &inputs.layer,
@@ -150,7 +150,7 @@ impl crate::segments::NativeStage for Stage {
     type Inputs = Inputs;
     type Output = ActivationSequence;
     const PROJECT: &'static str = "layer-mistral";
-    const ROUTINE: &'static str = "layer_mistral";
+    const NAME: &'static str = "layer_mistral";
 
     fn load_from_args() -> Result<Inputs> {
         load_inputs_from_args()
@@ -169,7 +169,7 @@ impl crate::segments::NativeStage for Stage {
         inputs: &Inputs,
         _caches: crate::segments::NativeStageCaches<'_>,
     ) -> Result<ActivationSequence> {
-        run_direct(inputs)
+        run_native(inputs)
     }
 
     fn cached(output: ActivationSequence) -> crate::cache::CachedStageValue {

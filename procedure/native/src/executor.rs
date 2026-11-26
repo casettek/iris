@@ -5,47 +5,47 @@
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
-use inference_generation::model::DirectInferenceModel;
+use inference_generation::model::NativeInferenceModel;
 use inference_generation::{
-    generate, generate_with_boundaries, DirectBoundaryRecord, GenerationInput,
+    generate, generate_with_boundaries, GenerationInput, NativeBoundaryRecord,
 };
 use procedure_definition::{
     read_case, read_specification, InferStageTiming, InferenceResult, InferenceRunReport,
     InferenceTimings,
 };
 
-use crate::DirectInferenceConfig;
+use crate::NativeInferenceConfig;
 
 #[derive(Debug)]
-pub struct DirectDiagnosticRunReport {
+pub struct NativeDiagnosticRunReport {
     pub report: InferenceRunReport,
-    pub boundaries: Vec<DirectBoundaryRecord>,
+    pub boundaries: Vec<NativeBoundaryRecord>,
 }
 
 #[derive(Debug, Default)]
-pub struct DirectInferenceExecutor;
+pub struct NativeInferenceExecutor;
 
-impl DirectInferenceExecutor {
-    pub fn run(&self, config: DirectInferenceConfig) -> Result<InferenceResult> {
+impl NativeInferenceExecutor {
+    pub fn run(&self, config: NativeInferenceConfig) -> Result<InferenceResult> {
         Ok(self.run_with_report(config)?.result)
     }
 
-    pub fn run_with_report(&self, config: DirectInferenceConfig) -> Result<InferenceRunReport> {
+    pub fn run_with_report(&self, config: NativeInferenceConfig) -> Result<InferenceRunReport> {
         Ok(self.run_inference(config, false)?.report)
     }
 
     pub fn run_with_diagnostics(
         &self,
-        config: DirectInferenceConfig,
-    ) -> Result<DirectDiagnosticRunReport> {
+        config: NativeInferenceConfig,
+    ) -> Result<NativeDiagnosticRunReport> {
         self.run_inference(config, true)
     }
 
     fn run_inference(
         &self,
-        config: DirectInferenceConfig,
+        config: NativeInferenceConfig,
         boundaries: bool,
-    ) -> Result<DirectDiagnosticRunReport> {
+    ) -> Result<NativeDiagnosticRunReport> {
         let infer_started = Instant::now();
         let specification_path = if config.specification_path.is_absolute() {
             config.specification_path.clone()
@@ -84,8 +84,8 @@ impl DirectInferenceExecutor {
         };
 
         let load_started = Instant::now();
-        let model = DirectInferenceModel::load(&model_manifest_path)
-            .context("failed to load direct-infer model")?;
+        let model = NativeInferenceModel::load(&model_manifest_path)
+            .context("failed to load native-run model")?;
         let load_duration = load_started.elapsed();
 
         // The run's text, what it was built from and its forms, and the text
@@ -164,9 +164,9 @@ impl DirectInferenceExecutor {
             result_forms_sha256,
         };
 
-        // The phases a direct run reports: the model's load, then the
+        // The phases a native run reports: the model's load, then the
         // generation's own, with preparing the prompt counted in the first.
-        let mut stages = vec![phase_timing("load_direct_model", load_duration)];
+        let mut stages = vec![phase_timing("load_native_model", load_duration)];
         stages.extend(generation.phases.into_iter().map(|phase| {
             let prepared = if phase.phase == "prompt_prepare" {
                 prepare_duration
@@ -175,7 +175,7 @@ impl DirectInferenceExecutor {
             };
             phase_timing(&phase.phase, phase.duration + prepared)
         }));
-        Ok(DirectDiagnosticRunReport {
+        Ok(NativeDiagnosticRunReport {
             report: InferenceRunReport {
                 input_token_count: Some(generation.input_token_count),
                 result,
@@ -193,7 +193,7 @@ impl DirectInferenceExecutor {
 fn phase_timing(stage: &str, duration: Duration) -> InferStageTiming {
     InferStageTiming {
         stage: stage.to_string(),
-        routine: String::from("direct-infer"),
+        native_stage: String::from("native-run"),
         input_synthesis_duration: Duration::ZERO,
         input_load_duration: Duration::ZERO,
         kernel_duration: duration,

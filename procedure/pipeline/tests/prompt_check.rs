@@ -197,12 +197,12 @@ fn claimed_tokens_on_the_production_vocabulary() {
         for counts in groupings(pieces.len()) {
             examined += 1;
             let passes = grouping_passes(&table, &pieces, &counts).unwrap();
-            let staged =
+            let pipeline_run =
                 check_range_in_rounds(&table, &pieces, 0, None, &marks_of(&counts)).unwrap();
             assert_eq!(
-                staged.fault.is_none(),
+                pipeline_run.fault.is_none(),
                 passes,
-                "staged rounds, text {text:?}, grouping {counts:?}"
+                "pipeline rounds, text {text:?}, grouping {counts:?}"
             );
             assert_eq!(
                 passes,
@@ -227,19 +227,19 @@ fn claimed_tokens_on_the_production_vocabulary() {
     let long = text_of(&mut rng, 2_000, 6_000);
     let long_pieces = pieces(&long, &profile, &vocab);
     let long_tokens = merged_tokens(&long_pieces, &table).unwrap();
-    let (mut staged_steps, mut today_steps, mut start, mut previous) = (0_u64, 0_u64, 0, None);
+    let (mut pipeline_steps, mut today_steps, mut start, mut previous) = (0_u64, 0_u64, 0, None);
     let root_page = raster::BytesPage::__from_parts(0, 0, Vec::new());
     let bound = prompt_check::input::PromptState::of_pieces(long_pieces.clone());
     let mut twin = bound.clone();
     for range in long_tokens.chunks(512) {
         let counts: Vec<usize> = range.iter().map(|token| token.pieces as usize).collect();
         let len: usize = counts.iter().sum();
-        let staged =
+        let pipeline_run =
             check_range_in_rounds(&table, &long_pieces, start, previous, &marks_of(&counts))
                 .unwrap();
-        assert_eq!(staged.fault, None);
-        assert_eq!(staged.texts.len(), range.len());
-        staged_steps += staged.scan_steps;
+        assert_eq!(pipeline_run.fault, None);
+        assert_eq!(pipeline_run.texts.len(), range.len());
+        pipeline_steps += pipeline_run.scan_steps;
         // The stage's native twin over the same range, fed the range before it.
         twin = run_prompt_check(
             &table,
@@ -278,11 +278,11 @@ fn claimed_tokens_on_the_production_vocabulary() {
     println!("  right grouping with one wrong id, refused: {wrong_id_refused}");
     println!("pieces per token in built texts: longest {longest_token}; counts {token_lengths:?}");
     println!(
-        "long prompt: {} pieces, {} tokens, {} ranges; merge lookups today {today_steps}, as staged rounds {staged_steps} ({:.1}x fewer)",
+        "long prompt: {} pieces, {} tokens, {} ranges; merge lookups today {today_steps}, as pipeline rounds {pipeline_steps} ({:.1}x fewer)",
         long_pieces.len(),
         long_tokens.len(),
         long_tokens.len().div_ceil(512),
-        today_steps as f64 / staged_steps as f64
+        today_steps as f64 / pipeline_steps as f64
     );
     println!(
         "vocabulary: longest entry {vocabulary_longest} characters; {over_16} entries over 16"

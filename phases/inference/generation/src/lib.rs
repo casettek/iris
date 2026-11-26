@@ -1,5 +1,5 @@
 pub mod diagnostics;
-pub use diagnostics::DirectBoundaryRecord;
+pub use diagnostics::NativeBoundaryRecord;
 pub use inference_weights;
 pub mod executor;
 pub mod generation;

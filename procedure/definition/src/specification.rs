@@ -204,8 +204,8 @@ const REPLACED_KEYS: [(&str, &str); 6] = [
     ("prompt_file", "`prompt_file` in the case file"),
     ("pipeline", "`procedure_kind`"),
     (
-        "pipeline",
-        "nothing: teacher-forced is the only staged pipeline, and it is not named",
+        "chain",
+        "nothing: teacher-forced is the only pipeline, and it is not named",
     ),
 ];
 

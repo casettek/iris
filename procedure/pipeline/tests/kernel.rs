@@ -2,7 +2,7 @@ use prefill_range::input::{
     pack_i32s, ActivationRow, ActivationSequence, KeyRow, LayerParams, PleLayerInputs, PleRow,
     TransformerLayer, PAGE_SIZE, Q8_PAGE_SIZE,
 };
-use procedure_pipeline::{run_prefill_range_direct, segments, PrefillRangeDirectInputs};
+use procedure_pipeline::{run_prefill_range_native, segments, PrefillRangeNativeInputs};
 use raster::{Bytes, List};
 
 const ONE: i32 = 1 << 16;
@@ -148,13 +148,13 @@ fn a_loaded_layer_keeps_the_root_of_its_bytes() {
 }
 
 #[test]
-fn direct_prefill_returns_activation_and_own_kv() {
+fn native_prefill_returns_activation_and_own_kv() {
     let activations = activation_sequence(&row(&[ONE]));
     let layer = tiny_layer(-1);
     let donor = activation_sequence(&[]);
     let ple = ple_inputs();
 
-    let output = run_prefill_range_direct(PrefillRangeDirectInputs {
+    let output = run_prefill_range_native(PrefillRangeNativeInputs {
         activations: &activations,
         layer: &layer,
         layer_cache_key: None,
@@ -170,7 +170,7 @@ fn direct_prefill_returns_activation_and_own_kv() {
     assert_eq!(output.kv.len(), 1);
     assert!(output.errors.is_empty());
 
-    let wrapper_output = segments::prefill_range::run_direct(&segments::prefill_range::Inputs {
+    let wrapper_output = segments::prefill_range::run_native(&segments::prefill_range::Inputs {
         activations,
         layer: layer.into(),
         layer_cache_key: None,
@@ -193,7 +193,7 @@ fn donor_layer_carries_prior_kv_and_publishes_own_kv() {
     let donor = donor_sequence();
     let ple = ple_inputs();
 
-    let output = run_prefill_range_direct(PrefillRangeDirectInputs {
+    let output = run_prefill_range_native(PrefillRangeNativeInputs {
         activations: &activations,
         layer: &layer,
         layer_cache_key: None,
@@ -209,7 +209,7 @@ fn donor_layer_carries_prior_kv_and_publishes_own_kv() {
     assert_eq!(output.kv[0].position, 0);
     assert_eq!(output.kv[1].position, 0);
 
-    let wrapper_output = segments::prefill_range::run_direct(&segments::prefill_range::Inputs {
+    let wrapper_output = segments::prefill_range::run_native(&segments::prefill_range::Inputs {
         activations,
         layer: layer.into(),
         layer_cache_key: None,

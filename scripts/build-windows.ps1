@@ -41,9 +41,9 @@ try {
         & cargo "+$toolchain" test --release --locked -p raster-prover --test windows_host --target-dir $targetDir -j $Jobs
         if ($LASTEXITCODE -ne 0) { throw 'Windows prover selection regression failed.' }
         & cargo "+$toolchain" test --release --locked -p inference-generation -p procedure-native --test executor --target-dir $targetDir -j $Jobs
-        if ($LASTEXITCODE -ne 0) { throw 'Direct inference tests failed.' }
+        if ($LASTEXITCODE -ne 0) { throw 'The native run tests failed.' }
         & cargo "+$toolchain" test --release --locked -p procedure-pipeline --test infer_parity --test worker_parity --target-dir $targetDir -j $Jobs
-        if ($LASTEXITCODE -ne 0) { throw 'Staged inference parity test failed.' }
+        if ($LASTEXITCODE -ne 0) { throw 'The pipeline run parity test failed.' }
     }
     Write-Host "Windows executable: $(Join-Path $targetDir 'release/iris.exe')"
 }

@@ -4,8 +4,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use inference_manifest::{
-    model_id_of, write_json, DirectInferBundle, DirectInferProvenance, FamilyShape,
-    ModelCommitment, ModelFamily, ModelManifest, MODEL_MANIFEST_JSON, MODEL_MANIFEST_VERSION,
+    model_id_of, write_json, FamilyShape, ModelCommitment, ModelFamily, ModelManifest,
+    NativeInferBundle, NativeInferProvenance, MODEL_MANIFEST_JSON, MODEL_MANIFEST_VERSION,
 };
 use sha2::{Digest, Sha256};
 
@@ -32,13 +32,13 @@ pub fn write_model_manifest(
     let config = args.model_dir.join("config.json");
     let tokenizer_path = args.model_dir.join("tokenizer.json");
 
-    let direct = ModelManifest {
+    let native_run = ModelManifest {
         version: MODEL_MANIFEST_VERSION,
         family: family.name().to_string(),
         model_id: model_id_of(model_commitments),
         model_commitments: model_commitments.to_vec(),
         range_size: args.range_size,
-        bundle: DirectInferBundle {
+        bundle: NativeInferBundle {
             model_detwgt_path: manifest_relative_path(&artifact_dir, &model_detwgt)?,
             model_detwgt_sha256: sha256_file(&model_detwgt)?,
             config_path: manifest_relative_path(&artifact_dir, &config)?,
@@ -49,15 +49,15 @@ pub fn write_model_manifest(
         shape,
         eos_token_ids: eos_ids.iter().copied().collect(),
         provenance: raster_manifest.map(template_provenance).transpose()?.map(
-            |(raster_manifest_path, raster_manifest_sha256)| DirectInferProvenance {
+            |(raster_manifest_path, raster_manifest_sha256)| NativeInferProvenance {
                 raster_manifest_path,
                 raster_manifest_sha256,
             },
         ),
     };
 
-    if direct.provenance.is_some() {
-        let descriptor = direct.descriptor().map_err(|error| error.to_string())?;
+    if native_run.provenance.is_some() {
+        let descriptor = native_run.descriptor().map_err(|error| error.to_string())?;
         let bytes = descriptor
             .encode()
             .map_err(|fault| format!("invalid model descriptor: {fault:?}"))?;
@@ -67,13 +67,13 @@ pub fn write_model_manifest(
         )?;
     }
 
-    write_json(&manifest_path, &direct)
+    write_json(&manifest_path, &native_run)
         .map_err(|error| -> Box<dyn Error> { error.to_string().into() })?;
     println!("wrote {}", manifest_path.display());
     Ok(manifest_path)
 }
 
-pub fn warn_partial_direct_manifest_not_refreshed(args: &ImportConfig) {
+pub fn warn_partial_native_manifest_not_refreshed(args: &ImportConfig) {
     eprintln!(
         "model manifest not refreshed; run a full `iris model import ...` \
          to regenerate {}",

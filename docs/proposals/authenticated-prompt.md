@@ -24,7 +24,7 @@ for it, and what the output means. The examples in iris-backend keep their shape
 ## What does not change
 
 - The challenge: rerun honestly, find the first mismatching checkpoint, replay that stage.
-- Direct inference runs first and decides whether a claim is built.
+- The native run runs first and decides whether a claim is built.
 - A wrong input never aborts a stage. It publishes a fault and the final record is invalid.
 - `prompt-check`, the embedding, layer and check programs, apart from the re-lock a change
   to `PromptContext` brings.
@@ -171,14 +171,14 @@ check's record, which already says whether the output is complete.
 
 Two crates, `phases/source` and `phases/result`, hold every function the two new stages compute: the
 attestation message, the field scan, the text fold, the form match. Tiles call it, the
-native stage twins call it and direct calls it, as with `inference-tokenizer`.
+the native stages call it and the native run calls it, as with `inference-tokenizer`.
 
 | Where | What it gains |
 | --- | --- |
 | `iris attest sign` | Host only. Signs a document's hash, length, server and target with a key file. This is the trusted stand-in for the notary |
 | Specification and case | A `[source]` table in the specification holds the recipe and the signer's key, and `[[form]]` tables the forms. The case names each document and its attestation, and gives no `prompt` or `prompt_file` |
-| Direct | Verifies the attestation, renders the prompt, runs the model, matches the forms. The rendered text is what the claim's binds are given |
-| Staged, native | `source` and `result` routines with checkpoints, like every other stage |
+| Native | Verifies the attestation, renders the prompt, runs the model, matches the forms. The rendered text is what the claim's binds are given |
+| Pipeline, native | `source` and `result` routines with checkpoints, like every other stage |
 | Raster | `raster-stages/source`, `raster-stages/result` |
 | Backend | Fetches as it does now, calls `iris attest sign`, and writes a recipe where it wrote `prompt.txt` |
 
@@ -232,7 +232,7 @@ until the notary replaces it.
 
 ## Build order
 
-1. `source-phase`, `iris attest sign`, the `[source]` table and the direct path. The
+1. `source-phase`, `iris attest sign`, the `[source]` table and the native path. The
    backend's earthquake case runs through it. No pipeline change.
 2. The native `source` and `result` routines, the bind's new input, checkpoints, and a
    parity case for each row of the table above.
@@ -279,7 +279,7 @@ The first half of step 2, the same day: the tie.
   and length to it (faults 13 and 14 in the shared prompt source) and stores the record's
   digest in `PromptContext.source_sha256`. The digest reaches the output record, the
   claim record's statement and the claim submission.
-- Direct inference binds the same statement, so a direct result and an honest claim
+- The native run binds the same statement, so a native result and an honest claim
   agree. A challenger rebuilds a run under the source record the claim fixed.
 - On the parity model, imported into a scratch directory and run natively: a claim with
   a source and one without build and pass `claim check`; they have the same text hash
@@ -314,11 +314,11 @@ Checked:
 | What | Result |
 | --- | --- |
 | Workspace tests | 73 test binaries pass |
-| Parity model, native claim with a source | 198 stages, `source` first; the statement is direct inference's; `claim check` passes |
+| Parity model, native claim with a source | 198 stages, `source` first; the statement is the native run's; `claim check` passes |
 | Parity model, native claim without one | 197 stages; `claim check` passes |
 | The Raster program without authentication, on that claim's inputs | output equals the native stage's, byte for byte |
 | The Raster program authenticated, same inputs | commit and audit succeed; the output is the same bytes |
-| The Raster program on the real impact-claim documents | the record direct inference computes; commit and audit succeed; 158 trace steps |
+| The Raster program on the real impact-claim documents | the record the native run computes; commit and audit succeed; 158 trace steps |
 
 On the parity claim's small documents the stage is 63 trace steps, under the 128 a replay
 needs. On the real documents it is 158 with 4,096-byte chunks. Smaller chunks would
@@ -330,7 +330,7 @@ The batch, the same day:
 | --- | --- |
 | Re-lock of all eight stage programs | verified, 19 minutes |
 | Full test tier: unit tests, lock check, both parity gates with their challenge scenarios, the stage ladder | all pass, 41 minutes |
-| A claim with a source on the parity model: direct, native, and the whole pipeline through Raster | one statement; `claim check` holds every native checkpoint to the boundary the Raster run committed |
+| A claim with a source on the parity model: native, native, and the whole pipeline through Raster | one statement; `claim check` holds every native checkpoint to the boundary the Raster run committed |
 | Re-import of Gemma 4 E2B, Gemma 4 E4B and Ministral 3B at version 17 | done; the version 16 imports are in `runtime/model-artifact-backups` |
 | Real-model check, with its references rewritten | E2B and E4B claims build with no fault; one stage of each program as Raster gives the native output |
 | The impact claim on the real documents, Gemma 4 E2B | 219 stages in 68 s, valid, `{"verdict":"confirmed"}`; `claim check` passes |
@@ -347,7 +347,7 @@ full test tier passes again, for both families, challenge scenarios included:
 
 | Family | The claim with a source | Bad sources |
 | --- | --- | --- |
-| Gemma | 198 checkpoints the same through Raster and natively; its record is direct inference's | 7 finish through both and record the fault |
+| Gemma | 198 checkpoints the same through Raster and natively; its record is the native run's | 7 finish through both and record the fault |
 | Mistral | 112 checkpoints, the same | 7, the same |
 
 The result stage and the contract, the same day: `raster-stages/claim-result`, with its
@@ -355,7 +355,7 @@ lock, at manifest version 18.
 
 - **The stage.** Three tiles: a seed, a loop over the forms, and one that states the
   record. Its logic is `phases/result/src/forms.rs`, which the stage compiles on its
-  own, direct inference calls and the native routine calls. It reads the last check's
+  own, the native run calls and the native routine calls. It reads the last check's
   output through its own copy of the edge type, and a test holds the copy to the check's
   commitment. The forms are a run input, empty for a run that names none, so every pipeline
   ends in the stage.

@@ -5,7 +5,7 @@ use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
 
 #[derive(Debug, Parser)]
-#[command(name = "staged-infer")]
+#[command(name = "procedure-pipeline")]
 struct Cli {
     /// Persistent auxiliary worker; value is its retained-weight byte budget.
     #[arg(long, hide = true)]
@@ -31,7 +31,7 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Commands {
-    /// Run staged-infer pipeline commands.
+    /// Run pipeline commands.
     Pipeline {
         #[command(subcommand)]
         command: PipelineCommand,
@@ -40,16 +40,16 @@ enum Commands {
 
 #[derive(Debug, Subcommand)]
 enum PipelineCommand {
-    /// Run the staged-infer pipeline, optionally leaving one stage on Raster as the reference.
+    /// Run the pipeline on native stages, optionally leaving one stage on Raster as the reference.
     Run {
-        /// Stage to run on Raster while staged-infer owns supported stages around it.
-        /// Omit this to run every stage staged-infer.
+        /// Stage to run on Raster while native stages run the supported stages around it.
+        /// Omit this to run every stage as a native stage.
         #[arg(long = "raster-stage")]
         raster_stage: Option<String>,
 
-        /// Use the previous per-stage child-process staged-infer runner.
-        #[arg(long = "staged-subprocess", alias = "direct-subprocess", hide = true)]
-        staged_subprocess: bool,
+        /// Run each native stage in a child process of its own, as the previous runner did.
+        #[arg(long = "native-stage-subprocess", hide = true)]
+        native_stage_subprocess: bool,
     },
 }
 
@@ -57,7 +57,7 @@ fn main() -> ExitCode {
     match try_main() {
         Ok(code) => code,
         Err(error) => {
-            eprintln!("staged-infer error: {error:#}");
+            eprintln!("procedure-pipeline error: {error:#}");
             ExitCode::from(1)
         }
     }
@@ -74,7 +74,7 @@ fn execute(cli: Cli) -> Result<ExitCode> {
     }
     if let Some(stage_dir) = cli.run_stage.as_ref() {
         require_input_args(&cli)?;
-        procedure_pipeline::parity::run_hidden_stage_direct(stage_dir)?;
+        procedure_pipeline::parity::run_hidden_stage_native(stage_dir)?;
         return Ok(ExitCode::SUCCESS);
     }
 
@@ -96,14 +96,14 @@ fn execute(cli: Cli) -> Result<ExitCode> {
             command:
                 PipelineCommand::Run {
                     raster_stage,
-                    staged_subprocess,
+                    native_stage_subprocess,
                 },
         }) => {
             let exe = std::env::current_exe().context("failed to locate current executable")?;
-            let staged_backend = if staged_subprocess {
-                procedure_pipeline::pipeline_runner::StagedExecutionBackend::Subprocess
+            let native_stage_backend = if native_stage_subprocess {
+                procedure_pipeline::pipeline_runner::NativeStageBackend::Subprocess
             } else {
-                procedure_pipeline::pipeline_runner::StagedExecutionBackend::InProcess
+                procedure_pipeline::pipeline_runner::NativeStageBackend::InProcess
             };
             let manifest_path = std::env::current_dir()
                 .context("failed to read current directory")?
@@ -112,7 +112,7 @@ fn execute(cli: Cli) -> Result<ExitCode> {
                 &manifest_path,
                 raster_stage.as_deref(),
                 &exe,
-                staged_backend,
+                native_stage_backend,
             )?;
             if let Some(selected_stage_dir) = run.selected_stage_dir.as_ref() {
                 let report = procedure_pipeline::parity::read_parity_report(selected_stage_dir)?;
@@ -124,7 +124,7 @@ fn execute(cli: Cli) -> Result<ExitCode> {
             Ok(ExitCode::SUCCESS)
         }
         None => bail!(
-            "staged-infer requires `pipeline run`; \
+            "procedure-pipeline requires `pipeline run`; \
              use the Raster CLI directly for Raster-only execution"
         ),
     }
@@ -176,7 +176,7 @@ fn run_hidden_compare(stage_dir: &Path) -> Result<ExitStatus> {
     let exe = std::env::current_exe().context("failed to locate current executable")?;
     let status = comparison_command(&exe, stage_dir, &input, &input_manifest)
         .status()
-        .context("failed to start staged-infer comparison child")?;
+        .context("failed to start procedure-pipeline comparison child")?;
     Ok(status)
 }
 
@@ -237,7 +237,7 @@ mod tests {
     }
 
     #[test]
-    fn hidden_direct_stage_requires_input_files() {
+    fn hidden_native_stage_requires_input_files() {
         let error = execute(Cli {
             aux_worker: None,
             command: None,
@@ -254,8 +254,8 @@ mod tests {
     #[test]
     fn comparison_command_is_unauthenticated_and_isolated() {
         let command = comparison_command(
-            Path::new("/tmp/staged-infer"),
-            Path::new("/tmp/staged-runs/run/range_p0_l3"),
+            Path::new("/tmp/procedure-pipeline"),
+            Path::new("/tmp/pipeline-runs/run/range_p0_l3"),
             Path::new("/tmp/input.json"),
             Path::new("/tmp/input_manifest.json"),
         );
@@ -285,7 +285,7 @@ mod tests {
         let report = procedure_pipeline::parity::ParityReport {
             version: 3,
             stage: String::from("range_p0_l3"),
-            routine: String::from("prefill_range"),
+            native_stage: String::from("prefill_range"),
             instance: Some(3),
             authority: procedure_pipeline::parity::ParityAuthority::NonAuthoritative,
             raster_source_mode: procedure_pipeline::parity::RasterSourceMode::Unauthenticated,
@@ -293,7 +293,7 @@ mod tests {
             input_load_duration_ns: 1,
             kernel_duration_ns: 1,
             encode_write_duration_ns: 1,
-            direct_stage_duration_ns: 1,
+            native_stage_duration_ns: 1,
         };
 
         let summary = render_timing_summary_or_warning(Path::new("/missing/pipeline/run"), &report);

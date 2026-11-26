@@ -42,7 +42,7 @@ impl ModelFamily {
     }
 
     /// Whether each layer has a stage before it that prepares a per-layer
-    /// input, and with it a step direct inference records.
+    /// input, and with it a step the native run records.
     pub const fn has_auxiliary_stages(self) -> bool {
         matches!(self, Self::GemmaDense)
     }
@@ -90,7 +90,7 @@ pub struct ModelCommitment {
 
 /// The model's identifier: a hash of its commitments by role, in order.
 ///
-/// This is the legacy role-list adapter, also used for direct-only imports.
+/// This is the legacy role-list adapter, also used for native-only imports.
 /// Claim-capable imports validate the inventory through ModelDescriptor; stages
 /// bind that descriptor to the expected ID and verify actual component data.
 /// Paths are excluded, so relocating an import preserves identity.
@@ -116,11 +116,11 @@ pub struct ModelManifest {
     pub model_commitments: Vec<ModelCommitment>,
     /// Largest range the pipeline cuts a prompt or an output into, in tokens.
     pub range_size: u32,
-    pub bundle: DirectInferBundle,
+    pub bundle: NativeInferBundle,
     pub shape: FamilyShape,
     pub eos_token_ids: Vec<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub provenance: Option<DirectInferProvenance>,
+    pub provenance: Option<NativeInferProvenance>,
 }
 
 impl ModelManifest {
@@ -228,7 +228,7 @@ pub fn verify_file_sha256(path: &Path, expected: &str, label: &str) -> Result<()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct DirectInferBundle {
+pub struct NativeInferBundle {
     pub model_detwgt_path: PathBuf,
     pub model_detwgt_sha256: String,
     pub config_path: PathBuf,
@@ -238,7 +238,7 @@ pub struct DirectInferBundle {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct DirectInferShape {
+pub struct NativeInferShape {
     pub hidden_size: u32,
     pub num_hidden_layers: u32,
     pub num_attention_heads: u32,
@@ -291,7 +291,7 @@ pub struct MistralShape {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(untagged)]
 pub enum FamilyShape {
-    GemmaDense(DirectInferShape),
+    GemmaDense(NativeInferShape),
     MistralDense(MistralShape),
 }
 
@@ -325,7 +325,7 @@ impl FamilyShape {
     }
 
     /// `gemma-dense`'s shape, or why this model has none.
-    pub fn gemma(&self) -> Result<&DirectInferShape> {
+    pub fn gemma(&self) -> Result<&NativeInferShape> {
         match self {
             Self::GemmaDense(shape) => Ok(shape),
             other => bail!(
@@ -347,8 +347,8 @@ impl FamilyShape {
     }
 }
 
-impl From<DirectInferShape> for FamilyShape {
-    fn from(shape: DirectInferShape) -> Self {
+impl From<NativeInferShape> for FamilyShape {
+    fn from(shape: NativeInferShape) -> Self {
         Self::GemmaDense(shape)
     }
 }
@@ -360,7 +360,7 @@ impl From<MistralShape> for FamilyShape {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct DirectInferProvenance {
+pub struct NativeInferProvenance {
     pub raster_manifest_path: PathBuf,
     pub raster_manifest_sha256: String,
 }

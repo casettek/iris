@@ -92,7 +92,7 @@ impl PagedHead {
 /// Each page is read and verified once and scored against all positions.
 /// Every position folds its pages in page order and its rows in token-id
 /// order, keeping only strictly greater scores, so each selection is the one
-/// direct generation makes for that row.
+/// native generation makes for that row.
 pub(crate) fn select_positions(positions: &[&[i32]], head: &PagedHead) -> Result<Vec<Selection>> {
     select_positions_measured(positions, head).map(|(selections, _)| selections)
 }

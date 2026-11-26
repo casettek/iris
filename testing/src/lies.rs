@@ -411,7 +411,7 @@ fn forge_valid_verdict(check_dir: &Path, result_dir: &Path) -> Result<ForgedVerd
     let files = |dir: &Path| (dir.join("input.json"), dir.join(INPUT_MANIFEST_JSON));
     let cached = procedure_pipeline::cache::CachedInputs::new();
     let (input, list) = files(check_dir);
-    let mut edge = sequence_check::run_direct(&sequence_check::load_inputs_from_paths(
+    let mut edge = sequence_check::run_native(&sequence_check::load_inputs_from_paths(
         &input, &list, &cached,
     )?)?;
     ensure!(
@@ -430,6 +430,6 @@ fn forge_valid_verdict(check_dir: &Path, result_dir: &Path) -> Result<ForgedVerd
     // The two stages declare the edge field for field: one encoding.
     inputs.check = postcard::from_bytes(&postcard::to_allocvec(&edge)?)
         .context("the check's output is not the result stage's input")?;
-    let result = encode_output(&claim_result::run_direct(&inputs)?)?;
+    let result = encode_output(&claim_result::run_native(&inputs)?)?;
     Ok(ForgedVerdict { check, result })
 }

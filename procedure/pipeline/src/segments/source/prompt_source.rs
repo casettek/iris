@@ -31,7 +31,7 @@ pub fn load_inputs_from_paths_with_cache(
 }
 
 /// The stage's steps, in its order, over the same functions its tiles call.
-pub fn run_direct(inputs: &Inputs) -> Result<SourceRecord> {
+pub fn run_native(inputs: &Inputs) -> Result<SourceRecord> {
     Ok(run_source_steps(&inputs.signer, &inputs.recipe, &inputs.documents).record)
 }
 
@@ -66,7 +66,7 @@ impl crate::segments::NativeStage for Stage {
     type Inputs = Inputs;
     type Output = SourceRecord;
     const PROJECT: &'static str = "prompt-source";
-    const ROUTINE: &'static str = "prompt_source";
+    const NAME: &'static str = "prompt_source";
 
     fn load_from_args() -> Result<Inputs> {
         load_inputs_from_args()
@@ -85,7 +85,7 @@ impl crate::segments::NativeStage for Stage {
         inputs: &Inputs,
         _caches: crate::segments::NativeStageCaches<'_>,
     ) -> Result<SourceRecord> {
-        run_direct(inputs)
+        run_native(inputs)
     }
 
     fn cached(output: SourceRecord) -> crate::cache::CachedStageValue {

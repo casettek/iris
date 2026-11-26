@@ -10,7 +10,7 @@ use ::common_identity::context::parse_id;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
-use inference_manifest::direct::{model_id_of, ModelCommitment, ModelManifest};
+use inference_manifest::native_run::{model_id_of, ModelCommitment, ModelManifest};
 use procedure_definition::checkpoint::locked_program_commitment;
 use procedure_definition::procedure_kind::ProcedureKind;
 

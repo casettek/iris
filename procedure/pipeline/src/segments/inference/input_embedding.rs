@@ -9,7 +9,7 @@ use crate::{
 };
 use anyhow::Result;
 use inference_kernels::kernels::input_embedding::{
-    run_input_embedding_direct, InputEmbeddingDirectInputs,
+    run_input_embedding_native, InputEmbeddingNativeInputs,
 };
 use input_embedding::input::{
     pack_i32s, ActivationRow, ActivationSequence, ClaimedOutput, EmbeddingTable, PromptTokenization,
@@ -97,9 +97,9 @@ pub fn load_inputs_from_paths_with_cache(
         )
     })
 }
-pub fn run_direct(inputs: &Inputs) -> Result<ActivationSequence> {
+pub fn run_native(inputs: &Inputs) -> Result<ActivationSequence> {
     let mut output = match &inputs.embedding {
-        Weights::Eager(embedding) => run_input_embedding_direct(InputEmbeddingDirectInputs {
+        Weights::Eager(embedding) => run_input_embedding_native(InputEmbeddingNativeInputs {
             prompt: &PromptTokenization {
                 token_ids: List::from(inputs.token_ids().collect::<Vec<_>>()),
                 ..Default::default()
@@ -270,7 +270,7 @@ impl crate::segments::NativeStage for Stage {
     type Inputs = Inputs;
     type Output = ActivationSequence;
     const PROJECT: &'static str = "input-embedding";
-    const ROUTINE: &'static str = "input_embedding";
+    const NAME: &'static str = "input_embedding";
 
     fn load_from_args() -> Result<Inputs> {
         load_inputs_from_args()
@@ -289,7 +289,7 @@ impl crate::segments::NativeStage for Stage {
         inputs: &Inputs,
         _caches: crate::segments::NativeStageCaches<'_>,
     ) -> Result<ActivationSequence> {
-        run_direct(inputs)
+        run_native(inputs)
     }
 
     fn cached(output: ActivationSequence) -> crate::cache::CachedStageValue {

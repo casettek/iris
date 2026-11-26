@@ -32,7 +32,7 @@ pub fn load_inputs_from_paths_with_cache(
 }
 
 /// The stage's steps, in its order, over the same functions its tiles call.
-pub fn run_direct(inputs: &Inputs) -> Result<SourceRecord> {
+pub fn run_native(inputs: &Inputs) -> Result<SourceRecord> {
     let claim = &inputs.check.claim;
     Ok(run_relay_steps(
         &inputs.recipe,
@@ -67,7 +67,7 @@ impl crate::segments::NativeStage for Stage {
     type Inputs = Inputs;
     type Output = SourceRecord;
     const PROJECT: &'static str = "prompt-relay";
-    const ROUTINE: &'static str = "prompt_relay";
+    const NAME: &'static str = "prompt_relay";
 
     fn load_from_args() -> Result<Inputs> {
         load_inputs_from_args()
@@ -86,7 +86,7 @@ impl crate::segments::NativeStage for Stage {
         inputs: &Inputs,
         _caches: crate::segments::NativeStageCaches<'_>,
     ) -> Result<SourceRecord> {
-        run_direct(inputs)
+        run_native(inputs)
     }
 
     fn cached(output: SourceRecord) -> crate::cache::CachedStageValue {
@@ -118,7 +118,7 @@ mod tests {
         };
 
         let recipe = relay_recipe("Is this right:", "Answer yes or no.");
-        let record = run_direct(&Inputs {
+        let record = run_native(&Inputs {
             check: read(&written),
             recipe: recipe.clone(),
         })
@@ -144,7 +144,7 @@ mod tests {
         // An earlier inference with no valid record is a fault in the
         // relay's, which the bind turns into a fault of the later prompt.
         written.claim.valid = false;
-        let record = run_direct(&Inputs {
+        let record = run_native(&Inputs {
             check: read(&written),
             recipe,
         })

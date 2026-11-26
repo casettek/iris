@@ -83,11 +83,11 @@ pub(super) fn check_inventory(expected: &[String], actual: &[String]) -> Result<
 pub(super) fn read_boundaries(
     dir: &Path,
     expected: &[String],
-    direct: bool,
+    native_run: bool,
 ) -> Result<BTreeMap<String, Boundary>> {
     // Current Raster also writes public pipeline-commitment metadata in no-auth
     // mode. Only per-stage execution traces/commit.bin imply authentication.
-    let names = if direct {
+    let names = if native_run {
         procedure_definition::read_json::<Vec<String>>(&dir.join("boundary-order.json"))?
     } else {
         procedure_definition::read_stage_order(dir)?.context(
@@ -95,10 +95,10 @@ pub(super) fn read_boundaries(
         )?
     };
     check_inventory(expected, &names)?;
-    if !direct {
+    if !native_run {
         ensure!(
             names == expected,
-            "staged execution order differs from expected pipeline"
+            "pipeline execution order differs from expected pipeline"
         );
     }
     let dirs = fs::read_dir(dir)?
@@ -125,7 +125,7 @@ pub(super) fn read_boundaries(
                     "{stage}: authenticated artifact {file} in host no-auth run"
                 );
             }
-            if !direct {
+            if !native_run {
                 for file in ["input.json", "input_manifest.json"] {
                     ensure!(path.join(file).is_file(), "{stage}: missing {file}");
                     let _: Value = procedure_definition::read_json(&path.join(file))?;
@@ -175,7 +175,7 @@ pub use blockchain_host::raster_json::value_json;
 pub(super) fn validate_errors(stage: &str, value: &Value) -> Result<()> {
     // A stage of a pipeline of several inferences is named for its own.
     let stage = procedure_definition::procedure_kind::unlabelled(stage);
-    // `decode_init` and `output_finalize` are direct inference's names for
+    // `decode_init` and `output_finalize` are the native run's names for
     // its empty edge and its final one; no pipeline stage has them.
     if stage != "prompt_prepare"
         && stage != "source"

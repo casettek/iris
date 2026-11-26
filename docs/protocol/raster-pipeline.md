@@ -165,7 +165,7 @@ order made the layer stages 3× slower than one stage per layer.
 `check_c{k}`:
 `sequence-check` scores the previous range's last row followed by this range's
 rows against the head, takes the first-maximum argmax at each position exactly as
-direct generation would, and appends the selections to the previous check's transcript. It also compares each selection
+native generation would, and appends the selections to the previous check's transcript. It also compares each selection
 with the consumed token id retained in that position's activation row and commits the result as the edge's claim
 verdict: `claim_mismatches`, the previous check's count plus this range's, and
 `first_claim_mismatch_position`, the earliest one. It reads the last prompt
@@ -236,10 +236,10 @@ Through version 12 the pipeline had both: those three seeds, and four literal
 arguments in `prefill-range`. The parity gate and `cargo test` now refuse a stage
 with either (`testing/src/stage_bindings.rs`).
 
-Causal attention means row `i` sees exactly the tokens direct generation's decode
+Causal attention means row `i` sees exactly the tokens native generation's decode
 step at position `i` saw. For an honest claim every row and K/V entry equals
-direct generation's, and the last check's `DecodeEdge`, with its record, is byte
-for byte direct generation's final edge.
+native generation's, and the last check's `DecodeEdge`, with its record, is byte
+for byte native generation's final edge.
 
 The claimed ids are an input to this pipeline, so a claim must not be able to post
 an output other than the one the pipeline consumed. It cannot: a claim posts no
@@ -311,7 +311,7 @@ projection, all transformer matrix projections, and the output-head projection
 replay one page per iteration.
 Attention and cache-copy sweeps keep their existing chunk size of 64.
 
-Native-staged and native-direct retain their whole-matrix kernels and must
+The native stages and the native run retain their whole-matrix kernels and must
 produce exactly the same stage outputs as Raster. To group pages, add
 `chunk = N` to the corresponding `call_recur!` sites, take
 `RecurInput<Block<BytesPage>>` in the step tile, and rebuild and verify the

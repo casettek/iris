@@ -7,7 +7,7 @@
 //! not by Rust type name. `DecodeEdge` is this stage's own: a check reads the
 //! edge of the check before it.
 //! The scoring numerics delegate to `inference_numerics`, so a score is bit-identical to
-//! direct generation's score of the same activation row.
+//! native generation's score of the same activation row.
 
 pub use common_identity::ModelContext;
 extern crate alloc;
@@ -87,7 +87,7 @@ pub struct FinalHead {
 /// The stage's authorized output: the greedy selection at every generated
 /// position so far, the verdict on the claim, and the output record.
 ///
-/// For an honest claim the selection fields are byte-identical to direct
+/// For an honest claim the selection fields are byte-identical to native
 /// generation's final edge. The next range's check reads this as its `prior`,
 /// and the last range's is the claim's final record.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, raster::Selectable)]
@@ -234,7 +234,7 @@ pub struct CheckCursor {
 pub struct CheckStep {
     pub row_index: u32,
     /// Absolute position of the token this row predicts — the
-    /// `decode_position` direct generation reports for it.
+    /// `decode_position` native generation reports for it.
     pub decode_position: u32,
     pub claimed_token_id: u32,
     pub start_position: u32,

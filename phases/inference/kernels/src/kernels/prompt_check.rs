@@ -769,7 +769,7 @@ mod tests {
     /// The rounds a stage would run accept and refuse exactly what the pair
     /// check does, for a whole prompt and for a second range at every cut.
     #[test]
-    fn the_staged_rounds_agree_with_the_pair_check() {
+    fn the_pipeline_rounds_agree_with_the_pair_check() {
         let letters = ["a", "b", "c"];
         let mut rng = Rng(0xbeef);
         for table in 0..30 {
@@ -791,7 +791,7 @@ mod tests {
                         for (start, previous, range) in ranges {
                             let expected =
                                 check_groups(&tokenizer, &pieces, start, previous, range).unwrap();
-                            let staged = rounds::check_range_in_rounds(
+                            let pipeline_run = rounds::check_range_in_rounds(
                                 &tokenizer,
                                 &pieces,
                                 start,
@@ -800,12 +800,12 @@ mod tests {
                             )
                             .unwrap();
                             assert_eq!(
-                                staged.fault.is_none(),
+                                pipeline_run.fault.is_none(),
                                 expected.is_ok(),
                                 "text {text:?}, break {segment_break:?}, grouping {counts:?}, from {start}"
                             );
                             if let Ok(texts) = expected {
-                                assert_eq!(staged.texts, texts);
+                                assert_eq!(pipeline_run.texts, texts);
                             }
                         }
                     }
@@ -829,18 +829,18 @@ mod tests {
         assert!(check_groups(&tokenizer, &pieces, 0, None, &counts)
             .unwrap()
             .is_ok());
-        let staged =
+        let pipeline_run =
             rounds::check_range_in_rounds(&tokenizer, &pieces, 0, None, &rounds::marks_of(&counts))
                 .unwrap();
         // 80 + 1 pieces need 79 merges and fit; the bound is on a window of
         // two long tokens, which this grouping does not contain.
-        assert_eq!(staged.fault, None);
+        assert_eq!(pipeline_run.fault, None);
         let pieces = pieces_of(&"a".repeat(160), None);
         let long = [80, 80];
-        let staged =
+        let pipeline_run =
             rounds::check_range_in_rounds(&tokenizer, &pieces, 0, None, &rounds::marks_of(&long))
                 .unwrap();
-        assert!(staged.fault.is_some());
+        assert!(pipeline_run.fault.is_some());
 
         // The stage's twin agrees on both. In the first, the short windows
         // finish and leave the rounds while the long one is still merging.
@@ -895,7 +895,7 @@ mod tests {
             assert!(check_groups(&tokenizer, &pieces, 0, None, counts)
                 .unwrap()
                 .is_ok());
-            let staged = rounds::check_range_in_rounds(
+            let pipeline_run = rounds::check_range_in_rounds(
                 &tokenizer,
                 &pieces,
                 0,
@@ -914,19 +914,19 @@ mod tests {
                 &mut Trusted,
             )
             .unwrap();
-            (staged.fault.is_none(), twin)
+            (pipeline_run.fault.is_none(), twin)
         };
 
-        let (staged, twin) = run(longest, &[longest, longest]);
-        assert!(staged);
+        let (pipeline_run, twin) = run(longest, &[longest, longest]);
+        assert!(pipeline_run);
         assert_eq!((twin.context.fault, twin.context.prompt_tokens), (0, 2));
         let ids = twin.token_ids.as_slice();
         assert_eq!(ids.len(), 2);
         assert_eq!(ids[0], ids[1]);
 
         // One piece more in one of the two is one merge too many.
-        let (staged, twin) = run(longest + 1, &[longest + 1, longest]);
-        assert!(!staged);
+        let (pipeline_run, twin) = run(longest + 1, &[longest + 1, longest]);
+        assert!(!pipeline_run);
         assert_ne!(twin.context.fault, 0);
     }
 

@@ -44,7 +44,7 @@ pub fn select_next_token(logits: &PrefillLogits, prior: &DecodeEdge) -> Result<D
         decode_position: logits.decode_position,
         token_id: best.token_id,
         value: best.value,
-        // Direct generation is given no claimed tokens.
+        // Native generation is given no claimed tokens.
         claim_mismatches: 0,
         first_claim_mismatch_position: 0,
         check_fault: 0,

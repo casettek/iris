@@ -41,7 +41,7 @@ __device__ __forceinline__ int round_q24(long long hi, unsigned long long lo) {
 // Every output of one matrix against a batch of tokens. A thread block owns 16
 // matrix rows and 16 tokens. For each 32-column slice it stages those rows'
 // weights and those tokens' activations in shared memory, and each of its 256
-// threads then forms one (row, token) block sum from the staged values.
+// threads then forms one (row, token) block sum from the pipeline values.
 //
 // An activation is split as v = (v >> 16) * 65536 + (v & 0xFFFF). With weights
 // in [-128, 127], thirty-two products of either half stay below 2^31 in

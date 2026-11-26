@@ -20,7 +20,7 @@
 //!   }
 //! ```
 //!
-//! The scores and the tie-break are direct generation's logits and greedy
+//! The scores and the tie-break are native generation's logits and greedy
 //! selection, fused so the vocabulary-wide logit list is never built: each head
 //! page folds straight into a running argmax, in page order, so a strictly
 //! greater score replaces the incumbent exactly as it would scanning the
@@ -28,7 +28,7 @@
 //!
 //! The stage re-derives the greedy continuation rather than asserting the
 //! claimed one, and commits the comparison as the edge's claim verdict. An
-//! honest claim's output is byte-identical to direct generation's final edge. A
+//! honest claim's output is byte-identical to native generation's final edge. A
 //! claim whose tokens are not the greedy continuation, run
 //! honestly, publishes a non-zero verdict; one that publishes a clean verdict
 //! anyway has doctored this stage, and a challenge replays it here.

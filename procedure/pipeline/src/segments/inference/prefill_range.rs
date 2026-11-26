@@ -12,7 +12,7 @@ use crate::cache::{
 };
 
 pub use inference_kernels::kernels::prefill_range::{
-    run_prefill_range_direct, run_prefill_range_direct_with_weight_cache, PrefillRangeDirectInputs,
+    run_prefill_range_native, run_prefill_range_native_with_weight_cache, PrefillRangeNativeInputs,
     PrefillRangeWeightCache,
 };
 
@@ -101,16 +101,16 @@ pub fn load_inputs_from_paths_with_cache(
     })
 }
 
-pub fn run_direct(inputs: &Inputs) -> Result<ActivationSequence> {
-    run_direct_with_weight_cache(inputs, None)
+pub fn run_native(inputs: &Inputs) -> Result<ActivationSequence> {
+    run_native_with_weight_cache(inputs, None)
 }
 
-pub fn run_direct_with_weight_cache(
+pub fn run_native_with_weight_cache(
     inputs: &Inputs,
     weight_cache: Option<&PrefillRangeWeightCache>,
 ) -> Result<ActivationSequence> {
-    let mut output = run_prefill_range_direct_with_weight_cache(
-        PrefillRangeDirectInputs {
+    let mut output = run_prefill_range_native_with_weight_cache(
+        PrefillRangeNativeInputs {
             activations: &inputs.activations,
             layer: &inputs.layer,
             layer_cache_key: inputs.layer_cache_key.as_ref(),
@@ -210,7 +210,7 @@ impl crate::segments::NativeStage for Stage {
     type Inputs = Inputs;
     type Output = ActivationSequence;
     const PROJECT: &'static str = "prefill-range";
-    const ROUTINE: &'static str = "prefill_range";
+    const NAME: &'static str = "prefill_range";
 
     fn load_from_args() -> Result<Inputs> {
         load_inputs_from_args()
@@ -229,7 +229,7 @@ impl crate::segments::NativeStage for Stage {
         inputs: &Inputs,
         caches: crate::segments::NativeStageCaches<'_>,
     ) -> Result<ActivationSequence> {
-        run_direct_with_weight_cache(inputs, caches.prefill_range_weights)
+        run_native_with_weight_cache(inputs, caches.prefill_range_weights)
     }
 
     fn cached(output: ActivationSequence) -> crate::cache::CachedStageValue {

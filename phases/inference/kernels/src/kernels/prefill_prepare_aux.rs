@@ -8,13 +8,13 @@ use rayon::prelude::*;
 
 use crate::tensor::{self, Matrix};
 
-pub struct PrefillPrepareAuxDirectInputs<'a> {
+pub struct PrefillPrepareAuxNativeInputs<'a> {
     pub embedded: &'a ActivationSequence,
     pub layer: &'a PleLayer,
 }
 
-pub fn run_prefill_prepare_aux_direct(
-    inputs: PrefillPrepareAuxDirectInputs<'_>,
+pub fn run_prefill_prepare_aux_native(
+    inputs: PrefillPrepareAuxNativeInputs<'_>,
 ) -> Result<PleLayerInputs> {
     let params = validate_params(&inputs.layer.params)?;
     let projection = Matrix::from_region(

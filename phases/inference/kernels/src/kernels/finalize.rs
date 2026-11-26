@@ -1,5 +1,5 @@
 //! Output finalization, natively: the record a check states with its edge,
-//! and direct inference's output.
+//! and the native run's output.
 use anyhow::Result;
 use sequence_check::input::{ClaimRecord, DecodeEdge, DecoderTable, DecoderWitness, OutputRecord};
 use sequence_check::prompt::PromptContext;
@@ -57,9 +57,9 @@ pub fn output_record(edge: &DecodeEdge, inputs: &FinalizeInputs<'_>) -> Result<O
     ))
 }
 
-/// Direct inference's final edge with its output record: byte for byte what
+/// The native run's final edge with its output record: byte for byte what
 /// an honest claim's last check publishes.
-pub fn run_output_finalize_direct(
+pub fn run_output_finalize_native(
     edge: &DecodeEdge,
     inputs: &FinalizeInputs<'_>,
 ) -> Result<DecodeEdge> {
@@ -75,7 +75,7 @@ pub fn claim_record(edge: &DecodeEdge) -> ClaimRecord {
     sequence_check::claim_record(&edge.record, edge.claim_mismatches, edge.check_fault)
 }
 
-/// Output discovery for direct-only imports without a staged commitment package.
+/// Output discovery for native-only imports without a pipeline commitment package.
 /// Explicitly marks the record unverified; this path cannot authorize a claim.
 pub fn run_output_finalize_discovery(
     edge: &DecodeEdge,

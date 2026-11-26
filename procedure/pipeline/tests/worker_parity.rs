@@ -413,11 +413,11 @@ impl Fixture {
         let mut cmd = Command::new(env!("CARGO_BIN_EXE_procedure-pipeline"));
         cmd.current_dir(&self.base)
             .args(["pipeline", "run"])
-            .env("STAGED_INFER_WEIGHT_CACHE_BYTES", budget.to_string())
-            .env("STAGED_INFER_PLE_LOADING", mode)
-            .env("STAGED_INFER_AUX_PARALLELISM", workers.to_string());
+            .env("IWEBS_PIPELINE_WEIGHT_CACHE_BYTES", budget.to_string())
+            .env("IWEBS_PIPELINE_PLE_LOADING", mode)
+            .env("IWEBS_PIPELINE_AUX_PARALLELISM", workers.to_string());
         if subprocess {
-            cmd.arg("--staged-subprocess");
+            cmd.arg("--native-stage-subprocess");
         }
         let output = cmd.output().unwrap();
         assert!(
@@ -483,7 +483,7 @@ fn repeated_ranges_have_identical_checkpoints_with_worker_and_cache_reuse() {
         let run = f.run(budget, workers, false);
         f.compare(&baseline, &run);
         let perf: serde_json::Value =
-            serde_json::from_slice(&fs::read(run.join("staged-performance.json")).unwrap())
+            serde_json::from_slice(&fs::read(run.join("pipeline-performance.json")).unwrap())
                 .unwrap();
         let starts = perf["auxiliary_process_starts"].as_u64().unwrap();
         assert_eq!(perf["stages"][0]["name"], "embed_p0");
@@ -512,7 +512,7 @@ fn repeated_ranges_have_identical_checkpoints_with_worker_and_cache_reuse() {
 /// from the last check's record, as a checkpointed run does.
 #[test]
 fn uncheckpointed_inference_gives_the_checkpointed_result() {
-    use procedure_pipeline::pipeline_runner::StagedExecutionBackend;
+    use procedure_pipeline::pipeline_runner::NativeStageBackend;
     use procedure_pipeline::{
         CheckpointedInferenceConfig, CheckpointedInferenceExecutor, UncheckpointedInferenceConfig,
         UncheckpointedInferenceExecutor,
@@ -536,7 +536,7 @@ fn uncheckpointed_inference_gives_the_checkpointed_result() {
             manifest_path: f.base.join("Raster.toml"),
             // The auxiliary stages run in worker processes of this binary.
             current_exe: PathBuf::from(env!("CARGO_BIN_EXE_procedure-pipeline")),
-            staged_backend: StagedExecutionBackend::InProcess,
+            native_stage_backend: NativeStageBackend::InProcess,
             parity_policy: procedure_pipeline::ParityPolicy::Skip,
         })
         .unwrap();
@@ -620,7 +620,7 @@ fn selective_input_failure_does_not_publish_and_unknown_mode_fails_early() {
     let bad_mode = Command::new(env!("CARGO_BIN_EXE_procedure-pipeline"))
         .current_dir(&f.base)
         .args(["pipeline", "run"])
-        .env("STAGED_INFER_PLE_LOADING", "typo")
+        .env("IWEBS_PIPELINE_PLE_LOADING", "typo")
         .output()
         .unwrap();
     assert!(!bad_mode.status.success());
@@ -648,7 +648,7 @@ fn selective_input_failure_does_not_publish_and_unknown_mode_fails_early() {
         .arg(dest.join("input.json"))
         .arg("--input-manifest")
         .arg(dest.join("input_manifest.json"))
-        .env("STAGED_INFER_PLE_LOADING", "selective")
+        .env("IWEBS_PIPELINE_PLE_LOADING", "selective")
         .env(raster_runtime::auth::AUTH_ENV, "0")
         .env(raster_runtime::OUTPUT_DIR_ENV, &dest)
         .output()
@@ -746,8 +746,8 @@ fn early_checkpoint_divergence_stops_and_reaps_workers() {
         ])
         .env("IRIS_WORKER_TEST_BASE", &f.base)
         .env("IRIS_WORKER_TEST_STOP", stop.to_string())
-        .env("STAGED_INFER_WEIGHT_CACHE_BYTES", "1048576")
-        .env("STAGED_INFER_AUX_PARALLELISM", "2")
+        .env("IWEBS_PIPELINE_WEIGHT_CACHE_BYTES", "1048576")
+        .env("IWEBS_PIPELINE_AUX_PARALLELISM", "2")
         .output()
         .unwrap();
     assert!(
@@ -777,7 +777,8 @@ fn challenge_cleanup_child() {
             base_dir: base.clone(),
             manifest_path: base.join("Raster.toml"),
             current_exe: env!("CARGO_BIN_EXE_procedure-pipeline").into(),
-            staged_backend: procedure_pipeline::pipeline_runner::StagedExecutionBackend::InProcess,
+            native_stage_backend:
+                procedure_pipeline::pipeline_runner::NativeStageBackend::InProcess,
             claimed_hashes_path: path,
             claimed_hashes: hashes,
             claimed_sources: None,
@@ -799,10 +800,11 @@ fn challenge_cleanup_child() {
 }
 
 #[test]
-#[ignore = "requires actual Raster stage binaries in STAGED_INFER_REPLAY_BIN_DIR"]
+#[ignore = "requires actual Raster stage binaries in IWEBS_PIPELINE_REPLAY_BIN_DIR"]
 fn repeated_ranges_match_authenticated_raster_stage_execution() {
     let bin = PathBuf::from(
-        std::env::var_os("STAGED_INFER_REPLAY_BIN_DIR").expect("build Raster stage binaries first"),
+        std::env::var_os("IWEBS_PIPELINE_REPLAY_BIN_DIR")
+            .expect("build Raster stage binaries first"),
     );
     let mut f = Fixture::new();
     f.manifest();

@@ -1,6 +1,6 @@
 //! A procedure run with no blockchain, `iris run`.
 
-use super::infer::print_direct_run;
+use super::infer::print_native_run;
 use crate::*;
 
 #[derive(Debug, Args)]
@@ -20,9 +20,9 @@ pub(crate) struct RunArgs {
     #[arg(long)]
     compare: Option<PathBuf>,
 
-    /// Use the previous per-stage child-process staged-infer runner.
-    #[arg(long = "staged-subprocess", hide = true)]
-    staged_subprocess: bool,
+    /// Run each native stage in a child process of its own, as the previous runner did.
+    #[arg(long = "native-stage-subprocess", hide = true)]
+    native_stage_subprocess: bool,
 }
 
 pub(crate) fn run(args: RunArgs) -> Result<ExitCode> {
@@ -32,10 +32,10 @@ pub(crate) fn run(args: RunArgs) -> Result<ExitCode> {
         specification_path: args.specification.clone(),
         case_path: args.case.clone(),
         current_exe: std::env::current_exe().context("failed to locate current executable")?,
-        staged_backend: if args.staged_subprocess {
-            procedure_pipeline::pipeline_runner::StagedExecutionBackend::Subprocess
+        native_stage_backend: if args.native_stage_subprocess {
+            procedure_pipeline::pipeline_runner::NativeStageBackend::Subprocess
         } else {
-            procedure_pipeline::pipeline_runner::StagedExecutionBackend::InProcess
+            procedure_pipeline::pipeline_runner::NativeStageBackend::InProcess
         },
         base_dir: base_dir.clone(),
     };
@@ -46,34 +46,42 @@ pub(crate) fn run(args: RunArgs) -> Result<ExitCode> {
             .with_context(|| format!("the checkpoint list to compare with, {}", other.display()))?;
     }
     // The result first: it is known before any stage runs.
-    let direct = procedure_run::run_direct(&options)?;
-    print_direct_run(&direct, &args.specification, &args.case)?;
-    let staged = procedure_run::run_staged(&options, &direct)?;
+    let native_run = procedure_run::run_native(&options)?;
+    print_native_run(&native_run, &args.specification, &args.case)?;
+    let pipeline_run = procedure_run::run_pipeline(&options, &native_run)?;
     println!(
-        "staged run: {} stages, and the result the direct run stated",
-        staged.checkpoints
+        "pipeline run: {} stages, and the result the native run stated",
+        pipeline_run.checkpoints
     );
-    println!("checkpoint list: {}", staged.checkpoint_list_path.display());
-    println!("checkpoints: {}", staged.checkpoint_hashes_path.display());
+    println!(
+        "checkpoint list: {}",
+        pipeline_run.checkpoint_list_path.display()
+    );
+    println!(
+        "checkpoints: {}",
+        pipeline_run.checkpoint_hashes_path.display()
+    );
     let Some(other) = compare else {
         return Ok(ExitCode::SUCCESS);
     };
-    Ok(match procedure_run::first_difference(&staged, &other)? {
-        None => {
-            println!("compared with {}: the same at every stage", other.display());
-            ExitCode::SUCCESS
-        }
-        Some(divergence) => {
-            println!(
-                "compared with {}: differs first at stage `{}` (checkpoint {}): {}",
-                other.display(),
-                divergence.stage,
-                divergence.checkpoint_index,
-                serde_json::to_value(divergence.reason)?
-                    .as_str()
-                    .unwrap_or("unknown")
-            );
-            ExitCode::FAILURE
-        }
-    })
+    Ok(
+        match procedure_run::first_difference(&pipeline_run, &other)? {
+            None => {
+                println!("compared with {}: the same at every stage", other.display());
+                ExitCode::SUCCESS
+            }
+            Some(divergence) => {
+                println!(
+                    "compared with {}: differs first at stage `{}` (checkpoint {}): {}",
+                    other.display(),
+                    divergence.stage,
+                    divergence.checkpoint_index,
+                    serde_json::to_value(divergence.reason)?
+                        .as_str()
+                        .unwrap_or("unknown")
+                );
+                ExitCode::FAILURE
+            }
+        },
+    )
 }

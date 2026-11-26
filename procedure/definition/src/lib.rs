@@ -218,7 +218,7 @@ mod tests {
             ("prompt = \"hi\"\n", "in the case file"),
             ("prompt_file = \"p.txt\"\n", "in the case file"),
             ("pipeline = \"consensus\"\n", "`procedure_kind`"),
-            ("pipeline = \"teacher-forced\"\n", "only staged pipeline"),
+            ("chain = \"teacher-forced\"\n", "only pipeline"),
         ] {
             fs::write(&path, format!("{old}{MODEL}")).unwrap();
             let error = format!("{:#}", read_specification(&path).unwrap_err());

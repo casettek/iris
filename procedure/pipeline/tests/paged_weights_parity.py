@@ -1,6 +1,6 @@
 """Compare preserved baseline, embedding-only, and current builds with authenticated Raster.
 
-The three bin directories must contain iris and staged-infer. The baseline and
+The three bin directories must contain iris and procedure-pipeline. The baseline and
 current directories must also contain the unchanged Raster stage binaries.
 No production eager switch is needed or introduced.
 """
@@ -30,7 +30,7 @@ def main():
     for key in ["RASTER_AUTH", "RASTER_TRACE_PATH", "RASTER_TRACE_FORMAT", "RASTER_OUTPUT_DIR",
                 "RASTER_PARALLELISM"]:
         env.pop(key, None)
-    env.update(RISC0_SKIP_BUILD="1", RAYON_NUM_THREADS="4", STAGED_INFER_PLE_LOADING="selective")
+    env.update(RISC0_SKIP_BUILD="1", RAYON_NUM_THREADS="4", IWEBS_PIPELINE_PLE_LOADING="selective")
     artifacts = output / "model-artifacts"
     invoke([current / f"iris{suffix}", "model", "import", "--model", bundle, "--artifact-root", artifacts,
             "--model-id", "parity-gemma", "--no-stage-fixtures"], root, env, output / "import.log")
@@ -43,7 +43,7 @@ def main():
         report["unchanged_raster_binaries"][name] = a
     for label, binaries in [("baseline", baseline), ("embedding-only", embedding), ("updated", current)]:
         report["build_sha256"][label] = {name: sha((binaries / f"{name}{suffix}").read_bytes())
-                                        for name in ["iris", "staged-infer"]}
+                                        for name in ["iris", "procedure-pipeline"]}
     for case in read(bundle / "cases.json"):
         print(f"Running {case['name']}", flush=True)
         directory = output / case["name"]
@@ -63,13 +63,13 @@ def main():
             ("updated-small", current, 32768, 2, "on"),
             ("updated-serial", current, 64 << 20, 1, "off"),
         ]:
-            child_env = env | {"STAGED_INFER_WEIGHT_CACHE_BYTES": str(budget),
-                               "STAGED_INFER_AUX_PARALLELISM": str(workers), "RASTER_PARALLELISM": parallel}
+            child_env = env | {"IWEBS_PIPELINE_WEIGHT_CACHE_BYTES": str(budget),
+                               "IWEBS_PIPELINE_AUX_PARALLELISM": str(workers), "RASTER_PARALLELISM": parallel}
             seconds = invoke([binaries / f"iris{suffix}", "parity-worker", "--specification", spec, "--case", case_file,
                               "--output", directory / label], root, child_env, directory / f"{label}.log")
             pipeline = Path(read(directory / label / "result.json")["pipeline_dir"])
             pipelines[label] = pipeline
-            perf = read(pipeline / "staged-performance.json")
+            perf = read(pipeline / "pipeline-performance.json")
             record["runs"][label] = {"seconds": seconds, "pipeline_dir": str(pipeline),
                                      "sampled_peak_rss_bytes": perf["sampled_peak_rss_bytes"],
                                      "budget_bytes": budget, "workers": workers, "parallel": parallel}

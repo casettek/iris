@@ -5,7 +5,7 @@ use anyhow::{bail, ensure, Result};
 use serde::Serialize;
 
 #[derive(Debug, Clone)]
-pub struct DirectBoundaryRecord {
+pub struct NativeBoundaryRecord {
     pub stage: String,
     pub output_bytes: Vec<u8>,
     pub output_index: Vec<u8>,
@@ -46,18 +46,18 @@ fn decode_pass_names(layers: u32, token: u32, auxiliary: bool) -> Vec<String> {
     names
 }
 
-pub(crate) struct DirectTrace {
+pub(crate) struct NativeTrace {
     print: bool,
     collect: bool,
     required: BTreeSet<String>,
     seen: BTreeSet<String>,
     auxiliary: bool,
-    pub records: Vec<DirectBoundaryRecord>,
+    pub records: Vec<NativeBoundaryRecord>,
 }
 
-impl DirectTrace {
+impl NativeTrace {
     pub fn new(collect: bool) -> Result<Self> {
-        let print = std::env::var("DIRECT_INFER_TRACE_COMMITMENTS")
+        let print = std::env::var("NATIVE_RUN_TRACE_COMMITMENTS")
             .map(|value| !value.eq_ignore_ascii_case("off") && value != "0")
             .unwrap_or(false);
         if print || collect {
@@ -100,18 +100,18 @@ impl DirectTrace {
         }
         ensure!(
             self.required.contains(stage),
-            "unexpected direct boundary {stage}"
+            "unexpected native boundary {stage}"
         );
         ensure!(
             self.seen.insert(stage.to_string()),
-            "duplicate direct boundary {stage}"
+            "duplicate native boundary {stage}"
         );
         let (output_bytes, output_index, output_commitment) = raster::encode_raster_value(value)?;
         if self.print {
-            eprintln!("direct-infer trace {stage}: structural={output_commitment}");
+            eprintln!("native-run trace {stage}: structural={output_commitment}");
         }
         if self.collect {
-            self.records.push(DirectBoundaryRecord {
+            self.records.push(NativeBoundaryRecord {
                 stage: stage.into(),
                 output_bytes,
                 output_index,
@@ -123,7 +123,7 @@ impl DirectTrace {
 
     pub fn finish(&self) -> Result<()> {
         if self.enabled() {
-            check_names(&self.required, &self.seen, "direct")?;
+            check_names(&self.required, &self.seen, "native")?;
         }
         Ok(())
     }
@@ -157,7 +157,7 @@ mod tests {
 
     #[test]
     fn missing_duplicate_and_unexpected_boundaries_fail() {
-        let mut trace = DirectTrace {
+        let mut trace = NativeTrace {
             print: false,
             collect: true,
             required: BTreeSet::new(),

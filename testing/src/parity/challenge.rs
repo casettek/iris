@@ -18,7 +18,7 @@ use procedure_definition::{
     build_checkpoint_list, checkpoint_hashes, read_checkpoint_list, read_json,
     write_checkpoint_hashes, CheckpointList,
 };
-use procedure_pipeline::pipeline_runner::StagedExecutionBackend;
+use procedure_pipeline::pipeline_runner::NativeStageBackend;
 use procedure_pipeline::{
     CheckpointedInferenceConfig, CheckpointedInferenceExecutor, ParityPolicy,
 };
@@ -32,7 +32,8 @@ use super::{
 use blockchain_host::challenge::locate_divergence;
 use blockchain_host::claim::{
     build_posted_claim, corrupt_checkpoint_hashes, render_ranged_manifest, ClaimBuildOptions,
-    ClaimBuildResult, CorruptCheckpointHashesOptions, CorruptCheckpointSelection, PreparedClaimRun,
+    ClaimBuildResult, CorruptCheckpointHashesOptions, CorruptCheckpointSelection,
+    PreparedPipelineRun,
 };
 
 /// The window a challenge replays at.
@@ -66,7 +67,7 @@ pub(super) struct Scenario<'a> {
     pub model_path: &'a Path,
     pub model: &'a ModelManifest,
     pub case: &'a Case,
-    pub prepared: &'a PreparedClaimRun,
+    pub prepared: &'a PreparedPipelineRun,
     pub claimed: &'a [u32],
 }
 
@@ -662,9 +663,9 @@ fn claim(
         case_path: Some(case_beside(&specification)),
         specification_path: specification.to_path_buf(),
         current_exe: scenario.exe.to_path_buf(),
-        staged_backend: StagedExecutionBackend::InProcess,
+        native_stage_backend: NativeStageBackend::InProcess,
         claimed_token_ids: ids,
-        direct_output_ids: None,
+        native_output_ids: None,
         claimer: None,
     })
     .with_context(|| format!("claim `{name}`"))
@@ -1482,7 +1483,7 @@ fn claimed_run(
             base_dir: dir.clone(),
             manifest_path: manifest_path.clone(),
             current_exe: scenario.exe.to_path_buf(),
-            staged_backend: StagedExecutionBackend::InProcess,
+            native_stage_backend: NativeStageBackend::InProcess,
             parity_policy: ParityPolicy::Skip,
         })
         .with_context(|| format!("substituted claim `{name}`"))?;
@@ -1859,7 +1860,7 @@ fn replay_semantic_rejection(
         base_dir: dir.clone(),
         manifest_path: manifest_path.clone(),
         current_exe: exe.to_path_buf(),
-        staged_backend: StagedExecutionBackend::InProcess,
+        native_stage_backend: NativeStageBackend::InProcess,
         parity_policy: ParityPolicy::Skip,
     })?;
     let raster_dir = dir.join("raster");
@@ -2017,7 +2018,7 @@ mod tests {
                     base_dir: dir,
                     manifest_path: path,
                     current_exe: root.join("target/release/iris"),
-                    staged_backend: StagedExecutionBackend::InProcess,
+                    native_stage_backend: NativeStageBackend::InProcess,
                     parity_policy: ParityPolicy::Skip,
                 })
                 .unwrap();

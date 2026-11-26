@@ -44,11 +44,11 @@ pub struct WeightAllocation {
 
 impl WeightAllocation {
     pub fn resolve(workers: usize) -> Result<Self> {
-        let (total, source) = match std::env::var("STAGED_INFER_WEIGHT_CACHE_BYTES") {
+        let (total, source) = match std::env::var("IWEBS_PIPELINE_WEIGHT_CACHE_BYTES") {
             Ok(value) => (
-                value
-                    .parse::<usize>()
-                    .context("STAGED_INFER_WEIGHT_CACHE_BYTES must be a nonnegative byte count")?,
+                value.parse::<usize>().context(
+                    "IWEBS_PIPELINE_WEIGHT_CACHE_BYTES must be a nonnegative byte count",
+                )?,
                 "environment",
             ),
             Err(std::env::VarError::NotPresent) => {
@@ -62,7 +62,7 @@ impl WeightAllocation {
                     None => (1 << 30, "1 GiB fallback: available RAM unavailable"),
                 }
             }
-            Err(error) => return Err(error).context("invalid STAGED_INFER_WEIGHT_CACHE_BYTES"),
+            Err(error) => return Err(error).context("invalid IWEBS_PIPELINE_WEIGHT_CACHE_BYTES"),
         };
         Ok(Self::split(total, workers, source))
     }

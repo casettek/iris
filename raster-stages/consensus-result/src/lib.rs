@@ -4,7 +4,7 @@
 //! inferences' last checks stated by the run's forms, and states each one's
 //! code and whether the two agree, beside the claim record each check stated.
 //!
-//! The logic is in `consensus` and `forms`, shared with direct inference and
+//! The logic is in `consensus` and `forms`, shared with the native run and
 //! the native stage. A tile calls it, so it is inside the tile's image id.
 //!
 //! `#![no_std]` so the same tiles compile into RISC0 replay guests.

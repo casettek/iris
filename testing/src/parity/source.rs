@@ -1,6 +1,6 @@
 //! The gate's source scenario: a prompt built from signed documents.
 //!
-//! One honest claim with a source is run three ways, as every case is: direct,
+//! One honest claim with a source is run three ways, as every case is: native,
 //! native stages, and the whole pipeline through Raster. Its recipe names the
 //! output as one of its forms, so the result stage states that form's code.
 //! Then sources that are
@@ -18,7 +18,7 @@ use procedure_definition::{
     SpecificationDocument, SpecificationField, SpecificationForm, SpecificationModel,
     SpecificationSource, CASE_TOML, SPECIFICATION_TOML,
 };
-use procedure_pipeline::pipeline_runner::StagedExecutionBackend;
+use procedure_pipeline::pipeline_runner::NativeStageBackend;
 use procedure_prepare::source::{LoadedDocument, LoadedSource};
 use serde_json::{json, Value};
 use source_phase::{
@@ -193,10 +193,10 @@ pub(super) fn write_run_of(
     Ok(path)
 }
 
-/// What the model answers the source's prompt with, from direct inference
+/// What the model answers the source's prompt with, from the native run
 /// alone. The forms are no part of the prompt, so naming this text as a form
 /// afterwards leaves the answer as it is.
-fn direct_output(
+fn native_output(
     root: &Path,
     dir: &Path,
     exe: &Path,
@@ -210,13 +210,13 @@ fn direct_output(
         .arg("--case")
         .arg(case_beside(&specification))
         .arg("--output")
-        .arg(dir.join("native-direct"))
-        .arg("--direct");
-    logged(run, &dir.join("native-direct.log")).context("direct inference")?;
-    let result: Value = procedure_definition::read_json(&dir.join("native-direct/result.json"))?;
+        .arg(dir.join("native-run"))
+        .arg("--native");
+    logged(run, &dir.join("native-run.log")).context("the native run")?;
+    let result: Value = procedure_definition::read_json(&dir.join("native-run/result.json"))?;
     Ok(result["generated_text"]
         .as_str()
-        .context("direct inference recorded no text")?
+        .context("the native run recorded no text")?
         .to_string())
 }
 
@@ -228,16 +228,16 @@ fn run_honest(
     raster: &Path,
     model_path: &Path,
     source: &LoadedSource,
-) -> Result<(Value, blockchain_host::claim::PreparedClaimRun)> {
+) -> Result<(Value, blockchain_host::claim::PreparedPipelineRun)> {
     let specification = write_run(dir, source, ProcedureKind::single(), &[model_path])?;
     let prepared = prepare_claim_run(&ClaimBuildOptions {
         base_dir: dir.to_path_buf(),
         case_path: Some(case_beside(&specification)),
         specification_path: specification.clone(),
         current_exe: exe.to_path_buf(),
-        staged_backend: StagedExecutionBackend::InProcess,
+        native_stage_backend: NativeStageBackend::InProcess,
         claimed_token_ids: None,
-        direct_output_ids: None,
+        native_output_ids: None,
         claimer: None,
     })?;
     let raster_dir = dir.join("raster");
@@ -247,8 +247,8 @@ fn run_honest(
         .arg(&prepared.manifest_path)
         .args(["--no-auth", "--run"])
         .arg(&raster_dir);
-    logged(run, &dir.join("raster.log")).context("Raster-staged execution")?;
-    for (name, direct) in [("native-staged", false), ("native-direct", true)] {
+    logged(run, &dir.join("raster.log")).context("pipeline-raster execution")?;
+    for (name, native_run) in [("pipeline-native", false), ("native-run", true)] {
         let mut run = command(exe, root);
         run.args(["parity-worker", "--specification"])
             .arg(&specification)
@@ -256,17 +256,18 @@ fn run_honest(
             .arg(case_beside(&specification))
             .arg("--output")
             .arg(dir.join(name));
-        if direct {
-            run.arg("--direct");
+        if native_run {
+            run.arg("--native");
         }
         logged(run, &dir.join(format!("{name}.log"))).with_context(|| name.to_string())?;
     }
-    let staged: Value = procedure_definition::read_json(&dir.join("native-staged/result.json"))?;
-    let direct: Value = procedure_definition::read_json(&dir.join("native-direct/result.json"))?;
+    let pipeline_run: Value =
+        procedure_definition::read_json(&dir.join("pipeline-native/result.json"))?;
+    let native_run: Value = procedure_definition::read_json(&dir.join("native-run/result.json"))?;
     let native_dir = std::path::PathBuf::from(
-        staged["pipeline_dir"]
+        pipeline_run["pipeline_dir"]
             .as_str()
-            .context("native-staged recorded no pipeline directory")?,
+            .context("pipeline-native recorded no pipeline directory")?,
     );
     let order = procedure_definition::read_stage_order(&native_dir)?
         .context("native pipeline recorded no stage inventory")?;
@@ -274,18 +275,18 @@ fn run_honest(
         order.first().map(String::as_str) == Some("source"),
         "a claim with a source does not start at the source stage"
     );
-    let raster_outputs = read_boundaries(&raster_dir, &order, false).context("Raster-staged")?;
-    let native = read_boundaries(&native_dir, &order, false).context("native-staged")?;
+    let raster_outputs = read_boundaries(&raster_dir, &order, false).context("pipeline-raster")?;
+    let native = read_boundaries(&native_dir, &order, false).context("pipeline-native")?;
     for stage in &order {
         compare(stage, &raster_outputs[stage], &native[stage])
-            .context("Raster-staged ↔ native-staged")?;
+            .context("pipeline-raster ↔ pipeline-native")?;
     }
 
-    // Direct inference states the record the pipeline's last check does.
-    let record = &staged["result"];
+    // The native run states the record the pipeline's last check does.
+    let record = &pipeline_run["result"];
     ensure!(
-        record == &direct,
-        "direct inference and the claim state different records: {record} and {direct}"
+        record == &native_run,
+        "the native run and the claim state different records: {record} and {native_run}"
     );
     let expected = procedure_prepare::source_id(Some(&source.run().record));
     ensure!(
@@ -424,7 +425,7 @@ fn run_fault(
             base_dir: dir.to_path_buf(),
             manifest_path: manifest,
             current_exe: exe.to_path_buf(),
-            staged_backend: StagedExecutionBackend::InProcess,
+            native_stage_backend: NativeStageBackend::InProcess,
             parity_policy: procedure_pipeline::ParityPolicy::Skip,
         })
         .with_context(|| format!("source fault `{name}`: a native stage did not finish"))?
@@ -477,7 +478,7 @@ pub(super) fn run_source_scenario(
     let mut honest = honest_source()?;
     // The answer is learned first and named as the second form, so the claim's
     // result stage passes one form by and stops at the next.
-    let output = direct_output(root, &dir.join("answer"), exe, model_path, &honest)
+    let output = native_output(root, &dir.join("answer"), exe, model_path, &honest)
         .context("the answer to the source's prompt")?;
     honest.forms.push(SpecificationForm {
         text: output.trim().to_string(),

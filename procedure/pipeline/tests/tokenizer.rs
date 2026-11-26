@@ -1,5 +1,5 @@
 use procedure_pipeline::kernels::prompt_prepare::{
-    best_merge, finalize_prompt, run_prompt_prepare_direct, PromptPrepareDirectInputs,
+    best_merge, finalize_prompt, run_prompt_prepare_native, PromptPrepareDirectInputs,
 };
 use prompt_check::input::{BpePiece, BpePieces};
 use serde_json::{json, Value};
@@ -34,18 +34,18 @@ fn check_reference(tokenizer_path: &Path, corpus_path: &Path) {
     let table = inference_prompt::prompt_tokenizer(&tokenizer).unwrap();
     for case in corpus["cases"].as_array().unwrap() {
         let initial = pieces(case["text"].as_str().unwrap(), &tokenizer);
-        let direct = run_prompt_prepare_direct(PromptPrepareDirectInputs {
+        let native_run = run_prompt_prepare_native(PromptPrepareDirectInputs {
             tokenizer: &table,
             initial_pieces: &initial,
         })
         .unwrap();
         assert_eq!(
-            serde_json::to_value(direct.token_ids.as_slice()).unwrap(),
+            serde_json::to_value(native_run.token_ids.as_slice()).unwrap(),
             case["token_ids"],
             "{}",
             case["name"]
         );
-        assert_eq!(direct.context.fault, 0, "{}", case["name"]);
+        assert_eq!(native_run.context.fault, 0, "{}", case["name"]);
     }
 }
 
@@ -77,7 +77,7 @@ fn unknown_handling_and_literal_space_segmentation_match_reference() {
         let table = inference_prompt::prompt_tokenizer(&tokenizer).unwrap();
         let input = pieces("a🙂中b", &tokenizer);
         assert_eq!(
-            run_prompt_prepare_direct(PromptPrepareDirectInputs {
+            run_prompt_prepare_native(PromptPrepareDirectInputs {
                 tokenizer: &table,
                 initial_pieces: &input
             })
@@ -91,7 +91,7 @@ fn unknown_handling_and_literal_space_segmentation_match_reference() {
     let table = inference_prompt::prompt_tokenizer(&tokenizer).unwrap();
     let input = pieces("a  b", &tokenizer);
     assert_eq!(
-        run_prompt_prepare_direct(PromptPrepareDirectInputs {
+        run_prompt_prepare_native(PromptPrepareDirectInputs {
             tokenizer: &table,
             initial_pieces: &input
         })
@@ -132,7 +132,7 @@ fn pieces_that_could_still_merge_are_recorded_and_merging_them_clears_it() {
         early.context.fault,
         prompt_check::input::FAULT_MERGES_INCOMPLETE
     );
-    let merged = run_prompt_prepare_direct(PromptPrepareDirectInputs {
+    let merged = run_prompt_prepare_native(PromptPrepareDirectInputs {
         tokenizer: &table,
         initial_pieces: &unmerged,
     })
@@ -162,7 +162,7 @@ fn special_segments_forbid_otherwise_eligible_merges() {
     };
     assert!(!best_merge(input.pieces.as_slice(), &table).unwrap().matched);
     assert_eq!(
-        run_prompt_prepare_direct(PromptPrepareDirectInputs {
+        run_prompt_prepare_native(PromptPrepareDirectInputs {
             tokenizer: &table,
             initial_pieces: &input
         })

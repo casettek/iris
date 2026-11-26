@@ -155,7 +155,7 @@ pub fn no_forms_id() -> String {
 }
 
 /// The prompt of a run with a source. A source with a fault gives no prompt:
-/// direct inference is the gate, and no claim is built on such a run.
+/// the native run is the gate, and no claim is built on such a run.
 pub fn sourced_prompt(source: &LoadedSource) -> Result<String> {
     Ok(sourced_run(source)?.text)
 }

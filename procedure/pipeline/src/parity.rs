@@ -9,9 +9,9 @@ use sha2::{Digest, Sha256};
 
 use crate::segments::{self, StageKind};
 
-const PARITY_DIR: &str = "staged-infer-parity";
-const DIRECT_OUTPUT_BIN: &str = "staged-infer-output.bin";
-const DIRECT_OUTPUT_RINDEX: &str = "staged-infer-output.rindex";
+const PARITY_DIR: &str = "procedure-pipeline-parity";
+const NATIVE_OUTPUT_BIN: &str = "procedure-pipeline-output.bin";
+const NATIVE_OUTPUT_RINDEX: &str = "procedure-pipeline-output.rindex";
 const REPORT_TXT: &str = "report.txt";
 const REPORT_JSON: &str = "report.json";
 pub const EXECUTION_TIMES_JSON: &str = "execution-times.json";
@@ -32,7 +32,7 @@ pub enum RasterSourceMode {
 pub struct ParityReport {
     pub version: u32,
     pub stage: String,
-    pub routine: String,
+    pub native_stage: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub instance: Option<usize>,
     pub authority: ParityAuthority,
@@ -41,7 +41,7 @@ pub struct ParityReport {
     pub input_load_duration_ns: u128,
     pub kernel_duration_ns: u128,
     pub encode_write_duration_ns: u128,
-    pub direct_stage_duration_ns: u128,
+    pub native_stage_duration_ns: u128,
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
@@ -77,49 +77,49 @@ pub fn run_hidden_stage_compare(stage_dir: &Path) -> Result<ParityReport> {
     let kind = StageKind::from_stage_dir(stage_dir)?;
     validate_stage_artifacts(stage_dir)?;
 
-    let direct = segments::run_for_compare(&kind)?;
+    let native_run = segments::run_for_compare(&kind)?;
 
     let parity_dir = stage_dir.join(PARITY_DIR);
     fs::create_dir_all(&parity_dir)
         .with_context(|| format!("failed to create {}", parity_dir.display()))?;
-    let direct_bin = parity_dir.join(DIRECT_OUTPUT_BIN);
-    let direct_rindex = parity_dir.join(DIRECT_OUTPUT_RINDEX);
-    write_atomic(&direct_bin, &direct.encoded.data)?;
-    write_atomic(&direct_rindex, &direct.encoded.index)?;
+    let native_bin = parity_dir.join(NATIVE_OUTPUT_BIN);
+    let native_rindex = parity_dir.join(NATIVE_OUTPUT_RINDEX);
+    write_atomic(&native_bin, &native_run.encoded.data)?;
+    write_atomic(&native_rindex, &native_run.encoded.index)?;
 
     let raster_bin = stage_dir.join("output.bin");
     let raster_bytes = fs::read(&raster_bin)
         .with_context(|| format!("failed to read {}", raster_bin.display()))?;
-    let comparison = compare_bytes(&raster_bytes, &direct.encoded.data);
+    let comparison = compare_bytes(&raster_bytes, &native_run.encoded.data);
     let raster_sha = sha256_hex(&raster_bytes);
-    let direct_sha = sha256_hex(&direct.encoded.data);
+    let native_sha = sha256_hex(&native_run.encoded.data);
     let raster_structural = structural_hex(&raster_bytes)?;
-    let direct_structural = direct.encoded.structural_commitment;
+    let native_structural = native_run.encoded.structural_commitment;
     let result = ParityReport {
-        version: 3,
+        version: 4,
         stage: stage_name,
-        routine: kind.routine().to_string(),
+        native_stage: kind.native_stage().to_string(),
         instance: kind.instance(),
         authority: ParityAuthority::NonAuthoritative,
         raster_source_mode: RasterSourceMode::Unauthenticated,
         matched: comparison.is_match(),
-        input_load_duration_ns: direct.timings.input_load_duration.as_nanos(),
-        kernel_duration_ns: direct.timings.kernel_duration.as_nanos(),
-        encode_write_duration_ns: direct.timings.encode_write_duration.as_nanos(),
-        direct_stage_duration_ns: direct.timings.direct_stage_duration.as_nanos(),
+        input_load_duration_ns: native_run.timings.input_load_duration.as_nanos(),
+        kernel_duration_ns: native_run.timings.kernel_duration.as_nanos(),
+        encode_write_duration_ns: native_run.timings.encode_write_duration.as_nanos(),
+        native_stage_duration_ns: native_run.timings.native_stage_duration.as_nanos(),
     };
 
     let report = render_report(
         &result.stage,
         &comparison,
         raster_bytes.len(),
-        direct.encoded.data.len(),
+        native_run.encoded.data.len(),
         &raster_sha,
-        &direct_sha,
+        &native_sha,
         &raster_structural,
-        &direct_structural,
+        &native_structural,
         &raster_bin,
-        &direct_bin,
+        &native_bin,
         &result,
     );
     fs::write(parity_dir.join(REPORT_TXT), &report)
@@ -131,21 +131,21 @@ pub fn run_hidden_stage_compare(stage_dir: &Path) -> Result<ParityReport> {
     Ok(result)
 }
 
-pub fn run_hidden_stage_direct(stage_dir: &Path) -> Result<()> {
+pub fn run_hidden_stage_native(stage_dir: &Path) -> Result<()> {
     let stage_name = stage_name(stage_dir)?;
     let kind = StageKind::from_stage_dir(stage_dir)?;
     validate_stage_input_artifacts(stage_dir)?;
 
-    let direct = segments::run_and_publish(&kind)?;
+    let native_run = segments::run_and_publish(&kind)?;
     fs::write(
-        stage_dir.join("staged-timings.json"),
-        serde_json::to_vec(&direct.timings)?,
+        stage_dir.join("pipeline-timings.json"),
+        serde_json::to_vec(&native_run.timings)?,
     )?;
     println!(
-        "staged-infer {stage_name}: output {} structural={} stage={}",
-        direct.artifact.data_path.display(),
-        direct.artifact.commitment,
-        format_duration_ns(direct.timings.direct_stage_duration.as_nanos())
+        "procedure-pipeline {stage_name}: output {} structural={} stage={}",
+        native_run.artifact.data_path.display(),
+        native_run.artifact.commitment,
+        format_duration_ns(native_run.timings.native_stage_duration.as_nanos())
     );
 
     Ok(())
@@ -226,7 +226,10 @@ fn allowed_no_auth_roots() -> Result<Vec<PathBuf>> {
             .join("target")
             .join("raster")
             .join("pipelines-no-auth"),
-        current_dir.join("target").join("staged-infer").join("runs"),
+        current_dir
+            .join("target")
+            .join("procedure-pipeline")
+            .join("runs"),
     ];
     Ok(roots
         .into_iter()
@@ -252,7 +255,7 @@ enum ByteComparison {
     Mismatch {
         offset: usize,
         raster: Option<u8>,
-        direct: Option<u8>,
+        native_run: Option<u8>,
     },
 }
 
@@ -262,24 +265,24 @@ impl ByteComparison {
     }
 }
 
-fn compare_bytes(raster: &[u8], direct: &[u8]) -> ByteComparison {
-    for (idx, (left, right)) in raster.iter().zip(direct.iter()).enumerate() {
+fn compare_bytes(raster: &[u8], native_run: &[u8]) -> ByteComparison {
+    for (idx, (left, right)) in raster.iter().zip(native_run.iter()).enumerate() {
         if left != right {
             return ByteComparison::Mismatch {
                 offset: idx,
                 raster: Some(*left),
-                direct: Some(*right),
+                native_run: Some(*right),
             };
         }
     }
-    if raster.len() == direct.len() {
+    if raster.len() == native_run.len() {
         ByteComparison::Match
     } else {
-        let offset = raster.len().min(direct.len());
+        let offset = raster.len().min(native_run.len());
         ByteComparison::Mismatch {
             offset,
             raster: raster.get(offset).copied(),
-            direct: direct.get(offset).copied(),
+            native_run: native_run.get(offset).copied(),
         }
     }
 }
@@ -288,53 +291,53 @@ fn render_report(
     stage: &str,
     comparison: &ByteComparison,
     raster_len: usize,
-    direct_len: usize,
+    native_len: usize,
     raster_sha: &str,
-    direct_sha: &str,
+    native_sha: &str,
     raster_structural: &str,
-    direct_structural: &str,
+    native_structural: &str,
     raster_artifact: &Path,
-    direct_artifact: &Path,
+    native_artifact: &Path,
     result: &ParityReport,
 ) -> String {
     match comparison {
         ByteComparison::Match => format!(
-            "NON-AUTHORITATIVE staged-infer computational parity {stage}: MATCH\n\
+            "NON-AUTHORITATIVE procedure-pipeline computational parity {stage}: MATCH\n\
              Raster source mode: unauthenticated (--no-auth)\n\
              output.bin bytes: {raster_len}\n\
              raster sha256: {raster_sha}\n\
-             staged-infer sha256: {direct_sha}\n\
+             procedure-pipeline sha256: {native_sha}\n\
              structural commitment: {raster_structural}\n\
-             staged-infer stage: {}\n\
-             staged-infer kernel: {}\n",
-            format_duration_ns(result.direct_stage_duration_ns),
+             procedure-pipeline stage: {}\n\
+             procedure-pipeline kernel: {}\n",
+            format_duration_ns(result.native_stage_duration_ns),
             format_duration_ns(result.kernel_duration_ns),
         ),
         ByteComparison::Mismatch {
             offset,
             raster,
-            direct,
+            native_run,
         } => format!(
-            "NON-AUTHORITATIVE staged-infer computational parity {stage}: MISMATCH\n\
+            "NON-AUTHORITATIVE procedure-pipeline computational parity {stage}: MISMATCH\n\
              Raster source mode: unauthenticated (--no-auth)\n\
              raster bytes: {raster_len}\n\
-             staged-infer bytes: {direct_len}\n\
+             procedure-pipeline bytes: {native_len}\n\
              first differing byte offset: {offset}\n\
              raster byte: {}\n\
-             staged-infer byte: {}\n\
+             procedure-pipeline byte: {}\n\
              raster sha256: {raster_sha}\n\
-             staged-infer sha256: {direct_sha}\n\
+             procedure-pipeline sha256: {native_sha}\n\
              raster structural commitment: {raster_structural}\n\
-             staged-infer structural commitment: {direct_structural}\n\
+             procedure-pipeline structural commitment: {native_structural}\n\
              raster artifact: {}\n\
-             staged-infer artifact: {}\n\
-             staged-infer stage: {}\n\
-             staged-infer kernel: {}\n",
+             procedure-pipeline artifact: {}\n\
+             procedure-pipeline stage: {}\n\
+             procedure-pipeline kernel: {}\n",
             render_byte(*raster),
-            render_byte(*direct),
+            render_byte(*native_run),
             raster_artifact.display(),
-            direct_artifact.display(),
-            format_duration_ns(result.direct_stage_duration_ns),
+            native_artifact.display(),
+            format_duration_ns(result.native_stage_duration_ns),
             format_duration_ns(result.kernel_duration_ns),
         ),
     }
@@ -362,9 +365,9 @@ pub fn read_parity_report(stage_dir: &Path) -> Result<ParityReport> {
         &fs::read(&path).with_context(|| format!("failed to read {}", path.display()))?,
     )
     .with_context(|| format!("failed to decode {}", path.display()))?;
-    if report.version != 3 {
+    if report.version != 4 {
         bail!(
-            "unsupported staged-infer report version {} in {}",
+            "unsupported procedure-pipeline report version {} in {}",
             report.version,
             path.display()
         );
@@ -407,19 +410,19 @@ pub fn render_timing_summary(
     writeln!(
         output,
         "{:<stage_width$}  {:>12}  {:>12}  {:>12}  {:>12}  {:>8}  {:>8}",
-        "stage", "pipeline exec", "direct stage", "kernel", "saved", "speedup", "parity"
+        "stage", "pipeline exec", "native stage", "kernel", "saved", "speedup", "parity"
     )?;
 
     let mut selected_count = 0usize;
     for timing in &timings.stages {
         if timing.name == parity.stage {
             selected_count += 1;
-            let speedup = if parity.direct_stage_duration_ns == 0 {
+            let speedup = if parity.native_stage_duration_ns == 0 {
                 String::from("—")
             } else {
                 format!(
                     "{:.2}x",
-                    timing.exec_duration_ns as f64 / parity.direct_stage_duration_ns as f64
+                    timing.exec_duration_ns as f64 / parity.native_stage_duration_ns as f64
                 )
             };
             writeln!(
@@ -427,9 +430,9 @@ pub fn render_timing_summary(
                 "{:<stage_width$}  {:>12}  {:>12}  {:>12}  {:>12}  {:>8}  {:>8}",
                 timing.name,
                 format_duration_ns(timing.exec_duration_ns),
-                format_duration_ns(parity.direct_stage_duration_ns),
+                format_duration_ns(parity.native_stage_duration_ns),
                 format_duration_ns(parity.kernel_duration_ns),
-                format_saved(timing.exec_duration_ns, parity.direct_stage_duration_ns),
+                format_saved(timing.exec_duration_ns, parity.native_stage_duration_ns),
                 speedup,
                 if parity.matched { "MATCH" } else { "MISMATCH" },
             )?;
@@ -482,17 +485,17 @@ pub fn render_timing_summary(
     }
     writeln!(
         output,
-        "staged-infer parity overhead: {}",
-        format_duration_ns(parity.direct_stage_duration_ns)
+        "procedure-pipeline parity overhead: {}",
+        format_duration_ns(parity.native_stage_duration_ns)
     )?;
     Ok(output)
 }
 
-fn format_saved(raster_ns: u128, direct_ns: u128) -> String {
-    if raster_ns >= direct_ns {
-        format_duration_ns(raster_ns - direct_ns)
+fn format_saved(raster_ns: u128, native_ns: u128) -> String {
+    if raster_ns >= native_ns {
+        format_duration_ns(raster_ns - native_ns)
     } else {
-        format!("-{}", format_duration_ns(direct_ns - raster_ns))
+        format!("-{}", format_duration_ns(native_ns - raster_ns))
     }
 }
 
@@ -588,7 +591,7 @@ mod tests {
             ByteComparison::Mismatch {
                 offset: 1,
                 raster: Some(b'b'),
-                direct: Some(b'x')
+                native_run: Some(b'x')
             }
         );
     }
@@ -600,7 +603,7 @@ mod tests {
             ByteComparison::Mismatch {
                 offset: 2,
                 raster: Some(b'c'),
-                direct: None
+                native_run: None
             }
         );
     }

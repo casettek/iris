@@ -12,7 +12,7 @@
 //! the run gives the later inference is held to this record's hash, and that
 //! inference's statement names the record.
 //!
-//! Plain functions over a small state, one per step a stage takes, so direct
+//! Plain functions over a small state, one per step a stage takes, so native
 //! inference, the native stage and the tiles run one copy. Nothing aborts: an
 //! earlier inference whose record is not valid, or a part of the recipe over
 //! its limit, sets a fault in the record.

@@ -7,12 +7,12 @@ use prefill_range::input::{
 use raster::List;
 
 use crate::model::{
-    DirectFinalHead, DirectInferenceModel, DirectMistralLayer, DirectPleLayer,
-    DirectTransformerLayer,
+    NativeFinalHead, NativeInferenceModel, NativeMistralLayer, NativePleLayer,
+    NativeTransformerLayer,
 };
 
 pub fn run_input_embedding_view(
-    model: &DirectInferenceModel,
+    model: &NativeInferenceModel,
     prompt: &prompt_check::input::PromptTokenization,
 ) -> Result<ActivationSequence> {
     let mut rows = Vec::with_capacity(prompt.token_ids.len());
@@ -35,7 +35,7 @@ pub fn run_input_embedding_view(
 }
 
 pub fn run_decode_embed_view(
-    model: &DirectInferenceModel,
+    model: &NativeInferenceModel,
     edge: &sequence_check::input::DecodeEdge,
 ) -> Result<ActivationSequence> {
     if !edge.has_selected {
@@ -58,7 +58,7 @@ pub fn run_decode_embed_view(
 
 pub fn run_ple_prepare_view(
     embedded: &ActivationSequence,
-    layer: &DirectPleLayer<'_>,
+    layer: &NativePleLayer<'_>,
 ) -> Result<PleLayerInputs> {
     let mut rows = Vec::with_capacity(embedded.rows.len());
     let norm_weights = unpack(&layer.params.norm_weights)?;
@@ -100,7 +100,7 @@ pub fn run_ple_prepare_view(
 
 pub fn run_prefill_range_view(
     activations: &ActivationSequence,
-    layer: &DirectTransformerLayer<'_>,
+    layer: &NativeTransformerLayer<'_>,
     prior_kv: &ActivationSequence,
     donor_a_kv: &ActivationSequence,
     donor_b_kv: &ActivationSequence,
@@ -117,7 +117,7 @@ pub fn run_prefill_range_view(
         params.donor_a_layer,
         params.donor_b_layer,
     );
-    // The layer itself is the staged pass's kernel, reading the mapped weights.
+    // The layer itself is the pipeline pass's kernel, reading the mapped weights.
     let computed = layer_rows_and_keys(
         activations,
         prior_kv.kv.as_slice(),
@@ -165,7 +165,7 @@ pub fn run_prefill_range_view(
 /// for every earlier position; the result carries those and the range's own.
 pub fn run_mistral_range_view(
     activations: &ActivationSequence,
-    layer: &DirectMistralLayer<'_>,
+    layer: &NativeMistralLayer<'_>,
     prior_keys: &[prefill_range::input::KeyRow],
 ) -> Result<ActivationSequence> {
     let computed = inference_kernels::mistral::layer_rows_and_keys(
@@ -202,7 +202,7 @@ pub fn run_mistral_range_view(
 
 pub fn score_prefill_logits_view(
     activations: &ActivationSequence,
-    head: &DirectFinalHead<'_>,
+    head: &NativeFinalHead<'_>,
 ) -> Result<crate::generation::PrefillLogits> {
     let position = activations.rows.iter().last().ok_or_else(|| {
         anyhow::anyhow!("prefill produced no activation rows; there is no final position to score")
@@ -277,7 +277,7 @@ fn unpack(page: &raster::BytesPage) -> Result<Vec<i32>> {
     prefill_range::input::unpack_i32s(page).map_err(anyhow::Error::msg)
 }
 
-pub(crate) fn bound_model_context(model: &DirectInferenceModel) -> common_identity::ModelContext {
+pub(crate) fn bound_model_context(model: &NativeInferenceModel) -> common_identity::ModelContext {
     let bytes = model
         .manifest()
         .descriptor()

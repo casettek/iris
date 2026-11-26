@@ -75,7 +75,7 @@ pub struct ConsensusOutcome {
 
 impl ConsensusOutcome {
     /// What the consensus result step states of two inferences' results, as
-    /// direct inference computes it: the same functions the pipeline's result
+    /// the native run computes it: the same functions the pipeline's result
     /// stage runs, over the same values.
     pub fn of(
         forms: &[result_phase::Form],
@@ -150,7 +150,7 @@ pub struct InferenceTimings {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InferStageTiming {
     pub stage: String,
-    pub routine: String,
+    pub native_stage: String,
     pub input_synthesis_duration: Duration,
     pub input_load_duration: Duration,
     pub kernel_duration: Duration,

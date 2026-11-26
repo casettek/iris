@@ -19,7 +19,7 @@ use ::prefill_range::input::{
     LayerParams, PleLayerInputs, PleRow, TransformerLayer,
 };
 
-pub struct PrefillRangeDirectInputs<'a> {
+pub struct PrefillRangeNativeInputs<'a> {
     pub activations: &'a ActivationSequence,
     pub layer: &'a TransformerLayer,
     pub layer_cache_key: Option<&'a MaterializationCacheKey>,
@@ -43,8 +43,7 @@ struct PrefillRangeWeightCacheState {
 
 impl Default for PrefillRangeWeightCache {
     fn default() -> Self {
-        let capacity = std::env::var("STAGED_INFER_PREFILL_WEIGHT_CACHE_ENTRIES")
-            .or_else(|_| std::env::var("DIRECT_NATIVE_PREFILL_WEIGHT_CACHE_ENTRIES"))
+        let capacity = std::env::var("IWEBS_PIPELINE_PREFILL_WEIGHT_CACHE_ENTRIES")
             .ok()
             .and_then(|value| value.parse::<usize>().ok())
             .unwrap_or(0);
@@ -73,14 +72,14 @@ struct PreparedLayerWeightCacheKey {
     params: LayerWeightCacheKey,
 }
 
-pub fn run_prefill_range_direct(
-    inputs: PrefillRangeDirectInputs<'_>,
+pub fn run_prefill_range_native(
+    inputs: PrefillRangeNativeInputs<'_>,
 ) -> Result<ActivationSequence> {
-    run_prefill_range_direct_with_weight_cache(inputs, None)
+    run_prefill_range_native_with_weight_cache(inputs, None)
 }
 
-pub fn run_prefill_range_direct_with_weight_cache(
-    inputs: PrefillRangeDirectInputs<'_>,
+pub fn run_prefill_range_native_with_weight_cache(
+    inputs: PrefillRangeNativeInputs<'_>,
     weight_cache: Option<&PrefillRangeWeightCache>,
 ) -> Result<ActivationSequence> {
     let params = validate_layer_params(&inputs.layer.params)?;
@@ -288,7 +287,7 @@ struct LayerWeights {
 }
 
 /// One layer's matrices, wherever their bytes live: prepared in memory for
-/// the staged pass, memory-mapped for direct inference.
+/// the pipeline pass, memory-mapped for the native run.
 pub struct LayerMatrices<'a, Q: MatrixSource, D: MatrixSource> {
     pub w_q: &'a Q,
     pub w_k: &'a Q,
@@ -302,7 +301,7 @@ pub struct LayerMatrices<'a, Q: MatrixSource, D: MatrixSource> {
 }
 
 /// The activation rows and keys one layer produces for one range, or `None`
-/// for a range with no rows. The staged pass and direct inference both
+/// for a range with no rows. The pipeline pass and the native run both
 /// compute a layer here, so the two cannot disagree.
 pub fn layer_rows_and_keys<Q: MatrixSource, D: MatrixSource>(
     activations: &ActivationSequence,

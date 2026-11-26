@@ -9,7 +9,7 @@ fn parity_artifacts_live_under_stage_directory() {
     let stage = Path::new("target/raster/pipelines/run/range_p0_l3");
     assert_eq!(
         procedure_pipeline::parity::parity_dir(stage),
-        stage.join("staged-infer-parity")
+        stage.join("procedure-pipeline-parity")
     );
 }
 
@@ -27,9 +27,9 @@ fn timing_summary_annotates_selected_stage() {
     )
     .unwrap();
     let parity = ParityReport {
-        version: 3,
+        version: 4,
         stage: "range_p0_l3".into(),
-        routine: "prefill_range".into(),
+        native_stage: "prefill_range".into(),
         instance: Some(3),
         authority: ParityAuthority::NonAuthoritative,
         raster_source_mode: RasterSourceMode::Unauthenticated,
@@ -37,7 +37,7 @@ fn timing_summary_annotates_selected_stage() {
         input_load_duration_ns: 10_000_000,
         kernel_duration_ns: 200_000_000,
         encode_write_duration_ns: 20_000_000,
-        direct_stage_duration_ns: 250_000_000,
+        native_stage_duration_ns: 250_000_000,
     };
     let encoded = serde_json::to_vec(&parity).unwrap();
     let json = String::from_utf8(encoded.clone()).unwrap();
@@ -78,9 +78,9 @@ fn timing_summary_reports_wall_time_and_aux_wave_speedup() {
     )
     .unwrap();
     let parity = ParityReport {
-        version: 3,
+        version: 4,
         stage: "range_p0_l3".into(),
-        routine: "prefill_range".into(),
+        native_stage: "prefill_range".into(),
         instance: Some(3),
         authority: ParityAuthority::NonAuthoritative,
         raster_source_mode: RasterSourceMode::Unauthenticated,
@@ -88,7 +88,7 @@ fn timing_summary_reports_wall_time_and_aux_wave_speedup() {
         input_load_duration_ns: 10_000_000,
         kernel_duration_ns: 200_000_000,
         encode_write_duration_ns: 20_000_000,
-        direct_stage_duration_ns: 250_000_000,
+        native_stage_duration_ns: 250_000_000,
     };
 
     let summary = render_timing_summary(&timings, &parity).unwrap();

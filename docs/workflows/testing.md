@@ -36,7 +36,7 @@ its checks even after a failure and exits nonzero if any failed.
 
 Set `IRIS_FEATURES=cuda,gpu-kernels` to keep `target/release/iris` a GPU build;
 without it a tier rebuilds that binary for the CPU. Variables such as
-`STAGED_INFER_WEIGHT_CACHE_BYTES` pass through to the runs.
+`IWEBS_PIPELINE_WEIGHT_CACHE_BYTES` pass through to the runs.
 
 | Tier | Check | A pass means | Promise |
 | --- | --- | --- | --- |

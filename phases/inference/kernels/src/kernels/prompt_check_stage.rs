@@ -23,7 +23,7 @@ use prompt_check::input::{
 use raster::{BytesPage, List};
 
 /// What the stage's proofs of the tokenizer buckets it reads come to. The
-/// staged pass checks each bucket against the witness; a caller with nothing
+/// pipeline pass checks each bucket against the witness; a caller with nothing
 /// to check passes [`Trusted`].
 pub trait BucketProofs {
     fn merge_bucket(&mut self, index: u32) -> bool;

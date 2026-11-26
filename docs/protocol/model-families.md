@@ -68,7 +68,7 @@ model that computes something else.
 | The layer program | the steps' shape: project Q/K/V, score and softmax over the keys, the feed-forward matvecs, and the weight-page tile | `prefill-range` with `prefill-prepare-aux` is Gemma's; `layer-mistral` is Ministral's. The tiles both need are copied between them, not shared |
 | Native kernels (`inference-kernels`, `inference-generation`, `procedure-pipeline`) | batched products, the GPU path, caching | `prefill_range.rs` is Gemma's layer |
 | `inference-import` | command line, layout, paging, tokenizer externals, commitments, pipeline template, manifest | `gemma.rs`: config, tensors, layer and head externals, manifest shape |
-| Manifest `shape` | | the family's own: `DirectInferShape` is `gemma-dense`'s, `MistralShape` is `mistral-dense`'s |
+| Manifest `shape` | | the family's own: `NativeInferShape` is `gemma-dense`'s, `MistralShape` is `mistral-dense`'s |
 | Backend | yes; `IRIS_MODEL_MANIFEST` chooses the model, and its one-shot commands take `--model <import-name>` for another import beside it | |
 
 ## Adding a family
@@ -84,7 +84,7 @@ In this order, because each step can be checked before the next:
    tensor inventory, how its tensors become stage externals, and its manifest shape. Teach
    `bundle_family` to recognise it. Choose its page sizes for its own widths.
 4. **Native layer.** Add its layer to `inference-kernels` on the shared products, and run
-   direct inference against a reference implementation's output before anything is staged.
+   the native run against a reference implementation's output before anything is pipeline.
 5. **Stage programs.** Author its layer program from the shared tiles. If its tokenizer
    cuts text by rules the prompt stages do not have, add a scanner to `inference-tokenizer` and a
    value for it in the profile; a tokenizer whose steps differ gets its own program.
@@ -113,10 +113,10 @@ What exists:
 | Native stage | `inference-kernels`' `mistral::stage`, run by `procedure-pipeline`'s `layer_mistral` native stage. It reads the committed weight pages in place, and a `gpu-kernels` build sends its larger matrix products to the GPU from those pages |
 | Parity bundle | `model-bundles/parity-mistral`: four layers, a tekken-style vocabulary of 512 with a forty-byte token, three cases. `iris test parity --bundle parity-mistral` runs the gate on it |
 | Layer | `inference-kernels`' `mistral::layer`, and in `inference-numerics`'s `mistral.rs` the integer SiLU, rotation and score scale that only this family uses |
-| Tokenizer, reference | `inference-prompt`'s `tekken.rs`: the pattern as a backtracking matcher and the merge, which direct inference runs |
+| Tokenizer, reference | `inference-prompt`'s `tekken.rs`: the pattern as a backtracking matcher and the merge, which the native run runs |
 | Tokenizer, prompt stages | `inference-tokenizer`'s `tekken.rs`: the same split as a scanner that takes one character at a time, with the Unicode categories in `unicode_classes.rs` (written by `scripts/gen-unicode-classes.py`) |
 | Output decoding | `sequence-check`: a decoder entry says its text is bytes, and a character that spans tokens is put together |
-| Direct inference | `inference-generation`, which branches on the family where it loads layers and runs them |
+| The native run | `inference-generation`, which branches on the family where it loads layers and runs them |
 
 How it is checked (`phases/inference/generation/tests/mistral_reference.rs`, an ignored test
 that needs an imported model): the integer logits are compared with the same weights

@@ -27,10 +27,10 @@ challenge claim_context checkpoints specification="specification.toml":
 test-workspace:
     cargo test --workspace
 
-test-direct:
+test-native:
     cargo test -p inference-generation
 
-test-staged:
+test-pipeline:
     cargo test -p procedure-pipeline
 
 test-cli:

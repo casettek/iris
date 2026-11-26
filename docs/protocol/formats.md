@@ -54,5 +54,5 @@ same bytes, so a tag that both sides compute changes in both.
   change to either is a change to `iris/checkpoint/v1` or to Raster.
 - A stage program has no version. Its identity is its `Raster.lock`, which
   changes whenever its code does.
-- The worker protocol between the staged runner and its helper processes
+- The worker protocol between the pipeline runner and its helper processes
   (`VERSION` in `pipeline/src/worker.rs`) never leaves one run of one binary.

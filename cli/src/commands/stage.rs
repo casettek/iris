@@ -63,7 +63,7 @@ pub(crate) fn run_hidden_compare(stage_dir: &Path) -> Result<ExitStatus> {
     let exe = std::env::current_exe().context("failed to locate current executable")?;
     let status = comparison_command(&exe, stage_dir, &input, &input_manifest)
         .status()
-        .context("failed to start staged-infer comparison child")?;
+        .context("failed to start procedure-pipeline comparison child")?;
     Ok(status)
 }
 

@@ -1,4 +1,4 @@
-//! Preparing a staged run: from a specification and a case, or from what a
+//! Preparing a pipeline run: from a specification and a case, or from what a
 //! claim fixed or posted, to the files each stage loads and the pipeline the
 //! stages are run from.
 
@@ -14,9 +14,9 @@ use procedure_definition::{
 };
 use sha2::{Digest, Sha256};
 
-/// A prepared staged run: the frozen record of what it runs on, and the
+/// A prepared pipeline run: the frozen record of what it runs on, and the
 /// pipeline its stages are run from.
-pub struct PreparedClaimRun {
+pub struct PreparedPipelineRun {
     pub prepared_run: PreparedRun,
     pub manifest_path: PathBuf,
     /// The ids written into the run's `claimed_ids` externals: the first
@@ -54,7 +54,7 @@ struct RunModel {
     segment: String,
     tokenizer: serde_json::Value,
     prompt: procedure_definition::PreparedPrompt,
-    /// The inference's result as the direct run found it, when its output
+    /// The inference's result as the native run found it, when its output
     /// was not given.
     discovered: Option<InferenceResult>,
 }
@@ -65,8 +65,8 @@ struct WrittenInference {
     files: crate::run_inputs::InferenceRunFiles,
 }
 
-/// What a staged run is prepared from.
-pub struct StagedRun<'a> {
+/// What a pipeline run is prepared from.
+pub struct PipelineRun<'a> {
     /// Where the run's directory is made, under `target/iris/runs`.
     pub base_dir: &'a Path,
     pub specification_path: PathBuf,
@@ -84,21 +84,21 @@ pub struct StagedRun<'a> {
     pub given_ids: Option<&'a Vec<u32>>,
     /// Whether an output is held to the run's token budget here.
     pub check_claimed_length: bool,
-    /// Finds the output of an inference whose ids no one gave: the direct
+    /// Finds the output of an inference whose ids no one gave: the native
     /// run, which this crate does not make. It is given which inference, and
     /// for one whose prompt holds an earlier inference's output, that
     /// inference's result.
     pub discover: &'a Discover<'a>,
 }
 
-/// See [`StagedRun::discover`].
+/// See [`PipelineRun::discover`].
 pub type Discover<'a> = dyn Fn(usize, Option<&InferenceResult>) -> Result<InferenceResult> + 'a;
 
 /// `case` is the case, with the file it was read from when it is one.
 /// `given` is the inputs a claim posted, for a challenger of that claim:
 /// they are the run's inputs, in place of the ones this would prepare.
-pub fn prepare_run(run: StagedRun<'_>) -> Result<PreparedClaimRun> {
-    let StagedRun {
+pub fn prepare_run(run: PipelineRun<'_>) -> Result<PreparedPipelineRun> {
+    let PipelineRun {
         base_dir,
         specification_path,
         specification,
@@ -363,7 +363,7 @@ pub fn prepare_run(run: StagedRun<'_>) -> Result<PreparedClaimRun> {
             (Some(frozen), _) => frozen.ids[inference].clone(),
             (None, Some(ids)) => ids.clone(),
             // Discovery is the only autoregression left: the claim posts what
-            // direct decode produced and the pipeline checks it.
+            // native decode produced and the pipeline checks it.
             (None, None) => model
                 .discovered
                 .as_ref()
@@ -489,7 +489,7 @@ pub fn prepare_run(run: StagedRun<'_>) -> Result<PreparedClaimRun> {
         )?;
     }
 
-    Ok(PreparedClaimRun {
+    Ok(PreparedPipelineRun {
         prepared_run,
         manifest_path,
         claimed_token_ids: claimed_ids.into_iter().next().unwrap_or_default(),

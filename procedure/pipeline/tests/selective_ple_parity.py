@@ -1,6 +1,6 @@
 """Release parity gate against unchanged authenticated Raster stage binaries.
 
-Requires a built iris, staged-infer, and every stage binary in --bin-dir.
+Requires a built iris, procedure-pipeline, and every stage binary in --bin-dir.
 Writes only to a new --output directory. Uses the pinned parity-gemma bundle.
 """
 import argparse
@@ -101,7 +101,7 @@ def main():
     bundle = root / "model-bundles/parity-gemma"
     env = os.environ.copy()
     for key in ["RASTER_AUTH", "RASTER_TRACE_PATH", "RASTER_TRACE_FORMAT", "RASTER_OUTPUT_DIR",
-                "STAGED_INFER_PLE_LOADING"]:
+                "IWEBS_PIPELINE_PLE_LOADING"]:
         env.pop(key, None)
     env.update(RISC0_SKIP_BUILD="1", RAYON_NUM_THREADS="4")
     artifacts = output / "model-artifacts"
@@ -110,7 +110,7 @@ def main():
     model = artifacts / "parity-gemma/manifest.json"
     report = {"authenticated_raster": True, "cases": [], "binary_sha256": {},
               "timing_note": "Informational single runs, eager first; eager/selective use the same cache budget and worker count."}
-    for binary in ["iris", "staged-infer", *STAGES]:
+    for binary in ["iris", "procedure-pipeline", *STAGES]:
         report["binary_sha256"][binary] = sha((binaries / f"{binary}{suffix}").read_bytes())
     for case in read(bundle / "cases.json"):
         print(f"Running {case['name']}", flush=True)
@@ -129,11 +129,11 @@ def main():
             ("selective-zero", "selective", 0, 1),
             ("selective-small", "selective", 32768, 2),
         ]:
-            child_env = env | {"STAGED_INFER_PLE_LOADING": mode, "STAGED_INFER_WEIGHT_CACHE_BYTES": str(budget), "STAGED_INFER_AUX_PARALLELISM": str(workers)}
+            child_env = env | {"IWEBS_PIPELINE_PLE_LOADING": mode, "IWEBS_PIPELINE_WEIGHT_CACHE_BYTES": str(budget), "IWEBS_PIPELINE_AUX_PARALLELISM": str(workers)}
             seconds = invoke([iris, "parity-worker", "--specification", spec, "--case", case_file, "--output", directory / label], root, child_env, directory / f"{label}.log")
             pipeline = Path(read(directory / label / "result.json")["pipeline_dir"])
             pipelines[label] = pipeline
-            perf = read(pipeline / "staged-performance.json")
+            perf = read(pipeline / "pipeline-performance.json")
             assert perf["ple_loading"] == mode
             record["runs"][label] = {"seconds": seconds, "pipeline_dir": str(pipeline), "sampled_peak_rss_bytes": perf["sampled_peak_rss_bytes"], "mode": mode, "budget_bytes": budget, "workers": workers}
         baseline = pipelines["eager"]

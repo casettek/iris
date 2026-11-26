@@ -157,7 +157,7 @@ Two more lies are ones a replay shows, and an audit finds nothing in them.
 `--fault arrangement [--input <name>]` gives a stage a value the claim may
 name in a place the pipeline does not give it, such as another layer's weights.
 `--fault verdict --stage <the last check>`, on a claim built with claimed
-ids that are not the model's (`claim build --direct-output-ids`), states its
+ids that are not the model's (`claim build --native-output-ids`), states its
 record valid. Post and submit each as above, fetch it, and `challenge build
 --submission` replays the stage on the inputs its checkpoint names.
 

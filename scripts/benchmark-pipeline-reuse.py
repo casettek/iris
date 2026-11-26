@@ -1,6 +1,6 @@
 """Compare two built iris binaries on one unchanged specification, case and checkpoint list.
 
-Use an actual pre-change binary for --baseline, not --staged-subprocess: changing
+Use an actual pre-change binary for --baseline, not --native-stage-subprocess: changing
 the main-process backend would confound the comparison. No tracked files change.
 """
 import argparse
@@ -32,7 +32,7 @@ def run(label, binary, specification, case, cwd, output):
     if not trace.is_absolute():
         trace = cwd / trace
     pipeline = trace.parent
-    performance = pipeline / "staged-performance.json"
+    performance = pipeline / "pipeline-performance.json"
     return {
         "binary": str(binary), "wall_seconds": elapsed, "pipeline_dir": str(pipeline),
         "trace": json.loads(trace.read_text()),
@@ -65,7 +65,7 @@ def main():
                and results["baseline"]["checkpoint_hashes"] == results["candidate"]["checkpoint_hashes"])
     report = {
         "specification": str(specification), "case": str(case), "specification_and_case_sha256": spec_hash,
-        "cache_budget_override": os.environ.get("STAGED_INFER_WEIGHT_CACHE_BYTES"),
+        "cache_budget_override": os.environ.get("IWEBS_PIPELINE_WEIGHT_CACHE_BYTES"),
         "checkpoint_parity": matched,
         "baseline_seconds": results["baseline"]["wall_seconds"],
         "candidate_seconds": results["candidate"]["wall_seconds"],

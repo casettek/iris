@@ -70,8 +70,7 @@ struct MaterializationCacheState {
 
 impl Default for MaterializationCache {
     fn default() -> Self {
-        let capacity = std::env::var("STAGED_INFER_MATERIALIZATION_CACHE_ENTRIES")
-            .or_else(|_| std::env::var("DIRECT_NATIVE_MATERIALIZATION_CACHE_ENTRIES"))
+        let capacity = std::env::var("IWEBS_PIPELINE_MATERIALIZATION_CACHE_ENTRIES")
             .ok()
             .and_then(|value| value.parse::<usize>().ok())
             .unwrap_or(2);
@@ -264,7 +263,7 @@ impl StageOutputCache {
             return Ok(None);
         };
         if output.structural_commitment != expected_structural_commitment {
-            bail!("cached staged-infer output for stage `{stage}` has stale commitment");
+            bail!("cached procedure-pipeline output for stage `{stage}` has stale commitment");
         }
         Ok(Some(Arc::clone(&output.value)))
     }
@@ -672,7 +671,7 @@ mod tests {
             .unwrap()
             .as_nanos();
         std::env::temp_dir().join(format!(
-            "staged-infer-cache-{label}-{}-{nanos}",
+            "procedure-pipeline-cache-{label}-{}-{nanos}",
             std::process::id()
         ))
     }

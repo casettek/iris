@@ -5,7 +5,7 @@ use std::process::{Command, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use procedure_definition::{read_json, EXECUTION_TIMES_JSON};
-use procedure_pipeline::pipeline_runner::StagedExecutionBackend;
+use procedure_pipeline::pipeline_runner::NativeStageBackend;
 use procedure_pipeline::{
     CheckpointedInferenceConfig, CheckpointedInferenceExecutor, ParityPolicy,
 };
@@ -115,7 +115,7 @@ project = "raster-stages/sequence-check"
         base_dir: root.clone(),
         manifest_path: manifest,
         current_exe: PathBuf::from("/not-an-executable"),
-        staged_backend: StagedExecutionBackend::InProcess,
+        native_stage_backend: NativeStageBackend::InProcess,
         parity_policy: ParityPolicy::Skip,
     };
     let sequential = CheckpointedInferenceExecutor
@@ -151,7 +151,7 @@ for line in sys.stdin:
     job=request["Run"]["job"]
     for name in ["output.bin","output.rindex","output_manifest.json"]:
         shutil.copyfile('{source}/'+name, pathlib.Path(job["output_dir"])/name)
-    timings={{k:{{"secs":0,"nanos":1}} for k in ["input_load_duration","kernel_duration","encode_write_duration","direct_stage_duration"]}}
+    timings={{k:{{"secs":0,"nanos":1}} for k in ["input_load_duration","kernel_duration","encode_write_duration","native_stage_duration"]}}
     cache={{k:0 for k in ["budget_bytes","retained_bytes","hits","misses","bypasses","preparation_duration_ns"]}}
     print(json.dumps({{"version":1,"id":job["id"],"name":job["name"],"timings":timings,"cache":cache,"error":None}}),flush=True)
 "#

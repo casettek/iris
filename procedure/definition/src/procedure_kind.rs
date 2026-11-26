@@ -3,7 +3,7 @@
 //! A procedure kind is a named arrangement of the segments a claim is made of: an
 //! optional source, one or more inferences, and the stage program that turns
 //! their outputs into a result. A specification names its procedure kind, and so every
-//! command that takes a specification follows it: direct inference, claim build,
+//! command that takes a specification follows it: the native run, claim build,
 //! claim check and challenge build. A claim records the name in its frozen
 //! run and in its submission, so a challenger and a contract know which
 //! arrangement they are looking at.

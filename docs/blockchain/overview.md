@@ -376,7 +376,7 @@ claim with that id (`claims(bytes32)`), as iris-backend does.
 builds the challenge from that directory and the challenger's own
 specification. The case is the `case.toml` beside the submission. Every stage is run on the
 inputs the claim's checkpoint names for it: nothing is tokenized and no
-output is found by direct inference, since the stages check what they are
+output is found by the native run, since the stages check what they are
 given. The command writes the pipeline the checkpoints describe
 (`claim_arranged.toml`, beside the run's own manifest) and prints each input
 the claim gives a stage otherwise than the pipeline does. For a claim arranged
@@ -420,7 +420,7 @@ honest party runs.
   nothing in it.
 - `--fault verdict --stage <the last check>` writes the lie of a claimer
   whose claimed output is not the model's. Give it a claim built with such
-  ids (`claim build --direct-output-ids`), whose own record is not valid. The
+  ids (`claim build --native-output-ids`), whose own record is not valid. The
   check is run on the claim's inputs and its record stated valid, with no
   claimed token differing, and the result stage is run on that record. The
   claim arrives with a valid record, and a replay of the check shows it.
@@ -432,7 +432,7 @@ honest party runs.
 A contract takes both, as it must: nothing at arrival tells them from honest
 ones.
 
-The staged dispute then ends as a real one would. `iris fault prove` proves a
+The pipeline dispute then ends as a real one would. `iris fault prove` proves a
 window of the corrupted trace, read back from Celestia, and `iris evm
 fault-proof --receipt <fault.receipt> --challenge <challenge_submission.json>
 --submission <claim_submission.json>` writes the call that answers the

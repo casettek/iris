@@ -3,10 +3,10 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use inference_manifest::{
-    DirectInferBundle, DirectInferShape, ModelManifest, MODEL_ARTIFACTS_DIR, MODEL_MANIFEST_JSON,
+    ModelManifest, NativeInferBundle, NativeInferShape, MODEL_ARTIFACTS_DIR, MODEL_MANIFEST_JSON,
 };
 use procedure_definition::{write_json, CASE_TOML, SPECIFICATION_TOML};
-use procedure_native::{DirectInferenceConfig, DirectInferenceExecutor};
+use procedure_native::{NativeInferenceConfig, NativeInferenceExecutor};
 use sha2::{Digest, Sha256};
 
 const ONE: i32 = 1 << 16;
@@ -21,9 +21,9 @@ struct TensorFixture {
 }
 
 #[test]
-fn direct_executor_reports_missing_direct_manifest_message() {
+fn native_executor_reports_missing_native_manifest_message() {
     let dir = std::env::temp_dir().join(format!(
-        "direct-infer-missing-manifest-{}-{}",
+        "native-run-missing-manifest-{}-{}",
         std::process::id(),
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -32,8 +32,8 @@ fn direct_executor_reports_missing_direct_manifest_message() {
     ));
     fs::create_dir_all(&dir).expect("temp dir should create");
 
-    let error = DirectInferenceExecutor
-        .run(DirectInferenceConfig {
+    let error = NativeInferenceExecutor
+        .run(NativeInferenceConfig {
             base_dir: dir.clone(),
             specification_path: dir.join(SPECIFICATION_TOML),
             case_path: dir.join(CASE_TOML),
@@ -49,14 +49,14 @@ fn direct_executor_reports_missing_direct_manifest_message() {
 }
 
 #[test]
-#[ignore = "requires local Gemma model artifacts and runs the full direct inference path"]
-fn current_say_ciao_direct_first_token_matches_claim_reference() {
+#[ignore = "requires local Gemma model artifacts and runs the full the native run path"]
+fn current_say_ciao_native_first_token_matches_claim_reference() {
     let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../..")
         .canonicalize()
         .expect("repo root should resolve");
-    let result = DirectInferenceExecutor
-        .run(DirectInferenceConfig {
+    let result = NativeInferenceExecutor
+        .run(NativeInferenceConfig {
             base_dir: repo.clone(),
             specification_path: repo.join(SPECIFICATION_TOML),
             case_path: repo.join(CASE_TOML),
@@ -71,7 +71,7 @@ fn current_say_ciao_direct_first_token_matches_claim_reference() {
 }
 
 #[test]
-fn direct_executor_runs_from_direct_manifest_without_raster_toml() {
+fn native_executor_runs_from_native_manifest_without_raster_toml() {
     let dir = temp_dir("runtime");
     let artifact_dir = dir.join(MODEL_ARTIFACTS_DIR);
     fs::create_dir_all(&artifact_dir).unwrap();
@@ -120,7 +120,7 @@ fn direct_executor_runs_from_direct_manifest_without_raster_toml() {
             model_id: inference_manifest::model_id_of(&[]),
             model_commitments: Vec::new(),
             range_size: 512,
-            bundle: DirectInferBundle {
+            bundle: NativeInferBundle {
                 model_detwgt_path: PathBuf::from("../../model.detwgt"),
                 model_detwgt_sha256: sha256_file(&detwgt),
                 config_path: PathBuf::from("../../config.json"),
@@ -128,7 +128,7 @@ fn direct_executor_runs_from_direct_manifest_without_raster_toml() {
                 tokenizer_path: PathBuf::from("../../tokenizer.json"),
                 tokenizer_sha256: sha256_file(&tokenizer),
             },
-            shape: DirectInferShape {
+            shape: NativeInferShape {
                 hidden_size: W as u32,
                 num_hidden_layers: 0,
                 num_attention_heads: 1,
@@ -158,8 +158,8 @@ fn direct_executor_runs_from_direct_manifest_without_raster_toml() {
     .unwrap();
     write_specification(&dir, &manifest_path, "h", 1);
 
-    let result = DirectInferenceExecutor
-        .run(DirectInferenceConfig {
+    let result = NativeInferenceExecutor
+        .run(NativeInferenceConfig {
             base_dir: dir.clone(),
             specification_path: dir.join(SPECIFICATION_TOML),
             case_path: dir.join(CASE_TOML),
@@ -181,18 +181,18 @@ fn direct_executor_runs_from_direct_manifest_without_raster_toml() {
 }
 
 #[test]
-fn direct_executor_stops_at_eos_and_reports_only_selected_tokens() {
+fn native_executor_stops_at_eos_and_reports_only_selected_tokens() {
     for eos_id in [2, 0] {
         let dir = temp_dir("eos");
         fs::create_dir_all(&dir).unwrap();
-        write_direct_fixture(&dir);
+        write_native_fixture(&dir);
         let manifest_path = dir.join(MODEL_ARTIFACTS_DIR).join(MODEL_MANIFEST_JSON);
         let mut manifest: ModelManifest = procedure_definition::read_json(&manifest_path).unwrap();
         manifest.eos_token_ids = vec![eos_id];
         write_json(&manifest_path, &manifest).unwrap();
         let specification_path = write_specification(&dir, &manifest_path, "h", 8);
-        let report = DirectInferenceExecutor
-            .run_with_diagnostics(DirectInferenceConfig {
+        let report = NativeInferenceExecutor
+            .run_with_diagnostics(NativeInferenceConfig {
                 base_dir: dir.clone(),
                 specification_path,
                 case_path: dir.join(CASE_TOML),
@@ -236,14 +236,14 @@ fn direct_executor_stops_at_eos_and_reports_only_selected_tokens() {
 }
 
 #[test]
-fn direct_executor_keeps_a_maximum_budget_when_no_eos_is_selected() {
+fn native_executor_keeps_a_maximum_budget_when_no_eos_is_selected() {
     let dir = temp_dir("token-limit");
     fs::create_dir_all(&dir).unwrap();
-    write_direct_fixture(&dir);
+    write_native_fixture(&dir);
     let manifest_path = dir.join(MODEL_ARTIFACTS_DIR).join(MODEL_MANIFEST_JSON);
     let specification_path = write_specification(&dir, &manifest_path, "hhhh", 3);
-    let report = DirectInferenceExecutor
-        .run_with_report(DirectInferenceConfig {
+    let report = NativeInferenceExecutor
+        .run_with_report(NativeInferenceConfig {
             base_dir: dir.clone(),
             specification_path,
             case_path: dir.join(CASE_TOML),
@@ -267,10 +267,10 @@ fn direct_executor_keeps_a_maximum_budget_when_no_eos_is_selected() {
 }
 
 #[test]
-fn direct_executor_rejects_changed_bundle_before_inference() {
+fn native_executor_rejects_changed_bundle_before_inference() {
     let dir = temp_dir("changed-bundle");
     fs::create_dir_all(&dir).unwrap();
-    let specification_path = write_direct_fixture(&dir);
+    let specification_path = write_native_fixture(&dir);
     for (name, label) in [
         ("model.detwgt", "model weights"),
         ("config.json", "model config"),
@@ -279,8 +279,8 @@ fn direct_executor_rejects_changed_bundle_before_inference() {
         let path = dir.join(name);
         let original = fs::read(&path).unwrap();
         fs::write(&path, b"replaced").unwrap();
-        let error = DirectInferenceExecutor
-            .run(DirectInferenceConfig {
+        let error = NativeInferenceExecutor
+            .run(NativeInferenceConfig {
                 base_dir: dir.clone(),
                 specification_path: specification_path.clone(),
                 case_path: dir.join(CASE_TOML),
@@ -339,7 +339,7 @@ fn write_detwgt(path: &Path, tensors: &[TensorFixture]) {
     fs::write(path, bytes).unwrap();
 }
 
-fn write_direct_fixture(dir: &Path) -> PathBuf {
+fn write_native_fixture(dir: &Path) -> PathBuf {
     let artifact_dir = dir.join(MODEL_ARTIFACTS_DIR);
     fs::create_dir_all(&artifact_dir).unwrap();
     let detwgt = dir.join("model.detwgt");
@@ -351,7 +351,7 @@ fn write_direct_fixture(dir: &Path) -> PathBuf {
     let manifest_path = artifact_dir.join(MODEL_MANIFEST_JSON);
     write_json(
         &manifest_path,
-        &tiny_direct_manifest(&detwgt, &config, &tokenizer),
+        &tiny_native_manifest(&detwgt, &config, &tokenizer),
     )
     .unwrap();
     write_specification(dir, &manifest_path, "h", 1)
@@ -383,7 +383,7 @@ fn write_tiny_model_detwgt(path: &Path) {
     );
 }
 
-fn tiny_direct_manifest(detwgt: &Path, config: &Path, tokenizer: &Path) -> ModelManifest {
+fn tiny_native_manifest(detwgt: &Path, config: &Path, tokenizer: &Path) -> ModelManifest {
     ModelManifest {
         version: inference_manifest::MODEL_MANIFEST_VERSION,
         family: inference_manifest::ModelFamily::GemmaDense
@@ -392,7 +392,7 @@ fn tiny_direct_manifest(detwgt: &Path, config: &Path, tokenizer: &Path) -> Model
         model_id: inference_manifest::model_id_of(&[]),
         model_commitments: Vec::new(),
         range_size: 512,
-        bundle: DirectInferBundle {
+        bundle: NativeInferBundle {
             model_detwgt_path: PathBuf::from("../../model.detwgt"),
             model_detwgt_sha256: sha256_file(detwgt),
             config_path: PathBuf::from("../../config.json"),
@@ -400,7 +400,7 @@ fn tiny_direct_manifest(detwgt: &Path, config: &Path, tokenizer: &Path) -> Model
             tokenizer_path: PathBuf::from("../../tokenizer.json"),
             tokenizer_sha256: sha256_file(tokenizer),
         },
-        shape: DirectInferShape {
+        shape: NativeInferShape {
             hidden_size: W as u32,
             num_hidden_layers: 0,
             num_attention_heads: 1,
@@ -497,7 +497,7 @@ fn sha256_file(path: &Path) -> String {
 
 fn temp_dir(label: &str) -> PathBuf {
     std::env::temp_dir().join(format!(
-        "direct-infer-{label}-{}-{}",
+        "native-run-{label}-{}-{}",
         std::process::id(),
         SystemTime::now()
             .duration_since(UNIX_EPOCH)

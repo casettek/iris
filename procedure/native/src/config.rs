@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use procedure_definition::{CASE_TOML, SPECIFICATION_TOML};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DirectInferenceConfig {
+pub struct NativeInferenceConfig {
     pub base_dir: PathBuf,
     pub specification_path: PathBuf,
     /// The case the specification's procedure is run on.
@@ -16,7 +16,7 @@ pub struct DirectInferenceConfig {
     pub relayed: Option<procedure_definition::InferenceResult>,
 }
 
-impl DirectInferenceConfig {
+impl NativeInferenceConfig {
     pub fn from_current_dir() -> anyhow::Result<Self> {
         let base_dir = std::env::current_dir()?;
         Ok(Self {
@@ -34,8 +34,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn direct_infer_uses_direct_manifest_by_default() {
-        let config = DirectInferenceConfig::from_current_dir().expect("config should build");
+    fn native_run_uses_native_manifest_by_default() {
+        let config = NativeInferenceConfig::from_current_dir().expect("config should build");
         assert_eq!(
             config.specification_path,
             config.base_dir.join(SPECIFICATION_TOML)

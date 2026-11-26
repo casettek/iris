@@ -11,7 +11,7 @@
 //!   lowest-ranked neighbouring pair merged, leftmost on a tie, until no pair
 //!   has a rule. A rule's rank is its place in the file's merge list.
 //!
-//! This is the host's tokenizer for direct inference, and the one the prompt
+//! This is the host's tokenizer for the native run, and the one the prompt
 //! stages are held to. They do not run this code: they cut words with
 //! `inference-tokenizer`'s scanner, a character at a time, and check the merge that a
 //! claim states. The tests here compare the two.
@@ -791,7 +791,7 @@ mod tests {
     }
 
     /// The ids the prompt stages would accept: their scanner's pieces, merged.
-    fn staged_ids(
+    fn pipeline_ids(
         text: &str,
         tokenizer: &serde_json::Value,
         committed: &crate::PromptTokenizer,
@@ -840,7 +840,7 @@ mod tests {
             let text = format!("<s>{}", std::fs::read_to_string(file).unwrap());
             let (_, ids) = tekken.encode(&text).unwrap();
             checked += 1;
-            if staged_ids(&text, &tokenizer, &committed) != ids {
+            if pipeline_ids(&text, &tokenizer, &committed) != ids {
                 wrong.push(format!(
                     "{file}: the prompt stages' pieces merge to other ids"
                 ));

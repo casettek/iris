@@ -4,7 +4,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use inference_generation::inference_weights::MmapDetwgt;
 use inference_generation::model::{
-    DirectFinalHead, DirectMatrixView, DirectQ8View, DirectTransformerLayer,
+    NativeFinalHead, NativeMatrixView, NativeQ8View, NativeTransformerLayer,
 };
 use inference_generation::view_kernels::{run_prefill_range_view, score_prefill_logits_view};
 use inference_kernels::tensor::{dot_bits, matvec_from_source, Matrix, MatrixSource};
@@ -63,7 +63,7 @@ fn detwgt_matrix_view_matches_eager_matrix_matvec() {
         }],
     );
     let model = MmapDetwgt::open(&detwgt).unwrap();
-    let view = DirectMatrixView::new(model.matrix("matrix", 2, 3).unwrap());
+    let view = NativeMatrixView::new(model.matrix("matrix", 2, 3).unwrap());
     let eager = Matrix::from_region("matrix", &paged(&values), 2, 3).unwrap();
     let input = [ONE, 2 * ONE, 3 * ONE];
 
@@ -99,12 +99,12 @@ fn row_dot_matches_dot_bits_for_i16_and_i32() {
     );
     let model = MmapDetwgt::open(&detwgt).unwrap();
 
-    let i16_view = DirectMatrixView::new(model.matrix("i16_matrix", 2, 2).unwrap());
+    let i16_view = NativeMatrixView::new(model.matrix("i16_matrix", 2, 2).unwrap());
     assert_eq!(
         i16_view.row_dot(0, &[5, 6]).unwrap(),
         dot_bits(&[5, 6], &[1, -2])
     );
-    let i32_view = DirectMatrixView::new(model.matrix("i32_matrix", 2, 2).unwrap());
+    let i32_view = NativeMatrixView::new(model.matrix("i32_matrix", 2, 2).unwrap());
     assert_eq!(
         i32_view.row_dot(1, &[7, 8]).unwrap(),
         dot_bits(&[7, 8], &[0, ONE])
@@ -128,14 +128,14 @@ fn final_head_logits_feed_shared_decode_select_tie_break() {
         }],
     );
     let model = MmapDetwgt::open(&detwgt).unwrap();
-    let head = DirectFinalHead {
+    let head = NativeFinalHead {
         params: FinalHeadParams {
             hidden_size: W as u32,
             norm_eps: 0,
             softcap: 0,
             norm_weights: pack_i32_page(&[ONE; W]),
         },
-        projection: DirectQ8View::new(model.q8_matrix("projection").unwrap()),
+        projection: NativeQ8View::new(model.q8_matrix("projection").unwrap()),
     };
     let activations = prefill_range::input::ActivationSequence {
         model: Default::default(),
@@ -186,8 +186,8 @@ fn native_decode_rotary_outputs_match_prefill_across_chunks() {
         ],
     );
     let model = MmapDetwgt::open(&detwgt).unwrap();
-    let matrix = DirectMatrixView::new(model.matrix("identity", W, W).unwrap());
-    let q8_matrix = DirectQ8View::new(model.q8_matrix("q8_identity").unwrap());
+    let matrix = NativeMatrixView::new(model.matrix("identity", W, W).unwrap());
+    let q8_matrix = NativeQ8View::new(model.q8_matrix("q8_identity").unwrap());
     let norm = pack_i32s(&[ONE; W]);
     let unit = pack_i32s(&one_hot_rows(&[Some(0)]));
     let params = LayerParams {
@@ -216,7 +216,7 @@ fn native_decode_rotary_outputs_match_prefill_across_chunks() {
         ple_width: W as u32,
         ple_post_norm: norm,
     };
-    let view = DirectTransformerLayer {
+    let view = NativeTransformerLayer {
         params: params.clone(),
         w_q: q8_matrix,
         w_k: q8_matrix,
@@ -275,8 +275,8 @@ fn native_decode_rotary_outputs_match_prefill_across_chunks() {
         ]),
         errors: List::new(),
     };
-    let run_staged = |input: &ActivationSequence, prior: &ActivationSequence| {
-        inference_kernels::run_prefill_range_direct(inference_kernels::PrefillRangeDirectInputs {
+    let run_pipeline = |input: &ActivationSequence, prior: &ActivationSequence| {
+        inference_kernels::run_prefill_range_native(inference_kernels::PrefillRangeNativeInputs {
             activations: input,
             layer: &layer,
             layer_cache_key: None,
@@ -287,7 +287,7 @@ fn native_decode_rotary_outputs_match_prefill_across_chunks() {
         })
         .unwrap()
     };
-    let reference = run_staged(&activations, &empty);
+    let reference = run_pipeline(&activations, &empty);
     assert_eq!(
         unpack_i32s(&reference.kv[1].k).unwrap()[..2],
         [35408, 55146]
@@ -301,9 +301,10 @@ fn native_decode_rotary_outputs_match_prefill_across_chunks() {
             start_position: start as u32,
             ..empty.clone()
         };
-        let direct = run_prefill_range_view(&chunk, &view, &prior, &empty, &empty, &ple).unwrap();
-        let staged = run_staged(&chunk, &prior);
-        for output in [&direct, &staged] {
+        let native_run =
+            run_prefill_range_view(&chunk, &view, &prior, &empty, &empty, &ple).unwrap();
+        let pipeline_run = run_pipeline(&chunk, &prior);
+        for output in [&native_run, &pipeline_run] {
             assert!(output.errors.is_empty());
             assert_eq!(output.start_position, start as u32);
             assert_eq!(
@@ -317,7 +318,7 @@ fn native_decode_rotary_outputs_match_prefill_across_chunks() {
                 "all cached K/V rows at start_position {start}"
             );
         }
-        prior = direct;
+        prior = native_run;
     }
 
     fs::remove_dir_all(dir).unwrap();
@@ -414,7 +415,7 @@ fn bytes_of_i32s(values: &[i32]) -> Vec<u8> {
 
 fn temp_dir(label: &str) -> PathBuf {
     std::env::temp_dir().join(format!(
-        "direct-infer-{label}-{}-{}",
+        "native-run-{label}-{}-{}",
         std::process::id(),
         SystemTime::now()
             .duration_since(UNIX_EPOCH)

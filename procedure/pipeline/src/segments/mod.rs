@@ -39,7 +39,7 @@ pub trait NativeStage {
     /// The stage program's project: its directory name.
     const PROJECT: &'static str;
     /// What a timing record and an error call the stage.
-    const ROUTINE: &'static str;
+    const NAME: &'static str;
 
     /// The inputs of the stage this process was started as.
     fn load_from_args() -> Result<Self::Inputs>;
@@ -75,22 +75,22 @@ pub enum StageKind {
 }
 
 #[derive(Debug)]
-pub struct DirectCompareOutput {
+pub struct NativeCompareOutput {
     pub encoded: EncodedArtifact,
-    pub timings: DirectTimings,
+    pub timings: NativeTimings,
 }
 
-pub struct DirectPublishOutput {
+pub struct NativePublishOutput {
     pub artifact: OutputArtifact,
-    pub timings: DirectTimings,
+    pub timings: NativeTimings,
     pub output: CachedStageValue,
 }
 
 #[derive(Debug)]
-pub struct DirectCachedOutput {
+pub struct NativeCachedOutput {
     pub encoded: EncodedArtifact,
     pub output: CachedStageValue,
-    pub timings: DirectTimings,
+    pub timings: NativeTimings,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -101,11 +101,11 @@ pub struct NativeStageCaches<'a> {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct DirectTimings {
+pub struct NativeTimings {
     pub input_load_duration: Duration,
     pub kernel_duration: Duration,
     pub encode_write_duration: Duration,
-    pub direct_stage_duration: Duration,
+    pub native_stage_duration: Duration,
 }
 
 impl StageKind {
@@ -123,7 +123,7 @@ impl StageKind {
         if let Some(stage) = result::Stage::from_spec(program, name)? {
             return Ok(Self::Result(stage));
         }
-        bail!("stage `{name}` with project `{project}` is not supported by staged-infer")
+        bail!("stage `{name}` with project `{project}` is not supported by procedure-pipeline")
     }
 
     /// The stage a stage directory holds. Where its name does not say which
@@ -151,7 +151,7 @@ impl StageKind {
         if let Some(stage) = inference::Stage::from_name(name)? {
             return Ok(Self::Inference(stage));
         }
-        bail!("stage `{name}` is not supported by staged-infer")
+        bail!("stage `{name}` is not supported by procedure-pipeline")
     }
 
     fn visit<V: StageVisitor>(&self, visitor: V) -> V::Out {
@@ -173,15 +173,15 @@ impl StageKind {
         self.visit(Project)
     }
 
-    pub fn routine(&self) -> &'static str {
-        struct Routine;
-        impl StageVisitor for Routine {
+    pub fn native_stage(&self) -> &'static str {
+        struct Name;
+        impl StageVisitor for Name {
             type Out = &'static str;
             fn visit<S: NativeStage>(self) -> Self::Out {
-                S::ROUTINE
+                S::NAME
             }
         }
-        self.visit(Routine)
+        self.visit(Name)
     }
 
     pub fn instance(&self) -> Option<usize> {
@@ -236,12 +236,12 @@ fn load<S: NativeStage>(
 struct Compare;
 
 impl StageVisitor for Compare {
-    type Out = Result<DirectCompareOutput>;
+    type Out = Result<NativeCompareOutput>;
     fn visit<S: NativeStage>(self) -> Self::Out {
         compare(
             S::load_from_args,
             |inputs| S::run(inputs, NativeStageCaches::default()),
-            S::ROUTINE,
+            S::NAME,
         )
     }
 }
@@ -252,12 +252,12 @@ struct Publish<'a> {
 }
 
 impl StageVisitor for Publish<'_> {
-    type Out = Result<DirectPublishOutput>;
+    type Out = Result<NativePublishOutput>;
     fn visit<S: NativeStage>(self) -> Self::Out {
         publish(
             || load::<S>(self.from, self.caches),
             |inputs| S::run(inputs, self.caches),
-            S::ROUTINE,
+            S::NAME,
             S::cached,
         )
     }
@@ -269,22 +269,22 @@ struct Cache<'a> {
 }
 
 impl StageVisitor for Cache<'_> {
-    type Out = Result<DirectCachedOutput>;
+    type Out = Result<NativeCachedOutput>;
     fn visit<S: NativeStage>(self) -> Self::Out {
         cache(
             || load::<S>(Some(self.from), self.caches),
             |inputs| S::run(inputs, self.caches),
-            S::ROUTINE,
+            S::NAME,
             S::cached,
         )
     }
 }
 
-pub fn run_for_compare(kind: &StageKind) -> Result<DirectCompareOutput> {
+pub fn run_for_compare(kind: &StageKind) -> Result<NativeCompareOutput> {
     kind.visit(Compare)
 }
 
-pub fn run_and_publish(kind: &StageKind) -> Result<DirectPublishOutput> {
+pub fn run_and_publish(kind: &StageKind) -> Result<NativePublishOutput> {
     kind.visit(Publish {
         from: None,
         caches: NativeStageCaches::default(),
@@ -296,7 +296,7 @@ pub fn run_and_publish_from_paths(
     input_path: &Path,
     input_manifest_path: &Path,
     cached_inputs: &CachedInputs,
-) -> Result<DirectPublishOutput> {
+) -> Result<NativePublishOutput> {
     run_and_publish_from_paths_with_caches(
         kind,
         input_path,
@@ -312,7 +312,7 @@ pub fn run_and_publish_from_paths_with_caches(
     input_manifest_path: &Path,
     cached_inputs: &CachedInputs,
     caches: NativeStageCaches<'_>,
-) -> Result<DirectPublishOutput> {
+) -> Result<NativePublishOutput> {
     kind.visit(Publish {
         from: Some(FromPaths {
             input: input_path,
@@ -329,7 +329,7 @@ pub fn run_cached_from_paths_with_caches(
     input_manifest_path: &Path,
     cached_inputs: &CachedInputs,
     caches: NativeStageCaches<'_>,
-) -> Result<DirectCachedOutput> {
+) -> Result<NativeCachedOutput> {
     kind.visit(Cache {
         from: FromPaths {
             input: input_path,
@@ -344,31 +344,32 @@ fn compare<I, O>(
     load: impl FnOnce() -> Result<I>,
     run: impl FnOnce(&I) -> Result<O>,
     label: &str,
-) -> Result<DirectCompareOutput>
+) -> Result<NativeCompareOutput>
 where
     O: Serialize,
 {
-    let direct_stage_started = Instant::now();
+    let native_stage_started = Instant::now();
     let input_load_started = Instant::now();
     let inputs = load().with_context(|| format!("failed to load {label} stage inputs"))?;
     let input_load_duration = input_load_started.elapsed();
 
     let kernel_started = Instant::now();
-    let output = run(&inputs).with_context(|| format!("staged-infer {label} execution failed"))?;
+    let output =
+        run(&inputs).with_context(|| format!("procedure-pipeline {label} execution failed"))?;
     let kernel_duration = kernel_started.elapsed();
 
     let encode_write_started = Instant::now();
     let encoded = encode_output(&output)
-        .with_context(|| format!("failed to encode staged-infer {label} output"))?;
+        .with_context(|| format!("failed to encode procedure-pipeline {label} output"))?;
     let encode_write_duration = encode_write_started.elapsed();
 
-    Ok(DirectCompareOutput {
+    Ok(NativeCompareOutput {
         encoded,
-        timings: DirectTimings {
+        timings: NativeTimings {
             input_load_duration,
             kernel_duration,
             encode_write_duration,
-            direct_stage_duration: direct_stage_started.elapsed(),
+            native_stage_duration: native_stage_started.elapsed(),
         },
     })
 }
@@ -378,33 +379,34 @@ fn cache<I, O>(
     run: impl FnOnce(&I) -> Result<O>,
     label: &str,
     cache_value: impl FnOnce(O) -> CachedStageValue,
-) -> Result<DirectCachedOutput>
+) -> Result<NativeCachedOutput>
 where
     O: Serialize,
 {
-    let direct_stage_started = Instant::now();
+    let native_stage_started = Instant::now();
     let input_load_started = Instant::now();
     let inputs = load().with_context(|| format!("failed to load {label} stage inputs"))?;
     let input_load_duration = input_load_started.elapsed();
 
     let kernel_started = Instant::now();
-    let output = run(&inputs).with_context(|| format!("staged-infer {label} execution failed"))?;
+    let output =
+        run(&inputs).with_context(|| format!("procedure-pipeline {label} execution failed"))?;
     let kernel_duration = kernel_started.elapsed();
 
     let encode_write_started = Instant::now();
     let encoded = encode_output(&output)
-        .with_context(|| format!("failed to encode staged-infer {label} output"))?;
+        .with_context(|| format!("failed to encode procedure-pipeline {label} output"))?;
     let encode_write_duration = encode_write_started.elapsed();
     let output = cache_value(output);
 
-    Ok(DirectCachedOutput {
+    Ok(NativeCachedOutput {
         encoded,
         output,
-        timings: DirectTimings {
+        timings: NativeTimings {
             input_load_duration,
             kernel_duration,
             encode_write_duration,
-            direct_stage_duration: direct_stage_started.elapsed(),
+            native_stage_duration: native_stage_started.elapsed(),
         },
     })
 }
@@ -414,32 +416,33 @@ fn publish<I, O>(
     run: impl FnOnce(&I) -> Result<O>,
     label: &str,
     cache_value: impl FnOnce(O) -> CachedStageValue,
-) -> Result<DirectPublishOutput>
+) -> Result<NativePublishOutput>
 where
     O: Serialize,
 {
-    let direct_stage_started = Instant::now();
+    let native_stage_started = Instant::now();
     let input_load_started = Instant::now();
     let inputs = load().with_context(|| format!("failed to load {label} stage inputs"))?;
     let input_load_duration = input_load_started.elapsed();
 
     let kernel_started = Instant::now();
-    let output = run(&inputs).with_context(|| format!("staged-infer {label} execution failed"))?;
+    let output =
+        run(&inputs).with_context(|| format!("procedure-pipeline {label} execution failed"))?;
     let kernel_duration = kernel_started.elapsed();
 
     let encode_write_started = Instant::now();
     let artifact = write_output(&output)
-        .with_context(|| format!("failed to write staged-infer {label} output"))?;
+        .with_context(|| format!("failed to write procedure-pipeline {label} output"))?;
     let encode_write_duration = encode_write_started.elapsed();
     let output = cache_value(output);
 
-    Ok(DirectPublishOutput {
+    Ok(NativePublishOutput {
         artifact,
-        timings: DirectTimings {
+        timings: NativeTimings {
             input_load_duration,
             kernel_duration,
             encode_write_duration,
-            direct_stage_duration: direct_stage_started.elapsed(),
+            native_stage_duration: native_stage_started.elapsed(),
         },
         output,
     })
@@ -528,24 +531,24 @@ mod tests {
     #[test]
     fn a_stage_is_found_by_its_project_and_name_and_names_both() {
         let mut projects = Vec::new();
-        let mut routines = Vec::new();
+        let mut names = Vec::new();
         for (kind, name) in every_stage() {
             // The project a stage names is the one a pipeline finds it by.
             let project = format!("raster-stages/{}", kind.project());
             assert_eq!(StageKind::from_stage_spec(&project, name).unwrap(), kind);
-            // A routine is its project's name, as a timing record writes it.
-            assert_eq!(kind.routine(), kind.project().replace('-', "_"));
+            // A native stage is named for its project, as a timing record writes it.
+            assert_eq!(kind.native_stage(), kind.project().replace('-', "_"));
             assert_eq!(kind.instance().is_some(), name.ends_with("_l2"));
             projects.push(kind.project());
-            routines.push(kind.routine());
+            names.push(kind.native_stage());
         }
         // No two stages are of one project.
         projects.sort_unstable();
         projects.dedup();
-        routines.sort_unstable();
-        routines.dedup();
+        names.sort_unstable();
+        names.dedup();
         assert_eq!(projects.len(), every_stage().len());
-        assert_eq!(routines.len(), every_stage().len());
+        assert_eq!(names.len(), every_stage().len());
         assert_eq!(
             projects,
             [

@@ -5,7 +5,7 @@ use crate::*;
 
 #[derive(Debug, Subcommand)]
 pub(crate) enum ClaimCommand {
-    /// Build a staged-infer checkpoint claim.
+    /// Build a checkpoint claim from a pipeline run.
     Build(ClaimBuildArgs),
     /// Read a submitted claim's data back from the data-availability layer
     /// into a new directory, with the case it posted: what a challenger
@@ -152,14 +152,14 @@ pub(crate) struct ClaimBuildArgs {
     pub(crate) case: PathBuf,
 
     /// The comma-separated output ids `iris infer` printed for this same
-    /// specification and case. The claim is built from them without running direct inference
+    /// specification and case. The claim is built from them without running the native run
     /// again; the pipeline still re-derives every token and rejects any other ids.
-    #[arg(long = "direct-output-ids", value_delimiter = ',')]
-    direct_output_ids: Option<Vec<u32>>,
+    #[arg(long = "native-output-ids", value_delimiter = ',')]
+    native_output_ids: Option<Vec<u32>>,
 
-    /// Use the previous per-stage child-process staged-infer runner.
-    #[arg(long = "staged-subprocess", alias = "direct-subprocess", hide = true)]
-    staged_subprocess: bool,
+    /// Run each native stage in a child process of its own, as the previous runner did.
+    #[arg(long = "native-stage-subprocess", hide = true)]
+    native_stage_subprocess: bool,
 
     /// The address the claim is attributed to: `0x` and 40 lowercase hex
     /// digits. Every blob the claim posts names it. Default: `IRIS_CLAIMER`,
@@ -171,18 +171,18 @@ pub(crate) struct ClaimBuildArgs {
 impl ClaimBuildArgs {
     pub(crate) fn into_options(self) -> Result<ClaimBuildOptions> {
         let current_exe = std::env::current_exe().context("failed to locate current executable")?;
-        let staged_backend = if self.staged_subprocess {
-            procedure_pipeline::pipeline_runner::StagedExecutionBackend::Subprocess
+        let native_stage_backend = if self.native_stage_subprocess {
+            procedure_pipeline::pipeline_runner::NativeStageBackend::Subprocess
         } else {
-            procedure_pipeline::pipeline_runner::StagedExecutionBackend::InProcess
+            procedure_pipeline::pipeline_runner::NativeStageBackend::InProcess
         };
         let mut options = ClaimBuildOptions::from_current_dir(
             current_exe,
-            staged_backend,
+            native_stage_backend,
             self.specification,
             self.case,
         )?;
-        options.direct_output_ids = self.direct_output_ids;
+        options.native_output_ids = self.native_output_ids;
         options.claimer = self.claimer.or_else(|| std::env::var("IRIS_CLAIMER").ok());
         Ok(options)
     }

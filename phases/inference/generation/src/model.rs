@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
-use inference_manifest::{DirectInferShape, MistralShape, ModelFamily, ModelManifest};
+use inference_manifest::{MistralShape, ModelFamily, ModelManifest, NativeInferShape};
 use inference_prompt::PreparedPiece;
 use prompt_check::input::BpePieces;
 use raster::{Bytes, List};
@@ -10,9 +10,9 @@ use inference_kernels::tensor::{MatrixSource, Q8Key, Q8Source};
 use inference_weights::{DetwgtMatrixView, DetwgtSlice, MmapDetwgt, Q8MatrixView};
 
 const ONE: i32 = 1 << 16;
-pub const MISSING_DIRECT_MANIFEST: &str = "run iris model import ... to generate a model manifest";
+pub const MISSING_NATIVE_MANIFEST: &str = "run iris model import ... to generate a model manifest";
 
-pub struct DirectInferenceModel {
+pub struct NativeInferenceModel {
     pub manifest: ModelManifest,
     pub manifest_path: PathBuf,
     tokenizer: serde_json::Value,
@@ -25,11 +25,11 @@ pub struct DirectInferenceModel {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub struct DirectMatrixView<'a> {
+pub struct NativeMatrixView<'a> {
     inner: DetwgtMatrixView<'a>,
 }
 
-impl<'a> DirectMatrixView<'a> {
+impl<'a> NativeMatrixView<'a> {
     pub fn new(inner: DetwgtMatrixView<'a>) -> Self {
         Self { inner }
     }
@@ -51,7 +51,7 @@ impl<'a> DirectMatrixView<'a> {
     }
 }
 
-impl MatrixSource for DirectMatrixView<'_> {
+impl MatrixSource for NativeMatrixView<'_> {
     fn rows(&self) -> usize {
         self.inner.rows()
     }
@@ -69,11 +69,11 @@ impl MatrixSource for DirectMatrixView<'_> {
 /// A memory-mapped `Q8_0` matrix. Products use `inference_numerics::q8::dot_row`, the
 /// arithmetic every Raster stage uses; there is no Q16.16 row view.
 #[derive(Debug, Clone, Copy)]
-pub struct DirectQ8View<'a> {
+pub struct NativeQ8View<'a> {
     inner: Q8MatrixView<'a>,
 }
 
-impl<'a> DirectQ8View<'a> {
+impl<'a> NativeQ8View<'a> {
     pub fn new(inner: Q8MatrixView<'a>) -> Self {
         Self { inner }
     }
@@ -100,7 +100,7 @@ impl<'a> DirectQ8View<'a> {
     }
 }
 
-impl MatrixSource for DirectQ8View<'_> {
+impl MatrixSource for NativeQ8View<'_> {
     fn rows(&self) -> usize {
         self.inner.rows()
     }
@@ -126,47 +126,47 @@ impl MatrixSource for DirectQ8View<'_> {
     }
 }
 
-pub struct DirectPleLayer<'a> {
+pub struct NativePleLayer<'a> {
     pub params: prefill_prepare_aux::input::PleLayerParams,
-    pub embeddings: DirectQ8View<'a>,
+    pub embeddings: NativeQ8View<'a>,
     pub embedding_start: usize,
-    pub projection: DirectMatrixView<'a>,
+    pub projection: NativeMatrixView<'a>,
 }
 
-pub struct DirectTransformerLayer<'a> {
+pub struct NativeTransformerLayer<'a> {
     pub params: prefill_range::input::LayerParams,
-    pub w_q: DirectQ8View<'a>,
-    pub w_k: DirectQ8View<'a>,
-    pub w_v: DirectQ8View<'a>,
-    pub w_o: DirectQ8View<'a>,
-    pub w_gate: DirectQ8View<'a>,
-    pub w_up: DirectQ8View<'a>,
-    pub w_down: DirectQ8View<'a>,
-    pub ple_input_gate: DirectMatrixView<'a>,
-    pub ple_layer_projection: DirectMatrixView<'a>,
+    pub w_q: NativeQ8View<'a>,
+    pub w_k: NativeQ8View<'a>,
+    pub w_v: NativeQ8View<'a>,
+    pub w_o: NativeQ8View<'a>,
+    pub w_gate: NativeQ8View<'a>,
+    pub w_up: NativeQ8View<'a>,
+    pub w_down: NativeQ8View<'a>,
+    pub ple_input_gate: NativeMatrixView<'a>,
+    pub ple_layer_projection: NativeMatrixView<'a>,
 }
 
-pub struct DirectMistralLayer<'a> {
+pub struct NativeMistralLayer<'a> {
     pub params: inference_kernels::mistral::LayerParams,
-    pub w_q: DirectQ8View<'a>,
-    pub w_k: DirectQ8View<'a>,
-    pub w_v: DirectQ8View<'a>,
-    pub w_o: DirectQ8View<'a>,
-    pub w_gate: DirectQ8View<'a>,
-    pub w_up: DirectQ8View<'a>,
-    pub w_down: DirectQ8View<'a>,
+    pub w_q: NativeQ8View<'a>,
+    pub w_k: NativeQ8View<'a>,
+    pub w_v: NativeQ8View<'a>,
+    pub w_o: NativeQ8View<'a>,
+    pub w_gate: NativeQ8View<'a>,
+    pub w_up: NativeQ8View<'a>,
+    pub w_down: NativeQ8View<'a>,
 }
 
-pub struct DirectFinalHead<'a> {
+pub struct NativeFinalHead<'a> {
     pub params: sequence_check::input::FinalHeadParams,
-    pub projection: DirectQ8View<'a>,
+    pub projection: NativeQ8View<'a>,
 }
 
-impl DirectInferenceModel {
+impl NativeInferenceModel {
     pub fn load(manifest_path: &Path) -> Result<Self> {
         if !manifest_path.is_file() {
             bail!(
-                "missing direct-infer manifest {}; {MISSING_DIRECT_MANIFEST}",
+                "missing native-run manifest {}; {MISSING_NATIVE_MANIFEST}",
                 manifest_path.display()
             );
         }
@@ -175,7 +175,7 @@ impl DirectInferenceModel {
 
         let manifest_dir = manifest_path
             .parent()
-            .ok_or_else(|| anyhow::anyhow!("direct manifest has no parent directory"))?;
+            .ok_or_else(|| anyhow::anyhow!("native manifest has no parent directory"))?;
         let config_path = resolve_manifest_path(manifest_dir, &manifest.bundle.config_path);
         let tokenizer_path = resolve_manifest_path(manifest_dir, &manifest.bundle.tokenizer_path);
         let detwgt_path = resolve_manifest_path(manifest_dir, &manifest.bundle.model_detwgt_path);
@@ -249,11 +249,11 @@ impl DirectInferenceModel {
         u32::try_from(ranges.len()).ok()
     }
 
-    fn matrix_view(&self, name: &str, rows: usize, cols: usize) -> Result<DirectMatrixView<'_>> {
-        Ok(DirectMatrixView::new(self.detwgt.matrix(name, rows, cols)?))
+    fn matrix_view(&self, name: &str, rows: usize, cols: usize) -> Result<NativeMatrixView<'_>> {
+        Ok(NativeMatrixView::new(self.detwgt.matrix(name, rows, cols)?))
     }
 
-    fn q8_view(&self, name: &str, rows: usize, cols: usize) -> Result<DirectQ8View<'_>> {
+    fn q8_view(&self, name: &str, rows: usize, cols: usize) -> Result<NativeQ8View<'_>> {
         let inner = self.detwgt.q8_matrix(name)?;
         if (inner.rows(), inner.cols()) != (rows, cols) {
             bail!(
@@ -262,7 +262,7 @@ impl DirectInferenceModel {
                 inner.cols()
             );
         }
-        Ok(DirectQ8View { inner })
+        Ok(NativeQ8View { inner })
     }
 
     /// A `Q8_0` tensor's rows `start..end` as one committed region.
@@ -292,7 +292,7 @@ impl DirectInferenceModel {
             ),
             ..Default::default()
         };
-        inference_kernels::kernels::prompt_prepare::run_prompt_prepare_direct(
+        inference_kernels::kernels::prompt_prepare::run_prompt_prepare_native(
             inference_kernels::kernels::prompt_prepare::PromptPrepareDirectInputs {
                 tokenizer: &tokenizer,
                 initial_pieces: &pieces,
@@ -300,7 +300,7 @@ impl DirectInferenceModel {
         )
     }
 
-    pub fn embedding_view(&self) -> Result<DirectQ8View<'_>> {
+    pub fn embedding_view(&self) -> Result<NativeQ8View<'_>> {
         self.q8_view(
             "model.language_model.embed_tokens.weight",
             self.manifest.shape.vocab_size() as usize,
@@ -374,18 +374,18 @@ impl DirectInferenceModel {
         })
     }
 
-    pub fn direct_ple_layer(&self, layer_idx: usize) -> Result<DirectPleLayer<'_>> {
+    pub fn native_ple_layer(&self, layer_idx: usize) -> Result<NativePleLayer<'_>> {
         let shape = self.shape();
         let embedding_start = layer_idx * shape.hidden_size_per_layer_input as usize;
         let embedding_width = shape.hidden_size_per_layer_input as usize;
         let embedding_cols = shape.num_hidden_layers as usize * embedding_width;
-        let projection = DirectMatrixView::new(self.detwgt.matrix_rows(
+        let projection = NativeMatrixView::new(self.detwgt.matrix_rows(
             "model.language_model.per_layer_model_projection.weight",
             embedding_start,
             embedding_start + embedding_width,
             shape.hidden_size as usize,
         )?);
-        Ok(DirectPleLayer {
+        Ok(NativePleLayer {
             params: self.ple_params[layer_idx].clone(),
             embeddings: self.q8_view(
                 "model.language_model.embed_tokens_per_layer.weight",
@@ -484,7 +484,7 @@ impl DirectInferenceModel {
         })
     }
 
-    pub fn direct_transformer_layer(&self, layer_idx: usize) -> Result<DirectTransformerLayer<'_>> {
+    pub fn native_transformer_layer(&self, layer_idx: usize) -> Result<NativeTransformerLayer<'_>> {
         let shape = self.shape();
         let at = |suffix: &str| format!("model.language_model.layers.{layer_idx}.{suffix}");
         let params = self.layer_params[layer_idx].clone();
@@ -502,7 +502,7 @@ impl DirectInferenceModel {
             k_name.clone()
         };
 
-        Ok(DirectTransformerLayer {
+        Ok(NativeTransformerLayer {
             params,
             w_q: self.q8_view(&at("self_attn.q_proj.weight"), q_len, hidden)?,
             w_k: self.q8_view(&k_name, kv_len, hidden)?,
@@ -549,7 +549,7 @@ impl DirectInferenceModel {
         })
     }
 
-    pub fn direct_mistral_layer(&self, layer_idx: usize) -> Result<DirectMistralLayer<'_>> {
+    pub fn native_mistral_layer(&self, layer_idx: usize) -> Result<NativeMistralLayer<'_>> {
         let at = |suffix: &str| format!("model.language_model.layers.{layer_idx}.{suffix}");
         let params = self
             .mistral_layers
@@ -560,7 +560,7 @@ impl DirectInferenceModel {
         let ffn = params.ffn_size as usize;
         let q_len = params.num_heads as usize * params.head_dim as usize;
         let kv_len = params.num_kv_heads as usize * params.head_dim as usize;
-        Ok(DirectMistralLayer {
+        Ok(NativeMistralLayer {
             w_q: self.q8_view(&at("self_attn.q_proj.weight"), q_len, hidden)?,
             w_k: self.q8_view(&at("self_attn.k_proj.weight"), kv_len, hidden)?,
             w_v: self.q8_view(&at("self_attn.v_proj.weight"), kv_len, hidden)?,
@@ -572,7 +572,7 @@ impl DirectInferenceModel {
         })
     }
 
-    pub fn direct_final_head(&self) -> Result<DirectFinalHead<'_>> {
+    pub fn native_final_head(&self) -> Result<NativeFinalHead<'_>> {
         let shape = &self.manifest.shape;
         let tied = self
             .config_text
@@ -584,7 +584,7 @@ impl DirectInferenceModel {
         } else {
             "model.language_model.lm_head.weight"
         };
-        Ok(DirectFinalHead {
+        Ok(NativeFinalHead {
             params: self.final_head_params.clone(),
             projection: self.q8_view(
                 tensor,
@@ -611,7 +611,7 @@ impl DirectInferenceModel {
     }
 
     /// `gemma-dense`'s shape. Only that family's loading and layers ask for it.
-    pub fn shape(&self) -> &DirectInferShape {
+    pub fn shape(&self) -> &NativeInferShape {
         self.manifest
             .shape
             .gemma()
@@ -675,7 +675,7 @@ impl DirectInferenceModel {
 }
 
 fn build_ple_params(
-    shape: &DirectInferShape,
+    shape: &NativeInferShape,
     detwgt: &MmapDetwgt,
 ) -> Result<Vec<prefill_prepare_aux::input::PleLayerParams>> {
     if shape.num_hidden_layers == 0 {
@@ -698,7 +698,7 @@ fn build_ple_params(
 }
 
 fn build_layer_params(
-    shape: &DirectInferShape,
+    shape: &NativeInferShape,
     detwgt: &MmapDetwgt,
 ) -> Result<Vec<prefill_range::input::LayerParams>> {
     let (donor_a_layer, donor_b_layer) = donor_candidates(shape);
@@ -786,7 +786,7 @@ fn build_mistral_layers(
 }
 
 fn build_final_head_params(
-    shape: &DirectInferShape,
+    shape: &NativeInferShape,
     detwgt: &MmapDetwgt,
 ) -> Result<sequence_check::input::FinalHeadParams> {
     Ok(sequence_check::input::FinalHeadParams {
@@ -797,14 +797,14 @@ fn build_final_head_params(
     })
 }
 
-fn is_sliding(shape: &DirectInferShape, idx: usize) -> bool {
+fn is_sliding(shape: &NativeInferShape, idx: usize) -> bool {
     matches!(
         shape.layer_types.get(idx).map(String::as_str),
         Some("sliding_attention")
     )
 }
 
-fn head_dim_at(shape: &DirectInferShape, idx: usize) -> u32 {
+fn head_dim_at(shape: &NativeInferShape, idx: usize) -> u32 {
     if is_sliding(shape, idx) {
         shape.head_dim
     } else {
@@ -812,7 +812,7 @@ fn head_dim_at(shape: &DirectInferShape, idx: usize) -> u32 {
     }
 }
 
-fn rope_at(shape: &DirectInferShape, idx: usize) -> (i64, u32, u32) {
+fn rope_at(shape: &NativeInferShape, idx: usize) -> (i64, u32, u32) {
     let head_dim = head_dim_at(shape, idx);
     if is_sliding(shape, idx) {
         (shape.rope_base_sliding, head_dim, head_dim)
@@ -823,7 +823,7 @@ fn rope_at(shape: &DirectInferShape, idx: usize) -> (i64, u32, u32) {
     }
 }
 
-fn kv_donor_layer(shape: &DirectInferShape, idx: usize) -> i32 {
+fn kv_donor_layer(shape: &NativeInferShape, idx: usize) -> i32 {
     let first_shared =
         (shape.num_hidden_layers as usize).saturating_sub(shape.num_kv_shared_layers as usize);
     if shape.num_kv_shared_layers == 0 || idx < first_shared {
@@ -839,7 +839,7 @@ fn kv_donor_layer(shape: &DirectInferShape, idx: usize) -> i32 {
         .unwrap_or(-1)
 }
 
-fn donor_candidates(shape: &DirectInferShape) -> (i32, i32) {
+fn donor_candidates(shape: &NativeInferShape) -> (i32, i32) {
     let mut donors = (0..shape.num_hidden_layers as usize)
         .map(|layer| kv_donor_layer(shape, layer))
         .filter(|donor| *donor >= 0)

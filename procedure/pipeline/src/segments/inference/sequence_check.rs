@@ -10,8 +10,8 @@ use crate::{
 use anyhow::Result;
 use inference_kernels::kernels::finalize::{claim_record, output_record, FinalizeInputs};
 use inference_kernels::kernels::sequence_check::{
-    check_frame, check_positions, decode_edge, run_sequence_check_direct, scorable,
-    CheckHeadParams, SequenceCheckDirectInputs,
+    check_frame, check_positions, decode_edge, run_sequence_check_native, scorable,
+    CheckHeadParams, SequenceCheckNativeInputs,
 };
 use sequence_check::input::{
     unpack_i32s, ActivationSequence, DecodeEdge, DecoderTable, DecoderWitness, FinalHead,
@@ -99,9 +99,9 @@ pub fn load_inputs_from_paths_with_cache(
         )
     })
 }
-pub fn run_direct(inputs: &Inputs) -> Result<DecodeEdge> {
+pub fn run_native(inputs: &Inputs) -> Result<DecodeEdge> {
     let mut edge = match &inputs.head {
-        Weights::Eager(head) => run_sequence_check_direct(SequenceCheckDirectInputs {
+        Weights::Eager(head) => run_sequence_check_native(SequenceCheckNativeInputs {
             activations: &inputs.activations,
             previous: &inputs.previous,
             prior: &inputs.prior,
@@ -284,7 +284,7 @@ impl crate::segments::NativeStage for Stage {
     type Inputs = Inputs;
     type Output = DecodeEdge;
     const PROJECT: &'static str = "sequence-check";
-    const ROUTINE: &'static str = "sequence_check";
+    const NAME: &'static str = "sequence_check";
 
     fn load_from_args() -> Result<Inputs> {
         load_inputs_from_args()
@@ -300,7 +300,7 @@ impl crate::segments::NativeStage for Stage {
     }
 
     fn run(inputs: &Inputs, _caches: crate::segments::NativeStageCaches<'_>) -> Result<DecodeEdge> {
-        run_direct(inputs)
+        run_native(inputs)
     }
 
     fn cached(output: DecodeEdge) -> crate::cache::CachedStageValue {

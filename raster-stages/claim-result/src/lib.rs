@@ -5,7 +5,7 @@
 //! beside the claim record the check stated. Today that is all it does: it is
 //! where an output is turned into what a claim is used for.
 //!
-//! The logic is in `forms`, shared with direct inference and the native
+//! The logic is in `forms`, shared with the native run and the native
 //! stage. A tile calls it, so it is inside the tile's image id.
 //!
 //! `#![no_std]` so the same tiles compile into RISC0 replay guests.

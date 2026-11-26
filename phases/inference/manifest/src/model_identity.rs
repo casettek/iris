@@ -1,5 +1,5 @@
 //! Adapters from legacy JSON model manifests to the bounded stage descriptor.
-use crate::direct::{ModelCommitment, ModelManifest};
+use crate::native_run::{ModelCommitment, ModelManifest};
 use anyhow::{ensure, Context, Result};
 use common_identity::{ModelDescriptor, DESCRIPTOR_VERSION, MAX_LAYERS};
 
@@ -74,7 +74,7 @@ impl ModelManifest {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::direct::model_id_of;
+    use crate::native_run::model_id_of;
     fn entries() -> Vec<ModelCommitment> {
         [
             "tokenizer",

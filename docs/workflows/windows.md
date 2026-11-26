@@ -13,7 +13,7 @@ The script initializes the x64 Visual Studio environment, defines `NOMINMAX`
 and selects C++20 with exception unwinding for Windows C++ compilation, and builds the release executable at
 `target/windows/release/iris.exe`. Its separate target directory preserves the
 WSL build under `target/release`. `-Test` runs host linkage and prover selection
-regressions, direct executor tests, and the staged parity test.
+regressions, native executor tests, and the pipeline parity test.
 
 The RISC Zero package versions remain pinned in `Cargo.lock`. Local patches fix
 an MSVC guest allocator reference (`risc0-zkvm-platform 2.2.3`), Windows paths in
@@ -24,8 +24,8 @@ Windows requests for it fail explicitly. The local prover is retained.
 
 The script sets `RISC0_SKIP_BUILD=1` while building. This skips generating proof
 guest programs; it still compiles the host prover dependencies required by the
-current dependency graph. This build is for native import, direct inference,
-and staged claim generation. It does not establish native Windows proof
+current dependency graph. This build is for native import, the native run,
+and pipeline claim generation. It does not establish native Windows proof
 generation support.
 
 ## Model paths

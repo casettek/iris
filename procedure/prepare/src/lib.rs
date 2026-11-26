@@ -14,9 +14,9 @@ use procedure_definition::{Case, PreparedPrompt, Specification};
 use prompt_check::input::{PromptText, RunConfig, RunSchedule, TextDigest};
 use raster::List;
 
+pub mod pipeline_run;
 pub mod run_inputs;
 pub mod source;
-pub mod staged;
 
 /// One inference's prompt. `case_dir` is the directory the case's paths are
 /// relative to. `relayed` is the result of the inference whose output this
@@ -76,7 +76,7 @@ pub fn rendered_prompt(
 }
 
 /// The prompt built around an earlier inference's output, and the record the
-/// relay stage states of it. A relay with a fault gives no prompt: direct
+/// relay stage states of it. A relay with a fault gives no prompt: native
 /// inference is the gate, and no claim is built on such a run.
 pub fn relayed_run(
     specification: &Specification,
@@ -388,7 +388,7 @@ fn resolve_prompt(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use inference_manifest::{DirectInferBundle, DirectInferShape};
+    use inference_manifest::{NativeInferBundle, NativeInferShape};
     use inference_prompt::*;
     use prompt_check::input::BpePiece;
     use std::path::PathBuf;
@@ -730,7 +730,7 @@ mod tests {
             model_id: inference_manifest::model_id_of(&[]),
             model_commitments: Vec::new(),
             range_size: 512,
-            bundle: DirectInferBundle {
+            bundle: NativeInferBundle {
                 model_detwgt_path: PathBuf::from("model.detwgt"),
                 model_detwgt_sha256: String::new(),
                 config_path: PathBuf::from("config.json"),
@@ -738,7 +738,7 @@ mod tests {
                 tokenizer_path: PathBuf::from("tokenizer.json"),
                 tokenizer_sha256: String::new(),
             },
-            shape: DirectInferShape {
+            shape: NativeInferShape {
                 hidden_size: 1,
                 num_hidden_layers: 0,
                 num_attention_heads: 1,

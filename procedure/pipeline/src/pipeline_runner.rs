@@ -268,12 +268,12 @@ enum RenderedTemplate {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum StageDispatch {
-    StagedNative,
+    Native,
     RasterReference,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum StagedExecutionBackend {
+pub enum NativeStageBackend {
     InProcess,
     Subprocess,
 }
@@ -284,8 +284,8 @@ struct StageOutput {
     structural_commitment: Vec<u8>,
 }
 
-struct DirectStageRun {
-    timings: Option<segments::DirectTimings>,
+struct NativeStageRun {
+    timings: Option<segments::NativeTimings>,
     duration: Duration,
     output: Option<CachedStageValue>,
 }
@@ -294,7 +294,7 @@ struct DirectStageRun {
 struct StagePerformance {
     name: String,
     worker: Option<usize>,
-    timings: segments::DirectTimings,
+    timings: segments::NativeTimings,
     cache: inference_kernels::weight_budget::WeightCacheStats,
 }
 
@@ -489,13 +489,13 @@ pub fn run(
     manifest_path: &Path,
     raster_stage: Option<&str>,
     current_exe: &Path,
-    staged_backend: StagedExecutionBackend,
+    native_stage_backend: NativeStageBackend,
 ) -> Result<HybridRun> {
     Ok(run_inner(
         manifest_path,
         raster_stage,
         current_exe,
-        staged_backend,
+        native_stage_backend,
         None,
         None,
     )?
@@ -505,14 +505,14 @@ pub fn run(
 pub fn run_until_hash_divergence(
     manifest_path: &Path,
     current_exe: &Path,
-    staged_backend: StagedExecutionBackend,
+    native_stage_backend: NativeStageBackend,
     verifier: CheckpointHashVerifier,
 ) -> Result<CheckpointVerifiedRun> {
     let output = run_inner(
         manifest_path,
         None,
         current_exe,
-        staged_backend,
+        native_stage_backend,
         Some(verifier),
         None,
     )?;
@@ -529,7 +529,7 @@ pub fn run_through_stage(
     manifest_path: &Path,
     stage: &str,
     current_exe: &Path,
-    staged_backend: StagedExecutionBackend,
+    native_stage_backend: NativeStageBackend,
 ) -> Result<StagePrefixRun> {
     let manifest = read_manifest(manifest_path)?;
     validate_reference_stage(&manifest.pipeline.stage, stage)?;
@@ -544,7 +544,7 @@ pub fn run_through_stage(
         manifest_path,
         None,
         current_exe,
-        staged_backend,
+        native_stage_backend,
         None,
         Some(stage),
     )?
@@ -574,7 +574,7 @@ fn run_inner(
     manifest_path: &Path,
     raster_stage: Option<&str>,
     current_exe: &Path,
-    staged_backend: StagedExecutionBackend,
+    native_stage_backend: NativeStageBackend,
     checkpoint_verifier: Option<CheckpointHashVerifier>,
     through_stage: Option<&str>,
 ) -> Result<PipelineRunOutput> {
@@ -594,7 +594,7 @@ fn run_inner(
 
     let pipeline_dir = create_pipeline_dir(&base_dir)?;
     println!(
-        "staged-infer pipeline run  {}  ({} stages)",
+        "pipeline run  {}  ({} stages)",
         pipeline_run_id_label(&pipeline_dir),
         manifest.pipeline.stage.len()
     );
@@ -605,7 +605,7 @@ fn run_inner(
                 "  mode: unauthenticated pipeline runner (--no-auth; Raster reference: {stage})"
             );
         }
-        None => println!("  mode: unauthenticated staged-infer (--no-auth)"),
+        None => println!("  mode: unauthenticated procedure-pipeline (--no-auth)"),
     }
     println!();
 
@@ -615,7 +615,7 @@ fn run_inner(
         .filter_map(|i| aux_wave_range(&manifest.pipeline.stage, i).map(|r| r.len()))
         .max()
         .unwrap_or(0);
-    let allocation = if staged_backend == StagedExecutionBackend::InProcess {
+    let allocation = if native_stage_backend == NativeStageBackend::InProcess {
         WeightAllocation::resolve(persistent_aux_parallelism(largest_wave))?
     } else {
         WeightAllocation::split(0, 0, "diagnostic subprocess backend")
@@ -657,7 +657,7 @@ fn run_inner(
                 &pipeline_dir,
                 &stage_index,
                 current_exe,
-                staged_backend,
+                native_stage_backend,
                 raster_stage,
                 &recomputed_list_path,
                 &mut state,
@@ -676,7 +676,7 @@ fn run_inner(
             &pipeline_dir,
             &stage_index,
             current_exe,
-            staged_backend,
+            native_stage_backend,
             raster_stage,
             &recomputed_list_path,
             &mut state,
@@ -691,7 +691,7 @@ fn run_inner(
         pool.shutdown()?;
     }
     fs::write(
-        pipeline_dir.join("staged-performance.json"),
+        pipeline_dir.join("pipeline-performance.json"),
         serde_json::to_vec_pretty(&serde_json::json!({
             "version": 1,
             "ple_loading": ple_loading.as_str(),
@@ -712,7 +712,7 @@ fn run_inner(
     if state.has_divergence() {
         if let Some(divergence) = state.divergence() {
             println!(
-                "staged-infer stopped at checkpoint index {} / stage {}/{} ({})",
+                "procedure-pipeline stopped at checkpoint index {} / stage {}/{} ({})",
                 divergence.checkpoint_index,
                 divergence.checkpoint_index + 1,
                 manifest.pipeline.stage.len(),
@@ -727,7 +727,7 @@ fn run_inner(
             pipeline_wall_duration,
             &state.aux_waves,
         )?;
-        print_direct_timing_summary(
+        print_native_timing_summary(
             &manifest.pipeline.stage,
             &state.execution_times,
             pipeline_wall_duration,
@@ -1063,7 +1063,7 @@ fn dispatch_for_stage(stage: &StageSpec, raster_stage: Option<&str>) -> Result<S
     if raster_stage == Some(stage.name.as_str()) {
         Ok(StageDispatch::RasterReference)
     } else {
-        Ok(StageDispatch::StagedNative)
+        Ok(StageDispatch::Native)
     }
 }
 
@@ -1074,7 +1074,7 @@ fn run_one_stage(
     pipeline_dir: &Path,
     stage_index: &BTreeMap<String, usize>,
     current_exe: &Path,
-    staged_backend: StagedExecutionBackend,
+    native_stage_backend: NativeStageBackend,
     raster_stage: Option<&str>,
     recomputed_list_path: &Path,
     state: &mut PipelineRunState,
@@ -1105,7 +1105,7 @@ fn run_one_stage(
         stage,
         base_dir,
         current_exe,
-        staged_backend,
+        native_stage_backend,
         raster_stage,
         &input_json_path,
         &input_manifest_path,
@@ -1129,27 +1129,27 @@ fn run_prepared_stage(
     stage: &StageSpec,
     base_dir: &Path,
     current_exe: &Path,
-    staged_backend: StagedExecutionBackend,
+    native_stage_backend: NativeStageBackend,
     raster_stage: Option<&str>,
     input_json_path: &Path,
     input_manifest_path: &Path,
     stage_dir: &Path,
     stage_index: &BTreeMap<String, usize>,
     state: &mut PipelineRunState,
-) -> Result<DirectStageRun> {
+) -> Result<NativeStageRun> {
     let dispatch = dispatch_for_stage(stage, raster_stage)?;
     match dispatch {
-        StageDispatch::StagedNative => {
+        StageDispatch::Native => {
             let kind = StageKind::from_stage_spec(&stage.project, &stage.name)?;
-            println!("    staged-infer {} …", kind.routine());
+            println!("    procedure-pipeline {} …", kind.native_stage());
             let cached_inputs = cached_inputs_for_stage(
                 stage,
                 stage_index,
                 &state.output_commitments,
                 &state.output_cache,
             )?;
-            run_staged_infer_stage(
-                staged_backend,
+            run_native_stage(
+                native_stage_backend,
                 current_exe,
                 &kind,
                 &stage.name,
@@ -1162,7 +1162,7 @@ fn run_prepared_stage(
         }
         StageDispatch::RasterReference => {
             let kind = StageKind::from_stage_spec(&stage.project, &stage.name)?;
-            println!("    raster reference {} …", kind.routine());
+            println!("    raster reference {} …", kind.native_stage());
             let duration = run_raster_stage(
                 stage,
                 base_dir,
@@ -1170,10 +1170,10 @@ fn run_prepared_stage(
                 input_manifest_path,
                 stage_dir,
             )?;
-            println!("    staged-infer parity check …");
+            println!("    procedure-pipeline parity check …");
             run_compare_stage(current_exe, stage_dir)?;
             state.selected_stage_dir = Some(stage_dir.to_path_buf());
-            Ok(DirectStageRun {
+            Ok(NativeStageRun {
                 timings: None,
                 duration,
                 output: None,
@@ -1186,7 +1186,7 @@ fn finish_stage(
     idx: usize,
     stage: &StageSpec,
     stage_index: &BTreeMap<String, usize>,
-    stage_run: DirectStageRun,
+    stage_run: NativeStageRun,
     stage_dir: PathBuf,
     recomputed_list_path: &Path,
     state: &mut PipelineRunState,
@@ -1316,7 +1316,7 @@ fn run_aux_wave(
     pipeline_dir: &Path,
     stage_index: &BTreeMap<String, usize>,
     current_exe: &Path,
-    staged_backend: StagedExecutionBackend,
+    native_stage_backend: NativeStageBackend,
     raster_stage: Option<&str>,
     recomputed_list_path: &Path,
     state: &mut PipelineRunState,
@@ -1339,7 +1339,7 @@ fn run_aux_wave(
                     bail!("aux wave cannot contain more than one Raster reference stage");
                 }
             }
-            StageDispatch::StagedNative => jobs.push(prepare_aux_stage_job(
+            StageDispatch::Native => jobs.push(prepare_aux_stage_job(
                 idx,
                 stages,
                 base_dir,
@@ -1358,7 +1358,7 @@ fn run_aux_wave(
             pipeline_dir,
             stage_index,
             current_exe,
-            staged_backend,
+            native_stage_backend,
             raster_stage,
             recomputed_list_path,
             state,
@@ -1368,7 +1368,7 @@ fn run_aux_wave(
         }
     }
 
-    let batch = if staged_backend == StagedExecutionBackend::InProcess {
+    let batch = if native_stage_backend == NativeStageBackend::InProcess {
         if state.workers.is_none() && !jobs.is_empty() {
             state.workers = Some(WorkerPool::new(
                 current_exe,
@@ -1512,7 +1512,7 @@ fn run_persistent_aux_jobs(
             idx: response.id,
             name: response.name.clone(),
             stage_dir,
-            duration: timings.direct_stage_duration,
+            duration: timings.native_stage_duration,
             output,
             performance: Some(StagePerformance {
                 name: response.name,
@@ -1561,7 +1561,7 @@ fn run_aux_stage_jobs(current_exe: &Path, jobs: Vec<AuxStageJob>) -> Result<AuxS
 }
 
 fn run_aux_stage_job(current_exe: &Path, job: AuxStageJob) -> Result<AuxStageResult> {
-    let stage_run = run_staged_infer_stage_subprocess(
+    let stage_run = run_native_stage_subprocess(
         current_exe,
         &job.kind,
         &job.input_json_path,
@@ -1612,8 +1612,7 @@ fn ensure_stage_inputs_ready(
 }
 
 fn aux_parallelism(job_count: usize) -> usize {
-    let requested = std::env::var("STAGED_INFER_AUX_PARALLELISM")
-        .or_else(|_| std::env::var("DIRECT_NATIVE_AUX_PARALLELISM"))
+    let requested = std::env::var("IWEBS_PIPELINE_AUX_PARALLELISM")
         .ok()
         .and_then(|value| value.parse::<usize>().ok());
     let available = std::thread::available_parallelism()
@@ -1792,8 +1791,8 @@ fn run_raster_stage(
     run_timed_command(command, &format!("Raster stage '{}'", stage.name))
 }
 
-fn run_staged_infer_stage(
-    backend: StagedExecutionBackend,
+fn run_native_stage(
+    backend: NativeStageBackend,
     current_exe: &Path,
     kind: &StageKind,
     stage_name: &str,
@@ -1802,9 +1801,9 @@ fn run_staged_infer_stage(
     stage_dir: &Path,
     cached_inputs: &CachedInputs,
     weights: &RunWeights,
-) -> Result<DirectStageRun> {
+) -> Result<NativeStageRun> {
     match backend {
-        StagedExecutionBackend::InProcess => run_staged_infer_stage_in_process(
+        NativeStageBackend::InProcess => run_native_stage_in_process(
             kind,
             stage_name,
             input_json_path,
@@ -1813,7 +1812,7 @@ fn run_staged_infer_stage(
             cached_inputs,
             weights,
         ),
-        StagedExecutionBackend::Subprocess => run_staged_infer_stage_subprocess(
+        NativeStageBackend::Subprocess => run_native_stage_subprocess(
             current_exe,
             kind,
             input_json_path,
@@ -1823,13 +1822,13 @@ fn run_staged_infer_stage(
     }
 }
 
-fn run_staged_infer_stage_subprocess(
+fn run_native_stage_subprocess(
     current_exe: &Path,
     kind: &StageKind,
     input_json_path: &Path,
     input_manifest_path: &Path,
     stage_dir: &Path,
-) -> Result<DirectStageRun> {
+) -> Result<NativeStageRun> {
     let mut command = Command::new(current_exe);
     command
         .arg("--run-stage")
@@ -1842,21 +1841,24 @@ fn run_staged_infer_stage_subprocess(
         .stderr(Stdio::inherit());
     apply_stage_env(&mut command, stage_dir);
 
-    let duration = run_timed_command(command, &format!("staged-infer {} stage", kind.routine()))?;
-    let timing_path = stage_dir.join("staged-timings.json");
+    let duration = run_timed_command(
+        command,
+        &format!("procedure-pipeline {} stage", kind.native_stage()),
+    )?;
+    let timing_path = stage_dir.join("pipeline-timings.json");
     let timings = if timing_path.is_file() {
         Some(serde_json::from_slice(&fs::read(timing_path)?)?)
     } else {
         None
     };
-    Ok(DirectStageRun {
+    Ok(NativeStageRun {
         timings,
         duration,
         output: None,
     })
 }
 
-fn run_staged_infer_stage_in_process(
+fn run_native_stage_in_process(
     kind: &StageKind,
     stage_name: &str,
     input_json_path: &Path,
@@ -1864,11 +1866,11 @@ fn run_staged_infer_stage_in_process(
     stage_dir: &Path,
     cached_inputs: &CachedInputs,
     weights: &RunWeights,
-) -> Result<DirectStageRun> {
+) -> Result<NativeStageRun> {
     let _env = StageEnvGuard::apply(stage_dir);
     let started = Instant::now();
     let caches = weights.caches();
-    let direct = segments::run_and_publish_from_paths_with_caches(
+    let native_run = segments::run_and_publish_from_paths_with_caches(
         kind,
         input_json_path,
         input_manifest_path,
@@ -1877,15 +1879,15 @@ fn run_staged_infer_stage_in_process(
     )?;
     let duration = started.elapsed();
     println!(
-        "staged-infer {stage_name}: output {} structural={} stage={}",
-        direct.artifact.data_path.display(),
-        direct.artifact.commitment,
+        "procedure-pipeline {stage_name}: output {} structural={} stage={}",
+        native_run.artifact.data_path.display(),
+        native_run.artifact.commitment,
         format_duration(duration),
     );
-    Ok(DirectStageRun {
-        timings: Some(direct.timings),
+    Ok(NativeStageRun {
+        timings: Some(native_run.timings),
         duration,
-        output: Some(direct.output),
+        output: Some(native_run.output),
     })
 }
 
@@ -1921,10 +1923,10 @@ fn run_compare_stage(current_exe: &Path, stage_dir: &Path) -> Result<()> {
 
     let status = command
         .status()
-        .context("failed to start staged-infer comparison child")?;
+        .context("failed to start procedure-pipeline comparison child")?;
     if !status.success() {
         bail!(
-            "staged-infer parity check for {} failed ({status})",
+            "procedure-pipeline parity check for {} failed ({status})",
             stage_dir.display()
         );
     }
@@ -2030,7 +2032,7 @@ fn write_execution_times(
     .with_context(|| format!("failed to write {}", path.display()))
 }
 
-fn print_direct_timing_summary(
+fn print_native_timing_summary(
     stages: &[StageSpec],
     execution_times: &[Option<Duration>],
     total_wall_duration: Duration,
@@ -2052,7 +2054,7 @@ fn print_direct_timing_summary(
             duration.map(|duration| sum + duration)
         })?;
 
-    println!("staged-infer timing:");
+    println!("procedure-pipeline timing:");
     println!(
         "  elapsed wall time: {}",
         format_duration(total_wall_duration)
@@ -2065,7 +2067,10 @@ fn print_direct_timing_summary(
 }
 
 fn create_pipeline_dir(base_dir: &Path) -> Result<PathBuf> {
-    let root = base_dir.join("target").join("staged-infer").join("runs");
+    let root = base_dir
+        .join("target")
+        .join("procedure-pipeline")
+        .join("runs");
     fs::create_dir_all(&root).with_context(|| format!("failed to create {}", root.display()))?;
     let pipeline_dir = root.join(pipeline_run_id());
     fs::create_dir_all(&pipeline_dir)
@@ -2208,7 +2213,7 @@ mod tests {
     fn test_base_dir() -> PathBuf {
         let id = NEXT_TEMP_DIR.fetch_add(1, Ordering::Relaxed);
         std::env::temp_dir().join(format!(
-            "staged-infer-pipeline-runner-test-{}-{id}",
+            "procedure-pipeline-pipeline-runner-test-{}-{id}",
             std::process::id()
         ))
     }
@@ -2228,18 +2233,18 @@ mod tests {
     #[test]
     fn fixture_dispatches_one_reference_and_remaining_stages_native() {
         let manifest = fixture_manifest();
-        let mut direct = 0usize;
+        let mut native_run = 0usize;
         let mut reference = 0usize;
 
         for stage in &manifest.pipeline.stage {
             match dispatch_for_stage(stage, Some("range_p1_l2")).unwrap() {
-                StageDispatch::StagedNative => direct += 1,
+                StageDispatch::Native => native_run += 1,
                 StageDispatch::RasterReference => reference += 1,
             }
         }
 
         assert_eq!(manifest.pipeline.stage.len(), 42);
-        assert_eq!(direct, 41);
+        assert_eq!(native_run, 41);
         assert_eq!(reference, 1);
     }
 
@@ -2301,7 +2306,7 @@ mod tests {
         for stage in &manifest.pipeline.stage {
             assert!(matches!(
                 dispatch_for_stage(stage, None).unwrap(),
-                StageDispatch::StagedNative
+                StageDispatch::Native
             ));
         }
     }
@@ -2578,17 +2583,17 @@ inputs.edge = { from = "claimed.edge" }
             .position(is_prefill_prepare_aux_stage)
             .unwrap();
         let range = aux_wave_range(&manifest.pipeline.stage, first).unwrap();
-        let mut direct = 0usize;
+        let mut native_run = 0usize;
         let mut reference = Vec::new();
 
         for stage in &manifest.pipeline.stage[range] {
             match dispatch_for_stage(stage, Some("aux_p1_l0")).unwrap() {
-                StageDispatch::StagedNative => direct += 1,
+                StageDispatch::Native => native_run += 1,
                 StageDispatch::RasterReference => reference.push(stage.name.as_str()),
             }
         }
 
-        assert_eq!(direct, 3);
+        assert_eq!(native_run, 3);
         assert_eq!(reference, ["aux_p1_l0"]);
     }
 

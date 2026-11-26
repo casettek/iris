@@ -1,4 +1,4 @@
-//! Selective PLE loading for the staged host only. Raster remains the oracle.
+//! Selective PLE loading for the pipeline host only. Raster remains the oracle.
 use std::{collections::BTreeMap, sync::Arc};
 
 use crate::segments::inference::verified_weights::{fields, VerifiedSelections};
@@ -18,7 +18,7 @@ use rayon::prelude::*;
 
 use crate::cache::{MaterializationCache, MaterializationCacheKey};
 
-pub(crate) const LOADING_ENV: &str = "STAGED_INFER_PLE_LOADING";
+pub(crate) const LOADING_ENV: &str = "IWEBS_PIPELINE_PLE_LOADING";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Loading {

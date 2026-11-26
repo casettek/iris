@@ -1,7 +1,7 @@
 //! Standalone stage profiling, using the same Raster v4 report helpers as challenges.
 use anyhow::{ensure, Result};
 use procedure_definition::write_json;
-use procedure_pipeline::pipeline_runner::StagedExecutionBackend;
+use procedure_pipeline::pipeline_runner::NativeStageBackend;
 use procedure_pipeline::{
     CheckpointedInferenceConfig, CheckpointedInferenceExecutor, ParityPolicy,
 };
@@ -27,9 +27,9 @@ pub fn run_replay_profile(options: ReplayProfileOptions) -> Result<PathBuf> {
         specification_path: options.specification_path,
         case_path: Some(options.case_path),
         current_exe: options.current_exe.clone(),
-        staged_backend: StagedExecutionBackend::InProcess,
+        native_stage_backend: NativeStageBackend::InProcess,
         claimed_token_ids: None,
-        direct_output_ids: None,
+        native_output_ids: None,
         claimer: None,
     })?;
     let prefix = CheckpointedInferenceExecutor.run_through_stage(
@@ -37,7 +37,7 @@ pub fn run_replay_profile(options: ReplayProfileOptions) -> Result<PathBuf> {
             base_dir: options.base_dir,
             manifest_path: prepared.manifest_path,
             current_exe: options.current_exe,
-            staged_backend: StagedExecutionBackend::InProcess,
+            native_stage_backend: NativeStageBackend::InProcess,
             parity_policy: ParityPolicy::Skip,
         },
         &options.stage,

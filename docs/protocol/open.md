@@ -96,7 +96,7 @@ decided. The last is what Raster would have to change.
   takes to prove is not measured.
 - **`iris fault prove` and the contract ask slightly different things.**
   `fault prove` holds its proof to the checkpoint of the claim bundle it is
-  given, which in a staged dispute is the honest claim's, while the challenge
+  given, which in a pipeline dispute is the honest claim's, while the challenge
   on chain is of the lying claim's checkpoint. The two have the same program
   and inputs, which is all a fault proof names, so the proof serves both.
   `fault prove` also does not ask which authorization program the journal

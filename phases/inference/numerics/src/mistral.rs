@@ -6,7 +6,7 @@
 //! rotation frequencies, which an import computes once.
 //!
 //! They are here, and not beside the family's native layer, so that the
-//! family's stage program compiles the code direct inference runs.
+//! family's stage program compiles the code the native run runs.
 
 use alloc::vec::Vec;
 

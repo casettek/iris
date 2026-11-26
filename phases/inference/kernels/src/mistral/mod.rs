@@ -1,6 +1,6 @@
 //! `mistral-dense`: the family's native layer.
 //!
-//! Direct inference runs `layer`. `stage` is the `layer-mistral` stage
+//! The native run runs `layer`. `stage` is the `layer-mistral` stage
 //! program's native twin, built on it. The family's integer functions are
 //! `inference-numerics`'s `mistral` module, which the stage's tiles compile too.
 

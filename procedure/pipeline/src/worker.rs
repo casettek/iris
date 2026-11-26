@@ -2,7 +2,7 @@
 use crate::cache::CachedInputs;
 use crate::pipeline_runner::StageEnvGuard;
 use crate::segments::inference::weights::RunWeights;
-use crate::segments::{self, DirectTimings, StageKind};
+use crate::segments::{self, NativeTimings, StageKind};
 use anyhow::{bail, Context, Result};
 use inference_kernels::weight_budget::WeightCacheStats;
 use serde::{Deserialize, Serialize};
@@ -35,7 +35,7 @@ pub(crate) struct WorkerResponse {
     version: u32,
     pub id: usize,
     pub name: String,
-    pub timings: Option<DirectTimings>,
+    pub timings: Option<NativeTimings>,
     pub cache: WeightCacheStats,
     pub error: Option<String>,
 }
@@ -108,7 +108,7 @@ pub fn run_worker(budget_bytes: usize) -> Result<()> {
     Ok(())
 }
 
-fn execute_job(job: &WorkerJob, weights: &RunWeights) -> Result<DirectTimings> {
+fn execute_job(job: &WorkerJob, weights: &RunWeights) -> Result<NativeTimings> {
     if job.kind.auxiliary_layer().is_none() {
         bail!("worker accepts only auxiliary stages");
     }

@@ -5,7 +5,7 @@
 //! hashes the text the recipe makes of them. The first `prompt-bind` holds
 //! the text the run gives to this stage's record.
 //!
-//! The logic is in `input`, shared with direct inference and the native
+//! The logic is in `input`, shared with the native run and the native
 //! stage. A tile calls it, so it is inside the tile's image id.
 //!
 //! Nothing a run gives can stop a tile: a document, attestation or recipe that

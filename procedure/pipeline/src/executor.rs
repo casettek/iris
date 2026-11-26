@@ -5,7 +5,7 @@ use anyhow::{bail, Context, Result};
 use procedure_definition::{CheckpointList, ConsensusOutcome, Divergence, InferenceResult};
 
 use crate::cache::CachedStageValue;
-use crate::pipeline_runner::{self, CheckpointHashVerifier, StagedExecutionBackend};
+use crate::pipeline_runner::{self, CheckpointHashVerifier, NativeStageBackend};
 use crate::uncheckpointed::inference_result_from_generated;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -19,7 +19,7 @@ pub struct CheckpointedInferenceConfig {
     pub base_dir: PathBuf,
     pub manifest_path: PathBuf,
     pub current_exe: PathBuf,
-    pub staged_backend: StagedExecutionBackend,
+    pub native_stage_backend: NativeStageBackend,
     pub parity_policy: ParityPolicy,
 }
 
@@ -40,7 +40,7 @@ pub struct CheckpointHashChallengeConfig {
     pub base_dir: PathBuf,
     pub manifest_path: PathBuf,
     pub current_exe: PathBuf,
-    pub staged_backend: StagedExecutionBackend,
+    pub native_stage_backend: NativeStageBackend,
     pub claimed_hashes_path: PathBuf,
     pub claimed_hashes: Vec<String>,
     /// The producers each of the claim's checkpoints points at, for a run of
@@ -82,7 +82,7 @@ impl CheckpointedInferenceExecutor {
             &config.manifest_path,
             stage,
             &config.current_exe,
-            config.staged_backend,
+            config.native_stage_backend,
         )
     }
 
@@ -97,7 +97,7 @@ impl CheckpointedInferenceExecutor {
             &config.manifest_path,
             raster_stage,
             &config.current_exe,
-            config.staged_backend,
+            config.native_stage_backend,
         )?;
         let (results, consensus) = results(run.final_checks, run.final_output, &run.final_reads);
         Ok(CheckpointedInferenceResult {
@@ -117,7 +117,7 @@ impl CheckpointedInferenceExecutor {
         let verified = pipeline_runner::run_until_hash_divergence(
             &config.manifest_path,
             &config.current_exe,
-            config.staged_backend,
+            config.native_stage_backend,
             CheckpointHashVerifier {
                 claimed_hashes_path: config.claimed_hashes_path,
                 claimed_hashes: config.claimed_hashes,
@@ -235,14 +235,14 @@ impl Drop for CurrentDirGuard {
 impl CheckpointedInferenceConfig {
     pub fn from_current_dir(
         current_exe: PathBuf,
-        staged_backend: StagedExecutionBackend,
+        native_stage_backend: NativeStageBackend,
     ) -> Result<Self> {
         let base_dir = std::env::current_dir().context("failed to read current directory")?;
         Ok(Self {
             manifest_path: base_dir.join("Raster.toml"),
             base_dir,
             current_exe,
-            staged_backend,
+            native_stage_backend,
             parity_policy: ParityPolicy::Skip,
         })
     }
@@ -252,10 +252,10 @@ impl CheckpointedInferenceConfig {
         self
     }
 
-    pub fn with_current_exe_from_env(staged_backend: StagedExecutionBackend) -> Result<Self> {
+    pub fn with_current_exe_from_env(native_stage_backend: NativeStageBackend) -> Result<Self> {
         Self::from_current_dir(
             std::env::current_exe().context("failed to locate current executable")?,
-            staged_backend,
+            native_stage_backend,
         )
     }
 }
@@ -269,7 +269,7 @@ mod tests {
         let cwd = std::env::current_dir().unwrap();
         let config = CheckpointedInferenceConfig::from_current_dir(
             PathBuf::from("bin"),
-            StagedExecutionBackend::InProcess,
+            NativeStageBackend::InProcess,
         )
         .unwrap();
 
@@ -280,8 +280,10 @@ mod tests {
 
     #[test]
     fn manifest_path_must_exist_inside_base_dir() {
-        let base =
-            std::env::temp_dir().join(format!("staged-infer-manifest-path-{}", std::process::id()));
+        let base = std::env::temp_dir().join(format!(
+            "procedure-pipeline-manifest-path-{}",
+            std::process::id()
+        ));
         std::fs::create_dir_all(base.join("target/run")).unwrap();
         let manifest = base.join("target/run/Raster.toml");
         std::fs::write(&manifest, "[pipeline]\nname = \"test\"\n").unwrap();

@@ -317,7 +317,7 @@ fn read_stage_program(stage_dir: &Path) -> Result<StageProgramDocument> {
 
 /// Read the run's recorded order independently of optional timing reports.
 /// Current Raster writes an ordered pipeline commitment even in no-auth mode;
-/// staged-native and older Raster runs record their order in execution times.
+/// pipeline-native and older Raster runs record their order in execution times.
 /// A malformed commitment is an error, never a reason to use another inventory.
 pub fn read_stage_order(pipeline_dir: &Path) -> Result<Option<Vec<String>>> {
     let commitment_path = pipeline_dir.join("pipeline-commitment");

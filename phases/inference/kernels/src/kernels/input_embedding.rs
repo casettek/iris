@@ -6,13 +6,13 @@ use input_embedding::input::{
 };
 use raster::List;
 
-pub struct InputEmbeddingDirectInputs<'a> {
+pub struct InputEmbeddingNativeInputs<'a> {
     pub prompt: &'a PromptTokenization,
     pub embedding: &'a EmbeddingTable,
 }
 
-pub fn run_input_embedding_direct(
-    inputs: InputEmbeddingDirectInputs<'_>,
+pub fn run_input_embedding_native(
+    inputs: InputEmbeddingNativeInputs<'_>,
 ) -> Result<ActivationSequence> {
     let hidden_size = inputs.embedding.hidden_size;
     if hidden_size == 0 {

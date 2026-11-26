@@ -5,7 +5,7 @@
 //! the claim record it was given, so a reader can tell which claim the code
 //! belongs to.
 //!
-//! Plain functions over a small state, one per step a stage takes, so direct
+//! Plain functions over a small state, one per step a stage takes, so native
 //! inference, the native stage and the tiles run one copy. This file stands
 //! alone: the result stage compiles it without the source step's.
 //!

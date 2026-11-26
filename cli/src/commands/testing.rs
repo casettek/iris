@@ -175,8 +175,8 @@ pub(crate) fn run(command: TestCommand) -> Result<ExitCode> {
             let specification_path = build.specification.clone();
             let mut options = build.into_options()?;
             anyhow::ensure!(
-                options.direct_output_ids.is_none(),
-                "give the ids to claim with --ids alone: --direct-output-ids names the model's \
+                options.native_output_ids.is_none(),
+                "give the ids to claim with --ids alone: --native-output-ids names the model's \
                  own output"
             );
             options.claimed_token_ids = Some(ids);

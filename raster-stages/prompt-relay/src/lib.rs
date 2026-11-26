@@ -7,7 +7,7 @@
 //! inference holds the text the run gives it to this stage's record, as it
 //! holds a run's text to the `prompt-source` record.
 //!
-//! The logic is in `relay`, shared with direct inference and the native
+//! The logic is in `relay`, shared with the native run and the native
 //! stage. A tile calls it, so it is inside the tile's image id.
 //!
 //! Nothing a run gives can stop a tile: an earlier inference whose record is

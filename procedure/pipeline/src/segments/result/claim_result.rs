@@ -29,7 +29,7 @@ pub fn load_inputs_from_paths_with_cache(
 }
 
 /// The stage's steps, in its order, over the same functions its tiles call.
-pub fn run_direct(inputs: &Inputs) -> Result<ResultRecord> {
+pub fn run_native(inputs: &Inputs) -> Result<ResultRecord> {
     let claim = &inputs.check.claim;
     Ok(close_result(
         run_forms(
@@ -65,7 +65,7 @@ impl crate::segments::NativeStage for Stage {
     type Inputs = Inputs;
     type Output = ResultRecord;
     const PROJECT: &'static str = "claim-result";
-    const ROUTINE: &'static str = "claim_result";
+    const NAME: &'static str = "claim_result";
 
     fn load_from_args() -> Result<Inputs> {
         load_inputs_from_args()
@@ -84,7 +84,7 @@ impl crate::segments::NativeStage for Stage {
         inputs: &Inputs,
         _caches: crate::segments::NativeStageCaches<'_>,
     ) -> Result<ResultRecord> {
-        run_direct(inputs)
+        run_native(inputs)
     }
 
     fn cached(output: ResultRecord) -> crate::cache::CachedStageValue {
@@ -142,7 +142,7 @@ mod tests {
             ]
             .into(),
         };
-        let record = run_direct(&Inputs { check: read, forms }).unwrap();
+        let record = run_native(&Inputs { check: read, forms }).unwrap();
         assert_eq!(record.code, 1);
         assert!(record.valid);
         assert_eq!(record.statement.as_slice(), &[0x5a; 32]);

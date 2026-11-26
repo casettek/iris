@@ -726,8 +726,8 @@ impl Shape {
     pub(super) fn manifest_shape(
         &self,
         text_config: &serde_json::Value,
-    ) -> inference_manifest::DirectInferShape {
-        inference_manifest::DirectInferShape {
+    ) -> inference_manifest::NativeInferShape {
+        inference_manifest::NativeInferShape {
             hidden_size: self.hidden as u32,
             num_hidden_layers: self.layers as u32,
             num_attention_heads: self.heads as u32,

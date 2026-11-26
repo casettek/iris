@@ -1,4 +1,4 @@
-//! Direct inference, `iris infer`, and how a result is printed.
+//! The native run, `iris infer`, and how a result is printed.
 
 use crate::*;
 
@@ -271,8 +271,8 @@ pub(crate) fn print_infer_timing_summary(timings: &procedure_pipeline::Inference
 pub(crate) fn render_infer_timing_summary(
     timings: &procedure_pipeline::InferenceTimings,
 ) -> String {
-    if is_direct_infer_timing(timings) {
-        return render_direct_infer_timing_summary(timings);
+    if is_native_run_timing(timings) {
+        return render_native_run_timing_summary(timings);
     }
 
     let mut out = String::new();
@@ -326,15 +326,15 @@ pub(crate) fn render_infer_timing_summary(
     out
 }
 
-pub(crate) fn is_direct_infer_timing(timings: &procedure_pipeline::InferenceTimings) -> bool {
+pub(crate) fn is_native_run_timing(timings: &procedure_pipeline::InferenceTimings) -> bool {
     !timings.stages.is_empty()
         && timings
             .stages
             .iter()
-            .all(|stage| stage.routine == "direct-infer")
+            .all(|stage| stage.native_stage == "native-run")
 }
 
-pub(crate) fn render_direct_infer_timing_summary(
+pub(crate) fn render_native_run_timing_summary(
     timings: &procedure_pipeline::InferenceTimings,
 ) -> String {
     let named = |name: &str| {
@@ -345,7 +345,7 @@ pub(crate) fn render_direct_infer_timing_summary(
             .map(|stage| stage.total_duration)
             .unwrap_or_default()
     };
-    let accounted = named("load_direct_model")
+    let accounted = named("load_native_model")
         + named("prompt_prepare")
         + named("input_embedding")
         + named("prefill")
@@ -358,7 +358,7 @@ pub(crate) fn render_direct_infer_timing_summary(
         .count();
 
     let mut out = String::new();
-    out.push_str("direct-infer timing:\n");
+    out.push_str("native-run timing:\n");
     out.push_str(&format!(
         "  total: {}\n",
         format_duration(timings.total_duration)
@@ -366,7 +366,7 @@ pub(crate) fn render_direct_infer_timing_summary(
     out.push_str(&format!("  phase records: {kernel_records}\n"));
     out.push_str(&format!(
         "  model load: {}\n",
-        format_duration(named("load_direct_model"))
+        format_duration(named("load_native_model"))
     ));
     out.push_str(&format!(
         "  prompt prepare: {}\n",
@@ -404,9 +404,9 @@ pub(crate) fn format_duration(duration: std::time::Duration) -> String {
     }
 }
 
-/// What a direct run found: the procedure kind, the source, and each
+/// What a native run found: the procedure kind, the source, and each
 /// inference's result and timings.
-pub(crate) fn print_direct_run(
+pub(crate) fn print_native_run(
     run: &procedure_native::InferRun,
     specification_path: &Path,
     case_path: &Path,
@@ -466,7 +466,7 @@ pub(crate) fn print_direct_run(
 pub(crate) fn run(args: InferArgs) -> Result<ExitCode> {
     warn_if_debug_build("infer");
     let run = run_infer(args.specification.clone(), args.case.clone())?;
-    print_direct_run(&run, &args.specification, &args.case)?;
+    print_native_run(&run, &args.specification, &args.case)?;
     Ok(ExitCode::SUCCESS)
 }
 
@@ -475,25 +475,25 @@ mod tests {
     use super::*;
 
     #[test]
-    fn direct_infer_timing_summary_uses_phase_language() {
+    fn native_run_timing_summary_uses_phase_language() {
         let timings = procedure_pipeline::InferenceTimings {
             total_duration: std::time::Duration::from_millis(10),
             stages: vec![
-                direct_timing("load_direct_model", 1),
-                direct_timing("prompt_prepare", 1),
-                direct_timing("input_embedding", 1),
-                direct_timing("prefill_layer", 3),
-                direct_timing("prefill", 3),
-                direct_timing("decode_layer", 2),
-                direct_timing("decode", 2),
-                direct_timing("output_finalize", 1),
+                native_timing("load_native_model", 1),
+                native_timing("prompt_prepare", 1),
+                native_timing("input_embedding", 1),
+                native_timing("prefill_layer", 3),
+                native_timing("prefill", 3),
+                native_timing("decode_layer", 2),
+                native_timing("decode", 2),
+                native_timing("output_finalize", 1),
             ],
             aux_waves: Vec::new(),
         };
 
         let summary = render_infer_timing_summary(&timings);
 
-        assert!(summary.contains("direct-infer timing:"));
+        assert!(summary.contains("native-run timing:"));
         assert!(summary.contains("model load: 1ms"));
         assert!(summary.contains("phase records: 6"));
         assert!(summary.contains("accounted phase time: 9ms"));
@@ -535,11 +535,11 @@ mod tests {
         assert!(trace.contains(r#"5: id=3 token="late" kind=after_stop rendered=<skipped>"#));
     }
 
-    fn direct_timing(stage: &str, millis: u64) -> procedure_pipeline::InferStageTiming {
+    fn native_timing(stage: &str, millis: u64) -> procedure_pipeline::InferStageTiming {
         let duration = std::time::Duration::from_millis(millis);
         procedure_pipeline::InferStageTiming {
             stage: stage.to_string(),
-            routine: String::from("direct-infer"),
+            native_stage: String::from("native-run"),
             input_synthesis_duration: std::time::Duration::ZERO,
             input_load_duration: std::time::Duration::ZERO,
             kernel_duration: duration,

@@ -16,7 +16,7 @@ just challenge \
 Flow:
 
 1. Load the claimed `checkpoints.txt` and use `claim_bundle.json` only as today's local carrier for `prepared_run.json`.
-2. Verify the frozen run manifest's hash, then prepare the challenger's own run: the claim's prompt, `raw_prompt`, `max_new_tokens` and claimed ids, on the models `--specification` (default: `specification.toml`) names. Run the checkpointed staged executor on that manifest. The prompt and token count are the claim's, whatever the challenger's specification and any case beside it say.
+2. Verify the frozen run manifest's hash, then prepare the challenger's own run: the claim's prompt, `raw_prompt`, `max_new_tokens` and claimed ids, on the models `--specification` (default: `specification.toml`) names. Run the checkpointed pipeline executor on that manifest. The prompt and token count are the claim's, whatever the challenger's specification and any case beside it say.
 3. After each recomputed checkpoint, hash the verifier's local checkpoint record and compare it to the claimed hash at the same index.
 4. If no divergence exists, report the claimed and recomputed traces.
 5. If a divergence exists, seed a replay directory with all prior recomputed stages.
@@ -112,9 +112,9 @@ The specification is the challenger's own, and `challenge build --submission`
 reads the case from beside the submission.
 `challenge build --submission` runs every stage on the inputs the claim's
 checkpoint names for it, each of which the claim posted, the procedure
-pins or an earlier stage made. It tokenizes nothing and runs no direct
+pins or an earlier stage made. It tokenizes nothing and runs no native
 inference: the stages check the marks and the claimed ids they are given,
-and `--direct-output-ids` is not used. It writes the pipeline the checkpoints
+and `--native-output-ids` is not used. It writes the pipeline the checkpoints
 describe as `claim_arranged.toml` beside the run's manifest and prints a
 line for each input the claim gives a stage otherwise than the pipeline does
 (`checkpoint 61 (range_p1_l2) gives layer another value than the pipeline

@@ -15,7 +15,7 @@ pub use executor::{
     CheckpointedInferenceExecutor, CheckpointedInferenceResult, ParityPolicy,
 };
 pub use inference_kernels::{kernels, prefill_range, tensor};
-pub use kernels::prefill_range::{run_prefill_range_direct, PrefillRangeDirectInputs};
+pub use kernels::prefill_range::{run_prefill_range_native, PrefillRangeNativeInputs};
 pub use procedure_definition::{
     InferAuxWaveTiming, InferStageTiming, InferenceResult, InferenceRunReport, InferenceTimings,
 };

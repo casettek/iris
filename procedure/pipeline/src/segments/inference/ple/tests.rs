@@ -1,7 +1,7 @@
 use super::*;
 use crate::{artifact_io::with_stage_sequence_scope, cache::materialization_key_from_stage_files};
 use inference_kernels::{
-    kernels::prefill_prepare_aux::{run_prefill_prepare_aux_direct, PrefillPrepareAuxDirectInputs},
+    kernels::prefill_prepare_aux::{run_prefill_prepare_aux_native, PrefillPrepareAuxNativeInputs},
     weight_budget::WeightBudget,
 };
 use prefill_prepare_aux::input::{ActivationRow, PleLayer};
@@ -159,7 +159,7 @@ impl Fixture {
     }
 
     fn assert_parity(&self, selected: &SelectedWeights) {
-        let eager = run_prefill_prepare_aux_direct(PrefillPrepareAuxDirectInputs {
+        let eager = run_prefill_prepare_aux_native(PrefillPrepareAuxNativeInputs {
             embedded: &self.embedded,
             layer: &self.layer,
         })
@@ -272,7 +272,7 @@ fn cross_page_rows_and_projection_geometry_fail() {
     f.write(false);
     assert!(f.load(None).is_err());
     assert!(
-        run_prefill_prepare_aux_direct(PrefillPrepareAuxDirectInputs {
+        run_prefill_prepare_aux_native(PrefillPrepareAuxNativeInputs {
             embedded: &f.embedded,
             layer: &f.layer
         })
@@ -395,8 +395,8 @@ fn postcard_inputs_keep_eager_compatibility() {
         &crate::cache::CachedInputs::new(),
     )
     .unwrap();
-    let actual = crate::segments::prefill_prepare_aux::run_direct(&inputs).unwrap();
-    let eager = run_prefill_prepare_aux_direct(PrefillPrepareAuxDirectInputs {
+    let actual = crate::segments::prefill_prepare_aux::run_native(&inputs).unwrap();
+    let eager = run_prefill_prepare_aux_native(PrefillPrepareAuxNativeInputs {
         embedded: &f.embedded,
         layer: &f.layer,
     })
@@ -414,10 +414,11 @@ fn loading_mode_rejects_unknown_values() {
 }
 
 #[test]
-#[ignore = "requires actual Raster stage binaries in STAGED_INFER_REPLAY_BIN_DIR"]
+#[ignore = "requires actual Raster stage binaries in IWEBS_PIPELINE_REPLAY_BIN_DIR"]
 fn multi_page_matches_authenticated_raster_stage() {
     let bin = PathBuf::from(
-        std::env::var_os("STAGED_INFER_REPLAY_BIN_DIR").expect("build Raster stage binaries first"),
+        std::env::var_os("IWEBS_PIPELINE_REPLAY_BIN_DIR")
+            .expect("build Raster stage binaries first"),
     );
     let mut f = Fixture::new(4, 32);
     for boundary_values in [false, true] {
@@ -488,7 +489,7 @@ fn selective_loading_benchmark() {
             let layer = raster::materialize_auth_return(
                 raster::entry_argument_auth_ref::<PleLayer>(binding.reference, "layer"),
             );
-            let output = run_prefill_prepare_aux_direct(PrefillPrepareAuxDirectInputs {
+            let output = run_prefill_prepare_aux_native(PrefillPrepareAuxNativeInputs {
                 embedded: &f.embedded,
                 layer: &layer,
             })?;
@@ -555,7 +556,7 @@ fn auxiliary_sparse_witness_is_rechecked_after_cache_hit() {
             Some(&cache),
         )
         .unwrap();
-        crate::segments::prefill_prepare_aux::run_direct(&inputs).unwrap()
+        crate::segments::prefill_prepare_aux::run_native(&inputs).unwrap()
     };
     assert_eq!(run().model.fault, 0);
     let mut witness =

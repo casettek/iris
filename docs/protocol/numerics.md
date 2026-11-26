@@ -1,7 +1,7 @@
 # Numerics
 
 Inference is integer arithmetic with every rounding and overflow rule fixed,
-so direct inference, the native staged pass, and Raster's RISC Zero replay
+so the native run, the pipeline run on native stages, and Raster's RISC Zero replay
 produce bit-identical results. Floating point appears only once, when a model
 is converted into a bundle; everything committed after that is integers.
 
@@ -39,7 +39,7 @@ Norms, softmax, RoPE and GELU are `inference_numerics`'s fixed-point routines.
 
 ## `Q8_0` products on a GPU
 
-Built with the `gpu-kernels` feature, native-direct and native-staged run the
+Built with the `gpu-kernels` feature, native-run and pipeline-native run the
 transformer layer's `Q8_0` matrix products on an NVIDIA GPU
 (`phases/inference/kernels/cuda/q8_product.cu`). The kernel computes the same
 integers as `inference_numerics::q8::dot_row`, with no floating point:

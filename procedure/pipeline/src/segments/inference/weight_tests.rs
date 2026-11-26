@@ -117,11 +117,11 @@ impl Fixture {
             &CachedInputs::new(),
             cache,
         )?;
-        segments::input_embedding::run_direct(&inputs)
+        segments::input_embedding::run_native(&inputs)
     }
     fn compare_raster<T: Serialize>(&self, binary: &str, output: &T, label: &str) {
         let bin = PathBuf::from(
-            std::env::var_os("STAGED_INFER_REPLAY_BIN_DIR").expect("build Raster binaries first"),
+            std::env::var_os("IWEBS_PIPELINE_REPLAY_BIN_DIR").expect("build Raster binaries first"),
         );
         let dest = self.dir.join(label);
         fs::create_dir_all(&dest).unwrap();
@@ -220,8 +220,8 @@ fn eager_prompt(
     table: &EmbeddingTable,
     prompt: &PromptTokenization,
 ) -> input_embedding::input::ActivationSequence {
-    inference_kernels::kernels::input_embedding::run_input_embedding_direct(
-        inference_kernels::kernels::input_embedding::InputEmbeddingDirectInputs {
+    inference_kernels::kernels::input_embedding::run_input_embedding_native(
+        inference_kernels::kernels::input_embedding::InputEmbeddingNativeInputs {
             prompt,
             embedding: table,
         },
@@ -405,7 +405,7 @@ fn embedding_multi_page_authenticated_raster_parity() {
         &common_identity::sparse::witness(zero.values.pages.as_slice()).unwrap(),
     );
     assert!(f.prompt(None).is_err());
-    let bin = PathBuf::from(std::env::var_os("STAGED_INFER_REPLAY_BIN_DIR").unwrap());
+    let bin = PathBuf::from(std::env::var_os("IWEBS_PIPELINE_REPLAY_BIN_DIR").unwrap());
     let dest = f.dir.join("zero-width-raster");
     fs::create_dir(&dest).unwrap();
     let result = std::process::Command::new(bin.join("input-embedding"))
@@ -583,7 +583,7 @@ impl Fixture {
             &CachedInputs::new(),
             cache,
         )?;
-        let mut edge = segments::sequence_check::run_direct(&inputs)?;
+        let mut edge = segments::sequence_check::run_native(&inputs)?;
         edge.record = Default::default();
         edge.claim = Default::default();
         Ok(edge)
@@ -597,12 +597,12 @@ impl Fixture {
             &CachedInputs::new(),
             None,
         )?;
-        segments::sequence_check::run_direct(&inputs)
+        segments::sequence_check::run_native(&inputs)
     }
 }
 fn eager_check(head: &FinalHead, activations: &ActivationSequence) -> DecodeEdge {
-    inference_kernels::kernels::sequence_check::run_sequence_check_direct(
-        inference_kernels::kernels::sequence_check::SequenceCheckDirectInputs {
+    inference_kernels::kernels::sequence_check::run_sequence_check_native(
+        inference_kernels::kernels::sequence_check::SequenceCheckNativeInputs {
             activations,
             previous: &head_previous(head.params.hidden_size),
             prior: &DecodeEdge::default(),
@@ -858,7 +858,7 @@ fn head_multi_page_authenticated_raster_parity() {
     ]);
     f.write("activations", &activations);
     assert!(f.check(None).is_err());
-    let bin = PathBuf::from(std::env::var_os("STAGED_INFER_REPLAY_BIN_DIR").unwrap());
+    let bin = PathBuf::from(std::env::var_os("IWEBS_PIPELINE_REPLAY_BIN_DIR").unwrap());
     let dest = f.dir.join("raster-rejects-split-rows");
     fs::create_dir(&dest).unwrap();
     let rejected = std::process::Command::new(
@@ -988,7 +988,7 @@ fn forged_index_list_lengths_cannot_skip_committed_pages() {
 impl Fixture {
     fn standalone(&self, stage: &str, label: &str) -> (std::process::Output, PathBuf) {
         let bin = PathBuf::from(
-            std::env::var_os("STAGED_INFER_REPLAY_BIN_DIR").expect("build staged binary first"),
+            std::env::var_os("IWEBS_PIPELINE_REPLAY_BIN_DIR").expect("build pipeline binary first"),
         );
         let dest = self
             .dir
@@ -1015,9 +1015,10 @@ impl Fixture {
             dest.join("input_manifest.json"),
         )
         .unwrap();
-        let output = std::process::Command::new(
-            bin.join(format!("staged-infer{}", std::env::consts::EXE_SUFFIX)),
-        )
+        let output = std::process::Command::new(bin.join(format!(
+            "procedure-pipeline{}",
+            std::env::consts::EXE_SUFFIX
+        )))
         .current_dir(&self.dir)
         .arg("--run-stage")
         .arg(&dest)
@@ -1034,7 +1035,7 @@ impl Fixture {
 }
 
 #[test]
-#[ignore = "requires built staged-infer binary"]
+#[ignore = "requires built procedure-pipeline binary"]
 fn standalone_publishes_exact_outputs_and_rejects_corruption_before_publication() {
     let (f, _, _) = prompt_fixture(4, 32);
     let expected = f.prompt(None).unwrap();
@@ -1123,7 +1124,7 @@ fn sparse_embedding_checks_current_proofs_with_warm_cache() {
     let check = |label: &str, clean: bool| {
         let output = run();
         assert_eq!(output.model.fault == 0, clean, "{label}");
-        if std::env::var_os("STAGED_INFER_REPLAY_BIN_DIR").is_some() {
+        if std::env::var_os("IWEBS_PIPELINE_REPLAY_BIN_DIR").is_some() {
             f.compare_raster("input-embedding", &output, label);
         }
     };
@@ -1283,7 +1284,7 @@ fn sparse_merge_fault_survives_later_matches_and_cached_tokenizer() {
             Some(&cache),
         )
         .unwrap();
-        segments::prompt_check::run_direct(&inputs).unwrap()
+        segments::prompt_check::run_native(&inputs).unwrap()
     };
     let honest = run();
     assert_eq!(honest.context.model.fault, 0);
@@ -1297,7 +1298,7 @@ fn sparse_merge_fault_survives_later_matches_and_cached_tokenizer() {
     let output = run();
     assert_eq!(output.token_ids.as_slice(), &[2]);
     assert_ne!(output.context.model.fault, 0);
-    if std::env::var_os("STAGED_INFER_REPLAY_BIN_DIR").is_some() {
+    if std::env::var_os("IWEBS_PIPELINE_REPLAY_BIN_DIR").is_some() {
         f.compare_raster("prompt-check", &output, "merge-sticky-fault");
     }
     f.write("witness", &witness);

@@ -10,7 +10,7 @@ widened to the same canonical 32-bit values, preserving artifact bytes and
 commitments. Raster serialization
 still needs memory for the current external and its encoding buffers; this is
 not a constant-memory streaming serializer. Keep the bundle unchanged during
-import, as with direct inference's memory-mapped reader.
+import, as with the native run's memory-mapped reader.
 
 ```bash
 cargo run --release -p iris-cli -- model import \
@@ -25,7 +25,7 @@ Inputs:
 - `config.json`: model shape, attention/window settings, softcap, and normalization parameters.
 - `tokenizer.json`: vocabulary, merges, added tokens, and EOS metadata.
 
-A `mistral-dense` bundle (Ministral 3) imports with `--only-direct` and nothing else: the
+A `mistral-dense` bundle (Ministral 3) imports with `--only-native` and nothing else: the
 family has no stage programs yet, so a full import is refused. Convert its GGUF first, with
 `--metadata` naming a directory that holds Mistral's own `config.json` and `tokenizer.json`.
 
@@ -82,7 +82,7 @@ Legacy frozen prepared runs are rejected.
 
 Useful partial modes:
 
-- `--only-direct`: refresh only `runtime/model-artifacts/<model-id>/manifest.json` for direct inference. This clears template provenance, even if `--manifest` is supplied: existing staged artifacts cannot be bound to a refreshed bundle without a full import. Run a full import before building claims or challenges.
+- `--only-native`: refresh only `runtime/model-artifacts/<model-id>/manifest.json` for the native run. This clears template provenance, even if `--manifest` is supplied: existing pipeline artifacts cannot be bound to a refreshed bundle without a full import. Run a full import before building claims or challenges.
 - `--only-tokenizer`: refresh tokenizer/decoder externals.
 - `--only-layers`, `--only-embedding`, `--only-ple`: refresh targeted weight externals.
 
@@ -102,7 +102,7 @@ from that package and do not change the decoder's root.
 
 Reimport models and prepare new runs after this schema change. v4 model/run
 artifacts are rejected; replay historical claims with their original Iris
-revision and Raster identities. Direct-only imports still support discovery,
+revision and Raster identities. Native-only imports still support discovery,
 but cannot produce a verified claim package.
 
 All component roles are checked by their consuming stages. Imports include separate

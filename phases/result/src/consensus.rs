@@ -11,7 +11,7 @@
 //! inferences name the same input text and source. Its parts are stated beside
 //! it, so a reader can tell which of them failed.
 //!
-//! Plain functions over a small state, one per step a stage takes, so direct
+//! Plain functions over a small state, one per step a stage takes, so native
 //! inference, the native stage and the tiles run one copy.
 //!
 //! See `docs/protocol/procedure-kinds.md`.

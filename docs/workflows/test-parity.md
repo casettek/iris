@@ -18,7 +18,7 @@ the shared programs do for a byte-level tokenizer. A model with no per-layer inp
 auxiliary stages, so the cases built on them are left out. `just test-full` runs both.
 
 The command runs the pinned synthetic Gemma model through the complete Raster
-pipeline (`--no-auth`), the checkpointed native-staged pipeline, and native-direct
+pipeline (`--no-auth`), the checkpointed pipeline on native stages, and the native run's
 generation. Each execution owns its intermediate outputs and runtime state.
 All three fixed cases run every time. There are no numerical tolerances.
 
@@ -47,35 +47,35 @@ argument, or a recur seed selected out of a larger value. See
 
 The gate imports with `--range-size 6` (six tokens per range), so every case's
 prompt and output split into several ranges, including ranges inside and past the
-16-token sliding window. Preparation discovers each output with direct decode, and
+16-token sliding window. Preparation discovers each output with native decode, and
 the pipeline then checks it.
 
-- Raster/native-staged: every expected checkpoint's canonical output bytes and
+- Raster/pipeline-native: every expected checkpoint's canonical output bytes and
   structural commitment, with recorded payload/index roots checked independently.
-- Direct's own coverage: pinned input IDs, every complete fixed-point logit vector
+- The native run's own coverage: pinned input IDs, every complete fixed-point logit vector
   used for selection, argmax selection, selected-token history, active PLE, cache
   growth/eviction, and position advancement.
-- The pipeline and direct: the prompt ranges' token ids concatenate to direct's
+- The pipeline and native: the prompt ranges' token ids concatenate to the native run's
   tokenization; the last range's check, its edge and its output record, is
-  byte-identical to direct's final boundary; and an earlier range's check states a
+  byte-identical to the native run's final boundary; and an earlier range's check states a
   record that carries a fault, so it cannot stand as a claim's.
 - Position by position, stitching each layer's ranges together: every
-  `embed_*`, `aux_*_l*` and `range_*_l*` row at position `i` equals direct's
+  `embed_*`, `aux_*_l*` and `range_*_l*` row at position `i` equals the native run's
   prefill row (`i < prompt_len`) or decode step `i - prompt_len`'s single row, and
   every range starts where the previous one ended. Every K/V entry a range publishes,
-  inherited or its own, equals direct's entry at the same position. Direct runs no
+  inherited or its own, equals the native run's entry at the same position. The native run runs no
   pass for its last token, so the pipeline's row for it has no reference. Nothing is
-  scored from that row, and it still matches between Raster and native-staged.
+  scored from that row, and it still matches between Raster and pipeline-native.
 - `iris run` and the claim: [a run with no blockchain](run.md) of the same
-  specification and case leaves the checkpoints the claim's native-staged run
-  left, at every stage, and its staged run states the result its direct run did.
+  specification and case leaves the checkpoints the claim's pipeline-native run
+  left, at every stage, and its pipeline run states the result its native run did.
   The consensus claim is held to the same.
 - Layers 2 and 3 of every range borrow layers 0 and 1 of the same range.
 - The last prompt context: no fault, complete, and holding the prompt's SHA-256, the
   model id and the prompt's token count.
 - The final record: its context is the last prompt context's, its
   `output_text_sha256` is the SHA-256 of its own text, its faults and verdict are
-  clean, and the native result artifact and direct's result are exactly this record
+  clean, and the native result artifact and the native run's result are exactly this record
   with what the `result` stage states: code 0 and the hash of no forms, beside the
   same claim record.
 - The [contract checks](../protocol/checks.md): the native claim's submission
@@ -141,7 +141,7 @@ the pipeline then checks it.
   `iris test devstack replay` takes them to the contracts
   ([the blockchains](../blockchain/overview.md)).
 - Over wrong token marks, on the templated case: the prompt stages finish through
-  both Raster and native-staged, agree byte for byte, and record the expected fault.
+  both Raster and pipeline-native, agree byte for byte, and record the expected fault.
   This includes marks past the end of the prompt, a range with no marks, a token
   claimed as two, two tokens claimed as one, and a range left out. Marks that
   split or join tokens spell the prompt with vocabulary entries and are refused
@@ -156,7 +156,7 @@ the pipeline then checks it.
   text chunk and native does not, so only this run shows that the chunk size fits.
 - Over empty prompt ranges, non-greedy claimed ids, claimed ids outside the
   vocabulary and an output short of its budget, on the templated case: the whole pipeline finishes through both Raster and
-  native-staged, agrees byte for byte, and the final record names the failure.
+  pipeline-native, agrees byte for byte, and the final record names the failure.
 - Over a stage schedule that disagrees with the run, on the templated case (one
   prompt range or one claimed range more than the manifest runs):
   the whole pipeline finishes through both, agrees byte for byte, and the final record
@@ -164,13 +164,13 @@ the pipeline then checks it.
 - Missing, duplicate, unexpected, malformed, or error-bearing outputs fail.
 
 Raster's ordered stage inventory comes from its public `pipeline-commitment` file;
-this metadata does not imply authenticated execution. Native-staged and older
+this metadata does not imply authenticated execution. A pipeline run on native stages and older
 Raster runs can supply the inventory through `execution-times.json`. Timing JSON
 is not required from the current Raster CLI. A malformed commitment fails instead
 of falling back to timing metadata, and the recorded stage order must still match
 the independently expected pipeline.
 
-`iris compare-teacher-forced --teacher-forced <pipeline-dir> --direct <parity-worker --direct output>`
+`iris compare-teacher-forced --teacher-forced <pipeline-dir> --native <parity-worker --native output>`
 (hidden) runs the same position-by-position comparison on any pipeline, reading one
 layer at a time.
 
@@ -184,14 +184,14 @@ documents (`testing/src/parity/source.rs`). The documents, the recipe and
 the signing key are made in the run. The recipe takes values from both documents, one of
 them through an array and a key with a dot in it.
 
-The gate first asks direct inference alone for the answer to that prompt and adds the
+The gate first asks the native run alone for the answer to that prompt and adds the
 answer to the recipe as its second form. The forms are no part of the prompt, so the
 answer stays what it was, and the claim's `result` stage has one form to pass by and one
 to stop at.
 
 The claim is run three ways, as each case is. Its pipeline starts at the `source` stage and
 ends at the `result` stage, and every stage's output must be the same bytes through Raster
-and natively. The record of direct inference must be the claim's, its source digest the
+and natively. The record of the native run must be the claim's, its source digest the
 one the source step gives, and its result code the second form's. A contract's checks must
 pass with every native checkpoint held to the Raster run's boundary: those include the
 source record's signer and recipe and the result code, each against what the specification
@@ -228,13 +228,13 @@ both source programs: `prompt-source` before the first inference and
 
 The claim is run directly, natively and through Raster:
 
-- The claim states every field of both inferences' results as direct
+- The claim states every field of both inferences' results as native
   inference does, and `iris run` leaves the same checkpoints.
 - The second inference ran the recipe's text around the first output, exactly.
 - The pipeline is the `source` stage, the first model's stages, the `relay` stage,
   the second model's and the `result` stage, and every stage's output is the
   same bytes through Raster and natively.
-- The relay stage's record is the one direct inference computes, is of the
+- The relay stage's record is the one native run computes, is of the
   prompt the second inference ran, and is the record the second statement
   names. The first statement names the run's source.
 - The result stage is of the second inference alone.
@@ -261,7 +261,7 @@ imported into the run, so one pipeline holds both families' stage programs under
 their labels. The prompt is the source scenario's, built from its two signed
 documents.
 
-The gate first asks direct inference for each model's answer and names both as
+The gate first asks the native run for each model's answer and names both as
 forms with one code. The forms are no part of the prompt, so the answers stay
 what they were, and the claim's result stage finds two different texts that
 stand for the same thing.
@@ -271,7 +271,7 @@ The claim is then run directly, natively and through Raster:
 - The pipeline is the `source` stage, the first model's stages, the second model's
   and the `result` stage, and every stage's output is the same bytes through
   Raster and natively.
-- The claim states what direct inference does: each inference's result and that
+- The claim states what the native run does: each inference's result and that
   the two agree.
 - The result stage states both answers' codes, that they agree, and each
   inference's own statement.
@@ -309,7 +309,7 @@ one of them here: a range of the pinned model is six tokens and its bind about 1
 steps, so no case replays `prompt-bind` through authenticated Raster. On a real
 model a 512-token bind range is about 28,000 steps and replays.
 
-Two wirings stop a layer stage through both Raster and native-staged, because
+Two wirings stop a layer stage through both Raster and pipeline-native, because
 positions no longer line up with the cache: restarting positions at a later range,
 and dropping a range's cache. The claimer has no output to post, and only a manifest
 the claimer rewired reaches this. The same holds for transformer layers exchanged,
@@ -342,7 +342,7 @@ identify the corresponding log. Tests never rewrite existing model imports or
 `Raster.lock` files.
 
 Normal `infer` remains free of diagnostic serialization. Library users can opt
-into `DirectInferenceExecutor::run_with_diagnostics` to receive canonical boundary
+into `NativeInferenceExecutor::run_with_diagnostics` to receive canonical boundary
 bytes, indexes, and commitments alongside the ordinary inference report.
 
 ## Model Bundle Maintenance
@@ -376,9 +376,9 @@ logits and multiple selected token IDs prevent a degenerate bundle from passing.
 This gate checks host computational parity. Proof generation and native/zkVM
 equivalence are separate from this local command.
 
-## Selective PLE loading in staged inference
+## Selective PLE loading in the pipeline run
 
-Staged `aux_*_l*` stages default to selective PLE
+Pipeline `aux_*_l*` stages default to selective PLE
 loading. They verify the parameters, projection, and embedding metadata against
 the declared Raster input commitment, retain those small static values within
 the existing weight-cache budget, and read each required embedding page once per
@@ -387,23 +387,23 @@ for each invocation. Artifact files must remain immutable during a run.
 
 The implementation lives in `procedure-pipeline`. It uses Raster's existing public
 selection/witness APIs, including explicit proof and typed-payload checks when
-the staged process runs with `RASTER_AUTH=0`. Raster stage implementations,
+the pipeline process runs with `RASTER_AUTH=0`. Raster stage implementations,
 Raster libraries, shared kernels, stage identities, and checkpoint formats are
 unchanged. Postcard inputs retain eager loading; malformed Raster inputs fail.
 
-`STAGED_INFER_PLE_LOADING=selective|eager` selects the path for pipeline execution,
-persistent workers, and standalone staged execution. An unset variable means
+`IWEBS_PIPELINE_PLE_LOADING=selective|eager` selects the path for pipeline execution,
+persistent workers, and standalone pipeline execution. An unset variable means
 `selective`; other values are errors. The requested mode is recorded as
-`ple_loading` in `staged-performance.json`. For a real-model comparison, run the
+`ple_loading` in `pipeline-performance.json`. For a real-model comparison, run the
 same release binary, specification and case with `eager`, then `selective`, keeping the
 weight-cache budget, worker count, and Rayon thread count identical. Compare
 every entry in `checkpoint_list.json` and `checkpoints.txt`; repeat in reversed
 order to assess OS-cache effects. On PowerShell, set the mode with:
 
 ```powershell
-$env:STAGED_INFER_PLE_LOADING = 'eager'
+$env:IWEBS_PIPELINE_PLE_LOADING = 'eager'
 # Run your normal iris claim build command.
-$env:STAGED_INFER_PLE_LOADING = 'selective'
+$env:IWEBS_PIPELINE_PLE_LOADING = 'selective'
 # Repeat the same command and compare the two pipeline directories.
 ```
 
@@ -411,7 +411,7 @@ Rust callers constructing auxiliary inputs from owned weights use
 `segments::prefill_prepare_aux::Inputs::eager(embedded, layer)`; file loaders
 choose the configured representation internally.
 
-The focused regression and loading benchmark are in the staged crate:
+The focused regression and loading benchmark are in the pipeline crate:
 
 ```sh
 RASTER_AUTH=0 cargo test --release --locked -p procedure-pipeline --lib ple::tests -- --test-threads=1
@@ -419,7 +419,7 @@ RASTER_AUTH=0 cargo test --release --locked -p procedure-pipeline --lib segments
 cargo test --release --locked -p procedure-pipeline --test worker_parity -- --test-threads=1
 ```
 
-With `STAGED_INFER_REPLAY_BIN_DIR` pointing at the built stage binaries, also run
+With `IWEBS_PIPELINE_REPLAY_BIN_DIR` pointing at the built stage binaries, also run
 `segments::inference::ple::tests::multi_page_matches_authenticated_raster_stage` with
 `--lib -- --ignored --exact`, and the existing
 `repeated_ranges_match_authenticated_raster_stage_execution` test with
@@ -449,7 +449,7 @@ not a zkVM proof-generation test.
 
 ## Selective main embeddings and paged output head
 
-These are the standard staged implementations for Raster inputs, not modes to
+These are the standard pipeline implementations for Raster inputs, not modes to
 opt into. `embed_*` stages cache verified dimensions, scale,
 and page metadata, then gather each needed page once per invocation.
 `check_*` stages authenticate the complete projection
@@ -457,7 +457,7 @@ page count and score every vocabulary row in batches of at most 32 pages. The
 head never creates a complete owned matrix. Only parameters and metadata enter
 the existing run-owned cache; selected/streamed pages are invocation-local.
 
-The verifier is staged-local and uses public Raster APIs. Scalar/struct values
+The verifier is pipeline-local and uses public Raster APIs. Scalar/struct values
 are checked against proven typed payloads. Main embedding/head pages are parsed
 directly from the proven raw payload using Raster's canonical parser, with
 explicit root, selector, and geometry checks. Head page counts are authenticated
@@ -465,7 +465,7 @@ list metadata, including empty lists. This applies with `RASTER_AUTH=0` too.
 Artifact files remain immutable during a run. Postcard and mixed-encoding inputs
 retain eager compatibility; invalid Raster selections never trigger fallback.
 
-No new environment switch is provided. `STAGED_INFER_PLE_LOADING` still controls
+No new environment switch is provided. `IWEBS_PIPELINE_PLE_LOADING` still controls
 only PLE. The diagnostic performance report records `embedding_loading=selective`
 and `head_loading=paged`. Head page loading and verification occur inside its
 kernel-duration interval; focused benchmarks report those costs separately.
@@ -478,10 +478,10 @@ Then run the complete pinned small-model gate against those builds:
 
 ```powershell
 python procedure/pipeline/tests/paged_weights_parity.py `
-  --baseline-bin target/staged-pages-validation/baseline-bin `
-  --embedding-bin target/staged-pages-validation/embedding-bin `
+  --baseline-bin target/pipeline-pages-validation/baseline-bin `
+  --embedding-bin target/pipeline-pages-validation/embedding-bin `
   --bin-dir target/windows/release `
-  --output target/staged-pages-parity
+  --output target/pipeline-pages-parity
 ```
 
 The output directory must be new. All three cases run through the three builds,
@@ -493,9 +493,9 @@ and checkpoint hashes, and checks that the Raster binaries themselves did not
 change. Its report includes wall times and sampled memory; the small-model
 numbers are not estimates of Gemma speedup.
 
-Focused tests live in `segments::inference::weight_tests` in the staged crate. Run them both normally
+Focused tests live in `segments::inference::weight_tests` in the pipeline crate. Run them both normally
 and in a separate process with `RASTER_AUTH=0`. With
-`STAGED_INFER_REPLAY_BIN_DIR` pointing to `target/windows/release`, explicitly run
+`IWEBS_PIPELINE_REPLAY_BIN_DIR` pointing to `target/windows/release`, explicitly run
 the ignored authenticated multi-page and standalone-publication tests. Run the
 ignored `embedding_loading_benchmark` and `head_loading_benchmark` in release
 mode with `--nocapture --test-threads=1` and no competing build. The fixtures
@@ -512,14 +512,14 @@ cache budget, worker count, Rayon threads, and PLE mode identical. For example,
 from the Iris repository, using the retained budget from the earlier run:
 
 ```powershell
-$env:STAGED_INFER_WEIGHT_CACHE_BYTES = '3584417792'
-$env:STAGED_INFER_AUX_PARALLELISM = '4'
+$env:IWEBS_PIPELINE_WEIGHT_CACHE_BYTES = '3584417792'
+$env:IWEBS_PIPELINE_AUX_PARALLELISM = '4'
 $env:RAYON_NUM_THREADS = '4'
-$env:STAGED_INFER_PLE_LOADING = 'selective'
+$env:IWEBS_PIPELINE_PLE_LOADING = 'selective'
 Remove-Item Env:RASTER_PARALLELISM -ErrorAction SilentlyContinue
-& ./target/staged-pages-validation/baseline-bin/iris.exe parity-worker `
+& ./target/pipeline-pages-validation/baseline-bin/iris.exe parity-worker `
   --specification ./gemma-short.toml --case ./case.toml --output ./target/gemma-pages-before
-& ./target/staged-pages-validation/embedding-bin/iris.exe parity-worker `
+& ./target/pipeline-pages-validation/embedding-bin/iris.exe parity-worker `
   --specification ./gemma-short.toml --case ./case.toml --output ./target/gemma-pages-embedding
 & ./target/windows/release/iris.exe parity-worker `
   --specification ./gemma-short.toml --case ./case.toml --output ./target/gemma-pages-after
@@ -528,7 +528,7 @@ Remove-Item Env:RASTER_PARALLELISM -ErrorAction SilentlyContinue
 Use fresh output directories on repeats and reverse build order to assess OS
 cache effects. Each `result.json` identifies its `pipeline_dir`. Compare every
 entry of `checkpoint_list.json` and `checkpoints.txt`, not just final text or
-EOS, and inspect `staged-performance.json` for embedding/check timings
+EOS, and inspect `pipeline-performance.json` for embedding/check timings
 and sampled process-tree memory. Then repeat the original full-length run.
 
 ## Model-fault self-replay

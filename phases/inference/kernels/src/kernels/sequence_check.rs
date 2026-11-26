@@ -83,7 +83,7 @@ pub fn score_row(normalized: &[i32], row: &[u8], cap: i32) -> Result<i32> {
 /// The predicting rows are the previous range's last row followed by this
 /// range's rows: claimed token `k` sits at `start_position + k` and is
 /// predicted by the row before it. Causal attention means that row has seen
-/// exactly the tokens a decode step of direct generation saw.
+/// exactly the tokens a decode step of native generation saw.
 ///
 /// A previous range with no rows leaves the stage's empty row at the boundary.
 pub fn check_positions(
@@ -220,7 +220,7 @@ pub fn scorable(positions: &[CheckPosition]) -> Vec<&[i32]> {
         .collect()
 }
 
-pub struct SequenceCheckDirectInputs<'a> {
+pub struct SequenceCheckNativeInputs<'a> {
     pub activations: &'a ActivationSequence,
     pub previous: &'a ActivationSequence,
     pub prior: &'a DecodeEdge,
@@ -229,7 +229,7 @@ pub struct SequenceCheckDirectInputs<'a> {
 }
 
 /// Already-materialized comparison path over an owned head.
-pub fn run_sequence_check_direct(inputs: SequenceCheckDirectInputs<'_>) -> Result<DecodeEdge> {
+pub fn run_sequence_check_native(inputs: SequenceCheckNativeInputs<'_>) -> Result<DecodeEdge> {
     let head = &inputs.head.params;
     ensure!(
         head.hidden_size > 0,

@@ -11,7 +11,7 @@ use crate::cache::{
 };
 use crate::segments::inference::ple::{self, Loading, SelectedWeights, StaticWeights};
 use inference_kernels::kernels::prefill_prepare_aux::{
-    run_prefill_prepare_aux_direct, PrefillPrepareAuxDirectInputs,
+    run_prefill_prepare_aux_native, PrefillPrepareAuxNativeInputs,
 };
 use raster_core::input::ExternalEncoding;
 
@@ -94,9 +94,9 @@ pub fn load_inputs_from_paths_with_cache(
     })
 }
 
-pub fn run_direct(inputs: &Inputs) -> Result<PleLayerInputs> {
+pub fn run_native(inputs: &Inputs) -> Result<PleLayerInputs> {
     let mut output = match &inputs.layer {
-        Weights::Eager(layer) => run_prefill_prepare_aux_direct(PrefillPrepareAuxDirectInputs {
+        Weights::Eager(layer) => run_prefill_prepare_aux_native(PrefillPrepareAuxNativeInputs {
             embedded: &inputs.embedded,
             layer,
         }),
@@ -223,7 +223,7 @@ impl crate::segments::NativeStage for Stage {
     type Inputs = Inputs;
     type Output = PleLayerInputs;
     const PROJECT: &'static str = "prefill-prepare-aux";
-    const ROUTINE: &'static str = "prefill_prepare_aux";
+    const NAME: &'static str = "prefill_prepare_aux";
 
     fn load_from_args() -> Result<Inputs> {
         load_inputs_from_args()
@@ -242,7 +242,7 @@ impl crate::segments::NativeStage for Stage {
         inputs: &Inputs,
         _caches: crate::segments::NativeStageCaches<'_>,
     ) -> Result<PleLayerInputs> {
-        run_direct(inputs)
+        run_native(inputs)
     }
 
     fn cached(output: PleLayerInputs) -> crate::cache::CachedStageValue {

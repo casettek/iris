@@ -11,7 +11,7 @@
 //! ```
 //!
 //! Everything here is plain functions over small states, one function per step
-//! a stage would take, so direct, the native stage and the tiles run one copy.
+//! a stage would take, so native, the native stage and the tiles run one copy.
 //! Nothing aborts: a step that cannot go on records the first fault in its
 //! state and the rest run to the end.
 //!

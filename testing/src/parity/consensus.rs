@@ -4,11 +4,11 @@
 //! The second model is the other family's bundle, so the pipeline holds both
 //! families' stage programs under their labels. The run's prompt is built from
 //! the source scenario's signed documents. Each model's answer is learned first by
-//! direct inference and named as a form, both with one code, so the claim's
+//! the native run and named as a form, both with one code, so the claim's
 //! result stage finds two different texts that stand for the same thing.
 //!
 //! The claim is run directly, natively and through Raster. Every stage must
-//! give the same bytes both ways, the claim must state what direct inference
+//! give the same bytes both ways, the claim must state what the native run
 //! does, a contract's checks must pass, and a challenger must find a false
 //! checkpoint in the second inference and replay it.
 
@@ -20,7 +20,7 @@ use blockchain_rules::checks::CLAIM_SUBMISSION_JSON;
 use inference_manifest::{ModelFamily, ModelManifest};
 use procedure_definition::SpecificationForm;
 use procedure_definition::{PreparedRun, ProcedureKind};
-use procedure_pipeline::pipeline_runner::StagedExecutionBackend;
+use procedure_pipeline::pipeline_runner::NativeStageBackend;
 use procedure_prepare::source::LoadedSource;
 use serde_json::{json, Value};
 
@@ -82,7 +82,7 @@ pub(super) fn run_consensus_scenario(
     let other_path = import_other_family(root, &dir, exe, model)?;
     let models = [model_path, other_path.as_path()];
 
-    // Each model's answer, from direct inference alone. The forms are no
+    // Each model's answer, from the native run alone. The forms are no
     // part of the prompt, so naming the answers afterwards leaves them as
     // they are.
     let mut source = source::honest_source()?;
@@ -109,25 +109,25 @@ pub(super) fn run_consensus_scenario(
     // The claim, three ways.
     let claim_dir = dir.join("claim");
     let specification = write_run(&claim_dir, &source, &models)?;
-    let direct =
+    let native_run =
         procedure_native::infer::run_infer(specification.clone(), case_beside(&specification))
-            .context("direct inference")?;
-    let direct_consensus = direct
+            .context("the native run")?;
+    let native_consensus = native_run
         .consensus
         .as_ref()
-        .context("direct inference stated no consensus")?;
+        .context("the native run stated no consensus")?;
     ensure!(
-        direct_consensus.agree && direct_consensus.code == AGREED_CODE,
-        "direct inference does not find the two answers to agree: {direct_consensus:?}"
+        native_consensus.agree && native_consensus.code == AGREED_CODE,
+        "the native run does not find the two answers to agree: {native_consensus:?}"
     );
     let built = build_posted_claim(ClaimBuildOptions {
         base_dir: claim_dir.clone(),
         case_path: Some(case_beside(&specification)),
         specification_path: specification.clone(),
         current_exe: exe.to_path_buf(),
-        staged_backend: StagedExecutionBackend::InProcess,
+        native_stage_backend: NativeStageBackend::InProcess,
         claimed_token_ids: None,
-        direct_output_ids: None,
+        native_output_ids: None,
         claimer: None,
     })
     .context("the consensus claim")?;
@@ -136,10 +136,10 @@ pub(super) fn run_consensus_scenario(
             && built
                 .results
                 .iter()
-                .eq(direct.reports.iter().map(|report| &report.result))
-            && built.consensus == direct.consensus,
-        "direct inference and the claim state different results: {:?} and {:?}",
-        direct.consensus,
+                .eq(native_run.reports.iter().map(|report| &report.result))
+            && built.consensus == native_run.consensus,
+        "the native run and the claim state different results: {:?} and {:?}",
+        native_run.consensus,
         built.consensus
     );
     // And with no blockchain: the same checkpoints as the claim's run.
@@ -169,7 +169,7 @@ pub(super) fn run_consensus_scenario(
         .arg(manifest)
         .args(["--no-auth", "--run"])
         .arg(&raster_dir);
-    logged(run, &claim_dir.join("raster.log")).context("Raster-staged execution")?;
+    logged(run, &claim_dir.join("raster.log")).context("pipeline-raster execution")?;
     let order = procedure_definition::read_stage_order(&built.pipeline_dir)?
         .context("native pipeline recorded no stage inventory")?;
     let of = |label: &str| {
@@ -186,13 +186,13 @@ pub(super) fn run_consensus_scenario(
             && of("m0_") + of("m1_") + 2 == order.len(),
         "a consensus pipeline is the source, two inferences and the result; ran {order:?}"
     );
-    let raster_outputs = read_boundaries(&raster_dir, &order, false).context("Raster-staged")?;
-    let native = read_boundaries(&built.pipeline_dir, &order, false).context("native-staged")?;
+    let raster_outputs = read_boundaries(&raster_dir, &order, false).context("pipeline-raster")?;
+    let native = read_boundaries(&built.pipeline_dir, &order, false).context("pipeline-native")?;
     for stage in &order {
         compare(stage, &raster_outputs[stage], &native[stage])
-            .context("Raster-staged ↔ native-staged")?;
+            .context("pipeline-raster ↔ pipeline-native")?;
     }
-    // The result stage states what direct inference does: each answer's
+    // The result stage states what the native run does: each answer's
     // code, and that the two agree.
     let stated = &raster_outputs["result"].value;
     ensure!(
@@ -202,9 +202,9 @@ pub(super) fn run_consensus_scenario(
             && stated["first"]["code"] == json!(AGREED_CODE)
             && stated["second"]["code"] == json!(AGREED_CODE)
             && stated["first"]["statement"]["bytes"]
-                == json!(direct.reports[0].result.statement_sha256)
+                == json!(native_run.reports[0].result.statement_sha256)
             && stated["second"]["statement"]["bytes"]
-                == json!(direct.reports[1].result.statement_sha256)
+                == json!(native_run.reports[1].result.statement_sha256)
             && stated["first"]["statement"] != stated["second"]["statement"],
         "the result stage does not state that the two answers agree: {stated}"
     );

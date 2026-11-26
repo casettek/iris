@@ -249,7 +249,7 @@ fn run_cached_stage(
     )?;
     let input_synthesis_duration = input_synthesis_started.elapsed();
 
-    let direct = segments::run_cached_from_paths_with_caches(
+    let native_run = segments::run_cached_from_paths_with_caches(
         &kind,
         &input_json_path,
         &input_manifest_path,
@@ -260,19 +260,19 @@ fn run_cached_stage(
         },
     )
     .with_context(|| format!("infer failed at stage `{}`", stage.name))?;
-    let structural_commitment = hex::decode(&direct.encoded.structural_commitment)
+    let structural_commitment = hex::decode(&native_run.encoded.structural_commitment)
         .with_context(|| format!("stage `{}` produced a non-hex commitment", stage.name))?;
 
     Ok(InferStageRun {
         structural_commitment,
-        output: direct.output,
+        output: native_run.output,
         timing: InferStageTiming {
             stage: stage.name.clone(),
-            routine: kind.routine().to_string(),
+            native_stage: kind.native_stage().to_string(),
             input_synthesis_duration,
-            input_load_duration: direct.timings.input_load_duration,
-            kernel_duration: direct.timings.kernel_duration,
-            encode_duration: direct.timings.encode_write_duration,
+            input_load_duration: native_run.timings.input_load_duration,
+            kernel_duration: native_run.timings.kernel_duration,
+            encode_duration: native_run.timings.encode_write_duration,
             total_duration: stage_started.elapsed(),
         },
     })
@@ -418,7 +418,7 @@ fn run_aux_stage_jobs(jobs: Vec<InferAuxStageJob<'_>>) -> Result<InferAuxStageBa
 
 fn run_aux_stage_job(job: InferAuxStageJob<'_>) -> Result<InferAuxStageResult> {
     let stage_started = Instant::now();
-    let direct = segments::run_cached_from_paths_with_caches(
+    let native_run = segments::run_cached_from_paths_with_caches(
         &job.kind,
         &job.input_json_path,
         &job.input_manifest_path,
@@ -429,20 +429,20 @@ fn run_aux_stage_job(job: InferAuxStageJob<'_>) -> Result<InferAuxStageResult> {
         },
     )
     .with_context(|| format!("infer failed at parallel aux stage `{}`", job.name))?;
-    let structural_commitment = hex::decode(&direct.encoded.structural_commitment)
+    let structural_commitment = hex::decode(&native_run.encoded.structural_commitment)
         .with_context(|| format!("stage `{}` produced a non-hex commitment", job.name))?;
     Ok(InferAuxStageResult {
         idx: job.idx,
         run: InferStageRun {
             structural_commitment,
-            output: direct.output,
+            output: native_run.output,
             timing: InferStageTiming {
                 stage: job.name,
-                routine: job.kind.routine().to_string(),
+                native_stage: job.kind.native_stage().to_string(),
                 input_synthesis_duration: job.input_synthesis_duration,
-                input_load_duration: direct.timings.input_load_duration,
-                kernel_duration: direct.timings.kernel_duration,
-                encode_duration: direct.timings.encode_write_duration,
+                input_load_duration: native_run.timings.input_load_duration,
+                kernel_duration: native_run.timings.kernel_duration,
+                encode_duration: native_run.timings.encode_write_duration,
                 total_duration: job.input_synthesis_duration + stage_started.elapsed(),
             },
         },
@@ -493,8 +493,7 @@ fn ensure_stage_inputs_ready(
 }
 
 fn aux_parallelism(job_count: usize) -> usize {
-    let requested = std::env::var("STAGED_INFER_AUX_PARALLELISM")
-        .or_else(|_| std::env::var("DIRECT_NATIVE_AUX_PARALLELISM"))
+    let requested = std::env::var("IWEBS_PIPELINE_AUX_PARALLELISM")
         .ok()
         .and_then(|value| value.parse::<usize>().ok());
     let available = std::thread::available_parallelism()
@@ -566,8 +565,10 @@ mod tests {
 
     #[test]
     fn missing_manifest_is_rejected_before_execution() {
-        let base_dir =
-            std::env::temp_dir().join(format!("staged-infer-infer-missing-{}", std::process::id()));
+        let base_dir = std::env::temp_dir().join(format!(
+            "procedure-pipeline-infer-missing-{}",
+            std::process::id()
+        ));
         fs::create_dir_all(&base_dir).unwrap();
         let manifest_path = base_dir.join("Raster.toml");
 

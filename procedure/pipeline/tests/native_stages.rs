@@ -98,7 +98,7 @@ struct FinalizeCase {
 impl FinalizeCase {
     /// The output a claim would have if this were its last check's edge.
     fn run(&self) -> sequence_check::input::GeneratedOutput {
-        let edge = kernels::finalize::run_output_finalize_direct(
+        let edge = kernels::finalize::run_output_finalize_native(
             &self.edge,
             &kernels::finalize::FinalizeInputs {
                 decoder: &self.decoder,
@@ -321,9 +321,9 @@ fn input_embedding_gathers_and_scales_rows() {
     }
     .into();
     let inputs = segments::input_embedding::Inputs::eager(prompt, embedding.clone());
-    let output = segments::input_embedding::run_direct(&inputs).unwrap();
-    let kernel_output = kernels::input_embedding::run_input_embedding_direct(
-        kernels::input_embedding::InputEmbeddingDirectInputs {
+    let output = segments::input_embedding::run_native(&inputs).unwrap();
+    let kernel_output = kernels::input_embedding::run_input_embedding_native(
+        kernels::input_embedding::InputEmbeddingNativeInputs {
             prompt: &inputs.prompt,
             embedding: &embedding,
         },
@@ -366,9 +366,9 @@ fn prefill_prepare_aux_publishes_one_row() {
         projection: paged(&identity()),
     });
     let inputs = segments::prefill_prepare_aux::Inputs::eager(activation, layer.clone());
-    let output = segments::prefill_prepare_aux::run_direct(&inputs).unwrap();
-    let kernel_output = kernels::prefill_prepare_aux::run_prefill_prepare_aux_direct(
-        kernels::prefill_prepare_aux::PrefillPrepareAuxDirectInputs {
+    let output = segments::prefill_prepare_aux::run_native(&inputs).unwrap();
+    let kernel_output = kernels::prefill_prepare_aux::run_prefill_prepare_aux_native(
+        kernels::prefill_prepare_aux::PrefillPrepareAuxNativeInputs {
             embedded: &inputs.embedded,
             layer: &layer,
         },
@@ -403,7 +403,7 @@ fn prefill_prepare_aux_preserves_prompt_row_order() {
         projection: paged(&identity()),
     };
     let run = |rows| {
-        segments::prefill_prepare_aux::run_direct(&segments::prefill_prepare_aux::Inputs::eager(
+        segments::prefill_prepare_aux::run_native(&segments::prefill_prepare_aux::Inputs::eager(
             prefill_prepare_aux::input::ActivationSequence {
                 model: Default::default(),
                 rows: List::from(rows),
@@ -461,7 +461,7 @@ fn sequence_check_matches_a_greedy_oracle_at_every_position() {
     let prompt_len = 3;
     let rows = 6;
 
-    // What direct generation does: normalise the predicting row, score the whole
+    // What native generation does: normalise the predicting row, score the whole
     // vocabulary, keep the first maximum.
     let mut prior = check::DecodeEdge::default();
     let mut greedy = Vec::new();
@@ -559,7 +559,7 @@ fn sequence_check_matches_a_greedy_oracle_at_every_position() {
                     })
                     .collect::<Vec<_>>(),
             );
-            segments::sequence_check::run_direct(&segments::sequence_check::Inputs::eager(
+            segments::sequence_check::run_native(&segments::sequence_check::Inputs::eager(
                 activations,
                 previous,
                 prior,
@@ -606,7 +606,7 @@ fn sequence_check_matches_a_greedy_oracle_at_every_position() {
         prompt_len as u32 + 2
     );
 
-    // An honest claim publishes a clean verdict and direct generation's edge.
+    // An honest claim publishes a clean verdict and native generation's edge.
     let honest = prior
         .generated_token_ids
         .iter()
@@ -627,7 +627,7 @@ fn sequence_check_matches_a_greedy_oracle_at_every_position() {
             .collect::<Vec<_>>(),
     );
     let substituted =
-        segments::sequence_check::run_direct(&segments::sequence_check::Inputs::eager(
+        segments::sequence_check::run_native(&segments::sequence_check::Inputs::eager(
             consumed,
             sequence(0..3),
             check::DecodeEdge::default(),

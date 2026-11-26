@@ -1,6 +1,6 @@
 # Claim Build Workflow
 
-`claim build` reruns inference through the checkpointed staged path and writes the phase-two claim artifacts.
+`claim build` reruns inference through the checkpointed pipeline path and writes the phase-two claim artifacts.
 
 ```bash
 cargo run --release -p iris-cli -- claim build --specification specification.toml --case case.toml
@@ -11,19 +11,19 @@ just claim specification.toml case.toml
 Flow:
 
 1. The CLI loads the specification, the case and the specification's model manifest, then verifies the weight, config, tokenizer, and model-specific template hashes once before preparing the run. Missing template provenance is an error. The run's [procedure kind](../protocol/procedure-kinds.md) makes the pipeline template from the model's segment: the `source` stage in front and its result stage behind.
-2. Direct inference discovers the output ids. They must fill `max_new_tokens` unless the last one is EOS.
+2. The native run discovers the output ids. They must fill `max_new_tokens` unless the last one is EOS.
 3. The prompt's pieces are tokenized natively and the tokens cut into ranges of at most the model's range size, and the ids into ranges of the same size. A prompt range may end between any two tokens. The text is cut to match: slice `j` is the bytes whose scan yields range `j`'s pieces, so each range's bind stage reads only its own part of the prompt.
 4. Each prompt range's slice of the original text (`text_{j}`), the text digest (`text_digest`: the whole text's SHA-256, its length, and the first and last bytes the template's trim keeps), the run's configuration (`config`), its stage schedule (`schedule`), each prompt range's token marks (`marks_{j}`: one number per piece, 1 where a token starts) and each claimed range (`claimed_{k}`) are written as externals under `target/iris/runs/<run>/prompt/`, and a run-specific `Raster.toml` beside it commits to them. The configuration holds the model id, `raw_prompt`, `max_new_tokens` and the range size. The model id comes from the model manifest, which recomputes it from its commitments by role when it is loaded.
 5. `procedure-pipeline` reads the run manifest and expands the [pipeline](../protocol/raster-pipeline.md).
 6. Each stage synthesizes `input.json` and `input_manifest.json`, runs the host implementation, and writes Raster-compatible output artifacts.
-7. Claim build applies the rule a challenger will. If the final record's committed verdict counts any claimed id that is not the greedy selection, claim build fails: direct and teacher-forced inference are not in parity, and the claim would refute itself.
+7. Claim build applies the rule a challenger will. If the final record's committed verdict counts any claimed id that is not the greedy selection, claim build fails: native and teacher-forced inference are not in parity, and the claim would refute itself.
 8. `blockchain-rules` scans the completed pipeline directory and writes the claim files.
 
 `prepared_run.json` holds no copy of the ids: the claim's output is the record the last range's check states with its edge, which also holds the input text's SHA-256, the model id and the output text's SHA-256.
 
 When `iris infer` has already run this specification and case, pass the ids it printed with
-`--direct-output-ids 1,2,3` and step 2 is skipped: the claim is built from them
-without a second direct pass. Nothing else changes. The ids must still fill
+`--native-output-ids 1,2,3` and step 2 is skipped: the claim is built from them
+without a second native pass. Nothing else changes. The ids must still fill
 `max_new_tokens` unless the last is EOS, the pipeline re-derives every token, and ids that
 are not the run's greedy output fail the build at step 7.
 
@@ -79,9 +79,9 @@ verification remain unchanged. Model artifacts must remain immutable during a ru
 
 The total retained-weight budget defaults to 25% of available RAM at startup,
 with a reported 1 GiB fallback if memory detection is unavailable. Override it
-with `STAGED_INFER_WEIGHT_CACHE_BYTES`; zero disables retention. Half goes to the
+with `IWEBS_PIPELINE_WEIGHT_CACHE_BYTES`; zero disables retention. Half goes to the
 main process and half is divided among workers; runs without auxiliary waves
-use the whole budget in the main process. `STAGED_INFER_AUX_PARALLELISM` sets the
+use the whole budget in the main process. `IWEBS_PIPELINE_AUX_PARALLELISM` sets the
 worker count (default up to four, capped by available parallelism and wave size).
 
 The budget covers owned weight allocations, including spare capacities and
@@ -92,17 +92,17 @@ instead of evicting every layer during a cyclic scan. A small budget therefore
 retains only a subset of weights. Existing entry-count cache settings belong to
 the legacy uncheckpointed helper and do not override this run-owned byte budget.
 
-`staged-performance.json` records the allocation, auxiliary process starts,
+`pipeline-performance.json` records the allocation, auxiliary process starts,
 per-stage load/kernel/encode-write timings, cumulative cache counters, and a
 100 ms sampled peak RSS for the runner and its descendants. Weight preparation
 time is a subset of kernel time, not an additional phase to sum. Cache snapshots
 are cumulative per process: use the final main snapshot and the final snapshot
 for each worker instead of summing stage snapshots. Existing
 `execution-times.json` readers remain compatible. Diagnostic single-stage
-subprocesses also write `staged-timings.json`.
+subprocesses also write `pipeline-timings.json`.
 
 Worker errors fail the run, terminate peers, and reap the pool; jobs are never
-silently retried. The hidden `--staged-subprocess` diagnostic backend retains its
+silently retried. The hidden `--native-stage-subprocess` diagnostic backend retains its
 per-stage process behavior. Authenticated Raster reference runs remain separate
 from unauthenticated native checkpoint generation.
 
@@ -116,19 +116,19 @@ against actual authenticated Raster stage execution:
 ```bash
 cargo build -p input-embedding -p prefill-prepare-aux \
   -p prefill-range -p sequence-check --bins
-STAGED_INFER_REPLAY_BIN_DIR="$PWD/target/debug" cargo test -p procedure-pipeline \
+IWEBS_PIPELINE_REPLAY_BIN_DIR="$PWD/target/debug" cargo test -p procedure-pipeline \
   --test worker_parity repeated_ranges_match_authenticated_raster_stage_execution -- --ignored
 ```
 
 Use an actual pre-change release binary for performance comparisons; comparing
-against `--staged-subprocess` would also change the main-stage execution backend.
+against `--native-stage-subprocess` would also change the main-stage execution backend.
 Keep the model artifacts, the specification and the case identical:
 
 ```bash
-python scripts/benchmark-staged-reuse.py --baseline /path/to/old/iris \
+python scripts/benchmark-pipeline-reuse.py --baseline /path/to/old/iris \
   --candidate target/release/iris \
   --specification /path/to/specification.toml --case /path/to/300-in-128-out.toml \
-  --output target/staged-benchmark
+  --output target/pipeline-benchmark
 ```
 
 The harness saves both logs, timings, and trace/hash comparisons. It reports

@@ -4,7 +4,7 @@
 //! layout, the tokenizer externals, commitments, the pipeline template and the
 //! manifest. What is particular to a family (its config, its tensors and how
 //! they become stage externals) is in that family's module: [`gemma`], and
-//! [`mistral`], which so far builds a direct manifest only. [`bundle_family`]
+//! [`mistral`], which so far builds a native manifest only. [`bundle_family`]
 //! refuses anything else.
 //!
 //! ```sh
@@ -21,11 +21,11 @@
 //! patterns, which is the representation the stages compute in. Nothing here
 //! requantises.
 
-mod direct_manifest;
 mod externals;
 mod gemma;
 mod mapped_weights;
 mod mistral;
+mod native_manifest;
 
 use externals::*;
 use gemma::*;
@@ -97,9 +97,9 @@ pub struct ImportConfig {
     pub only_embedding: bool,
     /// Rewrite only the PLE layer externals (`prefill-prepare-aux`).
     pub only_ple: bool,
-    /// Write only the host-side direct-infer manifest, without regenerating
+    /// Write only the host-side native-run manifest, without regenerating
     /// committed Raster stage externals.
-    pub only_direct: bool,
+    pub only_native: bool,
     /// Accepted and ignored. Import once wrote input fixtures into a stage's
     /// directory and this kept them; it writes nothing there now.
     pub no_stage_fixtures: bool,
@@ -142,7 +142,7 @@ fn parse_args_from(args: impl IntoIterator<Item = String>) -> Result<ImportConfi
     let mut only_layers = false;
     let mut only_embedding = false;
     let mut only_ple = false;
-    let mut only_direct = false;
+    let mut only_native = false;
     let mut no_stage_fixtures = false;
     let mut range_size = DEFAULT_RANGE_SIZE;
     let mut args = args.into_iter();
@@ -164,7 +164,7 @@ fn parse_args_from(args: impl IntoIterator<Item = String>) -> Result<ImportConfi
             "--only-layers" => only_layers = true,
             "--only-embedding" => only_embedding = true,
             "--only-ple" => only_ple = true,
-            "--only-direct" => only_direct = true,
+            "--only-native" => only_native = true,
             "--no-stage-fixtures" => no_stage_fixtures = true,
             "--range-size" => {
                 range_size = args
@@ -178,8 +178,8 @@ fn parse_args_from(args: impl IntoIterator<Item = String>) -> Result<ImportConfi
             other => return Err(format!("unknown argument '{other}'").into()),
         }
     }
-    if only_direct && (only_tokenizer || only_layers || only_embedding || only_ple) {
-        return Err("--only-direct cannot be combined with other --only-* modes".into());
+    if only_native && (only_tokenizer || only_layers || only_embedding || only_ple) {
+        return Err("--only-native cannot be combined with other --only-* modes".into());
     }
     Ok(ImportConfig {
         model_dir: model_dir.ok_or("--model <bundle-dir> is required")?,
@@ -190,7 +190,7 @@ fn parse_args_from(args: impl IntoIterator<Item = String>) -> Result<ImportConfi
         only_layers,
         only_embedding,
         only_ple,
-        only_direct,
+        only_native,
         no_stage_fixtures,
         range_size,
     })
@@ -311,7 +311,7 @@ pub fn import_model(args: ImportConfig) -> Result<ImportResult, Box<dyn Error>> 
 
     let eos_ids = load_eos_ids(&args.model_dir);
 
-    if args.only_direct {
+    if args.only_native {
         let config: serde_json::Value =
             serde_json::from_slice(&fs::read(args.model_dir.join("config.json"))?)?;
         let text = config
@@ -328,9 +328,9 @@ pub fn import_model(args: ImportConfig) -> Result<ImportResult, Box<dyn Error>> 
                 mistral::eos_ids(&tokenizer)?,
             ),
         };
-        // A direct-only refresh cannot attest that existing Raster externals
+        // A native-only refresh cannot attest that existing Raster externals
         // were generated from this bundle. Only a full import binds a template.
-        direct_manifest::write_model_manifest(&args, &eos_ids, family, shape, None, &[])?;
+        native_manifest::write_model_manifest(&args, &eos_ids, family, shape, None, &[])?;
         return Ok(ImportResult {
             manifest_path: None,
             manifest_text: None,
@@ -371,7 +371,7 @@ pub fn import_model(args: ImportConfig) -> Result<ImportResult, Box<dyn Error>> 
                 &witness_commitment
             )
         );
-        direct_manifest::warn_partial_direct_manifest_not_refreshed(&args);
+        native_manifest::warn_partial_native_manifest_not_refreshed(&args);
         return Ok(ImportResult {
             manifest_path: None,
             manifest_text: None,
@@ -397,7 +397,7 @@ pub fn import_model(args: ImportConfig) -> Result<ImportResult, Box<dyn Error>> 
         ModelFamily::MistralDense => {
             if args.only_ple || args.only_embedding || args.only_layers {
                 return Err("a mistral-dense import writes every external or only the \
-                            direct manifest"
+                            native_run manifest"
                     .into());
             }
             let shape = mistral::shape_from_config(text)?;
@@ -456,7 +456,7 @@ pub fn import_model(args: ImportConfig) -> Result<ImportResult, Box<dyn Error>> 
             println!();
             print!("{stage}");
         }
-        direct_manifest::warn_partial_direct_manifest_not_refreshed(&args);
+        native_manifest::warn_partial_native_manifest_not_refreshed(&args);
         return Ok(ImportResult {
             manifest_path: None,
             manifest_text: None,
@@ -483,7 +483,7 @@ pub fn import_model(args: ImportConfig) -> Result<ImportResult, Box<dyn Error>> 
             println!();
             print!("{stage}");
         }
-        direct_manifest::warn_partial_direct_manifest_not_refreshed(&args);
+        native_manifest::warn_partial_native_manifest_not_refreshed(&args);
         return Ok(ImportResult {
             manifest_path: None,
             manifest_text: None,
@@ -503,7 +503,7 @@ pub fn import_model(args: ImportConfig) -> Result<ImportResult, Box<dyn Error>> 
             println!();
             print!("{stage}");
         }
-        direct_manifest::warn_partial_direct_manifest_not_refreshed(&args);
+        native_manifest::warn_partial_native_manifest_not_refreshed(&args);
         return Ok(ImportResult {
             manifest_path: None,
             manifest_text: None,
@@ -612,7 +612,7 @@ fn finish_import(
             stages,
         )?,
     )?;
-    let model_manifest_path = direct_manifest::write_model_manifest(
+    let model_manifest_path = native_manifest::write_model_manifest(
         args,
         eos_ids,
         family,
@@ -1296,7 +1296,7 @@ fn write_tokenizer(
         .collect();
 
     let max_token_id = vocab.iter().map(|entry| entry.id).max().unwrap_or(0);
-    // As `inference_prompt::decoder_table` builds it, which direct inference decodes with.
+    // As `inference_prompt::decoder_table` builds it, which the native run decodes with.
     let byte_level = inference_prompt::is_tekken(tokenizer);
     let mut decoder_tokens = vec![DecoderToken::default(); max_token_id.saturating_add(1) as usize];
     for entry in &vocab {
@@ -1455,7 +1455,7 @@ mod tests {
                     .join(format!("data/{name}.rindex"))
                     .to_string_lossy()
             )));
-            let model_path = direct_manifest::write_model_manifest(
+            let model_path = native_manifest::write_model_manifest(
                 &args,
                 &Default::default(),
                 ModelFamily::GemmaDense,
@@ -1511,11 +1511,11 @@ mod tests {
             let model = inference_manifest::ModelManifest::load_verified(path).unwrap();
             assert_eq!(model.verified_raster_template(path).unwrap().1, *template);
         }
-        args.only_direct = true;
+        args.only_native = true;
         import_model(args).unwrap();
-        let direct_only = inference_manifest::ModelManifest::load_verified(&models[1].0).unwrap();
-        assert!(direct_only.provenance.is_none());
-        assert!(direct_only.verified_raster_template(&models[1].0).is_err());
+        let native_only = inference_manifest::ModelManifest::load_verified(&models[1].0).unwrap();
+        assert!(native_only.provenance.is_none());
+        assert!(native_only.verified_raster_template(&models[1].0).is_err());
         fs::remove_dir_all(base).unwrap();
     }
 
@@ -1545,7 +1545,7 @@ mod tests {
                 only_layers: false,
                 only_embedding: true,
                 only_ple: false,
-                only_direct: false,
+                only_native: false,
                 no_stage_fixtures: false,
                 range_size: DEFAULT_RANGE_SIZE,
             }
@@ -1575,12 +1575,12 @@ mod tests {
     }
 
     #[test]
-    fn parse_args_accepts_only_direct() {
+    fn parse_args_accepts_only_native() {
         let config =
-            parse_args_from(["--model", "model-bundles/model", "--only-direct"].map(String::from))
+            parse_args_from(["--model", "model-bundles/model", "--only-native"].map(String::from))
                 .unwrap();
 
-        assert!(config.only_direct);
+        assert!(config.only_native);
         assert!(!config.only_tokenizer);
         assert!(!config.only_layers);
         assert!(!config.only_embedding);
@@ -1630,7 +1630,7 @@ mod tests {
             only_layers: false,
             only_embedding: false,
             only_ple: false,
-            only_direct: false,
+            only_native: false,
             no_stage_fixtures: false,
             range_size: DEFAULT_RANGE_SIZE,
         };
@@ -1663,7 +1663,7 @@ mod tests {
             only_layers: false,
             only_embedding: false,
             only_ple: false,
-            only_direct: false,
+            only_native: false,
             no_stage_fixtures: false,
             range_size: DEFAULT_RANGE_SIZE,
         };
@@ -1684,12 +1684,12 @@ mod tests {
     }
 
     #[test]
-    fn parse_args_rejects_only_direct_with_other_partial_modes() {
+    fn parse_args_rejects_only_native_with_other_partial_modes() {
         let error = parse_args_from(
             [
                 "--model",
                 "model-bundles/model",
-                "--only-direct",
+                "--only-native",
                 "--only-tokenizer",
             ]
             .map(String::from),
@@ -1697,7 +1697,7 @@ mod tests {
         .unwrap_err()
         .to_string();
 
-        assert!(error.contains("--only-direct cannot be combined"));
+        assert!(error.contains("--only-native cannot be combined"));
     }
 
     #[test]

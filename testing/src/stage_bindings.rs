@@ -40,7 +40,7 @@ fn stage_dirs(root: &Path) -> Result<Vec<PathBuf>> {
 /// Whether a binding, or anything it indexes by, is an inline value.
 fn has_inline(binding: &Value) -> bool {
     if binding
-        .get("Direct")
+        .get("Native")
         .is_some_and(|source| source == "Inline")
     {
         return true;
@@ -199,7 +199,7 @@ mod tests {
     #[test]
     fn a_literal_argument_is_refused() {
         let prior = json!({ "PriorItemOutput": { "intra_sequence_item_index": 0, "path": [] } });
-        let literal = json!({ "Direct": "Inline" });
+        let literal = json!({ "Native": "Inline" });
         let tile = schema(json!({ "Tile": { "id": "f", "sources": [prior, literal] } }));
         assert_eq!(
             unpinned_bindings(&tile),
@@ -228,7 +228,7 @@ mod tests {
         let selected = json!({ "PriorItemOutput": {
             "intra_sequence_item_index": 1, "path": [{ "Field": "carry" }, { "Field": "text" }],
         } });
-        let created = json!({ "Direct": "Inline" });
+        let created = json!({ "Native": "Inline" });
         let output = json!({ "schema_hash": [], "empty_root": [], "derives": false });
         let item = |seed: &Value, output: &Value, slot: &Value| {
             schema(json!({ "RecurTile": {

@@ -10,8 +10,8 @@ use anyhow::Result;
 use inference_prompt::PreparedPiece;
 use sequence_check::input::GeneratedOutput;
 
-use crate::diagnostics::{DirectBoundaryRecord, DirectTrace};
-use crate::model::DirectInferenceModel;
+use crate::diagnostics::{NativeBoundaryRecord, NativeTrace};
+use crate::model::NativeInferenceModel;
 use crate::view_kernels::{
     run_decode_embed_view, run_input_embedding_view, run_ple_prepare_view, run_prefill_range_view,
     score_prefill_logits_view,
@@ -47,26 +47,26 @@ pub struct Generation {
     pub phases: Vec<PhaseTiming>,
 }
 
-pub fn generate(model: &DirectInferenceModel, input: &GenerationInput<'_>) -> Result<Generation> {
-    let mut trace = DirectTrace::new(false)?;
+pub fn generate(model: &NativeInferenceModel, input: &GenerationInput<'_>) -> Result<Generation> {
+    let mut trace = NativeTrace::new(false)?;
     generate_traced(model, input, &mut trace)
 }
 
 /// The same generation, with every boundary it crosses kept as a stage would
 /// publish it.
 pub fn generate_with_boundaries(
-    model: &DirectInferenceModel,
+    model: &NativeInferenceModel,
     input: &GenerationInput<'_>,
-) -> Result<(Generation, Vec<DirectBoundaryRecord>)> {
-    let mut trace = DirectTrace::new(true)?;
+) -> Result<(Generation, Vec<NativeBoundaryRecord>)> {
+    let mut trace = NativeTrace::new(true)?;
     let generation = generate_traced(model, input, &mut trace)?;
     Ok((generation, trace.records))
 }
 
 fn generate_traced(
-    model: &DirectInferenceModel,
+    model: &NativeInferenceModel,
     input: &GenerationInput<'_>,
-    trace: &mut DirectTrace,
+    trace: &mut NativeTrace,
 ) -> Result<Generation> {
     let mut timings = Vec::new();
     let prompt_started = Instant::now();
@@ -76,7 +76,7 @@ fn generate_traced(
         model.family().has_auxiliary_stages(),
     );
     let prompt = model.prompt_inputs(input.pieces)?;
-    // Direct inference is the independent numerical oracle; construct its
+    // The native run is the independent numerical oracle; construct its
     // diagnostic statement/history from the actual prompt and selected IDs.
     let prompt_ranges = model.prompt_ranges(input.pieces);
     // What the statement names as the text's source: zeros when the text
@@ -203,7 +203,7 @@ fn generate_traced(
         decoder: &decoder,
         descriptor: &descriptor,
         witness: &witness,
-        // The record the pipeline publishes for this run: a direct result
+        // The record the pipeline publishes for this run: a native result
         // and an honest claim's final record are the same bytes.
         context: &sequence_check::prompt::PromptContext {
             model: execution_context(None, output_edge.generated_token_ids.len()),
@@ -227,7 +227,7 @@ fn generate_traced(
             finalize_inputs.context,
         )?
     } else {
-        inference_kernels::kernels::finalize::run_output_finalize_direct(
+        inference_kernels::kernels::finalize::run_output_finalize_native(
             &output_edge,
             &finalize_inputs,
         )?
@@ -246,13 +246,13 @@ fn generate_traced(
 }
 
 fn run_layers_and_logits(
-    model: &DirectInferenceModel,
+    model: &NativeInferenceModel,
     seed: prefill_range::input::ActivationSequence,
     empty_or_embedding: prefill_range::input::ActivationSequence,
     prior_layers: Option<&[prefill_range::input::ActivationSequence]>,
     timings: &mut Vec<PhaseTiming>,
     label: &str,
-    trace: &mut DirectTrace,
+    trace: &mut NativeTrace,
 ) -> Result<(
     Vec<prefill_range::input::ActivationSequence>,
     crate::generation::PrefillLogits,
@@ -265,7 +265,7 @@ fn run_layers_and_logits(
     let mut layer_outputs = Vec::with_capacity(model.num_layers() as usize);
     for layer_idx in 0..model.num_layers() as usize {
         let aux_started = Instant::now();
-        let ple_layer = model.direct_ple_layer(layer_idx)?;
+        let ple_layer = model.native_ple_layer(layer_idx)?;
         let ple = run_ple_prepare_view(&ple_source, &ple_layer)?;
         trace.record(&aux_stage_name(label, layer_idx), &ple)?;
         timings.push(phase_timing(
@@ -274,7 +274,7 @@ fn run_layers_and_logits(
         ));
 
         let range_started = Instant::now();
-        let layer = model.direct_transformer_layer(layer_idx)?;
+        let layer = model.native_transformer_layer(layer_idx)?;
         let prior_kv = prior_layers
             .and_then(|layers| layers.get(layer_idx))
             .cloned()
@@ -304,7 +304,7 @@ fn run_layers_and_logits(
     }
 
     let finalize_started = Instant::now();
-    let head = model.direct_final_head()?;
+    let head = model.native_final_head()?;
     let logits = score_prefill_logits_view(&current, &head)?;
     trace.record(&finalize_stage_name(label), &logits)?;
     timings.push(phase_timing(
@@ -317,12 +317,12 @@ fn run_layers_and_logits(
 /// A `mistral-dense` pass: every layer attends to the whole prefix and takes
 /// nothing but the layer before it and its own earlier keys.
 fn run_mistral_layers_and_logits(
-    model: &DirectInferenceModel,
+    model: &NativeInferenceModel,
     seed: prefill_range::input::ActivationSequence,
     prior_layers: Option<&[prefill_range::input::ActivationSequence]>,
     timings: &mut Vec<PhaseTiming>,
     label: &str,
-    trace: &mut DirectTrace,
+    trace: &mut NativeTrace,
 ) -> Result<(
     Vec<prefill_range::input::ActivationSequence>,
     crate::generation::PrefillLogits,
@@ -331,7 +331,7 @@ fn run_mistral_layers_and_logits(
     let mut layer_outputs = Vec::with_capacity(model.num_layers() as usize);
     for layer_idx in 0..model.num_layers() as usize {
         let range_started = Instant::now();
-        let layer = model.direct_mistral_layer(layer_idx)?;
+        let layer = model.native_mistral_layer(layer_idx)?;
         let prior_keys = prior_layers
             .and_then(|layers| layers.get(layer_idx))
             .map_or(&[][..], |sequence| sequence.kv.as_slice());
@@ -345,7 +345,7 @@ fn run_mistral_layers_and_logits(
     }
 
     let finalize_started = Instant::now();
-    let head = model.direct_final_head()?;
+    let head = model.native_final_head()?;
     let logits = score_prefill_logits_view(&current, &head)?;
     trace.record(&finalize_stage_name(label), &logits)?;
     timings.push(phase_timing(

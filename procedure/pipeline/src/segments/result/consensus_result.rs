@@ -34,7 +34,7 @@ pub fn load_inputs_from_paths_with_cache(
 }
 
 /// The stage's steps, in its order, over the same functions its tiles call.
-pub fn run_direct(inputs: &Inputs) -> Result<ConsensusRecord> {
+pub fn run_native(inputs: &Inputs) -> Result<ConsensusRecord> {
     let (first, second) = (&inputs.first, &inputs.second);
     let matched = run_consensus(
         inputs.forms.forms.iter(),
@@ -102,7 +102,7 @@ impl crate::segments::NativeStage for Stage {
     type Inputs = Inputs;
     type Output = ConsensusRecord;
     const PROJECT: &'static str = "consensus-result";
-    const ROUTINE: &'static str = "consensus_result";
+    const NAME: &'static str = "consensus_result";
 
     fn load_from_args() -> Result<Inputs> {
         load_inputs_from_args()
@@ -121,7 +121,7 @@ impl crate::segments::NativeStage for Stage {
         inputs: &Inputs,
         _caches: crate::segments::NativeStageCaches<'_>,
     ) -> Result<ConsensusRecord> {
-        run_direct(inputs)
+        run_native(inputs)
     }
 
     fn cached(output: ConsensusRecord) -> crate::cache::CachedStageValue {
@@ -134,7 +134,7 @@ mod tests {
     use super::*;
 
     /// The stage reads two check outputs through its own copy of the edge
-    /// type, and states what direct inference computes from the same texts.
+    /// type, and states what the native run computes from the same texts.
     #[test]
     fn the_stage_states_whether_two_checks_agree() {
         raster::init();
@@ -166,7 +166,7 @@ mod tests {
             .into(),
         };
         let run = |first: DecodeEdge, second: DecodeEdge| {
-            run_direct(&Inputs {
+            run_native(&Inputs {
                 first,
                 second,
                 forms: forms(),

@@ -63,7 +63,7 @@ struct Cli {
     #[command(subcommand)]
     command: Option<Commands>,
 
-    /// Run one staged-infer stage and publish its canonical output artifact.
+    /// Run one native stage and publish its canonical output artifact.
     #[arg(long = "run-stage", alias = "run-prefill-range-stage", hide = true)]
     run_stage: Option<PathBuf>,
 
@@ -92,7 +92,7 @@ enum Commands {
     },
     /// Fast deterministic inference: the output a claim then states.
     Infer(InferArgs),
-    /// Run a procedure with no blockchain: its direct result, then a staged
+    /// Run a procedure with no blockchain: its native result, then a pipeline
     /// run of it with a checkpoint per stage.
     Run(RunArgs),
     /// The host signer: a trusted stand-in for a notary.
@@ -108,14 +108,14 @@ enum Commands {
     /// Measure the heaviest tile replays in one exact stage instance.
     #[cfg(feature = "replay-profile")]
     ReplayProfile(ReplayProfileArgs),
-    /// Compare a pipeline run with direct generation of the same prompt and
+    /// Compare a pipeline run with native generation of the same prompt and
     /// output, position by position.
     #[command(hide = true)]
     CompareTeacherForced {
         #[arg(long = "teacher-forced")]
         teacher_forced: PathBuf,
         #[arg(long)]
-        direct: PathBuf,
+        native_run: PathBuf,
     },
     #[command(hide = true)]
     ParityWorker {
@@ -126,7 +126,7 @@ enum Commands {
         #[arg(long)]
         output: PathBuf,
         #[arg(long)]
-        direct: bool,
+        native_run: bool,
     },
     /// A challenge of a claim: build, post and check one, or read one back.
     Challenge {
@@ -193,7 +193,7 @@ fn warn_if_debug_build(workflow: &str) {
     eprintln!(
         "warning: iris {workflow} is running from a debug build; \
          use `cargo run --release -p iris-cli -- {workflow}` \
-         for the optimized staged-infer path"
+         for the optimized build"
     );
 }
 
@@ -204,7 +204,7 @@ fn execute(cli: Cli) -> Result<ExitCode> {
     }
     if let Some(stage_dir) = cli.run_stage.as_ref() {
         require_input_args(&cli)?;
-        procedure_pipeline::parity::run_hidden_stage_direct(stage_dir)?;
+        procedure_pipeline::parity::run_hidden_stage_native(stage_dir)?;
         return Ok(ExitCode::SUCCESS);
     }
 
@@ -237,9 +237,9 @@ fn execute(cli: Cli) -> Result<ExitCode> {
         }
         Some(Commands::CompareTeacherForced {
             teacher_forced,
-            direct,
+            native_run,
         }) => {
-            let comparison = parity::compare_teacher_forced(&teacher_forced, &direct)?;
+            let comparison = parity::compare_teacher_forced(&teacher_forced, &native_run)?;
             println!("{}", serde_json::to_string_pretty(&comparison)?);
             Ok(ExitCode::SUCCESS)
         }
@@ -247,9 +247,9 @@ fn execute(cli: Cli) -> Result<ExitCode> {
             specification,
             case,
             output,
-            direct,
+            native_run,
         }) => {
-            parity::worker(&specification, &case, &output, direct)?;
+            parity::worker(&specification, &case, &output, native_run)?;
             Ok(ExitCode::SUCCESS)
         }
         Some(Commands::Model { command }) => commands::model::run(command),
@@ -414,7 +414,7 @@ mod tests {
             "import",
             "--model",
             "model-bundles/model",
-            "--only-direct",
+            "--only-native",
         ])
         .unwrap();
     }

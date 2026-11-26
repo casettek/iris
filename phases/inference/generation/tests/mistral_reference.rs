@@ -25,7 +25,7 @@ use std::path::Path;
 
 use inference_generation::generation::PrefillLogits;
 use inference_generation::inference_weights::MmapDetwgt;
-use inference_generation::model::DirectInferenceModel;
+use inference_generation::model::NativeInferenceModel;
 use inference_generation::view_kernels::{run_mistral_range_view, score_prefill_logits_view};
 use inference_manifest::MistralShape;
 use prefill_range::input::{pack_i32s, ActivationRow, ActivationSequence};
@@ -239,7 +239,7 @@ mod float {
     }
 }
 
-fn rows(model: &DirectInferenceModel, ids: &[u32], start_position: u32) -> ActivationSequence {
+fn rows(model: &NativeInferenceModel, ids: &[u32], start_position: u32) -> ActivationSequence {
     ActivationSequence {
         model: Default::default(),
         rows: List::from(
@@ -257,19 +257,19 @@ fn rows(model: &DirectInferenceModel, ids: &[u32], start_position: u32) -> Activ
 }
 
 fn pass(
-    model: &DirectInferenceModel,
+    model: &NativeInferenceModel,
     seed: ActivationSequence,
     prior: Option<&[ActivationSequence]>,
 ) -> (Vec<ActivationSequence>, PrefillLogits) {
     let mut current = seed;
     let mut outputs = Vec::new();
     for layer_idx in 0..model.num_layers() as usize {
-        let layer = model.direct_mistral_layer(layer_idx).unwrap();
+        let layer = model.native_mistral_layer(layer_idx).unwrap();
         let keys = prior.map_or(&[][..], |layers| layers[layer_idx].kv.as_slice());
         current = run_mistral_range_view(&current, &layer, keys).unwrap();
         outputs.push(current.clone());
     }
-    let logits = score_prefill_logits_view(&current, &model.direct_final_head().unwrap()).unwrap();
+    let logits = score_prefill_logits_view(&current, &model.native_final_head().unwrap()).unwrap();
     (outputs, logits)
 }
 
@@ -287,7 +287,7 @@ fn best(logits: &[f64]) -> usize {
 #[ignore = "needs MISTRAL_MANIFEST and MISTRAL_REFERENCE"]
 fn logits_follow_the_same_weights_in_floating_point() {
     let manifest_path = std::env::var("MISTRAL_MANIFEST").unwrap();
-    let model = DirectInferenceModel::load(Path::new(&manifest_path)).unwrap();
+    let model = NativeInferenceModel::load(Path::new(&manifest_path)).unwrap();
     let shape = model.manifest.shape.mistral().unwrap().clone();
     let weights = MmapDetwgt::open(
         &Path::new(&manifest_path)

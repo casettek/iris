@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use crate::{DirectInferenceConfig, DirectInferenceExecutor};
+use crate::{NativeInferenceConfig, NativeInferenceExecutor};
 use anyhow::{Context, Result};
 use procedure_definition::{ConsensusOutcome, ProcedureKind, ResultKind};
 use procedure_pipeline::InferenceRunReport;
@@ -15,7 +15,7 @@ pub struct InferRun {
 
 pub fn run_infer(specification_path: PathBuf, case_path: PathBuf) -> Result<InferRun> {
     let mut config =
-        DirectInferenceConfig::from_current_dir().context("failed to build infer configuration")?;
+        NativeInferenceConfig::from_current_dir().context("failed to build infer configuration")?;
     config.specification_path = specification_path;
     config.case_path = case_path;
     let specification_path = crate::absolute(&config.base_dir, &config.specification_path);
@@ -35,7 +35,7 @@ pub fn run_infer(specification_path: PathBuf, case_path: PathBuf) -> Result<Infe
             .relayed_from(inference)
             .map(|earlier| reports[earlier].result.clone());
         reports.push(
-            DirectInferenceExecutor
+            NativeInferenceExecutor
                 .run_with_report(config.clone())
                 .with_context(|| {
                     format!("inference {inference} of the `{procedure_kind}` procedure kind")

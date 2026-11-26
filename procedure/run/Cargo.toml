@@ -2,7 +2,7 @@
 name = "procedure-run"
 version = "0.1.0"
 edition = "2021"
-description = "A procedure run with no blockchain: its direct result, then a staged run with a checkpoint per stage"
+description = "A procedure run with no blockchain: its native result, then a pipeline run with a checkpoint per stage"
 
 [features]
 gpu-kernels = ["procedure-native/gpu-kernels", "procedure-pipeline/gpu-kernels"]

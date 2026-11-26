@@ -5,7 +5,7 @@ use std::process::{Command, Stdio};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{bail, ensure, Context, Result};
-use procedure_pipeline::pipeline_runner::StagedExecutionBackend;
+use procedure_pipeline::pipeline_runner::NativeStageBackend;
 use procedure_pipeline::{CheckpointHashChallengeConfig, CheckpointedInferenceExecutor};
 
 use blockchain_rules::{
@@ -48,13 +48,13 @@ pub struct ChallengeBuildOptions {
     pub base_dir: PathBuf,
     pub specification_path: PathBuf,
     pub current_exe: PathBuf,
-    pub staged_backend: StagedExecutionBackend,
+    pub native_stage_backend: NativeStageBackend,
     pub input: ChallengeInput,
-    /// The output ids the challenger's own direct run of the fetched case produced,
+    /// The output ids the challenger's own native run of the fetched case produced,
     /// taken in place of running it again. Not used for a posted claim: its
     /// stages are run on the ids the claim posted, and the checks say whether
     /// they are the greedy output.
-    pub direct_output_ids: Option<Vec<u32>>,
+    pub native_output_ids: Option<Vec<u32>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -110,7 +110,7 @@ pub fn build_challenge(options: ChallengeBuildOptions) -> Result<ChallengeBuildR
         base_dir: options.base_dir.clone(),
         manifest_path: manifest_path.clone(),
         current_exe: options.current_exe.clone(),
-        staged_backend: options.staged_backend,
+        native_stage_backend: options.native_stage_backend,
         claimed_hashes_path: claimed_input.hashes_path.clone(),
         claimed_hashes: claimed_input.hashes.clone(),
         claimed_sources: posted_claim.as_ref().map(|posted| {
@@ -382,9 +382,9 @@ fn challenge_run(
         specification_path,
         case_path: None,
         current_exe: options.current_exe.clone(),
-        staged_backend: options.staged_backend,
+        native_stage_backend: options.native_stage_backend,
         claimed_token_ids: None,
-        direct_output_ids: options.direct_output_ids.clone(),
+        native_output_ids: options.native_output_ids.clone(),
         claimer: None,
     };
     let ChallengeInput::Posted { submission_path } = &options.input else {
@@ -412,7 +412,7 @@ fn challenge_run(
     let prepared = crate::claim::prepare_posted_run(
         &crate::claim::ClaimBuildOptions {
             case_path: Some(claim_dir.join(CASE_TOML)),
-            direct_output_ids: None,
+            native_output_ids: None,
             ..build
         },
         &posted,
@@ -433,7 +433,7 @@ fn challenge_run(
 fn rebuild_teacher_forced_run(
     options: &ChallengeBuildOptions,
     frozen: &PreparedRun,
-) -> Result<crate::claim::PreparedClaimRun> {
+) -> Result<crate::claim::PreparedPipelineRun> {
     let specification_path = resolve_bundle_path(&options.base_dir, &options.specification_path);
     let selected = procedure_definition::read_specification(&specification_path)?;
     // A challenger rebuilds the claim's own arrangement of stages, so its
@@ -481,9 +481,9 @@ fn rebuild_teacher_forced_run(
             specification_path,
             case_path: None,
             current_exe: options.current_exe.clone(),
-            staged_backend: options.staged_backend,
+            native_stage_backend: options.native_stage_backend,
             claimed_token_ids: None,
-            direct_output_ids: None,
+            native_output_ids: None,
             claimer: None,
         },
         &specification,
@@ -887,7 +887,7 @@ fn sanitize_stage_name(stage: &str) -> String {
 impl ChallengeBuildOptions {
     pub fn from_current_dir(
         current_exe: PathBuf,
-        staged_backend: StagedExecutionBackend,
+        native_stage_backend: NativeStageBackend,
         input: ChallengeInput,
         specification_path: PathBuf,
     ) -> Result<Self> {
@@ -896,9 +896,9 @@ impl ChallengeBuildOptions {
             specification_path,
             base_dir,
             current_exe,
-            staged_backend,
+            native_stage_backend,
             input,
-            direct_output_ids: None,
+            native_output_ids: None,
         })
     }
 }
@@ -1184,9 +1184,9 @@ mod tests {
             case_path: Some(crate::test_support::case_beside(&specification_path)),
             specification_path,
             current_exe: PathBuf::from("unused"),
-            staged_backend: StagedExecutionBackend::InProcess,
+            native_stage_backend: NativeStageBackend::InProcess,
             claimed_token_ids: Some(ids),
-            direct_output_ids: None,
+            native_output_ids: None,
             claimer: None,
         })
         .unwrap();
@@ -1242,12 +1242,12 @@ mod tests {
             base_dir: base.clone(),
             specification_path,
             current_exe: PathBuf::from("unused"),
-            staged_backend: StagedExecutionBackend::InProcess,
+            native_stage_backend: NativeStageBackend::InProcess,
             input: ChallengeInput::CheckpointHashes {
                 claim_context_path: base.join("claim_bundle.json"),
                 checkpoint_hashes_path: base.join("checkpoints.txt"),
             },
-            direct_output_ids: None,
+            native_output_ids: None,
         };
         // The claimer's model files are not needed to challenge the claim.
         fs::remove_dir_all(base.join("models/claimers-model")).unwrap();
@@ -1306,12 +1306,12 @@ mod tests {
             base_dir: base.clone(),
             specification_path: crate::test_support::specification(&base, "model"),
             current_exe: PathBuf::from("unused"),
-            staged_backend: StagedExecutionBackend::InProcess,
+            native_stage_backend: NativeStageBackend::InProcess,
             input: ChallengeInput::CheckpointHashes {
                 claim_context_path: base.join("claim_bundle.json"),
                 checkpoint_hashes_path: base.join("checkpoints.txt"),
             },
-            direct_output_ids: None,
+            native_output_ids: None,
         };
         let claimed = ClaimedInput {
             hashes_path: base.join("checkpoints.txt"),

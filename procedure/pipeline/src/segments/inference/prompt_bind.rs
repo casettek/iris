@@ -54,7 +54,7 @@ pub fn load_inputs_from_paths_with_cache(
     })
 }
 
-pub fn run_direct(inputs: &Inputs) -> Result<PromptState> {
+pub fn run_native(inputs: &Inputs) -> Result<PromptState> {
     let mut proofs = WitnessProofs {
         tokenizer: &inputs.tokenizer,
         witness: &inputs.witness,
@@ -158,7 +158,7 @@ impl crate::segments::NativeStage for Stage {
     type Inputs = Inputs;
     type Output = PromptState;
     const PROJECT: &'static str = "prompt-bind";
-    const ROUTINE: &'static str = "prompt_bind";
+    const NAME: &'static str = "prompt_bind";
 
     fn load_from_args() -> Result<Inputs> {
         load_inputs_from_args()
@@ -177,7 +177,7 @@ impl crate::segments::NativeStage for Stage {
         inputs: &Inputs,
         _caches: crate::segments::NativeStageCaches<'_>,
     ) -> Result<PromptState> {
-        run_direct(inputs)
+        run_native(inputs)
     }
 
     fn cached(output: PromptState) -> crate::cache::CachedStageValue {

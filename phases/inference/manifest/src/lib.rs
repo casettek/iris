@@ -1,18 +1,18 @@
 //! A model as an import leaves it: the model manifest and its families, the
 //! descriptor a stage reads, and the pipeline template's paths.
 
-pub mod direct;
 pub mod io;
 pub mod manifest;
 pub mod model_identity;
+pub mod native_run;
 
-pub use direct::{
-    file_sha256, model_id_of, verify_file_sha256, DirectInferBundle, DirectInferProvenance,
-    DirectInferShape, FamilyShape, MistralShape, ModelCommitment, ModelFamily, ModelManifest,
-    MODEL_ARTIFACTS_DIR, MODEL_MANIFEST_JSON, MODEL_MANIFEST_VERSION,
-};
 pub use io::{read_json, write_json};
 pub use manifest::resolve_raster_manifest_paths;
+pub use native_run::{
+    file_sha256, model_id_of, verify_file_sha256, FamilyShape, MistralShape, ModelCommitment,
+    ModelFamily, ModelManifest, NativeInferBundle, NativeInferProvenance, NativeInferShape,
+    MODEL_ARTIFACTS_DIR, MODEL_MANIFEST_JSON, MODEL_MANIFEST_VERSION,
+};
 
 #[cfg(test)]
 mod tests {
@@ -114,7 +114,7 @@ mod tests {
             model_id: model_id_of(&[]),
             model_commitments: Vec::new(),
             range_size: 512,
-            bundle: DirectInferBundle {
+            bundle: NativeInferBundle {
                 model_detwgt_path: PathBuf::from("../model.detwgt"),
                 model_detwgt_sha256: String::from("model-sha"),
                 config_path: PathBuf::from("../config.json"),
@@ -122,7 +122,7 @@ mod tests {
                 tokenizer_path: PathBuf::from("../tokenizer.json"),
                 tokenizer_sha256: String::from("tokenizer-sha"),
             },
-            shape: DirectInferShape {
+            shape: NativeInferShape {
                 hidden_size: 4,
                 num_hidden_layers: 1,
                 num_attention_heads: 2,
@@ -146,7 +146,7 @@ mod tests {
             }
             .into(),
             eos_token_ids: vec![1, 2],
-            provenance: Some(DirectInferProvenance {
+            provenance: Some(NativeInferProvenance {
                 raster_manifest_path: PathBuf::from("../Raster.toml"),
                 raster_manifest_sha256: String::from("raster-sha"),
             }),

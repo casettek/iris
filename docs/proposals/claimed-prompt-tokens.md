@@ -171,8 +171,8 @@ uses it. Each test below compares it with the current full merge.
 | Same, wrong but plausible | The 27,269 of those groupings that spell vocabulary tokens with no pair left to merge | All refused |
 | Wrong id | The right grouping with one id changed, 20,000 times | All refused |
 | Ranges | On random tables, a wrong grouping cut into two ranges at any point | One of the two ranges always fails |
-| Staged rounds, random tables | The stage's rounds as modelled natively, on every grouping of every string up to 5 letters over 30 tables, whole and as a second range at every cut | Accepts and refuses exactly as the pair check does |
-| Staged rounds, production table | The same model on all 14,507,984 groupings above | Accepts and refuses exactly as the pair check does |
+| Pipeline rounds, random tables | The stage's rounds as modelled natively, on every grouping of every string up to 5 letters over 30 tables, whole and as a second range at every cut | Accepts and refuses exactly as the pair check does |
+| Pipeline rounds, production table | The same model on all 14,507,984 groupings above | Accepts and refuses exactly as the pair check does |
 
 Half of the random tables have their ranks shuffled, so a rule can outrank the rules that
 build its parts. The production table has 514,906 rules for 236,339 distinct results, so
@@ -313,7 +313,7 @@ cases are in place. These points differ from the plan above:
   schedule, with the three old programs still in the repository. Later the same day the
   merge-batch count and the step's batch coordinate were removed (`Execution` version 3),
   the three programs and their fixture pipeline were deleted, every remaining program was
-  re-locked, and import and prepared-run formats moved to version 9. Direct inference
+  re-locked, and import and prepared-run formats moved to version 9. The native run
   keeps its own whole-prompt tokenization in `inference-kernels`.
 - **The previous range's last token is always kept as a neighbour**, including when the
   range starts a new segment. It then merges alone, which changes nothing for a token the

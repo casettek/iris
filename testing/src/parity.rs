@@ -1,5 +1,5 @@
 //! The local three-path regression gate: the pipeline through Raster and natively,
-//! checked against direct generation position by position. Every worker owns its
+//! checked against native generation position by position. Every worker owns its
 //! runtime state.
 mod challenge;
 pub mod compare;
@@ -16,8 +16,8 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use anyhow::{bail, ensure, Context, Result};
 use inference_manifest::{file_sha256, ModelManifest};
 use procedure_definition::{read_json, write_json, InferenceResult};
-use procedure_native::{DirectInferenceConfig, DirectInferenceExecutor};
-use procedure_pipeline::pipeline_runner::StagedExecutionBackend;
+use procedure_native::{NativeInferenceConfig, NativeInferenceExecutor};
+use procedure_pipeline::pipeline_runner::NativeStageBackend;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -200,7 +200,7 @@ fn outcome_lines(outcomes: &Value) -> Vec<String> {
     let faults = &outcomes["faults_are_published"];
     let mut lines = vec![
         format!(
-            "honest runs agree: {} cases, {} checkpoints the same through Raster and natively, {} rows and {} cache entries the same as direct inference",
+            "honest runs agree: {} cases, {} checkpoints the same through Raster and natively, {} rows and {} cache entries the same as the native run",
             honest["cases"], honest["checkpoints"], honest["rows_compared"], honest["kv_entries_compared"]
         ),
         format!(
@@ -211,14 +211,14 @@ fn outcome_lines(outcomes: &Value) -> Vec<String> {
     let source = &outcomes["a_source_is_held"];
     if source["checkpoints"].is_u64() {
         lines.push(format!(
-            "a source is held: 1 claim with a source, {} checkpoints the same through Raster and natively and its record the same as direct inference; {} bad sources finish through both and record the fault",
+            "a source is held: 1 claim with a source, {} checkpoints the same through Raster and natively and its record the same as the native run; {} bad sources finish through both and record the fault",
             source["checkpoints"], source["bad_sources"]
         ));
     }
     let consensus = &outcomes["two_models_agree"];
     if consensus["checkpoints"].is_u64() {
         lines.push(format!(
-            "two models agree: 1 consensus claim with this model and the other family's, {} checkpoints the same through Raster and natively and its results the same as direct inference; a false checkpoint in the second inference found and replayed ({})",
+            "two models agree: 1 consensus claim with this model and the other family's, {} checkpoints the same through Raster and natively and its results the same as the native run; a false checkpoint in the second inference found and replayed ({})",
             consensus["checkpoints"],
             consensus["replayed"].as_str().unwrap_or_default()
         ));
@@ -226,7 +226,7 @@ fn outcome_lines(outcomes: &Value) -> Vec<String> {
     let relayed = &outcomes["an_output_is_relayed"];
     if relayed["checkpoints"].is_u64() {
         lines.push(format!(
-            "an output is relayed: 1 relay claim with this model's output in the other family's prompt, {} checkpoints the same through Raster and natively and its results the same as direct inference; a false checkpoint in each inference found and replayed ({})",
+            "an output is relayed: 1 relay claim with this model's output in the other family's prompt, {} checkpoints the same through Raster and natively and its results the same as the native run; a false checkpoint in each inference found and replayed ({})",
             relayed["checkpoints"],
             relayed["replayed"]
                 .as_array()
@@ -536,15 +536,15 @@ fn run_case(
     let specification = dir.join(procedure_definition::SPECIFICATION_TOML);
     write_specification(&specification, model_path, case)?;
     write_case(&specification, case)?;
-    // Preparation discovers the claimed ids with direct decode.
+    // Preparation discovers the claimed ids with native decode.
     let prepared = prepare_claim_run(&ClaimBuildOptions {
         base_dir: dir.to_path_buf(),
         case_path: Some(case_beside(&specification)),
         specification_path: specification.clone(),
         current_exe: exe.to_path_buf(),
-        staged_backend: StagedExecutionBackend::InProcess,
+        native_stage_backend: NativeStageBackend::InProcess,
         claimed_token_ids: None,
-        direct_output_ids: None,
+        native_output_ids: None,
         claimer: None,
     })?;
     let claimed = prepared.claimed_token_ids.clone();
@@ -555,10 +555,10 @@ fn run_case(
         .arg(&prepared.manifest_path)
         .args(["--no-auth", "--run"])
         .arg(&raster_dir);
-    let duration = logged(run, &dir.join("raster.log")).context("Raster-staged execution")?;
+    let duration = logged(run, &dir.join("raster.log")).context("pipeline-raster execution")?;
     report["raster_seconds"] = json!(duration);
 
-    for (name, direct) in [("native-staged", false), ("native-direct", true)] {
+    for (name, native_run) in [("pipeline-native", false), ("native-run", true)] {
         let mut run = command(exe, root);
         run.args(["parity-worker", "--specification"])
             .arg(&specification)
@@ -566,20 +566,20 @@ fn run_case(
             .arg(case_beside(&specification))
             .arg("--output")
             .arg(dir.join(name));
-        if direct {
-            run.arg("--direct");
+        if native_run {
+            run.arg("--native");
         }
         let duration = logged(run, &dir.join(format!("{name}.log")))
             .with_context(|| format!("{name} execution"))?;
         report[format!("{name}_seconds")] = json!(duration);
     }
-    let native_info: Value = read_json(&dir.join("native-staged/result.json"))?;
+    let native_info: Value = read_json(&dir.join("pipeline-native/result.json"))?;
     let native_dir = PathBuf::from(
         native_info["pipeline_dir"]
             .as_str()
             .context("missing native pipeline directory")?,
     );
-    let direct_dir = dir.join("native-direct");
+    let native_run_dir = dir.join("native-run");
     report["procedure-run_seconds"] = json!(run_with_no_blockchain(
         root,
         exe,
@@ -588,7 +588,7 @@ fn run_case(
         &native_dir,
     )?);
 
-    // Raster and native-staged, byte for byte, in the expected order.
+    // Raster and pipeline-native, byte for byte, in the expected order.
     let order = procedure_definition::read_stage_order(&native_dir)?
         .context("native pipeline recorded no stage inventory")?;
     let shape = RangedShape::from_names(&order);
@@ -600,11 +600,12 @@ fn run_case(
     );
     let names = teacher_forced_names(shape);
     let raster_outputs =
-        read_boundaries(&raster_dir, &names, false).context("Raster-staged artifacts")?;
-    let native = read_boundaries(&native_dir, &names, false).context("native-staged artifacts")?;
+        read_boundaries(&raster_dir, &names, false).context("pipeline-raster artifacts")?;
+    let native =
+        read_boundaries(&native_dir, &names, false).context("pipeline-native artifacts")?;
     for name in &names {
         compare(name, &raster_outputs[name], &native[name])
-            .context("Raster-staged ↔ native-staged")?;
+            .context("pipeline-raster ↔ pipeline-native")?;
     }
     // Only Gemma's layers borrow another layer's cache.
     if model.shape.gemma().is_ok() {
@@ -612,29 +613,29 @@ fn run_case(
         validate_donor_bindings(&native_dir, &native, shape)?;
     }
 
-    // Direct generation: its own coverage, then the pipeline position by position.
+    // Native generation: its own coverage, then the pipeline position by position.
     ensure!(
         claimed.len() == case.tokens as usize,
-        "direct decode produced {} of {} tokens; the pinned corpus fills its budget",
+        "native decode produced {} of {} tokens; the pinned corpus fills its budget",
         claimed.len(),
         case.tokens
     );
-    let direct_names = inference_generation::diagnostics::boundary_names(
+    let native_run_names = inference_generation::diagnostics::boundary_names(
         model.shape.num_hidden_layers(),
         case.tokens,
         shape.auxiliary,
     );
-    let direct =
-        read_boundaries(&direct_dir, &direct_names, true).context("native-direct artifacts")?;
-    validate_case(case, model, &direct).context("native-direct coverage")?;
+    let native_run = read_boundaries(&native_run_dir, &native_run_names, true)
+        .context("native-run artifacts")?;
+    validate_case(case, model, &native_run).context("native-run coverage")?;
     for token in &claimed {
         selected.insert(*token);
     }
     for step in 0..case.tokens {
         let stage = logits_stage(step);
-        logit_vectors.insert(serde_json::to_string(&direct[&stage].value["logits"])?);
+        logit_vectors.insert(serde_json::to_string(&native_run[&stage].value["logits"])?);
     }
-    let mut comparison = compare_teacher_forced(&native_dir, &direct_dir)?;
+    let mut comparison = compare_teacher_forced(&native_dir, &native_run_dir)?;
     ensure!(
         comparison["prompt_token_ids"] == json!(case.input_token_ids),
         "the prompt ranges' ids differ from the pinned ids"
@@ -768,10 +769,10 @@ fn run_case(
         native_info["result"] == *record,
         "the result artifact is not the pipeline's final record"
     );
-    let direct_result: Value = read_json(&direct_dir.join("result.json"))?;
+    let native_result: Value = read_json(&native_run_dir.join("result.json"))?;
     ensure!(
-        direct_result == *record,
-        "direct generation's result is not the pipeline's final record"
+        native_result == *record,
+        "native generation's result is not the pipeline's final record"
     );
 
     // Only the templated case has a safe first cut to build these from.
@@ -799,9 +800,9 @@ fn run_case(
         .context("challenge scenario")?;
     }
     println!(
-        "  PASS: {} checkpoints, {} direct boundaries, {} complete logit vectors, {} rows in {} prompt + {} claimed ranges ({:.2}s)",
+        "  PASS: {} checkpoints, {} native boundaries, {} complete logit vectors, {} rows in {} prompt + {} claimed ranges ({:.2}s)",
         names.len(),
-        direct_names.len(),
+        native_run_names.len(),
         case.tokens,
         comparison["rows_compared"],
         comparison["prompt_ranges"],
@@ -809,7 +810,7 @@ fn run_case(
         started.elapsed().as_secs_f64()
     );
     report["checkpoints"] = json!(names.len());
-    report["direct_boundaries"] = json!(direct_names.len());
+    report["native_boundaries"] = json!(native_run_names.len());
     report["logit_vectors_compared"] = json!(case.tokens);
     report["result"] = record.clone();
     report["comparison"] = comparison;
@@ -818,7 +819,7 @@ fn run_case(
 }
 
 /// A false claim must reach the final record. Runs whole pipelines through Raster
-/// and native-staged over wrong preparations and wrong claims, and checks that
+/// and pipeline-native over wrong preparations and wrong claims, and checks that
 /// every stage finishes, both agree byte for byte, and the record says which.
 #[allow(clippy::too_many_arguments)]
 fn run_pipeline_fault_scenario(
@@ -829,7 +830,7 @@ fn run_pipeline_fault_scenario(
     model_path: &Path,
     model: &ModelManifest,
     case: &Case,
-    prepared: &blockchain_host::claim::PreparedClaimRun,
+    prepared: &blockchain_host::claim::PreparedPipelineRun,
     claimed: &[u32],
 ) -> Result<Value> {
     let prompt = &prepared.prepared_run.first()?.prompt;
@@ -998,12 +999,12 @@ fn run_pipeline_fault_scenario(
             .arg(&raster_dir);
         logged(run, &dir.join("raster.log"))
             .with_context(|| format!("pipeline fault `{name}`: a Raster stage did not finish"))?;
-        let native_run = procedure_pipeline::CheckpointedInferenceExecutor
+        let pipeline_native_run = procedure_pipeline::CheckpointedInferenceExecutor
             .run(procedure_pipeline::CheckpointedInferenceConfig {
                 base_dir: dir.clone(),
                 manifest_path: manifest.clone(),
                 current_exe: exe.to_path_buf(),
-                staged_backend: StagedExecutionBackend::InProcess,
+                native_stage_backend: NativeStageBackend::InProcess,
                 parity_policy: procedure_pipeline::ParityPolicy::Skip,
             })
             .with_context(|| format!("pipeline fault `{name}`: a native stage did not finish"))?;
@@ -1011,7 +1012,7 @@ fn run_pipeline_fault_scenario(
         let order = procedure_definition::read_stage_order(&raster_dir)?
             .with_context(|| format!("pipeline fault `{name}`: no stage inventory"))?;
         let raster_outputs = read_boundaries(&raster_dir, &order, false)?;
-        let native = read_boundaries(&native_run.pipeline_dir, &order, false)?;
+        let native = read_boundaries(&pipeline_native_run.pipeline_dir, &order, false)?;
         for stage in &order {
             compare(stage, &raster_outputs[stage], &native[stage])
                 .with_context(|| format!("pipeline fault `{name}`"))?;
@@ -1072,7 +1073,7 @@ fn run_pipeline_fault_scenario(
         }
         let result: InferenceResult = serde_json::from_value(record.clone())?;
         ensure!(
-            native_run.results.first() == Some(&result),
+            pipeline_native_run.results.first() == Some(&result),
             "pipeline fault `{name}`: the native result is not the final record"
         );
         report.push(json!({
@@ -1090,7 +1091,7 @@ fn run_pipeline_fault_scenario(
 
 /// A wrong preparation must not stop a prompt stage: an aborting stage has no
 /// output to compare or replay. Runs the prompt stages over wrong marks through
-/// Raster and native-staged, and checks that both finish, agree byte for byte,
+/// Raster and pipeline-native, and checks that both finish, agree byte for byte,
 /// and record the fault.
 fn run_prompt_fault_scenario(
     root: &Path,
@@ -1099,7 +1100,7 @@ fn run_prompt_fault_scenario(
     raster: &Path,
     model_path: &Path,
     model: &ModelManifest,
-    prepared: &blockchain_host::claim::PreparedClaimRun,
+    prepared: &blockchain_host::claim::PreparedPipelineRun,
 ) -> Result<Value> {
     use inference_prompt::{
         FAULT_CUT_BEYOND_TEXT, FAULT_EMPTY_RANGE, FAULT_NONE, FAULT_NOT_THE_MERGE,
@@ -1262,7 +1263,7 @@ fn run_prompt_fault_scenario(
                 base_dir: dir.clone(),
                 manifest_path: manifest.clone(),
                 current_exe: exe.to_path_buf(),
-                staged_backend: StagedExecutionBackend::InProcess,
+                native_stage_backend: NativeStageBackend::InProcess,
                 parity_policy: procedure_pipeline::ParityPolicy::Skip,
             })
             .with_context(|| format!("prompt fault `{name}`: a native stage did not finish"))?
@@ -1335,7 +1336,7 @@ fn run_long_text_case(
             base_dir: dir.clone(),
             manifest_path: manifest,
             current_exe: exe.to_path_buf(),
-            staged_backend: StagedExecutionBackend::InProcess,
+            native_stage_backend: NativeStageBackend::InProcess,
             parity_policy: procedure_pipeline::ParityPolicy::Skip,
         })
         .context("a long text did not finish natively")?
@@ -1506,21 +1507,21 @@ fn prompt_only_manifest(
     Ok(out)
 }
 
-/// Compares a pipeline with direct generation for the same prompt and output, bit
+/// Compares a pipeline with native generation for the same prompt and output, bit
 /// for bit and position by position.
 ///
-/// The prompt ranges' token ids must concatenate to direct's tokenization.
+/// The prompt ranges' token ids must concatenate to the native run's tokenization.
 /// Stitching each layer's ranges together, row `i` of every embedding, PLE and
-/// layer stage must equal direct's prefill row `i` (`i < prompt_len`) or decode
+/// layer stage must equal the native run's prefill row `i` (`i < prompt_len`) or decode
 /// step `i - prompt_len`'s single row, and every K/V entry a range publishes,
-/// inherited or its own, direct's entry at the same position. Direct never runs a
+/// inherited or its own, the native run's entry at the same position. The native run never runs a
 /// pass for its last token, so the pipeline's row for it has no reference; nothing
-/// is scored from that row. The last range's check must be direct's final edge and record, and the
-/// last range's check the same edge as direct's last selection.
+/// is scored from that row. The last range's check must be the native run's final edge and record, and the
+/// last range's check the same edge as the native run's last selection.
 ///
 /// Stages are read one layer at a time, so real-model pipelines with hundreds of
 /// rows fit in memory.
-pub fn compare_teacher_forced(tf_dir: &Path, direct_dir: &Path) -> Result<Value> {
+pub fn compare_teacher_forced(tf_dir: &Path, native_run_dir: &Path) -> Result<Value> {
     let load = |dir: &Path, stage: &str| -> Result<Boundary> {
         let boundary = compare::read_boundary(&dir.join(stage))
             .with_context(|| format!("{stage} in {}", dir.display()))?;
@@ -1535,22 +1536,22 @@ pub fn compare_teacher_forced(tf_dir: &Path, direct_dir: &Path) -> Result<Value>
         "{}: not a pipeline run",
         tf_dir.display()
     );
-    let direct_names: Vec<String> = read_json(&direct_dir.join("boundary-order.json"))?;
+    let native_run_names: Vec<String> = read_json(&native_run_dir.join("boundary-order.json"))?;
 
-    let prompt_ids = load(direct_dir, "prompt_prepare")?.value["token_ids"].clone();
-    let generated = load(direct_dir, "output_finalize")?.value["generated_token_ids"].clone();
+    let prompt_ids = load(native_run_dir, "prompt_prepare")?.value["token_ids"].clone();
+    let generated = load(native_run_dir, "output_finalize")?.value["generated_token_ids"].clone();
     let prompt_len = prompt_ids.as_array().context("missing prompt ids")?.len();
     let tokens = generated.as_array().context("missing generated ids")?.len();
-    ensure!(tokens > 0, "direct generation produced no tokens");
+    ensure!(tokens > 0, "native generation produced no tokens");
     check_inventory(
         &inference_generation::diagnostics::boundary_names(
             shape.layers,
             tokens as u32,
             shape.auxiliary,
         ),
-        &direct_names,
+        &native_run_names,
     )
-    .with_context(|| format!("{}: not a direct run", direct_dir.display()))?;
+    .with_context(|| format!("{}: not a native run", native_run_dir.display()))?;
 
     let mut ranged_prompt = Vec::new();
     for j in 0..shape.prompt_ranges {
@@ -1562,16 +1563,16 @@ pub fn compare_teacher_forced(tf_dir: &Path, direct_dir: &Path) -> Result<Value>
         "prompt ranges tokenize differently from the whole prompt"
     );
     // The last check publishes the final edge with the output record, and
-    // direct generation's final boundary is the same bytes.
+    // native generation's final boundary is the same bytes.
     let last_check = format!("check_c{}", shape.claimed_ranges - 1);
     compare(
         &last_check,
         &load(tf_dir, &last_check)?,
-        &load(direct_dir, "output_finalize")?,
+        &load(native_run_dir, "output_finalize")?,
     )
-    .with_context(|| format!("pipeline {last_check} ↔ direct final edge and record"))?;
+    .with_context(|| format!("pipeline {last_check} ↔ native final edge and record"))?;
 
-    // The same family of stages, ranged and direct.
+    // The same family of stages, ranged and native.
     let ranges = (0..shape.prompt_ranges)
         .map(|j| format!("p{j}"))
         .chain((0..shape.claimed_ranges).map(|k| format!("c{k}")))
@@ -1613,10 +1614,10 @@ pub fn compare_teacher_forced(tf_dir: &Path, direct_dir: &Path) -> Result<Value>
     for (ranged, prefill, decode) in &families {
         // Position `prompt_len + t` comes from decode step `t`, which embeds
         // the token selected at step `t`.
-        let prefill_boundary = load(direct_dir, prefill)?;
+        let prefill_boundary = load(native_run_dir, prefill)?;
         let decode_boundaries = decode
             .iter()
-            .map(|stage| load(direct_dir, stage))
+            .map(|stage| load(native_run_dir, stage))
             .collect::<Result<Vec<_>>>()?;
         let source = |position: usize| {
             if position < prompt_len {
@@ -1649,7 +1650,7 @@ pub fn compare_teacher_forced(tf_dir: &Path, direct_dir: &Path) -> Result<Value>
                 if let Some((source, index)) = source(position) {
                     ensure!(
                         source.value["rows"][index] == *row,
-                        "{stage}: position {position} differs from direct's row"
+                        "{stage}: position {position} differs from the native run's row"
                     );
                     rows_compared += 1;
                 }
@@ -1675,15 +1676,15 @@ pub fn compare_teacher_forced(tf_dir: &Path, direct_dir: &Path) -> Result<Value>
                 };
                 let expected = source.value["kv"]
                     .as_array()
-                    .with_context(|| format!("{stage}: direct's source has no KV"))?
+                    .with_context(|| format!("{stage}: the native run's source has no KV"))?
                     .iter()
                     .find(|entry| entry["position"] == key["position"])
                     .with_context(|| {
-                        format!("{stage}: no direct K/V entry for position {key_position}")
+                        format!("{stage}: no native K/V entry for position {key_position}")
                     })?;
                 ensure!(
                     expected == key,
-                    "{stage}: K/V at position {key_position} differs from direct's entry"
+                    "{stage}: K/V at position {key_position} differs from the native run's entry"
                 );
                 keys_compared += 1;
             }
@@ -1713,7 +1714,7 @@ fn logits_stage(step: u32) -> String {
     }
 }
 
-/// Direct generation's own coverage: active PLE, full logit vectors whose argmax
+/// Native generation's own coverage: active PLE, full logit vectors whose argmax
 /// is the selection, and K/V growth and eviction over its decode passes.
 fn validate_case(
     case: &Case,
@@ -2128,17 +2129,17 @@ fn run_availability_cases(
     Ok(json!(cases))
 }
 
-pub fn worker(specification: &Path, case: &Path, output: &Path, direct: bool) -> Result<()> {
+pub fn worker(specification: &Path, case: &Path, output: &Path, native_run: bool) -> Result<()> {
     fs::create_dir_all(output)?;
-    if direct {
-        let config = DirectInferenceConfig {
+    if native_run {
+        let config = NativeInferenceConfig {
             base_dir: std::env::current_dir()?,
             specification_path: specification.to_path_buf(),
             case_path: case.to_path_buf(),
             inference: 0,
             relayed: None,
         };
-        let diagnostic = DirectInferenceExecutor.run_with_diagnostics(config.clone())?;
+        let diagnostic = NativeInferenceExecutor.run_with_diagnostics(config.clone())?;
         let names = diagnostic
             .boundaries
             .iter()
@@ -2156,10 +2157,10 @@ pub fn worker(specification: &Path, case: &Path, output: &Path, direct: bool) ->
         }
         write_json(&output.join("boundary-order.json"), &names)?;
         write_json(&output.join("result.json"), &diagnostic.report.result)?;
-        let ordinary = DirectInferenceExecutor.run(config)?;
+        let ordinary = NativeInferenceExecutor.run(config)?;
         ensure!(
             ordinary == diagnostic.report.result,
-            "ordinary and diagnostic direct execution differ"
+            "ordinary and diagnostic native execution differ"
         );
     } else {
         let result = build_posted_claim(ClaimBuildOptions {
@@ -2167,14 +2168,14 @@ pub fn worker(specification: &Path, case: &Path, output: &Path, direct: bool) ->
             case_path: Some(case.to_path_buf()),
             specification_path: specification.to_path_buf(),
             current_exe: std::env::current_exe()?,
-            staged_backend: StagedExecutionBackend::InProcess,
+            native_stage_backend: NativeStageBackend::InProcess,
             claimed_token_ids: None,
-            direct_output_ids: None,
+            native_output_ids: None,
             claimer: None,
         })?;
         write_json(
             &output.join("result.json"),
-            &json!({"pipeline_dir": result.pipeline_dir, "result": result.results.first().context("native-staged did not finalize")?}),
+            &json!({"pipeline_dir": result.pipeline_dir, "result": result.results.first().context("pipeline-native did not finalize")?}),
         )?;
     }
     Ok(())
@@ -2182,8 +2183,8 @@ pub fn worker(specification: &Path, case: &Path, output: &Path, direct: bool) ->
 
 /// `iris run` on a claim's specification and case, in a directory of its
 /// own: a procedure run with no blockchain. The command fails unless its
-/// staged run states the result its direct run did, and unless every one of
-/// its checkpoints is the one the claim's staged run left in `claim_pipeline`.
+/// pipeline run states the result its native run did, and unless every one of
+/// its checkpoints is the one the claim's pipeline run left in `claim_pipeline`.
 /// So the run a claim is built on is the run anyone makes without one.
 fn run_with_no_blockchain(
     root: &Path,
@@ -2249,13 +2250,10 @@ fn command(program: impl AsRef<std::ffi::OsStr>, root: &Path) -> Command {
     // Do not inherit debugging instrumentation or cache-disable settings into
     // the canonical gate. Each worker installs its own stage input environment.
     for name in [
-        "DIRECT_INFER_TRACE_COMMITMENTS",
-        "STAGED_INFER_MATERIALIZATION_CACHE_ENTRIES",
-        "DIRECT_NATIVE_MATERIALIZATION_CACHE_ENTRIES",
-        "STAGED_INFER_PREFILL_WEIGHT_CACHE_ENTRIES",
-        "DIRECT_NATIVE_PREFILL_WEIGHT_CACHE_ENTRIES",
-        "STAGED_INFER_AUX_PARALLELISM",
-        "DIRECT_NATIVE_AUX_PARALLELISM",
+        "NATIVE_RUN_TRACE_COMMITMENTS",
+        "IWEBS_PIPELINE_MATERIALIZATION_CACHE_ENTRIES",
+        "IWEBS_PIPELINE_PREFILL_WEIGHT_CACHE_ENTRIES",
+        "IWEBS_PIPELINE_AUX_PARALLELISM",
         "RASTER_OUTPUT_DIR",
         "RASTER_TRACE_PATH",
     ] {

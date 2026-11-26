@@ -48,8 +48,8 @@ step ignored-stage-binaries "stage programs build as host binaries" \
 
 # Benchmarks print timings and assert nothing; the helper is spawned by
 # another test; the production vocabulary test runs in release below.
-STAGED_INFER_REPLAY_BIN_DIR="$repo_root/target/debug" BPE_REFERENCE_TOKENIZER="$tokenizer" \
-    step ignored-staged "native loaders match authenticated Raster stage binaries" \
+IWEBS_PIPELINE_REPLAY_BIN_DIR="$repo_root/target/debug" BPE_REFERENCE_TOKENIZER="$tokenizer" \
+    step ignored-pipeline_run "native loaders match authenticated Raster stage binaries" \
     cargo test -p procedure-pipeline --no-fail-fast -- --ignored --test-threads=1 \
     --skip benchmark --skip challenge_cleanup_child \
     --skip claimed_tokens_on_the_production_vocabulary
@@ -58,7 +58,7 @@ BPE_REFERENCE_TOKENIZER="$tokenizer" \
     step ignored-production-vocabulary "claimed tokens check out on the real vocabulary" \
     cargo test --release -p procedure-pipeline --test prompt_check -- --ignored
 
-step ignored-direct "direct inference on the real model gives the known token" \
+step ignored-native_run "the native run on the real model gives the known token" \
     cargo test --release -p procedure-native --test executor -- --ignored
 
 IRIS_PARITY_RUN="$parity_run" \

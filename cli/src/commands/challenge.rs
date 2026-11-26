@@ -136,17 +136,17 @@ pub(crate) struct ChallengeBuildArgs {
 
     /// With `--submission`: the comma-separated output ids your own `iris
     /// infer` printed for your specification and the fetched case, taken in
-    /// place of running direct inference again.
+    /// place of running the native run again.
     #[arg(
-        long = "direct-output-ids",
+        long = "native-output-ids",
         value_delimiter = ',',
         requires = "submission"
     )]
-    direct_output_ids: Option<Vec<u32>>,
+    native_output_ids: Option<Vec<u32>>,
 
-    /// Use the previous per-stage child-process staged-infer runner.
-    #[arg(long = "staged-subprocess", alias = "direct-subprocess", hide = true)]
-    staged_subprocess: bool,
+    /// Run each native stage in a child process of its own, as the previous runner did.
+    #[arg(long = "native-stage-subprocess", hide = true)]
+    native_stage_subprocess: bool,
 }
 
 pub(crate) fn print_challenge_result(result: &ChallengeBuildResult) {
@@ -233,18 +233,18 @@ impl ChallengeBuildArgs {
             ),
         };
         let current_exe = std::env::current_exe().context("failed to locate current executable")?;
-        let staged_backend = if self.staged_subprocess {
-            procedure_pipeline::pipeline_runner::StagedExecutionBackend::Subprocess
+        let native_stage_backend = if self.native_stage_subprocess {
+            procedure_pipeline::pipeline_runner::NativeStageBackend::Subprocess
         } else {
-            procedure_pipeline::pipeline_runner::StagedExecutionBackend::InProcess
+            procedure_pipeline::pipeline_runner::NativeStageBackend::InProcess
         };
         let mut options = ChallengeBuildOptions::from_current_dir(
             current_exe,
-            staged_backend,
+            native_stage_backend,
             input,
             self.specification,
         )?;
-        options.direct_output_ids = self.direct_output_ids;
+        options.native_output_ids = self.native_output_ids;
         Ok(options)
     }
 }

@@ -7,7 +7,7 @@
 //! documents, so the pipeline has both source programs.
 //!
 //! The claim is run directly, natively and through Raster. Every stage must
-//! give the same bytes both ways, the claim must state what direct inference
+//! give the same bytes both ways, the claim must state what the native run
 //! does, the relay's record must be of the first output and be the one the
 //! second statement names, a contract's checks must pass, and a challenger
 //! must find a false checkpoint in either inference and replay it.
@@ -19,7 +19,7 @@ use anyhow::{ensure, Context, Result};
 use blockchain_rules::checks::CLAIM_SUBMISSION_JSON;
 use inference_manifest::ModelManifest;
 use procedure_definition::{PreparedRun, ProcedureKind, SpecificationRelay};
-use procedure_pipeline::pipeline_runner::StagedExecutionBackend;
+use procedure_pipeline::pipeline_runner::NativeStageBackend;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
@@ -66,13 +66,13 @@ pub(super) fn run_relay_scenario(
         &models,
         Some(relay),
     )?;
-    let direct =
+    let native_run =
         procedure_native::infer::run_infer(specification.clone(), case_beside(&specification))
-            .context("direct inference")?;
-    let [first, second] = direct.reports.as_slice() else {
+            .context("the native run")?;
+    let [first, second] = native_run.reports.as_slice() else {
         anyhow::bail!(
-            "a relay makes two inferences, and the direct run made {}",
-            direct.reports.len()
+            "a relay makes two inferences, and the native run made {}",
+            native_run.reports.len()
         );
     };
     let (first, second) = (&first.result, &second.result);
@@ -103,9 +103,9 @@ pub(super) fn run_relay_scenario(
         case_path: Some(case_beside(&specification)),
         specification_path: specification.clone(),
         current_exe: exe.to_path_buf(),
-        staged_backend: StagedExecutionBackend::InProcess,
+        native_stage_backend: NativeStageBackend::InProcess,
         claimed_token_ids: None,
-        direct_output_ids: None,
+        native_output_ids: None,
         claimer: None,
     })
     .context("the relay claim")?;
@@ -114,9 +114,9 @@ pub(super) fn run_relay_scenario(
             && built
                 .results
                 .iter()
-                .eq(direct.reports.iter().map(|report| &report.result))
+                .eq(native_run.reports.iter().map(|report| &report.result))
             && built.consensus.is_none(),
-        "direct inference and the claim state different results"
+        "the native run and the claim state different results"
     );
     // And with no blockchain: the same checkpoints as the claim's run.
     super::run_with_no_blockchain(
@@ -147,7 +147,7 @@ pub(super) fn run_relay_scenario(
         .arg(manifest)
         .args(["--no-auth", "--run"])
         .arg(&raster_dir);
-    logged(raster_run, &dir.join("raster.log")).context("Raster-staged execution")?;
+    logged(raster_run, &dir.join("raster.log")).context("pipeline-raster execution")?;
     let order = procedure_definition::read_stage_order(&built.pipeline_dir)?
         .context("native pipeline recorded no stage inventory")?;
     let of = |label: &str| {
@@ -173,11 +173,11 @@ pub(super) fn run_relay_scenario(
         "a relay pipeline is the source, the first inference, the relay, the second inference \
          and the result; ran {order:?}"
     );
-    let raster_outputs = read_boundaries(&raster_dir, &order, false).context("Raster-staged")?;
-    let native = read_boundaries(&built.pipeline_dir, &order, false).context("native-staged")?;
+    let raster_outputs = read_boundaries(&raster_dir, &order, false).context("pipeline-raster")?;
+    let native = read_boundaries(&built.pipeline_dir, &order, false).context("pipeline-native")?;
     for stage in &order {
         compare(stage, &raster_outputs[stage], &native[stage])
-            .context("Raster-staged ↔ native-staged")?;
+            .context("pipeline-raster ↔ pipeline-native")?;
     }
 
     // The relay's record: of the prompt the second inference ran, built on
@@ -201,7 +201,7 @@ pub(super) fn run_relay_scenario(
     .record;
     ensure!(
         record == expected,
-        "the relay stage states another record than direct inference: {stated}"
+        "the relay stage states another record than the native run: {stated}"
     );
     ensure!(
         second.source_sha256 == procedure_prepare::source_id(Some(&record)),

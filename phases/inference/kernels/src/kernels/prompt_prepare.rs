@@ -1,6 +1,6 @@
 //! Native prompt preparation: the bind `prompt-bind` runs for a range, the ranked merge
 //! every range's token check is held to, and the whole-prompt tokenization
-//! direct inference uses.
+//! the native run uses.
 use anyhow::{ensure, Result};
 use prompt_check::input::{
     bind_range, merge_bucket_of, open_bind_range, record_fault, vocab_bucket_of, BpePiece,
@@ -186,7 +186,7 @@ pub fn finalize_prompt(inputs: PromptPrepareDirectInputs<'_>) -> Result<PromptTo
     })
 }
 
-/// A prompt whose ids direct inference was handed, with nothing a pipeline binds.
+/// A prompt whose ids the native run was handed, with nothing a pipeline binds.
 pub fn tokenization_of_ids(token_ids: Vec<u32>) -> PromptTokenization {
     PromptTokenization {
         token_ids: List::from(token_ids),
@@ -208,9 +208,9 @@ pub fn merge_fully(
     }
 }
 
-/// The whole prompt's tokens, as direct inference takes them: merged fully,
+/// The whole prompt's tokens, as the native run takes them: merged fully,
 /// with no ranges and no checkpoints.
-pub fn run_prompt_prepare_direct(
+pub fn run_prompt_prepare_native(
     inputs: PromptPrepareDirectInputs<'_>,
 ) -> Result<PromptTokenization> {
     let pieces = merge_fully(
@@ -253,7 +253,7 @@ mod tests {
         let next = finish_token_context(&context, &MergeCandidate::default(), 3);
         assert_eq!(next.fault, FAULT_RANGE_TOO_LARGE);
 
-        // With no range size, as in direct inference, no range limit applies.
+        // With no range size, as in the native run, no range limit applies.
         let next = finish_token_context(&PromptContext::default(), &MergeCandidate::default(), 3);
         assert_eq!(next.fault, FAULT_NONE);
     }

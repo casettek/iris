@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
-use procedure_pipeline::pipeline_runner::StagedExecutionBackend;
+use procedure_pipeline::pipeline_runner::NativeStageBackend;
 use procedure_pipeline::{
     CheckpointedInferenceConfig, CheckpointedInferenceExecutor, CheckpointedInferenceResult,
     ParityPolicy,
@@ -15,10 +15,10 @@ use procedure_definition::{
     write_checkpoint_hashes, write_json, Case, InferenceResult, PreparedRun, Specification,
     CHECKPOINT_LIST_JSON, PREPARED_RUN_JSON,
 };
-use procedure_prepare::staged::Frozen;
-pub use procedure_prepare::staged::{
+use procedure_prepare::pipeline_run::Frozen;
+pub use procedure_prepare::pipeline_run::{
     render_pipeline, render_ranged_manifest, without_source_stage, FrozenSource, InferenceFiles,
-    PreparedClaimRun, RunExternal,
+    PreparedPipelineRun, RunExternal,
 };
 use serde::Serialize;
 use sha2::{Digest, Sha256};
@@ -31,16 +31,16 @@ pub struct ClaimBuildOptions {
     /// claimer's prepared run, whose case is the prompt that run holds.
     pub case_path: Option<PathBuf>,
     pub current_exe: PathBuf,
-    pub staged_backend: StagedExecutionBackend,
-    /// Debug-only: post these output ids instead of discovering them with direct
+    pub native_stage_backend: NativeStageBackend,
+    /// Debug-only: post these output ids instead of discovering them with native
     /// inference. Used to build claims whose tokens are not the greedy
     /// continuation.
     pub claimed_token_ids: Option<Vec<u32>>,
-    /// The output a direct run of this same specification and case already produced. Taken in
-    /// place of running direct inference again, and held to every rule a
+    /// The output a native run of this same specification and case already produced. Taken in
+    /// place of running the native run again, and held to every rule a
     /// discovered output is: the pipeline re-derives each token, and a claim it
     /// rejects is not written.
-    pub direct_output_ids: Option<Vec<u32>>,
+    pub native_output_ids: Option<Vec<u32>>,
     /// The address the claim is attributed to, `0x` and 40 hex digits. With
     /// none, the claim names the zero address.
     pub claimer: Option<String>,
@@ -111,7 +111,7 @@ pub fn build_claim(options: ClaimBuildOptions) -> Result<ClaimBuildResult> {
         base_dir: options.base_dir,
         manifest_path: prepared.manifest_path.clone(),
         current_exe: options.current_exe,
-        staged_backend: options.staged_backend,
+        native_stage_backend: options.native_stage_backend,
         parity_policy: ParityPolicy::Skip,
     })?;
     // A claimer applies the rule a challenger will: the claim is judged by
@@ -125,16 +125,16 @@ pub fn build_claim(options: ClaimBuildOptions) -> Result<ClaimBuildResult> {
     .with_context(|| format!("the `{procedure_kind}` pipeline did not state its result"))?;
     if let Some(reason) = rejection {
         if options.claimed_token_ids.is_none() {
-            if options.direct_output_ids.is_some() {
+            if options.native_output_ids.is_some() {
                 anyhow::bail!(
-                    "{reason}; the ids given as this run's direct output are not what the pipeline \
-                     derives, so they are not that output or direct and teacher-forced \
+                    "{reason}; the ids given as this run's native output are not what the pipeline \
+                     derives, so they are not that output or the native run and teacher-forced \
                      inference are not in parity"
                 );
             }
-            // The ids came from direct decode, so the two paths are not
+            // The ids came from native decode, so the two paths are not
             // bit-identical: an honest claimer would convict itself.
-            anyhow::bail!("{reason}; direct and teacher-forced inference are not in parity");
+            anyhow::bail!("{reason}; native and teacher-forced inference are not in parity");
         }
         eprintln!("warning: {reason}; writing the claim anyway because its ids were given (`iris test claim`)");
     }
@@ -338,7 +338,7 @@ fn write_claim_result(
 impl ClaimBuildOptions {
     pub fn from_current_dir(
         current_exe: PathBuf,
-        staged_backend: StagedExecutionBackend,
+        native_stage_backend: NativeStageBackend,
         specification_path: PathBuf,
         case_path: PathBuf,
     ) -> Result<Self> {
@@ -348,15 +348,15 @@ impl ClaimBuildOptions {
             case_path: Some(case_path),
             base_dir,
             current_exe,
-            staged_backend,
+            native_stage_backend,
             claimed_token_ids: None,
-            direct_output_ids: None,
+            native_output_ids: None,
             claimer: None,
         })
     }
 }
 
-pub fn prepare_claim_run(options: &ClaimBuildOptions) -> Result<PreparedClaimRun> {
+pub fn prepare_claim_run(options: &ClaimBuildOptions) -> Result<PreparedPipelineRun> {
     let specification_path = absolute(&options.base_dir, &options.specification_path);
     let specification = read_specification(&specification_path)?;
     let (case_path, case) = read_options_case(options)?;
@@ -394,7 +394,7 @@ fn read_options_case(options: &ClaimBuildOptions) -> Result<(PathBuf, Case)> {
 pub fn prepare_posted_run(
     options: &ClaimBuildOptions,
     posted: &blockchain_rules::availability::PostedRun,
-) -> Result<PreparedClaimRun> {
+) -> Result<PreparedPipelineRun> {
     let specification_path = absolute(&options.base_dir, &options.specification_path);
     let specification = read_specification(&specification_path)?;
     let (case_path, case) = read_options_case(options)?;
@@ -427,7 +427,7 @@ pub fn prepare_challenge_run(
     forms: &[procedure_prepare::source::Form],
     ids: &[Vec<u32>],
     prompts: &[procedure_definition::PreparedPrompt],
-) -> Result<PreparedClaimRun> {
+) -> Result<PreparedPipelineRun> {
     let specification_path = absolute(&options.base_dir, &options.specification_path);
     prepare_run(
         options,
@@ -445,9 +445,9 @@ pub fn prepare_challenge_run(
     )
 }
 
-/// Prepares the run, finding by direct inference the output of any inference
+/// Prepares the run, finding by the native run the output of any inference
 /// whose ids no one gave: the only autoregression left, since the claim
-/// posts what direct decode produced and the pipeline checks it.
+/// posts what native decode produced and the pipeline checks it.
 fn prepare_run(
     options: &ClaimBuildOptions,
     specification_path: PathBuf,
@@ -456,10 +456,10 @@ fn prepare_run(
     frozen: Option<Frozen<'_>>,
     given: Option<&blockchain_rules::availability::PostedRun>,
     check_claimed_length: bool,
-) -> Result<PreparedClaimRun> {
+) -> Result<PreparedPipelineRun> {
     let discover =
-        procedure_run::direct_output(&options.base_dir, &specification_path, case_path.as_deref());
-    procedure_prepare::staged::prepare_run(procedure_prepare::staged::StagedRun {
+        procedure_run::native_output(&options.base_dir, &specification_path, case_path.as_deref());
+    procedure_prepare::pipeline_run::prepare_run(procedure_prepare::pipeline_run::PipelineRun {
         base_dir: &options.base_dir,
         specification_path: specification_path.clone(),
         specification,
@@ -471,7 +471,7 @@ fn prepare_run(
         given_ids: options
             .claimed_token_ids
             .as_ref()
-            .or(options.direct_output_ids.as_ref()),
+            .or(options.native_output_ids.as_ref()),
         check_claimed_length,
         discover: &discover,
     })
@@ -582,7 +582,7 @@ mod tests {
 
         let options = ClaimBuildOptions::from_current_dir(
             PathBuf::from("iris"),
-            StagedExecutionBackend::InProcess,
+            NativeStageBackend::InProcess,
             PathBuf::from("specification.toml"),
             PathBuf::from("case.toml"),
         )
@@ -598,7 +598,7 @@ mod tests {
         );
         assert_eq!(options.case_path, Some(PathBuf::from("case.toml")));
         assert_eq!(options.current_exe, PathBuf::from("iris"));
-        assert_eq!(options.staged_backend, StagedExecutionBackend::InProcess);
+        assert_eq!(options.native_stage_backend, NativeStageBackend::InProcess);
     }
 
     #[test]
@@ -614,9 +614,9 @@ mod tests {
             case_path: Some(case_beside(&specification_path)),
             specification_path,
             current_exe: PathBuf::from("unused"),
-            staged_backend: StagedExecutionBackend::InProcess,
+            native_stage_backend: NativeStageBackend::InProcess,
             claimed_token_ids: Some(vec![0, 0, 0]),
-            direct_output_ids: None,
+            native_output_ids: None,
             claimer: None,
         };
         let prepared = prepare_claim_run(&options).unwrap();
@@ -624,11 +624,11 @@ mod tests {
         assert!(rendered.contains("name = \"model-b\""));
         assert!(!rendered.contains("model-a"));
         assert_eq!(prepared.claimed_token_ids, [0, 0, 0]);
-        // A prior direct run's output is taken without running direct again
+        // A prior native run's output is taken without running native again
         // (this fixture has no weights to run), and is held to the run's length.
         let given = |ids: &[u32]| ClaimBuildOptions {
             claimed_token_ids: None,
-            direct_output_ids: Some(ids.to_vec()),
+            native_output_ids: Some(ids.to_vec()),
             claimer: None,
             ..options.clone()
         };
@@ -841,9 +841,9 @@ mod tests {
             case_path: None,
             specification_path: specification.clone(),
             current_exe: PathBuf::from("unused"),
-            staged_backend: StagedExecutionBackend::InProcess,
+            native_stage_backend: NativeStageBackend::InProcess,
             claimed_token_ids: ids,
-            direct_output_ids: None,
+            native_output_ids: None,
             claimer: None,
         };
         let specification = read_specification(&specification).unwrap();

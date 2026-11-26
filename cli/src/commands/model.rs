@@ -46,8 +46,8 @@ pub(crate) struct ModelImportArgs {
     only_embedding: bool,
     #[arg(long = "only-ple")]
     only_ple: bool,
-    #[arg(long = "only-direct")]
-    only_direct: bool,
+    #[arg(long = "only-native")]
+    only_native: bool,
     /// Accepted and ignored: import no longer writes fixtures into stage directories.
     #[arg(long)]
     no_stage_fixtures: bool,
@@ -67,7 +67,7 @@ impl ModelImportArgs {
             only_layers: self.only_layers,
             only_embedding: self.only_embedding,
             only_ple: self.only_ple,
-            only_direct: self.only_direct,
+            only_native: self.only_native,
             no_stage_fixtures: self.no_stage_fixtures,
             range_size: self.range_size,
         }
@@ -127,7 +127,7 @@ mod tests {
             only_layers: false,
             only_embedding: true,
             only_ple: false,
-            only_direct: false,
+            only_native: false,
             no_stage_fixtures: false,
             range_size: inference_import::DEFAULT_RANGE_SIZE,
         }
@@ -144,7 +144,7 @@ mod tests {
                 only_layers: false,
                 only_embedding: true,
                 only_ple: false,
-                only_direct: false,
+                only_native: false,
                 no_stage_fixtures: false,
                 range_size: inference_import::DEFAULT_RANGE_SIZE,
             }
