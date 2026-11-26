@@ -109,7 +109,7 @@ pub fn run_worker(budget_bytes: usize) -> Result<()> {
 }
 
 fn execute_job(job: &WorkerJob, weights: &RunWeights) -> Result<DirectTimings> {
-    if !matches!(job.kind, StageKind::PrefillPrepareAux { .. }) {
+    if job.kind.auxiliary_layer().is_none() {
         bail!("worker accepts only auxiliary stages");
     }
     if StageKind::from_stage_name(&job.name)? != job.kind {
@@ -210,7 +210,7 @@ impl WorkerPool {
     pub fn run(&mut self, jobs: Vec<WorkerJob>) -> Result<Vec<WorkerResponse>> {
         let mut groups: Vec<Vec<WorkerJob>> = (0..self.len()).map(|_| Vec::new()).collect();
         for job in jobs {
-            let StageKind::PrefillPrepareAux { layer } = job.kind else {
+            let Some(layer) = job.kind.auxiliary_layer() else {
                 bail!("non-auxiliary pool job");
             };
             groups[layer % self.len()].push(job);
@@ -317,7 +317,7 @@ mod tests {
         let result = pool.run(vec![WorkerJob {
             id: 0,
             name: "aux_p0_l0".into(),
-            kind: StageKind::PrefillPrepareAux { layer: 0 },
+            kind: StageKind::Inference(segments::inference::Stage::PrefillPrepareAux { layer: 0 }),
             input: "missing".into(),
             input_manifest: "missing".into(),
             output_dir: "missing".into(),

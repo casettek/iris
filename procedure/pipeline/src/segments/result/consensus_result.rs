@@ -95,6 +95,40 @@ fn load_inputs() -> Result<Inputs> {
     })
 }
 
+/// This stage as the runner runs it.
+pub struct Stage;
+
+impl crate::segments::NativeStage for Stage {
+    type Inputs = Inputs;
+    type Output = ConsensusRecord;
+    const PROJECT: &'static str = "consensus-result";
+    const ROUTINE: &'static str = "consensus_result";
+
+    fn load_from_args() -> Result<Inputs> {
+        load_inputs_from_args()
+    }
+
+    fn load_from_paths(
+        input: &std::path::Path,
+        input_manifest: &std::path::Path,
+        cached_inputs: &crate::cache::CachedInputs,
+        materializations: Option<&crate::cache::MaterializationCache>,
+    ) -> Result<Inputs> {
+        load_inputs_from_paths_with_cache(input, input_manifest, cached_inputs, materializations)
+    }
+
+    fn run(
+        inputs: &Inputs,
+        _caches: crate::segments::NativeStageCaches<'_>,
+    ) -> Result<ConsensusRecord> {
+        run_direct(inputs)
+    }
+
+    fn cached(output: ConsensusRecord) -> crate::cache::CachedStageValue {
+        crate::cache::CachedStageValue::ConsensusRecord(output)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

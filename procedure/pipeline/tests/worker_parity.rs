@@ -566,7 +566,7 @@ fn workers_reject_bad_protocol_and_failed_stage_inputs() {
         format!(
             "{}\n",
             serde_json::json!({"Run":{"version":1,"job":{
-                "id":7,"name":"aux_p0_l0","kind":{"PrefillPrepareAux":{"layer":0}},
+                "id":7,"name":"aux_p0_l0","kind":{"Inference":{"PrefillPrepareAux":{"layer":0}}},
                 "input":"missing-input.json","input_manifest":"missing-manifest.json","output_dir":"unused-output"
             }}})
         ),
@@ -680,7 +680,7 @@ fn worker_reuse_preserves_output_isolation_and_reports_failed_writes() {
     let mut input = child.stdin.take().unwrap();
     for (id, dest) in [(1, &good), (2, &blocked)] {
         let request = serde_json::json!({"Run":{"version":1,"job":{
-            "id":id,"name":"aux_p0_l0","kind":{"PrefillPrepareAux":{"layer":0}},
+            "id":id,"name":"aux_p0_l0","kind":{"Inference":{"PrefillPrepareAux":{"layer":0}}},
             "input":source.join("input.json"),"input_manifest":source.join("input_manifest.json"),"output_dir":dest
         }}});
         writeln!(input, "{request}").unwrap();

@@ -202,3 +202,37 @@ fn load_inputs_from_initialized_runtime(
         ple,
     })
 }
+
+/// This stage as the runner runs it.
+pub struct Stage;
+
+impl crate::segments::NativeStage for Stage {
+    type Inputs = Inputs;
+    type Output = ActivationSequence;
+    const PROJECT: &'static str = "prefill-range";
+    const ROUTINE: &'static str = "prefill_range";
+
+    fn load_from_args() -> Result<Inputs> {
+        load_inputs_from_args()
+    }
+
+    fn load_from_paths(
+        input: &std::path::Path,
+        input_manifest: &std::path::Path,
+        cached_inputs: &crate::cache::CachedInputs,
+        materializations: Option<&crate::cache::MaterializationCache>,
+    ) -> Result<Inputs> {
+        load_inputs_from_paths_with_cache(input, input_manifest, cached_inputs, materializations)
+    }
+
+    fn run(
+        inputs: &Inputs,
+        caches: crate::segments::NativeStageCaches<'_>,
+    ) -> Result<ActivationSequence> {
+        run_direct_with_weight_cache(inputs, caches.prefill_range_weights)
+    }
+
+    fn cached(output: ActivationSequence) -> crate::cache::CachedStageValue {
+        crate::cache::CachedStageValue::RangeActivations(output)
+    }
+}

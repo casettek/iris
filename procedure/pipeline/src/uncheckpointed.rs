@@ -463,10 +463,8 @@ fn aux_wave_range(stages: &[StageSpec], start: usize) -> Option<Range<usize>> {
 }
 
 fn is_prefill_prepare_aux_stage(stage: &StageSpec) -> bool {
-    matches!(
-        StageKind::from_stage_spec(&stage.project, &stage.name),
-        Ok(StageKind::PrefillPrepareAux { .. })
-    )
+    StageKind::from_stage_spec(&stage.project, &stage.name)
+        .is_ok_and(|kind| kind.auxiliary_layer().is_some())
 }
 
 fn ensure_stage_inputs_ready(

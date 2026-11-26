@@ -1280,10 +1280,8 @@ fn aux_wave_range(stages: &[StageSpec], start: usize) -> Option<Range<usize>> {
 }
 
 fn is_prefill_prepare_aux_stage(stage: &StageSpec) -> bool {
-    matches!(
-        StageKind::from_stage_spec(&stage.project, &stage.name),
-        Ok(StageKind::PrefillPrepareAux { .. })
-    )
+    StageKind::from_stage_spec(&stage.project, &stage.name)
+        .is_ok_and(|kind| kind.auxiliary_layer().is_some())
 }
 
 fn run_aux_wave(
@@ -1463,9 +1461,8 @@ fn run_persistent_aux_jobs(
     let requests = jobs
         .into_iter()
         .map(|job| {
-            let layer = match job.kind {
-                StageKind::PrefillPrepareAux { layer } => layer,
-                _ => unreachable!(),
+            let Some(layer) = job.kind.auxiliary_layer() else {
+                unreachable!()
             };
             metadata.insert(job.idx, (job.stage_dir.clone(), layer % worker_count));
             WorkerJob {
