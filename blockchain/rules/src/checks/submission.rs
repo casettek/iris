@@ -355,7 +355,7 @@ impl std::fmt::Display for SubmissionRejection {
                 f,
                 "a claim of the `{procedure_kind}` procedure kind holds {} inference(s){}, and this one holds {inferences}{}",
                 procedure_kind.inferences(),
-                if procedure_kind.inferences() > 1 { " and what they agree on" } else { "" },
+                if procedure_kind.result().states_agreement() { " and what they agree on" } else { "" },
                 if *consensus { " and an agreement" } else { "" },
             ),
             Self::AnotherConsensus {
@@ -711,11 +711,11 @@ pub fn check_stated_records(
     if stated.results != submission.stated() {
         return Err(SubmissionRejection::AnotherStatedResult);
     }
-    let inputs = submission.procedure_kind.result_inputs();
     for (inference, claimed) in submission.inferences.iter().enumerate() {
-        let check = inputs
-            .get(inference)
-            .and_then(|input| stated.result_inputs.get(*input))
+        let check = submission
+            .procedure_kind
+            .result_input_of(inference)
+            .and_then(|input| stated.result_inputs.get(input))
             .and_then(|position| {
                 stated
                     .checks

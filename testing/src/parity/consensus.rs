@@ -66,7 +66,7 @@ fn import_other_family(
 
 /// Writes the run: a specification naming both models, and the source's case.
 fn write_run(dir: &Path, source: &LoadedSource, models: &[&Path; 2]) -> Result<PathBuf> {
-    source::write_run(dir, source, ProcedureKind::Consensus, models)
+    source::write_run(dir, source, ProcedureKind::named("consensus")?, models)
 }
 
 pub(super) fn run_consensus_scenario(
@@ -132,7 +132,7 @@ pub(super) fn run_consensus_scenario(
     })
     .context("the consensus claim")?;
     ensure!(
-        built.procedure_kind == ProcedureKind::Consensus
+        built.procedure_kind.name() == "consensus"
             && built.final_result.as_ref() == Some(&direct.reports[0].result)
             && built.consensus == direct.consensus,
         "direct inference and the claim state different results: {:?} and {:?}",
@@ -218,7 +218,7 @@ pub(super) fn run_consensus_scenario(
     let pins = blockchain_host::claim_check::run_pins(&claim_dir, &specification)
         .context("the contract's pins")?;
     ensure!(
-        pins.procedure_kind == ProcedureKind::Consensus
+        pins.procedure_kind.name() == "consensus"
             && pins.models.len() == 2
             && pins.models[0].model_id == prepared.inferences[0].model_id
             && pins.models[1].model_id == prepared.inferences[1].model_id

@@ -12,127 +12,128 @@
 //! holds is the shape: a claim of a procedure kind must end in that procedure kind's
 //! result program, which is in the approved set of no other.
 //!
+//! A kind is not written in code. Each is a file of `procedures/`, its shape
+//! ([`crate::shape::Shape`]), compiled in, and a [`ProcedureKind`] is one of
+//! them by name. Everything that depends on the arrangement asks the shape.
+//!
 //! A model import writes one inference's segment of a chain: its chain inputs
 //! and its stages, from the first bind to the last check, with the first
 //! bind given the constant source. [`ProcedureKind::chain_template`] makes the
-//! chain template of a run from one segment per model: the `source` stage in
-//! front, each segment's first bind taking its record, and the procedure kind's
-//! result stage behind.
+//! chain template of a run from one segment per model, by the kind's shape.
 //!
 //! See `docs/protocol/procedure-kinds.md`.
 
-use anyhow::{ensure, Context, Result};
-use serde::{Deserialize, Serialize};
+use std::sync::OnceLock;
+
+use anyhow::{Context, Result};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+use crate::segment_kind::ResultKind;
+use crate::shape::Shape;
+
+include!(concat!(env!("OUT_DIR"), "/catalog.rs"));
 
 /// The stage that states what the prompt text was built from.
 pub const SOURCE_STAGE: &str = "source";
 /// The stage that states a procedure kind's result.
 pub const RESULT_STAGE: &str = "result";
+/// The kind a specification that names none is of.
+pub const DEFAULT_KIND: &str = "single";
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum ProcedureKind {
-    /// One inference on one model, and the code of the form its output is.
-    /// What a specification that names no procedure kind runs.
-    #[default]
-    Single,
-    /// The same inference on two models, one after the other, and whether
-    /// their outputs agree.
-    Consensus,
+/// The shapes of `procedures/`, in name order. A file that is no shape stops
+/// the program where the kinds are first asked for: the files are compiled
+/// in, and the unit tests read every one.
+fn catalog() -> &'static [Shape] {
+    static SHAPES: OnceLock<Vec<Shape>> = OnceLock::new();
+    SHAPES.get_or_init(|| {
+        CATALOG
+            .iter()
+            .map(|(name, text)| {
+                Shape::parse(name, text)
+                    .unwrap_or_else(|error| panic!("procedures/{name}.toml: {error:#}"))
+            })
+            .collect()
+    })
 }
 
-/// What a procedure's last stage states.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum ResultKind {
-    /// The code of the form one output is.
-    OneOutput,
-    /// The code of each of two outputs, and whether they agree.
-    Agreement,
-}
-
-impl ResultKind {
-    /// Every result kind, in the order an output that does not say which it
-    /// holds is read as one: their records have no field in common at the top.
-    pub const ALL: &'static [ResultKind] = &[ResultKind::Agreement, ResultKind::OneOutput];
-
-    /// The stage program that states this result: the stage project's
-    /// directory name.
-    pub fn program(self) -> &'static str {
-        match self {
-            Self::OneOutput => "claim-result",
-            Self::Agreement => "consensus-result",
-        }
-    }
-
-    /// The inputs of the result stage that are an inference's last check, in
-    /// the order of the inferences.
-    pub fn inputs(self) -> &'static [&'static str] {
-        match self {
-            Self::OneOutput => &["check"],
-            Self::Agreement => &["first", "second"],
-        }
-    }
-
-    /// Whether the result says anything of several outputs together.
-    pub fn states_agreement(self) -> bool {
-        self == Self::Agreement
-    }
-}
+/// One of the procedure kinds of `procedures/`.
+#[derive(Clone, Copy)]
+pub struct ProcedureKind(&'static Shape);
 
 impl ProcedureKind {
-    /// Every procedure kind, in the order they are listed to a user.
-    pub const ALL: &'static [ProcedureKind] = &[ProcedureKind::Single, ProcedureKind::Consensus];
+    /// Every procedure kind, in name order.
+    pub fn all() -> Vec<ProcedureKind> {
+        catalog().iter().map(ProcedureKind).collect()
+    }
+
+    /// The procedure kind of this name.
+    pub fn named(name: &str) -> Result<Self> {
+        catalog()
+            .iter()
+            .find(|shape| shape.name == name)
+            .map(ProcedureKind)
+            .with_context(|| {
+                let names: Vec<String> = catalog()
+                    .iter()
+                    .map(|shape| format!("`{}`", shape.name))
+                    .collect();
+                format!(
+                    "unknown procedure kind `{name}`, expected one of {}",
+                    names.join(", ")
+                )
+            })
+    }
+
+    /// The kind a specification that names none is of.
+    pub fn single() -> Self {
+        Self::named(DEFAULT_KIND).expect("procedures/single.toml is compiled in")
+    }
+
+    /// The kind's steps in order.
+    pub fn shape(self) -> &'static Shape {
+        self.0
+    }
 
     /// The name a specification, a prepared run and a submission use.
     pub fn name(self) -> &'static str {
-        match self {
-            Self::Single => "single",
-            Self::Consensus => "consensus",
-        }
+        &self.0.name
     }
 
-    /// What this procedure kind's result is. Everything that depends on the
-    /// result asks this, so a kind says it in one place.
+    /// What this procedure kind's result is.
     pub fn result(self) -> ResultKind {
-        match self {
-            Self::Single => ResultKind::OneOutput,
-            Self::Consensus => ResultKind::Agreement,
-        }
+        self.0.result()
     }
 
     /// The stage program that ends a claim of this procedure kind and states its
     /// result: the stage project's directory name.
     pub fn result_program(self) -> &'static str {
-        self.result().program()
+        self.0.result_program().name
     }
 
-    /// The inputs of the result stage that are an inference's last check, in
-    /// the order of the inferences.
-    pub fn result_inputs(self) -> &'static [&'static str] {
-        self.result().inputs()
+    /// The input of the result stage that is this inference's last check, or
+    /// `None` for an inference the result stage does not read.
+    pub fn result_input_of(self, inference: usize) -> Option<&'static str> {
+        self.0
+            .result_reads()
+            .into_iter()
+            .find(|(_, read)| *read == inference)
+            .map(|(input, _)| input)
     }
 
     pub fn is_default(&self) -> bool {
-        *self == Self::default()
+        self.name() == DEFAULT_KIND
     }
 
     /// How many inferences a run of this procedure kind makes: one per model.
     pub fn inferences(self) -> usize {
-        match self {
-            Self::Single => 1,
-            Self::Consensus => 2,
-        }
+        self.0.inferences()
     }
 
     /// What marks a stage or a chain input as this inference's. Nothing in a
     /// procedure kind of one inference, whose stages are named as an import names
     /// them.
     pub fn label(self, inference: usize) -> String {
-        if self.inferences() == 1 {
-            String::new()
-        } else {
-            inference_label(inference)
-        }
+        self.0.label(inference)
     }
 
     /// The chain template of this procedure kind over model imports: `segments` are
@@ -141,36 +142,55 @@ impl ProcedureKind {
     /// The template always has the source stage. A run whose text is taken as
     /// given removes it when it renders its own chain.
     pub fn chain_template(self, segments: &[&str]) -> Result<String> {
-        ensure!(
-            segments.len() == self.inferences(),
-            "the `{self}` procedure kind makes {} inference(s), and {} model(s) were given",
-            self.inferences(),
-            segments.len()
-        );
-        let labels: Vec<String> = (0..segments.len()).map(|n| self.label(n)).collect();
-        let stages_dir = stage_projects_dir(segments[0])?;
-        // What the result stage reads of each inference: its last check.
-        let checks: String = self
-            .result_inputs()
-            .iter()
-            .zip(&labels)
-            .map(|(input, label)| {
-                format!("inputs.{input} = {{ from = \"{}\" }}\n", last_check(label))
-            })
-            .collect();
-        let result = format!(
-            "\n[[chain.stage]]\nname = \"{RESULT_STAGE}\"\n{}{checks}{}",
-            project_line(&stages_dir, self.result_program()),
-            run_input("forms", "result_forms"),
-        );
-        let source = format!(
-            "\n[[chain.stage]]\nname = \"{SOURCE_STAGE}\"\n{}{}{}{}",
-            project_line(&stages_dir, "prompt-source"),
-            run_input("signer", "source_signer"),
-            run_input("recipe", "source_recipe"),
-            run_input("documents", "source_documents"),
-        );
-        assemble(segments, &labels, &source, &result)
+        self.0.pipeline_template(segments)
+    }
+}
+
+impl Default for ProcedureKind {
+    fn default() -> Self {
+        Self::single()
+    }
+}
+
+impl PartialEq for ProcedureKind {
+    fn eq(&self, other: &Self) -> bool {
+        self.name() == other.name()
+    }
+}
+
+impl Eq for ProcedureKind {}
+
+impl std::hash::Hash for ProcedureKind {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.name().hash(state);
+    }
+}
+
+impl std::fmt::Debug for ProcedureKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "ProcedureKind({})", self.name())
+    }
+}
+
+impl std::fmt::Display for ProcedureKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.name())
+    }
+}
+
+/// A kind is written by its name.
+impl Serialize for ProcedureKind {
+    fn serialize<S: Serializer>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.name())
+    }
+}
+
+/// A name that is no procedure kind is refused where it is read, and the
+/// refusal says which names are.
+impl<'de> Deserialize<'de> for ProcedureKind {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> std::result::Result<Self, D::Error> {
+        let name = String::deserialize(deserializer)?;
+        Self::named(&name).map_err(serde::de::Error::custom)
     }
 }
 
@@ -194,182 +214,38 @@ pub fn labelled_name(name: &str) -> Option<(usize, &str)> {
     Some((inference, rest[digits..].strip_prefix('_')?))
 }
 
-/// The last check of the inference with this label, as a template names it
-/// before a run knows how many claimed ranges it has.
-fn last_check(label: &str) -> String {
-    format!("{label}check_c@{label}LAST_CLAIMED_RANGE@")
-}
-
-/// An input a run fills in when it renders its chain. Not a binding Raster
-/// reads: a template that still holds one is not a chain yet.
-fn run_input(param: &str, file: &str) -> String {
-    format!("inputs.{param} = {{ run = \"{file}\" }}\n")
-}
-
-fn project_line(stages_dir: &str, program: &str) -> String {
-    let project = if stages_dir.is_empty() {
-        program.to_string()
-    } else {
-        format!("{}/{program}", stages_dir.trim_end_matches('/'))
-    };
-    format!("project = {project:?}\n")
-}
-
-/// Where the stage projects are, read from the first stage a segment names:
-/// they are side by side, and a procedure kind's own stages are beside a model's.
-fn stage_projects_dir(segment: &str) -> Result<String> {
-    let line = segment
-        .lines()
-        .map(str::trim)
-        .find_map(|line| line.strip_prefix("project ="))
-        .context("the chain template of a model import names no stage project")?;
-    let project: String = serde_json::from_str(line.trim())
-        .with_context(|| format!("invalid stage project in a chain template: {line}"))?;
-    Ok(project
-        .rsplit_once('/')
-        .map(|(dir, _)| dir.to_string())
-        .unwrap_or_default())
-}
-
-/// One segment with every name that is its own given the label: its chain
-/// inputs, its stages and repeats, what its stages take from each other, and
-/// the marks a run replaces with its range counts.
-fn labelled(segment: &str, label: &str) -> String {
-    if label.is_empty() {
-        return segment.to_string();
-    }
-    let mut table = "";
-    let mut out = Vec::new();
-    for line in segment.lines() {
-        let trimmed = line.trim_start();
-        let indent = &line[..line.len() - trimmed.len()];
-        if trimmed.starts_with('[') {
-            table = trimmed.trim_end();
-        }
-        let mut line = if let Some(name) = trimmed.strip_prefix("[chain.input.") {
-            format!("{indent}[chain.input.{label}{name}")
-        } else if table != "[chain]" && trimmed.starts_with("name = \"") {
-            format!(
-                "{indent}{}",
-                trimmed.replacen("name = \"", &format!("name = \"{label}"), 1)
-            )
-        } else if trimmed.starts_with("inputs.") {
-            let mut line = line.to_string();
-            for key in ["from = \"", "first = \"", "input = \""] {
-                line = line.replace(key, &format!("{key}{label}"));
-            }
-            line
-        } else {
-            line.to_string()
-        };
-        for mark in ["LAST_PROMPT_RANGE", "LAST_CLAIMED_RANGE"] {
-            line = line.replace(&format!("@{mark}@"), &format!("@{label}{mark}@"));
-        }
-        out.push(line);
-    }
-    out.push(String::new());
-    out.join("\n")
-}
-
-/// The whole template: the `[chain]` table, every segment's chain inputs, the
-/// source stage, every segment's stages with its first bind taking the source
-/// stage's record, and the result stage.
-fn assemble(segments: &[&str], labels: &[String], source: &str, result: &str) -> Result<String> {
-    let mut chain: Option<String> = None;
-    let mut inputs = String::new();
-    let mut stages = String::new();
-    for (segment, label) in segments.iter().zip(labels) {
-        let segment = labelled(segment, label);
-        // A segment is its tables up to the first stage or repeat, then those.
-        let cut = segment
-            .find("\n[[chain.")
-            .context("the chain template of a model import has no stages")?;
-        let (head, body) = segment.split_at(cut);
-        let at = head.find("\n[chain.input.").unwrap_or(head.len());
-        let (table, part_inputs) = head.split_at(at);
-        // The chain is named as the first import names it.
-        if chain.is_none() {
-            chain = Some(table.to_string());
-        }
-        inputs.push_str(part_inputs);
-
-        let first_bind = format!("name = \"{label}prompt_bind_p0\"");
-        let (mut in_first_bind, mut rebound) = (false, 0);
-        for line in body.lines() {
-            let trimmed = line.trim();
-            if trimmed.starts_with('[') {
-                in_first_bind = false;
-            } else if trimmed == first_bind {
-                in_first_bind = true;
-            }
-            if in_first_bind && trimmed.starts_with("inputs.source =") {
-                rebound += 1;
-                stages.push_str(&format!("inputs.source = {{ from = \"{SOURCE_STAGE}\" }}"));
-            } else {
-                stages.push_str(line);
-            }
-            stages.push('\n');
-        }
-        ensure!(
-            rebound == 1,
-            "the chain template of a model import gives its first bind {rebound} sources"
-        );
-    }
-    Ok(format!(
-        "{}{inputs}{source}{stages}{result}",
-        chain.unwrap_or_default()
-    ))
-}
-
-impl std::fmt::Display for ProcedureKind {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.name())
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::shape::tests::PART;
 
-    /// What an import writes, cut down: one chain input, range 0's bind and
-    /// check, the repeat over later ranges, and the checks.
-    const PART: &str = r#"[chain]
-name = "iris"
-version = "0.1.0"
+    fn consensus() -> ProcedureKind {
+        ProcedureKind::named("consensus").unwrap()
+    }
 
-[chain.input.prompt_text]
-index = "j"
-path = "target/iris/run-prompt-placeholder/text_{j}.rastered"
-commitments = []
-
-[[chain.stage]]
-name = "prompt_bind_p0"
-project = "raster-stages/prompt-bind"
-inputs.text = { input = "prompt_text_0" }
-inputs.source = { external = { path = "model/no_source.rastered", index_path = "model/no_source.rindex", commitment = "n0" } }
-
-[[chain.repeat]]
-name = "prompt"
-index = "j"
-start = 1
-count = 0
-
-  [[chain.repeat.stage]]
-name = "prompt_bind_p{j}"
-project = "raster-stages/prompt-bind"
-inputs.text = { input = "prompt_text_{j}" }
-inputs.source = { external = { path = "model/no_source.rastered", index_path = "model/no_source.rindex", commitment = "n0" } }
-inputs.previous = { from = "prompt_bind_p{j-1}", first = "prompt_bind_p0" }
-
-[[chain.stage]]
-name = "check_c0"
-project = "raster-stages/sequence-check"
-inputs.prompt = { from = "prompt_bind_p@LAST_PROMPT_RANGE@" }
-"#;
+    #[test]
+    fn every_file_of_the_catalog_is_a_shape() {
+        // Reading the catalog parses every file, and stops on one that is no
+        // shape.
+        let names: Vec<&str> = ProcedureKind::all()
+            .iter()
+            .map(|kind| kind.name())
+            .collect();
+        assert!(names.contains(&DEFAULT_KIND), "{names:?}");
+        let mut sorted = names.clone();
+        sorted.sort_unstable();
+        sorted.dedup();
+        assert_eq!(names, sorted);
+        for kind in ProcedureKind::all() {
+            assert_eq!(kind.shape().name, kind.name());
+            assert_eq!(ProcedureKind::named(kind.name()).unwrap(), kind);
+        }
+    }
 
     #[test]
     fn the_single_procedure_kind_puts_a_source_before_its_inference_and_a_result_after() {
-        let template = ProcedureKind::Single.chain_template(&[PART]).unwrap();
+        let single = ProcedureKind::single();
+        let template = single.chain_template(&[PART]).unwrap();
         let expected = PART
             .replacen(
                 "\n[[chain.stage]]\nname = \"prompt_bind_p0\"",
@@ -395,88 +271,21 @@ inputs.prompt = { from = "prompt_bind_p@LAST_PROMPT_RANGE@" }
         // would take: the template is TOML.
         toml::from_str::<toml::Value>(&template).unwrap();
 
-        assert!(ProcedureKind::Single.chain_template(&[]).is_err());
-        assert!(ProcedureKind::Single.chain_template(&[PART, PART]).is_err());
+        assert!(single.chain_template(&[]).is_err());
+        assert!(single.chain_template(&[PART, PART]).is_err());
         let no_bind = PART.replace("prompt_bind_p0", "bind_0");
-        assert!(ProcedureKind::Single.chain_template(&[&no_bind]).is_err());
-    }
+        assert!(single.chain_template(&[&no_bind]).is_err());
 
-    #[test]
-    fn two_inferences_of_one_chain_keep_their_names_apart() {
-        let labels = [inference_label(0), inference_label(1)];
-        let template = assemble(
-            &[PART, PART],
-            &labels,
-            "\n[[chain.stage]]\nname = \"source\"\n",
-            "\n[[chain.stage]]\nname = \"result\"\n",
-        )
-        .unwrap();
-        let chain: toml::Value = toml::from_str(&template).unwrap();
-        // One `[chain]` table, and each inference's own inputs.
-        assert_eq!(template.matches("[chain]\n").count(), 1);
-        assert_eq!(chain["chain"]["name"].as_str(), Some("iris"));
-        let inputs = chain["chain"]["input"].as_table().unwrap();
-        assert_eq!(
-            inputs.keys().collect::<Vec<_>>(),
-            ["m0_prompt_text", "m1_prompt_text"]
-        );
-
-        // Every stage and repeat has its own name, and whatever a stage takes
-        // from the chain is of its own inference, or the source.
-        let stages = chain["chain"]["stage"].as_array().unwrap();
-        let repeats = chain["chain"]["repeat"].as_array().unwrap();
-        let mut names: Vec<&str> = stages
-            .iter()
-            .chain(repeats)
-            .chain(
-                repeats
-                    .iter()
-                    .flat_map(|repeat| repeat["stage"].as_array().unwrap()),
-            )
-            .map(|table| table["name"].as_str().unwrap())
-            .collect();
-        names.sort_unstable();
-        assert_eq!(
-            names,
-            [
-                "m0_check_c0",
-                "m0_prompt",
-                "m0_prompt_bind_p0",
-                "m0_prompt_bind_p{j}",
-                "m1_check_c0",
-                "m1_prompt",
-                "m1_prompt_bind_p0",
-                "m1_prompt_bind_p{j}",
-                "result",
-                "source",
-            ]
-        );
-        for label in &labels {
-            let bind = stages
-                .iter()
-                .find(|stage| stage["name"].as_str() == Some(&format!("{label}prompt_bind_p0")))
-                .unwrap();
-            assert_eq!(bind["inputs"]["source"]["from"].as_str(), Some("source"));
-            assert_eq!(
-                bind["inputs"]["text"]["input"].as_str(),
-                Some(format!("{label}prompt_text_0").as_str())
-            );
-            assert!(template.contains(&format!(
-                "inputs.previous = {{ from = \"{label}prompt_bind_p{{j-1}}\", first = \"{label}prompt_bind_p0\" }}"
-            )));
-            assert!(template.contains(&format!(
-                "inputs.prompt = {{ from = \"{label}prompt_bind_p@{label}LAST_PROMPT_RANGE@\" }}"
-            )));
-        }
-        // The first inference's stages all come before the second's.
-        assert!(
-            template.find("m0_check_c0").unwrap() < template.find("m1_prompt_bind_p0").unwrap()
-        );
+        assert_eq!(single.inferences(), 1);
+        assert_eq!(single.result(), ResultKind::OneOutput);
+        assert_eq!(single.result_program(), "claim-result");
+        assert_eq!(single.result_input_of(0), Some("check"));
+        assert_eq!(single.result_input_of(1), None);
     }
 
     #[test]
     fn a_label_is_taken_off_a_stage_name() {
-        assert_eq!(ProcedureKind::Single.label(0), "");
+        assert_eq!(ProcedureKind::single().label(0), "");
         for (stage, name) in [
             ("m0_check_c0", "check_c0"),
             ("m12_range_p3_l{l}", "range_p3_l{l}"),
@@ -498,16 +307,18 @@ inputs.prompt = { from = "prompt_bind_p@LAST_PROMPT_RANGE@" }
 
     #[test]
     fn a_procedure_kind_is_written_by_its_name() {
-        for procedure_kind in ProcedureKind::ALL {
-            let written = serde_json::to_string(procedure_kind).unwrap();
+        for procedure_kind in ProcedureKind::all() {
+            let written = serde_json::to_string(&procedure_kind).unwrap();
             assert_eq!(written, format!("{:?}", procedure_kind.name()));
             assert_eq!(
                 serde_json::from_str::<ProcedureKind>(&written).unwrap(),
-                *procedure_kind
+                procedure_kind
             );
             assert_eq!(procedure_kind.to_string(), procedure_kind.name());
         }
-        assert_eq!(ProcedureKind::default(), ProcedureKind::Single);
+        assert_eq!(ProcedureKind::default(), ProcedureKind::single());
+        assert!(ProcedureKind::default().is_default());
+        assert!(!consensus().is_default());
         // A name that is no procedure kind is refused where it is read, and the
         // refusal says which names are.
         let error = serde_json::from_str::<ProcedureKind>("\"committee\"").unwrap_err();
@@ -519,17 +330,15 @@ inputs.prompt = { from = "prompt_bind_p@LAST_PROMPT_RANGE@" }
 
     #[test]
     fn the_consensus_procedure_kind_runs_two_inferences_into_one_result() {
-        assert_eq!(ProcedureKind::Consensus.inferences(), 2);
+        let consensus = consensus();
+        assert_eq!(consensus.inferences(), 2);
+        assert_eq!(consensus.result(), ResultKind::Agreement);
+        assert_eq!([consensus.label(0), consensus.label(1)], ["m0_", "m1_"]);
         assert_eq!(
-            [
-                ProcedureKind::Consensus.label(0),
-                ProcedureKind::Consensus.label(1)
-            ],
-            ["m0_", "m1_"]
+            [consensus.result_input_of(0), consensus.result_input_of(1)],
+            [Some("first"), Some("second")]
         );
-        let template = ProcedureKind::Consensus
-            .chain_template(&[PART, PART])
-            .unwrap();
+        let template = consensus.chain_template(&[PART, PART]).unwrap();
         let chain: toml::Value = toml::from_str(&template).unwrap();
         let stages = chain["chain"]["stage"].as_array().unwrap();
         let names: Vec<&str> = stages
@@ -568,6 +377,6 @@ inputs.prompt = { from = "prompt_bind_p@LAST_PROMPT_RANGE@" }
         for bind in [&stages[1], &stages[3]] {
             assert_eq!(bind["inputs"]["source"]["from"].as_str(), Some("source"));
         }
-        assert!(ProcedureKind::Consensus.chain_template(&[PART]).is_err());
+        assert!(consensus.chain_template(&[PART]).is_err());
     }
 }

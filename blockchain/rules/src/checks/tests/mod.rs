@@ -72,7 +72,7 @@ fn pins() -> ContractPins {
     };
     ContractPins {
         version: CONTRACT_PINS_VERSION,
-        procedure_kind: ProcedureKind::Single,
+        procedure_kind: ProcedureKind::single(),
         programs: ProgramPins {
             family: String::from("gemma-dense"),
             stage_programs: vec![
@@ -188,7 +188,7 @@ impl Claim {
         let hashes = checkpoints_txt(&list);
         let submission = ClaimSubmission {
             version: CLAIM_SUBMISSION_VERSION,
-            procedure_kind: ProcedureKind::Single,
+            procedure_kind: ProcedureKind::single(),
             procedure: String::new(),
             claimer: NO_ADDRESS.to_string(),
             inferences: vec![inference(&pins.models[0], &input, "ZK")],
@@ -292,17 +292,16 @@ impl Claim {
 /// taken in the order of the procedure kind's inferences.
 fn stated_records(claim: &Claim) -> crate::availability::StatedRecords {
     let last = claim.list.checkpoints.last().unwrap();
-    let inputs = claim.submission.procedure_kind.result_inputs();
+    let procedure_kind = claim.submission.procedure_kind;
     crate::availability::StatedRecords {
         checkpoints_root: claim.submission.checkpoints_root.clone(),
         result_program: last.program_commitment.clone(),
         result_inputs: last.input_sources.clone(),
         results: claim.submission.stated(),
-        checks: inputs
-            .iter()
-            .enumerate()
-            .filter_map(|(inference, input)| {
-                let position = *last.input_sources.get(*input)?;
+        checks: (0..procedure_kind.inferences())
+            .filter_map(|inference| {
+                let input = procedure_kind.result_input_of(inference)?;
+                let position = *last.input_sources.get(input)?;
                 Some(crate::availability::StatedCheck {
                     checkpoint: position,
                     program: claim.list.checkpoints[position as usize]
@@ -405,7 +404,7 @@ fn consensus_claim(second_output: &str) -> Claim {
     ]);
     let mut claim = Claim::of(checkpoints, manifests);
     let input = claim.submission.input_text_sha256.clone();
-    claim.submission.procedure_kind = ProcedureKind::Consensus;
+    claim.submission.procedure_kind = ProcedureKind::named("consensus").unwrap();
     claim
         .submission
         .inferences

@@ -123,7 +123,7 @@ impl ContractPins {
     /// The pins of an import: its model, and the procedure kind its chain template
     /// describes, with the program id each stage project has locked.
     pub fn from_import(manifest: &ModelManifest, segment: &str) -> Result<Self> {
-        Self::of(ProcedureKind::Single, &[(manifest, segment)])
+        Self::of(ProcedureKind::single(), &[(manifest, segment)])
     }
 
     /// The pins of a procedure kind over imported models: each model as its import

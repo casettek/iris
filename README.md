@@ -152,8 +152,10 @@ phases/                     # the logic of each phase of a procedure, written on
     kernels/                # the inference kernels generation and verification share
     import/                 # a bundle to committed files, a manifest and pins
     generation/             # fast deterministic inference: finds the output a claim states
+procedures/                 # the procedure kinds: one file per kind, its steps in order
 procedure/                  # a procedure and the ways to run it
-  definition/               # what a procedure is, and the record of a run: specification, checkpoints
+  definition/               # what a procedure is, and the record of a run: specification, checkpoints,
+                            # the segment kinds, and a kind's shape as its file states it
   prepare/                  # a run's inputs and files, and the chain a pipeline run is made from
   native/                   # the native run: a procedure's result as fast as possible
   pipeline/                 # the pipeline run, stage by stage, that a claim and a challenge make:

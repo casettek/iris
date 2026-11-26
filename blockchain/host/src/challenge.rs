@@ -140,7 +140,7 @@ pub fn build_challenge(options: ChallengeBuildOptions) -> Result<ChallengeBuildR
         if let Some(prepared_run) = &prepared_run {
             // A claim of several inferences is refuted by any one's record.
             let mut rejection = claimed_output_rejection(final_result.as_ref())?;
-            if prepared_run.procedure_kind.inferences() > 1 && rejection.is_none() {
+            if prepared_run.procedure_kind.result().states_agreement() && rejection.is_none() {
                 let consensus = consensus
                     .as_ref()
                     .context("recomputation produced no result to check the claim against")?;
@@ -1036,7 +1036,7 @@ mod tests {
 
         let prepared = PreparedRun {
             version: procedure_definition::PREPARED_RUN_VERSION,
-            procedure_kind: procedure_definition::ProcedureKind::Single,
+            procedure_kind: procedure_definition::ProcedureKind::single(),
             specification_path: base.join("specification.toml"),
             case_path: Some(base.join("case.toml")),
             inferences: vec![procedure_definition::PreparedInference {

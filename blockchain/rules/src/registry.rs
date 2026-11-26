@@ -228,7 +228,7 @@ mod tests {
     fn procedure(max_new_tokens: u32) -> Procedure {
         Procedure {
             version: PROCEDURE_VERSION,
-            procedure_kind: ProcedureKind::Single,
+            procedure_kind: ProcedureKind::single(),
             programs: ProgramPins {
                 family: String::from("gemma-dense"),
                 stage_programs: Vec::new(),

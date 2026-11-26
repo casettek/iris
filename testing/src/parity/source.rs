@@ -190,7 +190,7 @@ fn direct_output(
     model_path: &Path,
     source: &LoadedSource,
 ) -> Result<String> {
-    let specification = write_run(dir, source, ProcedureKind::Single, &[model_path])?;
+    let specification = write_run(dir, source, ProcedureKind::single(), &[model_path])?;
     let mut run = command(exe, root);
     run.args(["parity-worker", "--specification"])
         .arg(&specification)
@@ -216,7 +216,7 @@ fn run_honest(
     model_path: &Path,
     source: &LoadedSource,
 ) -> Result<(Value, blockchain_host::claim::PreparedClaimRun)> {
-    let specification = write_run(dir, source, ProcedureKind::Single, &[model_path])?;
+    let specification = write_run(dir, source, ProcedureKind::single(), &[model_path])?;
     let prepared = prepare_claim_run(&ClaimBuildOptions {
         base_dir: dir.to_path_buf(),
         case_path: Some(case_beside(&specification)),

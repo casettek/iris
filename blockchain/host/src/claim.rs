@@ -118,7 +118,7 @@ pub fn build_claim(options: ClaimBuildOptions) -> Result<ClaimBuildResult> {
     let procedure_kind = prepared.prepared_run.procedure_kind;
     let mut rejection =
         crate::challenge::claimed_output_rejection(checkpointed.final_result.as_ref())?;
-    if procedure_kind.inferences() > 1 && rejection.is_none() {
+    if procedure_kind.result().states_agreement() && rejection.is_none() {
         let consensus = checkpointed
             .consensus
             .as_ref()
@@ -684,7 +684,7 @@ mod tests {
             &manifest_path,
             &PreparedRun {
                 version: procedure_definition::PREPARED_RUN_VERSION,
-                procedure_kind: procedure_definition::ProcedureKind::Single,
+                procedure_kind: procedure_definition::ProcedureKind::single(),
                 specification_path: base.join("specification.toml"),
                 case_path: Some(base.join("case.toml")),
                 inferences: vec![procedure_definition::PreparedInference {
@@ -844,7 +844,7 @@ mod tests {
         let run = &prepared.prepared_run;
         assert_eq!(
             run.procedure_kind,
-            procedure_definition::ProcedureKind::Consensus
+            procedure_definition::ProcedureKind::named("consensus").unwrap()
         );
         assert_eq!(run.inferences.len(), 2);
         assert_ne!(run.inferences[0].model_id, run.inferences[1].model_id);

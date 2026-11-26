@@ -828,7 +828,7 @@ fn run_chain_fault_scenario(
         .map(|index| index + 1)
         .context("the pinned case's prompt is a single token")?;
     let (template_path, segment) = model.verified_raster_template(model_path)?;
-    let template = procedure_definition::ProcedureKind::Single.chain_template(&[&segment])?;
+    let template = procedure_definition::ProcedureKind::single().chain_template(&[&segment])?;
     let template_dir = template_path
         .parent()
         .context("manifest template has no parent directory")?;

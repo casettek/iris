@@ -34,13 +34,15 @@ later bind is, so the segment on its own is a chain for a text taken as given, w
 no result.
 
 A procedure kind makes the chain template from one segment per model
-(`ProcedureKind::chain_template`):
+(`ProcedureKind::chain_template`). It follows the kind's shape, the steps its
+file in `procedures/` lists:
 
 1. the `[chain]` table and each segment's chain inputs;
-2. the `source` stage;
-3. each segment's stages, in order, with its first bind taking the `source` stage's
-   record in place of the constant;
-4. the procedure kind's result stage, reading each inference's last check.
+2. then each step in order. A source step is the `source` stage. An inference
+   step is its model's stages, with its first bind taking the record of the
+   step its `source` input names in place of the constant. The result step is
+   the kind's result stage, reading the last check of each inference its
+   inputs name.
 
 `claim build` then fills the template in for one run, as before. A run whose
 text is taken as given removes the `source` stage again and gives the first bind
@@ -190,9 +192,50 @@ a file, and `iris claim check --pins` checks a claim against it.
 
 ## Adding a procedure kind
 
-In code a procedure kind is a variant of `ProcedureKind`
-(`procedure/definition/src/procedure_kind.rs`) with its name, how many
-inferences it makes, its result program and its result stage's bindings. It
-also needs its result program (a stage project, a native stage and the
-function direct inference calls), what `iris infer` and `iris claim build`
-print for it, and how a claim of it is judged when every checkpoint matches.
+A procedure kind is a file, not code: `procedures/<name>.toml`, its shape.
+The file lists the kind's steps in order. Each step is a use of a segment
+kind (`source`, `inference`, `result`), with the stage program it runs where
+its kind has several, and the earlier step each of its inputs comes from.
+[`procedures/README.md`](../../procedures/README.md) has the format.
+
+```toml
+# procedures/consensus.toml
+[[step]]
+name = "source"
+segment = "source"
+
+[[step]]
+name = "first"
+segment = "inference"
+inputs.source = "source"
+
+[[step]]
+name = "second"
+segment = "inference"
+inputs.source = "source"
+
+[[step]]
+name = "result"
+segment = "result"
+program = "consensus-result"
+inputs.first = "first"
+inputs.second = "second"
+```
+
+The files are compiled into `iris`, and a specification names one by its file
+name. A shape is held to what the segment kinds declare when it is read
+(`procedure/definition/src/shape.rs`): an input from a later step, a program
+its segment does not have, or three inferences into the result of two is
+refused there, before any run.
+
+What a new kind needs depends on what it is made of:
+
+| The kind uses | What to add |
+| --- | --- |
+| Existing segments and programs, arranged another way | Its file in `procedures/`, and its registration on the contract |
+| A new program of an existing segment | The stage project under `raster-stages/`, its logic under `phases/`, its native stage in the segment's folder under `procedure/pipeline/src/segments/` with its entry in that segment's `Stage`, and the program's entry in `procedure/definition/src/segment_kind.rs`. A new result program also needs what `iris infer` and `iris claim build` print for it and how a claim of it is judged when every checkpoint matches |
+| A new segment kind | As a new program, with a folder of its own under `segments/` and the kind's entry in `segment_kind.rs` |
+
+Not yet read from the shape: a contract tells `consensus` from `single` by the
+kind's name (`IrisClaims.sol`), and a run prepares one source's inputs, so a
+shape has at most one source step.

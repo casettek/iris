@@ -9,7 +9,8 @@ follows, so this page says which is which until they agree.
 | Word | Meaning | In the code today, where it differs |
 | --- | --- | --- |
 | Procedure | The registered way a judgment is made: the stage programs, the models and the parameters a claim must have run under. A contract judges a claim by the procedure the claim names | |
-| Procedure kind | The arrangement a procedure's segments follow. Two exist: `single`, one inference on one model, and `consensus`, the same inference on two models and whether they agree | |
+| Procedure kind | The arrangement a procedure's segments follow. Two exist: `single`, one inference on one model, and `consensus`, the same inference on two models and whether they agree. Each is a file of `procedures/` | |
+| Shape | A procedure kind's steps in order: what its file in `procedures/` lists. Each step is a use of a segment kind, with the earlier step each of its inputs comes from | |
 | Specification | The document that defines a procedure | |
 | Case | One run of a procedure: what a claim is about | |
 | Claim | What a claimer posts about a case: the statement, the checkpoint list and what the procedure requires beside them | |

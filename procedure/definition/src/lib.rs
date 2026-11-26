@@ -10,6 +10,8 @@ pub mod procedure_kind;
 pub mod replay_profile;
 pub mod run;
 pub mod run_inputs;
+pub mod segment_kind;
+pub mod shape;
 pub mod specification;
 
 pub use checkpoint::{
@@ -26,11 +28,13 @@ pub use inference::{
     InferenceTimings,
 };
 pub use model_manifest::io::{read_json, write_json};
-pub use procedure_kind::{ProcedureKind, ResultKind};
+pub use procedure_kind::ProcedureKind;
 pub use run::{
     PreparedInference, PreparedPiece, PreparedPrompt, PreparedRun, PreparedSourceInputs,
     RunFileRef, PREPARED_RUN_JSON, PREPARED_RUN_VERSION,
 };
+pub use segment_kind::{ResultKind, SegmentKind};
+pub use shape::Shape;
 pub use specification::{
     read_case, read_specification, Case, CaseDocument, PathStep, Specification,
     SpecificationDocument, SpecificationField, SpecificationForm, SpecificationModel,
@@ -249,12 +253,12 @@ mod tests {
         fs::write(&path, MODEL).unwrap();
         assert_eq!(
             read_specification(&path).unwrap().procedure_kind,
-            ProcedureKind::Single
+            ProcedureKind::single()
         );
         fs::write(&path, format!("procedure_kind = \"single\"\n{MODEL}")).unwrap();
         assert_eq!(
             read_specification(&path).unwrap().procedure_kind,
-            ProcedureKind::Single
+            ProcedureKind::single()
         );
         // A name that is no procedure kind must not silently be the single one.
         fs::write(&path, format!("procedure_kind = \"committee\"\n{MODEL}")).unwrap();
@@ -278,7 +282,10 @@ mod tests {
         )
         .unwrap();
         let specification = read_specification(&path).unwrap();
-        assert_eq!(specification.procedure_kind, ProcedureKind::Consensus);
+        assert_eq!(
+            specification.procedure_kind,
+            ProcedureKind::named("consensus").unwrap()
+        );
         assert_eq!(specification.max_new_tokens, 4);
         assert_eq!(
             specification.model_manifests(),
@@ -440,7 +447,7 @@ mod tests {
     fn prepared_run_metadata_round_trips_as_json() {
         let prepared = PreparedRun {
             version: PREPARED_RUN_VERSION,
-            procedure_kind: ProcedureKind::Single,
+            procedure_kind: ProcedureKind::single(),
             specification_path: PathBuf::from("specification.toml"),
             case_path: Some(PathBuf::from("case.toml")),
             inferences: vec![PreparedInference {

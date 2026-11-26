@@ -163,7 +163,7 @@ fn a_claim_that_does_not_end_in_its_checks_and_the_result_stage_is_refused() {
     assert_eq!(
         check_stated_records(&programs, &claim.submission, &posted(stated)),
         Err(SubmissionRejection::NotTheResultStage {
-            expected: ProcedureKind::Single.result_program(),
+            expected: ProcedureKind::single().result_program(),
         })
     );
 
@@ -207,7 +207,7 @@ fn a_consensus_submission_is_two_inferences_of_one_input_and_their_agreement() {
     let submission = &claim.submission;
     let origin = no_source(forms());
     assert_eq!(
-        check_procedure_kind(ProcedureKind::Consensus, submission),
+        check_procedure_kind(ProcedureKind::named("consensus").unwrap(), submission),
         Ok(())
     );
     for (inference, model) in models.iter().enumerate() {
@@ -304,19 +304,22 @@ fn a_consensus_submission_is_two_inferences_of_one_input_and_their_agreement() {
     };
     let mut one = submission.clone();
     one.inferences.pop();
-    assert!(shape(&one, ProcedureKind::Consensus));
+    assert!(shape(&one, ProcedureKind::named("consensus").unwrap()));
     let mut unstated = submission.clone();
     unstated.consensus = None;
-    assert!(shape(&unstated, ProcedureKind::Consensus));
+    assert!(shape(&unstated, ProcedureKind::named("consensus").unwrap()));
     let mut single = Claim::honest().submission;
-    assert_eq!(check_procedure_kind(ProcedureKind::Single, &single), Ok(()));
-    single.consensus = submission.consensus;
-    assert!(shape(&single, ProcedureKind::Single));
     assert_eq!(
-        check_procedure_kind(ProcedureKind::Single, submission),
+        check_procedure_kind(ProcedureKind::single(), &single),
+        Ok(())
+    );
+    single.consensus = submission.consensus;
+    assert!(shape(&single, ProcedureKind::single()));
+    assert_eq!(
+        check_procedure_kind(ProcedureKind::single(), submission),
         Err(SubmissionRejection::AnotherProcedureKind {
-            expected: ProcedureKind::Single,
-            submitted: ProcedureKind::Consensus
+            expected: ProcedureKind::single(),
+            submitted: ProcedureKind::named("consensus").unwrap()
         })
     );
 }
@@ -397,7 +400,7 @@ fn a_consensus_claim_states_each_record_of_its_own_last_check() {
     assert_eq!(
         check_stated_records(&pins().programs, submission, &posted(honest)),
         Err(SubmissionRejection::NotTheResultStage {
-            expected: ProcedureKind::Consensus.result_program()
+            expected: ProcedureKind::named("consensus").unwrap().result_program()
         })
     );
 }
@@ -406,7 +409,7 @@ fn a_consensus_claim_states_each_record_of_its_own_last_check() {
 fn a_submission_names_its_procedure_kind() {
     let submission = Claim::honest().submission;
     assert_eq!(
-        check_procedure_kind(ProcedureKind::Single, &submission),
+        check_procedure_kind(ProcedureKind::single(), &submission),
         Ok(())
     );
     let written = serde_json::to_value(&submission).unwrap();
@@ -424,19 +427,19 @@ fn a_submission_names_its_procedure_kind() {
 
     // A contract accepts claims of one procedure kind.
     assert_eq!(
-        check_procedure_kind(ProcedureKind::Consensus, &submission),
+        check_procedure_kind(ProcedureKind::named("consensus").unwrap(), &submission),
         Err(SubmissionRejection::AnotherProcedureKind {
-            expected: ProcedureKind::Consensus,
-            submitted: ProcedureKind::Single,
+            expected: ProcedureKind::named("consensus").unwrap(),
+            submitted: ProcedureKind::single(),
         })
     );
     // The label alone does not make a claim another procedure kind's: it holds
     // one inference, and its last stage runs the single procedure kind's result
     // program.
     let mut relabelled = submission.clone();
-    relabelled.procedure_kind = ProcedureKind::Consensus;
+    relabelled.procedure_kind = ProcedureKind::named("consensus").unwrap();
     assert!(matches!(
-        check_procedure_kind(ProcedureKind::Consensus, &relabelled),
+        check_procedure_kind(ProcedureKind::named("consensus").unwrap(), &relabelled),
         Err(SubmissionRejection::AnotherShape { .. })
     ));
     let claim = Claim::honest();
@@ -445,7 +448,7 @@ fn a_submission_names_its_procedure_kind() {
     assert_eq!(
         check_stated_records(&pins().programs, &relabelled, &posted(stated)),
         Err(SubmissionRejection::NotTheResultStage {
-            expected: ProcedureKind::Consensus.result_program()
+            expected: ProcedureKind::named("consensus").unwrap().result_program()
         })
     );
 }
