@@ -203,6 +203,9 @@ pub(crate) fn build(options: ClaimBuildOptions, specification_path: PathBuf) -> 
         }
         ([only], _) => print_infer_result(only, Some(&specification_path), 0),
         (results, _) => {
+            if !results.is_empty() {
+                println!("result of inference: {}", result.procedure_kind.answer());
+            }
             for (inference, result) in results.iter().enumerate() {
                 println!("inference: {inference}");
                 print_infer_result(result, Some(&specification_path), inference);

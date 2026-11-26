@@ -65,6 +65,8 @@ takes.
 | --- | --- |
 | `iris claim pins` | Write what a contract would pin for a run's procedure kind over its models. |
 | `iris registry add` | Register a procedure in a registry file. |
+| `iris procedure list` | The procedure kinds of this build. |
+| `iris procedure describe` | One procedure kind: its steps, how many models it runs and which inference its result is of. `--json` for a caller. |
 | `iris evm procedure` | Write the contract call that registers a procedure. |
 | `iris evm proof-programs` | Print the ids of Raster's proof programs, which a contract pins. |
 

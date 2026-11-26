@@ -131,6 +131,15 @@ impl ProcedureKind {
         self.0.relayed_from(inference)
     }
 
+    /// The inference whose output is the procedure's answer: the first the
+    /// result stage reads.
+    pub fn answer(self) -> usize {
+        self.0
+            .result_reads()
+            .first()
+            .map_or(0, |(_, inference)| *inference)
+    }
+
     /// Whether a run of this kind has a relay recipe.
     pub fn relays(self) -> bool {
         self.0.runs(RELAY_PROGRAM)
@@ -403,6 +412,10 @@ mod tests {
         let relay = ProcedureKind::named("relay").unwrap();
         assert_eq!(relay.inferences(), 2);
         assert!(relay.relays());
+        // Its answer is the second output, and the other kinds' the first.
+        assert_eq!(relay.answer(), 1);
+        assert_eq!(ProcedureKind::single().answer(), 0);
+        assert_eq!(ProcedureKind::named("consensus").unwrap().answer(), 0);
         assert_eq!(
             [relay.relayed_from(0), relay.relayed_from(1)],
             [None, Some(0)]

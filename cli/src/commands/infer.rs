@@ -441,12 +441,13 @@ pub(crate) fn print_direct_run(
             "the `{}` procedure kind gave no result to print",
             run.procedure_kind
         ),
-        // Several inferences with nothing stated of them together: each in
-        // the order it was made.
+        // Several inferences with nothing stated of them together: which one
+        // the result is of, then each in the order it was made.
         (reports, None) => {
             if let Some(source) = &source {
                 source::print_source_lines(source);
             }
+            println!("result of inference: {}", run.procedure_kind.answer());
             for (inference, report) in reports.iter().enumerate() {
                 println!("inference: {inference}");
                 if let Some(count) = report.input_token_count {

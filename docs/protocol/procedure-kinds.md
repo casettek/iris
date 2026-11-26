@@ -8,8 +8,8 @@ without each command growing its own switch.
 
 `consensus` and `relay` each run directly, build a claim with a submission,
 pass a contract's checks, can be challenged, and have a scenario in the parity
-gate and a claim in the blockchain tier. The backend runs `single` and
-`consensus`.
+gate and a claim in the blockchain tier. The backend runs any kind: it passes
+the kind's name on and holds no list of them.
 
 ## What a procedure kind arranges
 
@@ -106,6 +106,13 @@ gives its prompt. Each model tokenizes its text with its own tokenizer and
 chat template, so the inferences have different prompt tokens, range counts and
 statements. In `consensus` both statements name the same input text hash and
 source digest.
+
+A caller that runs procedures need hold no list of kinds. `iris procedure
+list` names the kinds of this build, and `iris procedure describe <kind>`
+says what one is: its steps in order, how many models it runs, which
+inference its result is of (`answer`), whether its result states an
+agreement, which inference relays from which, and whether its specification
+has a `[source]` or a `[relay]` table. Both print JSON with `--json`.
 
 Every command that acts on a run takes the specification, so naming the procedure kind
 there is naming it for all of them:
@@ -223,8 +230,22 @@ refuses a source with a fault.
 output is in the run as the first inference's result, which has no code: the
 result stage did not read it.
 
-`iris infer`, `iris run` and `iris claim build` print each inference's result
-under an `inference:` line, in the order they were made.
+`iris infer`, `iris run` and `iris claim build` print which inference the
+result is of, then each inference's result under an `inference:` line, in
+the order they were made:
+
+```text
+procedure kind: relay
+result of inference: 1
+inference: 0
+...
+generated text:
+Paris
+inference: 1
+...
+generated text:
+Yes
+```
 
 Like `source` and `result`, `relay` is a few steps and one per chunk of the
 recipe, so on a short recipe its checkpoint cannot be replayed at the
@@ -313,7 +334,6 @@ a file, and `iris claim check --pins` checks a claim against it.
 
 For `relay`:
 
-- The backend and the frontend do not run it yet.
 - A second prompt that also reads the signed documents. It is fixed text
   around the first output.
 - A replay of the `relay` stage on a short recipe: the stage is under the

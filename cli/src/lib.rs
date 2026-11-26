@@ -138,6 +138,11 @@ enum Commands {
         #[command(subcommand)]
         command: RegistryCommand,
     },
+    /// The procedure kinds of this build: which exist, and what each is.
+    Procedure {
+        #[command(subcommand)]
+        command: commands::procedure::ProcedureCommand,
+    },
     /// The data-availability layer: what a relayer and an attester need.
     Da {
         #[command(subcommand)]
@@ -289,6 +294,7 @@ fn execute(cli: Cli) -> Result<ExitCode> {
         Some(Commands::Test { command }) => commands::testing::run(command),
         Some(Commands::Evm { command }) => commands::evm::run(command),
         Some(Commands::Registry { command }) => commands::registry::run(command),
+        Some(Commands::Procedure { command }) => commands::procedure::run(command),
         Some(Commands::Fault { command }) => commands::fault::run(command),
         None => {
             bail!("iris requires a workflow command; try `model import`, `claim build`, or `infer`")

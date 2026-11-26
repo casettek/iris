@@ -9,6 +9,7 @@ pub(crate) mod evm;
 pub(crate) mod fault;
 pub(crate) mod infer;
 pub(crate) mod model;
+pub(crate) mod procedure;
 pub(crate) mod registry;
 pub(crate) mod run;
 pub(crate) mod stage;
