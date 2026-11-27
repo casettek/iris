@@ -151,23 +151,32 @@ Nothing under `iwebs test` is anything an honest party runs.
 ## Quick start
 
 ```bash
-# Import a model: the small one checked in here, or your own bundle.
-cargo run --release -p iwebs-cli -- model import --model model-bundles/parity-gemma
+# Import the judge. The example's is Gemma 4 E2B, converted to a bundle
+# (docs/workflows/model-import.md). The small models under model-bundles/ are
+# for the tests, and answer in nonsense words.
+cargo run --release -p iwebs-cli -- model import --model <your bundle>
 
-# The id of the procedure a specification describes: what parties agree on.
-# `specification.toml` names the model manifest and the token budget.
-cargo run --release -p iwebs-cli -- procedure id --specification specification.toml
+# The example: an insurance policy's question, judged on a signed report of
+# an earthquake.
+example=examples/earthquake
 
-# Run a case and write its record. `case.toml` holds the case's prompt.
-# These two files are the defaults.
-cargo run --release -p iwebs-cli -- run --specification specification.toml --case case.toml --record my-record
+# The id of the procedure its specification describes: what parties agree on.
+cargo run --release -p iwebs-cli -- procedure id --specification $example/specification.toml
 
-# Check a record, as anyone who holds it can.
-cargo run --release -p iwebs-cli -- record check --record my-record --specification specification.toml
+# Run the case and write its record.
+cargo run --release -p iwebs-cli -- run --specification $example/specification.toml --case $example/case.toml --record my-record
+
+# Check a record, as anyone who holds it and the model can.
+cargo run --release -p iwebs-cli -- record check --record my-record --specification $example/specification.toml
 
 # To settle the same run on a blockchain, build a claim of it.
-cargo run --release -p iwebs-cli -- claim build --specification specification.toml --case case.toml
+cargo run --release -p iwebs-cli -- claim build --specification $example/specification.toml --case $example/case.toml
 ```
+
+[The example's own page](examples/earthquake/README.md) says what each file
+is and what the judge is given. With no `--specification` or `--case`, a
+command reads `specification.toml` and `case.toml` where it is run: the two at
+the root are the smallest case there is, a prompt with no evidence.
 
 The local blockchains, and a claim and a challenge taken through them, are in
 [blockchain/devstack/README.md](blockchain/devstack/README.md). `just --list` shows the shortcuts.
@@ -229,6 +238,7 @@ blockchain/
   celestia/                 # Celestia's commitment to a blob, as iwebs computes it
   contracts/                # the Solidity contracts and their tests
   devstack/                 # the local Celestia and EVM blockchains
+examples/                   # an adjudication from end to end: the procedure, the evidence, the case
 model-bundles/              # the small models the tests run
 runtime/                    # imported models
 scripts/                    # the test tiers and the formatter

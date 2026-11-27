@@ -1,0 +1,10 @@
+{
+  "scheme": 1,
+  "cipher": 0,
+  "time": 1795799327,
+  "server": "earthquake.example.org",
+  "target": "/event/ex70012345.geojson",
+  "records_sha256": "22efe0bad38bf2442efb955d5f6dd2f34d69155c676775eb60e2539eb180496a",
+  "records_length": 258,
+  "signature": "1061d94c212cb23609478dd98d1194aab64acfd307b4a908f0694d90ea61faff6eaa990033e7644d356b5dd8d681748de5cc445a1482770edb236ff5ab155d3a"
+}

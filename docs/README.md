@@ -25,6 +25,9 @@ Three kinds of page. Start with [how IWEBS works](protocol/overview.md). The
 
 ## How to run it
 
+- [An example adjudication](../examples/earthquake/README.md): a policy's
+  question judged on a signed report, from the procedure's id to a checked
+  record.
 - [Model import](workflows/model-import.md)
 - [Infer](workflows/infer.md)
 - [Run](workflows/run.md): a procedure with no blockchain, the id of the procedure a run is

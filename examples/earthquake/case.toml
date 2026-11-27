@@ -1,0 +1,5 @@
+# The evidence of one case: the report a server gave, and the signature that
+# it gave it.
+[[document]]
+file = "event.json"
+attestation = "event.attestation.json"
