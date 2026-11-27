@@ -5,7 +5,9 @@ pub mod availability;
 pub mod challenge;
 pub mod checks;
 pub mod claim;
-pub mod registry;
+/// A procedure and its id, and the registry of them: the procedure layer's,
+/// under the path this crate's callers know.
+pub use procedure_definition::registry;
 
 pub use challenge::{
     read_challenge_bundle, write_challenge_artifacts, ChallengeBundle, ChallengeSourcePath,

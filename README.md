@@ -28,7 +28,9 @@ takes.
 | Command | What it does |
 | --- | --- |
 | `iwebs infer` | Fast deterministic inference of a case under a specification. This is the only path that generates: it finds the output a claim then states. |
-| `iwebs run` | Run a procedure with no blockchain: the result of its native run, then a pipeline run of it with a checkpoint per stage. `--compare` names the first stage where it differs from another run. |
+| `iwebs run` | Run a procedure with no blockchain: the result of its native run, then a pipeline run of it with a checkpoint per stage. `--compare` names the first stage where it differs from another run. It prints the id of the procedure the run is of, and `--procedure <id>` refuses to run any other. `--record <dir>` writes the run's record. |
+| `iwebs procedure id` | The id of the procedure a specification describes: a hash over its stage programs, its models, its parameters and what it requires of the source and the result. Two parties that name one id have agreed to one procedure. `--json` prints the whole procedure. No blockchain is read. |
+| `iwebs record check` | Make a recorded run again, from the record's own inputs and under your specification of its procedure, and compare every checkpoint and the result with the record's. Nothing is generated. Anyone with the record and the models can do it. |
 
 ### Claim
 
@@ -157,12 +159,15 @@ phases/                     # the logic of each phase of a procedure, written on
 procedures/                 # the procedure kinds: one file per kind, its steps in order
 procedure/                  # a procedure and the ways to run it
   definition/               # what a procedure is, and the record of a run: specification, checkpoints,
-                            # the segment kinds, and a kind's shape as its file states it
-  prepare/                  # a run's inputs and files, and the pipeline a pipeline run is made from
+                            # the segment kinds, a kind's shape as its file states it, and a
+                            # procedure's pins and its id
+  prepare/                  # a run's inputs and files, the pipeline a pipeline run is made from,
+                            # and the procedure a specification describes
   native/                   # the native run: a procedure's result as fast as possible
   pipeline/                 # the pipeline run, stage by stage, that a claim and a challenge make:
                             # the runner, and each native stage under segments/{source,inference,result}
-  run/                      # a procedure run with no blockchain: native, then pipeline, held equal
+  run/                      # a procedure run with no blockchain: native, then pipeline, held equal;
+                            # the record of a run, and the check of one
 testing/                    # the parity gate, the lying claims, the stage schema check
 cli/                        # the `iwebs` binary: one module per command group under src/commands/
 raster-stages/              # one Raster program per kind of stage, each with its Raster.lock

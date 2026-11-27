@@ -1,11 +1,14 @@
-//! The procedures claims are made of, each registered before any claim
-//! arrives and named by its id.
+//! The procedures runs are made of, each named by its id.
 //!
-//! A procedure is everything a contract holds a claim to: the procedure kind
-//! and its approved stage programs, the model of each inference, the
-//! parameters, and what it requires of the claim's source and result. A claim
-//! names the id of one ([`crate::checks::ClaimSubmission::procedure`]),
-//! and a contract judges it by that one. Registering one is a choice made in
+//! A procedure is everything a run is held to: the procedure kind and its
+//! approved stage programs, the model of each inference, the parameters, and
+//! what it requires of the run's source and result. Its id is a hash over
+//! all of it, so two parties that name one id have agreed to one procedure,
+//! with a blockchain or without one.
+//!
+//! A contract registers procedures before any claim arrives. A claim names
+//! the id of one (`ClaimSubmission::procedure` in `blockchain-rules`), and
+//! the contract judges it by that one. Registering one is a choice made in
 //! advance; no claim can bring its own.
 //!
 //! What a procedure does not pin yet: the base prompt and the domains a
@@ -19,11 +22,11 @@ use std::path::Path;
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 
-use crate::checks::{
+use crate::encoding::Encoder;
+use crate::pins::{
     ContractPins, ModelPins, ProgramPins, RequiredOrigin, RequiredParameters, RequiredSource,
 };
-use procedure_definition::encoding::Encoder;
-use procedure_definition::procedure_kind::ProcedureKind;
+use crate::procedure_kind::ProcedureKind;
 
 pub const PROCEDURE_VERSION: u32 = 4;
 pub const REGISTRY_VERSION: u32 = 4;
@@ -118,7 +121,7 @@ impl Procedure {
 
     /// The procedure's id: a hash over all of it, in lowercase hex, in
     /// the encoding a contract recomputes when one is registered
-    /// (`procedure_definition::encoding`). Every field is hashed in the order it is
+    /// (`crate::encoding`). Every field is hashed in the order it is
     /// declared, each list after its count.
     pub fn id(&self) -> String {
         let mut encoder = Encoder::new(b"iris/procedure/v4\0");

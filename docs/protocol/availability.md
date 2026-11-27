@@ -7,7 +7,7 @@ with its trace body posted. A claim also names, by id, the registered
 procedure it is a claim of.
 
 The rules are in `blockchain_rules::availability` and
-`blockchain_rules::registry`; [the contract page](checks.md) lists the
+`procedure_definition::registry`; [the contract page](checks.md) lists the
 checks in the order a contract makes them. The layer is behind one trait
 (`blockchain/host/src/posting.rs`), with two implementations: a
 stand-in directory, and a local Celestia node. Blobstream and the availability
@@ -193,6 +193,11 @@ output is read by. Its id is a hash over all of it. `iwebs registry add --specif
 <file> --registry <file>` registers the specification's procedure and prints the id;
 `claim build` writes the id into the submission; `iwebs claim check --registry
 <file>` judges a claim by the procedure it names there.
+
+A procedure and its id need no contract and no registry. `iwebs procedure id` prints the id
+of the procedure a specification describes, and `iwebs run` states the id of the procedure
+its run is of ([run](../workflows/run.md#the-procedure-a-run-is-of)). The code is in
+`procedure/definition` (`registry`, `pins`), and `blockchain/rules` names it from there.
 
 Not pinned yet, by decision: the base prompt and the domains a source's
 documents may come from. A procedure accepts any recipe. The claim still

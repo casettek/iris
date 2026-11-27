@@ -1,4 +1,5 @@
-//! The procedure kinds of this build: `iwebs procedure`.
+//! The procedure kinds of this build, and the id of the procedure a
+//! specification describes: `iwebs procedure`.
 //!
 //! A caller that runs procedures holds no list of kinds. It asks here which
 //! exist and what each is: how many models it runs, which inference its
@@ -23,6 +24,22 @@ pub(crate) enum ProcedureCommand {
         /// The kind's name, as a specification writes `procedure_kind`.
         kind: String,
         /// Print the description as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// The id of the procedure a specification describes: a hash over its
+    /// kind's stage programs, its models, its parameters and what it requires
+    /// of a run's source and result. Two parties that name one id have
+    /// agreed to one procedure. No blockchain is read.
+    Id {
+        /// The specification of the procedure.
+        #[arg(long, default_value = procedure_definition::SPECIFICATION_TOML)]
+        specification: PathBuf,
+        /// The pins of the kind's programs and models, as `iwebs claim pins`
+        /// wrote them. Without it, those the models' imports wrote.
+        #[arg(long)]
+        pins: Option<PathBuf>,
+        /// Print the id with the whole procedure, as a registry holds one.
         #[arg(long)]
         json: bool,
     },
@@ -135,6 +152,25 @@ pub(crate) fn run(command: ProcedureCommand) -> Result<ExitCode> {
                 println!("{}", serde_json::to_string_pretty(&description(kind))?);
             } else {
                 print(kind);
+            }
+        }
+        ProcedureCommand::Id {
+            specification,
+            pins,
+            json,
+        } => {
+            let base_dir =
+                std::env::current_dir().context("failed to resolve current directory")?;
+            let procedure = procedure_prepare::procedure::spec_procedure(
+                &absolute(&base_dir, &specification),
+                pins.map(|path| absolute(&base_dir, &path)).as_deref(),
+            )?;
+            let id = procedure.id();
+            if json {
+                let registered = procedure_definition::registry::Registered { id, procedure };
+                println!("{}", serde_json::to_string_pretty(&registered)?);
+            } else {
+                println!("procedure: {id}");
             }
         }
     }

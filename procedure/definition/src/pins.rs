@@ -1,7 +1,11 @@
-//! What a contract is configured with before any claim arrives: the programs
-//! of a procedure kind and where each of their inputs comes from, the models, and
-//! the parameters a claim must have run under. Read from a pipeline template
-//! and the stage projects' locks.
+//! What a procedure pins: the programs of a procedure kind and where each of
+//! their inputs comes from, the models, the parameters a run must have been
+//! made under, and what it requires of the run's source and result. Read from
+//! a pipeline template and the stage projects' locks.
+//!
+//! A contract is configured with these before any claim arrives, which is
+//! where the names `ContractPins` and `contract_pins.json` come from. Nothing
+//! here needs a blockchain.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -10,9 +14,9 @@ use ::common_identity::context::parse_id;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
+use crate::checkpoint::locked_program_commitment;
+use crate::procedure_kind::ProcedureKind;
 use inference_manifest::native_run::{model_id_of, ModelCommitment, ModelManifest};
-use procedure_definition::checkpoint::locked_program_commitment;
-use procedure_definition::procedure_kind::ProcedureKind;
 
 /// Written beside a model import's `manifest.json`.
 pub const CONTRACT_PINS_JSON: &str = "contract_pins.json";
@@ -117,6 +121,36 @@ pub struct ModelPins {
 pub struct RequiredParameters {
     pub raw_prompt: bool,
     pub max_new_tokens: u32,
+}
+
+/// What a contract requires of where a claim's prompt came from and of how
+/// its output was read. Its own choice, like [`RequiredParameters`].
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RequiredOrigin {
+    /// The source the prompt must be built from, or `None` for a prompt taken
+    /// as given, when the claim must name no source.
+    pub source: Option<RequiredSource>,
+    /// The forms the output must be read by, in order. A contract holds them
+    /// and not only their hash: the result step is a comparison per form, so
+    /// a contract takes it on the submitted output itself and does not rest
+    /// on the result stage, which is too short to be replayed in a dispute.
+    pub forms: Vec<result_phase::Form>,
+    /// The hash over the recipe a relay must build its prompt with: the text
+    /// before and after the earlier output. `None` in a procedure that
+    /// relays nothing, and one that accepts any recipe.
+    pub relay_recipe_sha256: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RequiredSource {
+    /// The key every attestation must be signed by.
+    pub signer: String,
+    /// The hash over the recipe the prompt must be built with: its base
+    /// prompt, its documents' servers and paths, and its fields. `None`
+    /// accepts any recipe. The claim's statement still names the recipe it
+    /// used, through the source record.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recipe_sha256: Option<String>,
 }
 
 impl ContractPins {
@@ -236,7 +270,7 @@ impl ProgramPins {
 
     /// Whether this program id is the approved program of this stage
     /// project.
-    pub(super) fn runs(&self, program_commitment: &str, stage: &str) -> bool {
+    pub fn runs(&self, program_commitment: &str, stage: &str) -> bool {
         self.program(program_commitment)
             .is_some_and(|program| program.stage == stage)
     }
@@ -276,11 +310,8 @@ fn project_name(project: &Path) -> Result<String> {
 /// a stage belongs to is kept as it is: two inferences of one pipeline may run
 /// different programs for stages of one name.
 fn stage_shape(name: &str) -> String {
-    let (mut shape, name) = match procedure_definition::procedure_kind::labelled_name(name) {
-        Some((inference, name)) => (
-            procedure_definition::procedure_kind::inference_label(inference),
-            name,
-        ),
+    let (mut shape, name) = match crate::procedure_kind::labelled_name(name) {
+        Some((inference, name)) => (crate::procedure_kind::inference_label(inference), name),
         None => (String::new(), name),
     };
     let mut chars = name.chars().peekable();

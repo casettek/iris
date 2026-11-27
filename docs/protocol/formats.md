@@ -22,6 +22,7 @@ stops and says which it wants, with one exception noted below.
 | Contract pins | `contract_pins.json` in an import | 7 | `CONTRACT_PINS_VERSION` | Pins are written again (`iwebs claim pins`), which changes the procedure's id. |
 | Procedure | What a contract registers, by its id | 4 | `PROCEDURE_VERSION` | The contracts' decoding, and every registered procedure. |
 | Registry file | The file `iwebs registry add` writes | 4 | `REGISTRY_VERSION` | Registry files are written again. |
+| Run record | `record.json` in the directory `iwebs run --record` writes | 1 | `RUN_RECORD_VERSION` | Records written before cannot be checked: the run is made and recorded again. |
 | Claim submission | `claim_submission.json`, and what `submitClaim` takes | 8 | `CLAIM_SUBMISSION_VERSION` | The contracts' decoding, and iris-backend where it reads the file. |
 | Challenge submission | `challenge_submission.json`, and what `submitChallenge` takes | 2 | `CHALLENGE_SUBMISSION_VERSION` | The contracts' decoding, and iris-backend where it reads the file. |
 | Posted blob | Every blob on the data-availability layer | 4 | `BLOB_MAGIC` | Blobs posted before cannot be read: `iris/blob/v4`. |

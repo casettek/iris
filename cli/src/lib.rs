@@ -95,6 +95,11 @@ enum Commands {
     /// Run a procedure with no blockchain: its native result, then a pipeline
     /// run of it with a checkpoint per stage.
     Run(RunArgs),
+    /// The record of a run: check one by making the run again.
+    Record {
+        #[command(subcommand)]
+        command: commands::record::RecordCommand,
+    },
     /// The host signer: a trusted stand-in for a notary.
     Attest {
         #[command(subcommand)]
@@ -295,6 +300,7 @@ fn execute(cli: Cli) -> Result<ExitCode> {
         Some(Commands::Evm { command }) => commands::evm::run(command),
         Some(Commands::Registry { command }) => commands::registry::run(command),
         Some(Commands::Procedure { command }) => commands::procedure::run(command),
+        Some(Commands::Record { command }) => commands::record::run(command),
         Some(Commands::Fault { command }) => commands::fault::run(command),
         None => {
             bail!(
@@ -475,6 +481,7 @@ mod tests {
         use common_identity::common_statement::EXECUTION_VERSION;
         use common_identity::DESCRIPTOR_VERSION;
         use inference_manifest::MODEL_MANIFEST_VERSION;
+        use procedure_definition::run_record::RUN_RECORD_VERSION;
         use procedure_definition::PREPARED_RUN_VERSION;
 
         let table = include_str!(concat!(
@@ -492,6 +499,7 @@ mod tests {
             ("CONTRACT_PINS_VERSION", CONTRACT_PINS_VERSION),
             ("PROCEDURE_VERSION", PROCEDURE_VERSION),
             ("REGISTRY_VERSION", REGISTRY_VERSION),
+            ("RUN_RECORD_VERSION", RUN_RECORD_VERSION),
             ("CLAIM_SUBMISSION_VERSION", CLAIM_SUBMISSION_VERSION),
             ("CHALLENGE_SUBMISSION_VERSION", CHALLENGE_SUBMISSION_VERSION),
             ("BLOB_MAGIC", blob_version),

@@ -18,8 +18,7 @@ use blockchain_rules::availability::{
 };
 use blockchain_rules::checks::{ChallengeSubmission, ClaimSubmission, CLAIM_SUBMISSION_JSON};
 use procedure_definition::{
-    read_json, write_json, Case, CaseDocument, CheckpointList, CASE_TOML, CHECKPOINTS_TXT,
-    CHECKPOINT_LIST_JSON,
+    read_json, write_json, CheckpointList, CHECKPOINTS_TXT, CHECKPOINT_LIST_JSON,
 };
 use sha2::{Digest, Sha256};
 
@@ -177,10 +176,10 @@ pub fn fetch_claim(options: FetchClaimOptions) -> Result<FetchedClaim> {
         runs.next().is_none(),
         "the claim posted the inputs of more than one run"
     );
-    let first = run
-        .inferences
-        .first()
-        .context("the claim posted the inputs of a run of no inference")?;
+    ensure!(
+        !run.inferences.is_empty(),
+        "the claim posted the inputs of a run of no inference"
+    );
 
     fresh_dir(&options.out_dir)?;
     let out = fs::canonicalize(&options.out_dir)
@@ -189,39 +188,11 @@ pub fn fetch_claim(options: FetchClaimOptions) -> Result<FetchedClaim> {
     // The case: what the claim posted, as the files a specification of its
     // procedure reads. Whether the claim has a source is the procedure's,
     // which was held to the reader's specification above.
-    let case = match &run.source {
-        Some(posted) => {
-            let mut documents = Vec::new();
-            for (index, (document, attested)) in crate::run_inputs::documents_of(posted)
-                .into_iter()
-                .enumerate()
-            {
-                let file = PathBuf::from(format!("posted-document-{index}.bin"));
-                let body = out.join(&file);
-                fs::write(&body, &document)
-                    .with_context(|| format!("failed to write {}", body.display()))?;
-                let attestation = PathBuf::from(format!("posted-attestation-{index}.json"));
-                write_json(&out.join(&attestation), attested)?;
-                documents.push(CaseDocument { file, attestation });
-            }
-            Case {
-                documents,
-                ..Case::default()
-            }
-        }
-        // In the case itself: the text the posted slices concatenate to.
-        None => Case::of_prompt(crate::run_inputs::text_of(first)),
-    };
+    let case_path = crate::run_inputs::write_case(run, &out)?;
 
     write_package(&out, package)?;
     let submission_path = out.join(CLAIM_SUBMISSION_JSON);
     write_json(&submission_path, &submission)?;
-    let case_path = out.join(CASE_TOML);
-    fs::write(
-        &case_path,
-        toml::to_string(&case).context("the case does not encode")?,
-    )
-    .with_context(|| format!("failed to write {}", case_path.display()))?;
     let list: CheckpointList = serde_json::from_slice(&package.list)?;
     Ok(FetchedClaim {
         submission_path,

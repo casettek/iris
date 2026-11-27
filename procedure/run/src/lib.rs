@@ -5,6 +5,9 @@
 //! every token of that output and leaves a checkpoint per stage. The two
 //! results are then held equal.
 //!
+//! A run is of a procedure, named by its id ([`procedure_of`]): the id a
+//! contract registers is the id two parties with no contract agree to.
+//!
 //! A claim is this and what a blockchain needs besides. `blockchain/host`
 //! takes from here the function that asks the native run for an output.
 
@@ -12,6 +15,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use procedure_definition::divergence::locate_divergence;
+use procedure_definition::registry::Procedure;
 use procedure_definition::{
     build_checkpoint_list, read_case, read_checkpoint_list, read_specification, ConsensusOutcome,
     Divergence, InferenceResult, ProcedureKind,
@@ -21,7 +25,9 @@ use procedure_pipeline::pipeline_runner::NativeStageBackend;
 use procedure_pipeline::{
     CheckpointedInferenceConfig, CheckpointedInferenceExecutor, ParityPolicy,
 };
-use procedure_prepare::pipeline_run::PipelineRun;
+use procedure_prepare::pipeline_run::{PipelineRun, PreparedPipelineRun};
+
+pub mod record;
 
 /// What a procedure is run from.
 #[derive(Debug, Clone)]
@@ -67,6 +73,26 @@ pub fn run(options: &RunOptions) -> Result<ProcedureRun> {
         native_run,
         pipeline_run,
     })
+}
+
+/// The procedure the options' specification describes, which its id names.
+/// `Ok(None)` when a model it names was imported where the stage projects are
+/// not locked: its stage programs then have no identity to pin.
+pub fn procedure_of(options: &RunOptions) -> Result<Option<Procedure>> {
+    let specification_path = absolute(&options.base_dir, &options.specification_path);
+    let specification = read_specification(&specification_path)?;
+    procedure_prepare::procedure::procedure_of(&specification_path, &specification, None)
+}
+
+/// The first stage of a pipeline run whose program the procedure does not
+/// approve, if there is one. A run with such a stage is not a run of that
+/// procedure: the stage was locked again after the model was imported.
+pub fn first_unapproved(run: &CheckpointedRun, procedure: &Procedure) -> Result<Option<String>> {
+    Ok(read_checkpoint_list(&run.checkpoint_list_path)?
+        .checkpoints
+        .into_iter()
+        .find(|checkpoint| !procedure.programs.approves(&checkpoint.program_commitment))
+        .map(|checkpoint| checkpoint.stage))
 }
 
 /// The native run: every inference of the procedure generated, and what the
@@ -115,36 +141,21 @@ pub fn run_pipeline(options: &RunOptions, native_run: &InferRun) -> Result<Check
         check_claimed_length: true,
         discover: &generated,
     })?;
-    let pipeline_run = CheckpointedInferenceExecutor.run(CheckpointedInferenceConfig {
-        base_dir: options.base_dir.clone(),
-        manifest_path: prepared.manifest_path.clone(),
-        current_exe: options.current_exe.clone(),
-        native_stage_backend: options.native_stage_backend,
-        parity_policy: ParityPolicy::Skip,
-    })?;
-    let list = build_checkpoint_list(&pipeline_run.pipeline_dir, &prepared.manifest_path)?;
-    let checkpoint_list_path = procedure_definition::checkpoint::write_checkpoint_list_artifact(
-        &pipeline_run.pipeline_dir,
-        &list,
+    let pipeline_run = execute(
+        &options.base_dir,
+        &options.current_exe,
+        options.native_stage_backend,
+        &prepared,
+        procedure_kind,
     )?;
-    let checkpoint_hashes_path =
-        procedure_definition::checkpoint::write_checkpoint_hashes_artifact(
-            &pipeline_run.pipeline_dir,
-            &list,
-        )?;
-
-    let stated = pipeline_run.results;
-    anyhow::ensure!(
-        !stated.is_empty(),
-        "the pipeline run reached no final record"
-    );
+    let stated = &pipeline_run.results;
     anyhow::ensure!(
         stated.len() == native_run.reports.len(),
         "the pipeline run states {} result(s), and the native run made {} inference(s)",
         stated.len(),
         native_run.reports.len()
     );
-    for (inference, (report, pipeline_run)) in native_run.reports.iter().zip(&stated).enumerate() {
+    for (inference, (report, pipeline_run)) in native_run.reports.iter().zip(stated).enumerate() {
         if let Some(difference) = result_difference(&report.result, pipeline_run)? {
             anyhow::bail!(
                 "inference {inference}: {difference}; the native run and the pipeline run are not in \
@@ -158,14 +169,46 @@ pub fn run_pipeline(options: &RunOptions, native_run: &InferRun) -> Result<Check
         pipeline_run.consensus,
         native_run.consensus
     );
+    Ok(pipeline_run)
+}
+
+/// Runs a prepared pipeline run stage by stage and writes its checkpoints.
+pub(crate) fn execute(
+    base_dir: &Path,
+    current_exe: &Path,
+    native_stage_backend: NativeStageBackend,
+    prepared: &PreparedPipelineRun,
+    procedure_kind: ProcedureKind,
+) -> Result<CheckpointedRun> {
+    let pipeline_run = CheckpointedInferenceExecutor.run(CheckpointedInferenceConfig {
+        base_dir: base_dir.to_path_buf(),
+        manifest_path: prepared.manifest_path.clone(),
+        current_exe: current_exe.to_path_buf(),
+        native_stage_backend,
+        parity_policy: ParityPolicy::Skip,
+    })?;
+    let list = build_checkpoint_list(&pipeline_run.pipeline_dir, &prepared.manifest_path)?;
+    let checkpoint_list_path = procedure_definition::checkpoint::write_checkpoint_list_artifact(
+        &pipeline_run.pipeline_dir,
+        &list,
+    )?;
+    let checkpoint_hashes_path =
+        procedure_definition::checkpoint::write_checkpoint_hashes_artifact(
+            &pipeline_run.pipeline_dir,
+            &list,
+        )?;
+    anyhow::ensure!(
+        !pipeline_run.results.is_empty(),
+        "the pipeline run reached no final record"
+    );
     Ok(CheckpointedRun {
         procedure_kind,
-        manifest_path: prepared.manifest_path,
+        manifest_path: prepared.manifest_path.clone(),
         pipeline_dir: pipeline_run.pipeline_dir,
         checkpoint_list_path,
         checkpoint_hashes_path,
         checkpoints: list.checkpoints.len(),
-        results: stated,
+        results: pipeline_run.results,
         consensus: pipeline_run.consensus,
     })
 }
@@ -176,25 +219,37 @@ fn result_difference(
     native_run: &InferenceResult,
     pipeline_run: &InferenceResult,
 ) -> Result<Option<String>> {
-    if native_run == pipeline_run {
+    Ok(
+        differing_field(native_run, pipeline_run)?.map(|difference| match difference {
+            Some((field, native_run, pipeline_run)) => format!(
+                "the pipeline run states `{field}` as {pipeline_run}, and the native run as {native_run}"
+            ),
+            None => String::from("the pipeline run's result is not the native run's"),
+        }),
+    )
+}
+
+/// The first field two results differ in, with each one's value. `Some(None)`
+/// when they differ and no field of the first says where.
+pub(crate) fn differing_field(
+    first: &InferenceResult,
+    second: &InferenceResult,
+) -> Result<Option<Option<(String, serde_json::Value, serde_json::Value)>>> {
+    if first == second {
         return Ok(None);
     }
-    let native_run = serde_json::to_value(native_run)?;
-    let pipeline_run = serde_json::to_value(pipeline_run)?;
-    let fields = native_run
+    let first = serde_json::to_value(first)?;
+    let second = serde_json::to_value(second)?;
+    let fields = first
         .as_object()
         .context("an inference's result is not a record")?;
-    for (field, native_run) in fields {
-        let pipeline_run = &pipeline_run[field];
-        if native_run != pipeline_run {
-            return Ok(Some(format!(
-                "the pipeline run states `{field}` as {pipeline_run}, and the native run as {native_run}"
-            )));
+    for (field, first) in fields {
+        let second = &second[field];
+        if first != second {
+            return Ok(Some(Some((field.clone(), first.clone(), second.clone()))));
         }
     }
-    Ok(Some(String::from(
-        "the pipeline run's result is not the native run's",
-    )))
+    Ok(Some(None))
 }
 
 /// Where a run's checkpoints first differ from those of another run of the

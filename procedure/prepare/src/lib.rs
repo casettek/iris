@@ -15,6 +15,7 @@ use prompt_check::input::{PromptText, RunConfig, RunSchedule, TextDigest};
 use raster::List;
 
 pub mod pipeline_run;
+pub mod procedure;
 pub mod run_inputs;
 pub mod source;
 

@@ -13,7 +13,9 @@ use std::path::{Path, PathBuf};
 use crate::RunFile;
 use anyhow::{Context, Result};
 use procedure_definition::run_inputs::{PostedInference, PostedRun, PostedSourceInputs, RunInput};
-use procedure_definition::{PreparedSourceInputs, RunFileRef};
+use procedure_definition::{
+    write_json, Case, CaseDocument, PreparedSourceInputs, RunFileRef, CASE_TOML,
+};
 
 /// A run's inputs, beside its frozen manifest and beside a fetched claim.
 pub const POSTED_RUN_BIN: &str = "posted_run.bin";
@@ -147,6 +149,47 @@ pub fn documents_of(source: &PostedSourceInputs) -> Vec<(Vec<u8>, &source_phase:
         .collect()
 }
 
+/// A run's inputs as the case a specification of its procedure reads,
+/// written into `dir`: the prompt text the slices concatenate to, in the case
+/// file itself, or the source's documents with their attestations as files
+/// beside it. Returns the case file's path.
+///
+/// Whether a run has a source is its procedure's, so the reader's
+/// specification of that procedure reads this case as the run's own was read.
+pub fn write_case(run: &PostedRun, dir: &Path) -> Result<PathBuf> {
+    fs::create_dir_all(dir).with_context(|| format!("failed to create {}", dir.display()))?;
+    let case = match &run.source {
+        Some(posted) => {
+            let mut documents = Vec::new();
+            for (index, (document, attested)) in documents_of(posted).into_iter().enumerate() {
+                let file = PathBuf::from(format!("posted-document-{index}.bin"));
+                let body = dir.join(&file);
+                fs::write(&body, &document)
+                    .with_context(|| format!("failed to write {}", body.display()))?;
+                let attestation = PathBuf::from(format!("posted-attestation-{index}.json"));
+                write_json(&dir.join(&attestation), attested)?;
+                documents.push(CaseDocument { file, attestation });
+            }
+            Case {
+                documents,
+                ..Case::default()
+            }
+        }
+        None => Case::of_prompt(text_of(
+            run.inferences
+                .first()
+                .context("the run's inputs are those of no inference")?,
+        )),
+    };
+    let path = dir.join(CASE_TOML);
+    fs::write(
+        &path,
+        toml::to_string(&case).context("the case does not encode")?,
+    )
+    .with_context(|| format!("failed to write {}", path.display()))?;
+    Ok(path)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -214,6 +257,12 @@ mod tests {
         save(&run, &dir).unwrap();
         assert_eq!(load(&dir).unwrap(), run);
         assert_eq!(super::commitments(&run).unwrap().len(), run.values().len());
+        // And as a case: the text its slices concatenate to.
+        let case = write_case(&run, &dir.join("case")).unwrap();
+        assert_eq!(
+            procedure_definition::read_case(&case).unwrap(),
+            Case::of_prompt(String::from("hello there"))
+        );
         let _ = fs::remove_dir_all(&dir);
     }
 }

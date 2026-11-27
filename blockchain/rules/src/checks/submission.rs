@@ -42,27 +42,20 @@ pub struct SubmittedResult {
     pub forms_sha256: String,
 }
 
-/// What a contract requires of where a claim's prompt came from and of how
-/// its output was read. Its own choice, like [`RequiredParameters`].
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct RequiredOrigin {
-    /// The source the prompt must be built from, or `None` for a prompt taken
-    /// as given, when the claim must name no source.
-    pub source: Option<RequiredSource>,
-    /// The forms the output must be read by, in order. A contract holds them
-    /// and not only their hash: the result step is a comparison per form, so
-    /// a contract takes it on the submitted output itself and does not rest
-    /// on the result stage, which is too short to be replayed in a dispute.
-    pub forms: Vec<result_phase::Form>,
-    /// The hash over the recipe a relay must build its prompt with: the text
-    /// before and after the earlier output. `None` in a procedure that
-    /// relays nothing, and one that accepts any recipe.
-    pub relay_recipe_sha256: Option<String>,
+/// What the result steps state of outputs read by a procedure's forms, as a
+/// contract recomputes them from what a claim submits.
+pub trait OriginResults {
+    /// What the result step states of an output read by these forms.
+    fn result_of(&self, output_text: &str) -> SubmittedResult;
+
+    /// What the consensus result step states of two outputs read by these
+    /// forms, when both claim records are valid and name one input. A
+    /// contract has held the submission to both before it asks.
+    fn consensus_of(&self, first_output: &str, second_output: &str) -> SubmittedConsensus;
 }
 
-impl RequiredOrigin {
-    /// What the result step states of an output read by these forms.
-    pub fn result_of(&self, output_text: &str) -> SubmittedResult {
+impl OriginResults for RequiredOrigin {
+    fn result_of(&self, output_text: &str) -> SubmittedResult {
         let matched = result_phase::run_forms(&self.forms, output_text);
         SubmittedResult {
             code: matched.code,
@@ -70,10 +63,7 @@ impl RequiredOrigin {
         }
     }
 
-    /// What the consensus result step states of two outputs read by these
-    /// forms, when both claim records are valid and name one input. A
-    /// contract has held the submission to both before it asks.
-    pub fn consensus_of(&self, first_output: &str, second_output: &str) -> SubmittedConsensus {
+    fn consensus_of(&self, first_output: &str, second_output: &str) -> SubmittedConsensus {
         let valid = || result_phase::Claimed {
             statement: &[],
             output_text_sha256: &[],
@@ -114,18 +104,6 @@ pub struct SubmittedConsensus {
     pub agree: bool,
     /// The code both outputs have, when they agree and the run names forms.
     pub code: u32,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct RequiredSource {
-    /// The key every attestation must be signed by.
-    pub signer: String,
-    /// The hash over the recipe the prompt must be built with: its base
-    /// prompt, its documents' servers and paths, and its fields. `None`
-    /// accepts any recipe. The claim's statement still names the recipe it
-    /// used, through the source record.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub recipe_sha256: Option<String>,
 }
 
 /// The digest a statement names for a source record: see `source_id` in the

@@ -25,6 +25,9 @@ follows, so this page says which is which until they agree.
 | Checkpoint list | A claim's checkpoints, one per stage, in order | |
 | Checkpoint hashes | One hash per checkpoint of the list, in order (`checkpoints.txt`). A claim commits to its checkpoint list by the root of the tree over them | |
 | Text digest | What a run states of its input text before any stage has read the text: its SHA-256, its length, and the span the template's trim keeps. Every prompt range uses it, and the range the text ends in checks it | |
+| Procedure id | The hash over a procedure: its stage programs, its models, its parameters and what it requires of a run's source and result. Two parties that name one id have agreed to one procedure. The question, the criteria and the evidence of a case are not in it: they are inputs of a run. A contract registers a procedure under this id | |
+| Run record | What the party that made a run hands to anyone who wants to make it again: the procedure id with the procedure, the inputs the run was given and each inference's result, with the backings of that statement. A directory `iwebs run --record` writes and `iwebs record check` reads. It needs no blockchain | |
+| Backing | What one method leaves behind a run record's statement, besides making the run again. A record names the method of each. One is built: `fault_provable`, the count and root of the run's checkpoints | |
 | Challenge period | How long a claim stays open to challenge after it is submitted | |
 | Fault-proof period | How long a defender has to answer a challenge | |
 | Scenario | One test of the parity gate | |
@@ -60,7 +63,7 @@ keeps the word on the right.
 | Answers | The verdicts a procedure allows | Forms |
 | Verdict | The answer a case reaches | Result |
 | Judge | The model, pinned by its id | Model |
-| Record | What is posted for a case | Submission |
+| Record | What is posted for a case | Submission, on a blockchain. Run record, with none |
 | Relying party | Who acts on a verdict | Contract |
 
 Four more are named and not built:

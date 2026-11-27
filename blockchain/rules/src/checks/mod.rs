@@ -8,9 +8,10 @@
 //!
 //! By part:
 //!
-//! - `pins`: what a contract is configured with before any claim arrives
+//! - `procedure_definition::pins`, named here as if it were this module's:
+//!   what a contract is configured with before any claim arrives
 //!   ([`ContractPins`], [`RequiredParameters`]), read from a pipeline template
-//!   and the stage projects' locks.
+//!   and the stage projects' locks. A procedure has these with no contract.
 //! - `submission`: what a claimer submits ([`ClaimSubmission`]) and the
 //!   checks made when it arrives ([`check_submission`], [`check_origin`],
 //!   [`check_stated_records`]).
@@ -43,12 +44,11 @@
 
 mod checkpoints;
 mod dispute;
-mod pins;
 mod submission;
 
 pub use checkpoints::*;
 pub use dispute::*;
-pub use pins::*;
+pub use procedure_definition::pins::*;
 pub use submission::*;
 
 #[cfg(test)]

@@ -69,7 +69,9 @@ the pipeline then checks it.
 - `iwebs run` and the claim: [a run with no blockchain](run.md) of the same
   specification and case leaves the checkpoints the claim's pipeline-native run
   left, at every stage, and its pipeline run states the result its native run did.
-  The consensus claim is held to the same.
+  The consensus claim is held to the same. That run writes its [record](run.md#the-record-of-a-run),
+  and `iwebs record check` makes the run again from the record alone: every checkpoint and
+  the result are the record's.
 - Layers 2 and 3 of every range borrow layers 0 and 1 of the same range.
 - The last prompt context: no fault, complete, and holding the prompt's SHA-256, the
   model id and the prompt's token count.

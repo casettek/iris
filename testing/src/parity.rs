@@ -2186,6 +2186,10 @@ pub fn worker(specification: &Path, case: &Path, output: &Path, native_run: bool
 /// pipeline run states the result its native run did, and unless every one of
 /// its checkpoints is the one the claim's pipeline run left in `claim_pipeline`.
 /// So the run a claim is built on is the run anyone makes without one.
+///
+/// The run writes its record, and `iwebs record check` then makes the run
+/// again from that record and fails unless every checkpoint and the result
+/// are the record's.
 fn run_with_no_blockchain(
     root: &Path,
     exe: &Path,
@@ -2194,6 +2198,7 @@ fn run_with_no_blockchain(
     claim_pipeline: &Path,
 ) -> Result<f64> {
     fs::create_dir(dir)?;
+    let record = dir.join("record");
     let mut run = command(exe, root);
     run.current_dir(dir)
         .args(["run", "--specification"])
@@ -2201,8 +2206,23 @@ fn run_with_no_blockchain(
         .arg("--case")
         .arg(case_beside(specification))
         .arg("--compare")
-        .arg(claim_pipeline.join(procedure_definition::CHECKPOINT_LIST_JSON));
-    logged(run, &dir.join("run.log")).context("`iwebs run`, held to the claim's checkpoints")
+        .arg(claim_pipeline.join(procedure_definition::CHECKPOINT_LIST_JSON))
+        .arg("--record")
+        .arg(&record);
+    let seconds = logged(run, &dir.join("run.log"))
+        .context("`iwebs run`, held to the claim's checkpoints")?;
+    // The record that run left, checked as another party checks one: the run
+    // made again from the record's inputs alone and held to its checkpoints.
+    let mut check = command(exe, root);
+    check
+        .current_dir(dir)
+        .args(["record", "check", "--record"])
+        .arg(&record)
+        .arg("--specification")
+        .arg(specification);
+    logged(check, &dir.join("record-check.log"))
+        .context("`iwebs record check`, on the record `iwebs run` wrote")?;
+    Ok(seconds)
 }
 
 /// The case file of a gate run: `case.toml` beside its specification.

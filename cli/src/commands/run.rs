@@ -20,10 +20,26 @@ pub(crate) struct RunArgs {
     #[arg(long)]
     compare: Option<PathBuf>,
 
+    /// The id of the procedure the run must be of, as `iwebs procedure id`
+    /// prints one. The command fails, before anything runs, when the
+    /// specification describes another.
+    #[arg(long)]
+    procedure: Option<String>,
+
+    /// Write the record of the run into this directory: the procedure, the
+    /// inputs the run was given, the result it states and its checkpoint
+    /// list. `iwebs record check` makes the run again from it.
+    #[arg(long)]
+    record: Option<PathBuf>,
+
     /// Run each native stage in a child process of its own, as the previous runner did.
     #[arg(long = "native-stage-subprocess", hide = true)]
     native_stage_subprocess: bool,
 }
+
+/// Why a specification's procedure has no id.
+const NOT_IDENTIFIED: &str = "a model the specification names has no contract_pins.json, so \
+     its stage programs are not pinned: import it again from the iwebs root";
 
 pub(crate) fn run(args: RunArgs) -> Result<ExitCode> {
     warn_if_debug_build("run");
@@ -45,6 +61,25 @@ pub(crate) fn run(args: RunArgs) -> Result<ExitCode> {
         procedure_definition::read_checkpoint_list(other)
             .with_context(|| format!("the checkpoint list to compare with, {}", other.display()))?;
     }
+    // Which procedure this is, before anything runs.
+    let procedure = procedure_run::procedure_of(&options)?;
+    if let Some(wanted) = &args.procedure {
+        let id = procedure.as_ref().map(|procedure| procedure.id());
+        match id {
+            Some(id) if id == *wanted => {}
+            Some(id) => bail!(
+                "{} describes procedure {id}, not {wanted}",
+                args.specification.display()
+            ),
+            None => bail!("{}: {NOT_IDENTIFIED}", args.specification.display()),
+        }
+    }
+    if args.record.is_some() && procedure.is_none() {
+        bail!(
+            "{}: {NOT_IDENTIFIED}. A record names the procedure its run is of",
+            args.specification.display()
+        );
+    }
     // The result first: it is known before any stage runs.
     let native_run = procedure_run::run_native(&options)?;
     print_native_run(&native_run, &args.specification, &args.case)?;
@@ -61,6 +96,31 @@ pub(crate) fn run(args: RunArgs) -> Result<ExitCode> {
         "checkpoints: {}",
         pipeline_run.checkpoint_hashes_path.display()
     );
+    // The run is of the procedure only if every stage ran a program the
+    // procedure approves.
+    let of = match &procedure {
+        None => Err(String::from(NOT_IDENTIFIED)),
+        Some(procedure) => match procedure_run::first_unapproved(&pipeline_run, procedure)? {
+            None => Ok(procedure),
+            Some(stage) => Err(format!(
+                "stage `{stage}` ran a program procedure {} does not approve: the stage was \
+                 locked again after the model was imported, so import the model again",
+                procedure.id()
+            )),
+        },
+    };
+    match of {
+        Ok(procedure) => {
+            println!("procedure: {}", procedure.id());
+            if let Some(dir) = &args.record {
+                let dir = absolute(&base_dir, dir);
+                procedure_run::record::write_record(&pipeline_run, procedure, &dir)?;
+                println!("record: {}", dir.display());
+            }
+        }
+        Err(why) if args.procedure.is_some() || args.record.is_some() => bail!("{why}"),
+        Err(why) => println!("procedure: none: {why}"),
+    }
     let Some(other) = compare else {
         return Ok(ExitCode::SUCCESS);
     };

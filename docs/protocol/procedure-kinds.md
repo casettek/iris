@@ -263,7 +263,7 @@ wrong program.
 ### What a contract reads of a kind
 
 A contract does not read the name either. A registered procedure states its
-kind's arrangement (`Arrangement` in `blockchain/rules/src/registry.rs`), and
+kind's arrangement (`Arrangement` in `procedure/definition/src/registry.rs`), and
 the contract reads that. Registering a procedure of a new kind made of
 existing segments needs no change to the contracts.
 
