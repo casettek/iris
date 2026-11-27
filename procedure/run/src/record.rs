@@ -1,9 +1,9 @@
 //! Writing the record of a run, and checking one.
 //!
 //! A record (`procedure_definition::run_record`) is what the party that made
-//! a run hands to anyone who wants to make it again: its statement (the
+//! a run hands to anyone who wants to make it again: what it states (the
 //! procedure by its id, the inputs the run was given, the result), and what
-//! backs the statement, one entry for each method the run was made for. The
+//! backs that, one entry for each method the run was made for. The
 //! run this module records is a pipeline run, which leaves a checkpoint at
 //! every stage, so its record carries the fault provable backing.
 //!

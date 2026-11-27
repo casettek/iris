@@ -66,7 +66,7 @@ The directory holds:
 | `posted_run.bin` | The inputs the run was given, as values: the text, a source's documents with their attestations, the forms, and the output each inference is held to. These are the inputs a claim posts. |
 | `checkpoint_list.json`, `checkpoints.txt` | The run's checkpoints and their hashes: what the fault provable backing is of. |
 
-A record has two parts. The **statement** is the procedure id, the inputs and the result: it is the same whatever method the run was made for. The **backings** are what stands behind the statement besides making the run again, one entry for each method, named by its method:
+A record has two parts. **What it states** is the procedure id, the inputs and the result: the same whatever method the run was made for. **Its backings** are what stands behind that besides making the run again, one entry for each method, named by its method:
 
 ```json
 "backings": [

@@ -5,9 +5,10 @@ Three kinds of page. Start with [how IWEBS works](protocol/overview.md). The
 
 ## How it works
 
-- [How IWEBS works](protocol/overview.md): the whole of it from the top: what
-  is pinned, what a claim is, the one rule, and what catches each way a claim
-  can be wrong.
+- [How IWEBS works](protocol/overview.md): the whole of it from the top. With
+  no blockchain: what a procedure, a case and a verdict are, what a run
+  shows, and the record that carries it. On a blockchain: what a claim is,
+  the one rule, and what catches each way a claim can be wrong.
 - [The pipeline](protocol/raster-pipeline.md): the stages a run is made of,
   what each checks, and the schedule that holds them in order.
 - [Procedure kinds](protocol/procedure-kinds.md): a run of one model, and a consensus of

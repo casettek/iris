@@ -8,11 +8,12 @@ follows, so this page says which is which until they agree.
 
 | Word | Meaning | In the code today, where it differs |
 | --- | --- | --- |
-| Procedure | The registered way a judgment is made: the stage programs, the models and the parameters a claim must have run under. A contract judges a claim by the procedure the claim names | |
+| Adjudication harness | What IWEBS is: it runs a model as the judge of a case, under a procedure the parties agreed to beforehand, and the verdict it gives does not depend on who ran it | |
+| Procedure | The way a judgment is made, fixed before any case: the stage programs, the models, the parameters, and what a run must say of its source and result. Parties agree to one by its id. On a blockchain a contract registers it, and judges a claim by the procedure the claim names | |
 | Procedure kind | The arrangement a procedure's segments follow. Three exist: `single`, one inference on one model; `consensus`, the same inference on two models and whether they agree; and `relay`, one model's output set in a second model's prompt. Each is a file of `procedures/` | |
 | Shape | A procedure kind's steps in order: what its file in `procedures/` lists. Each step is a use of a segment kind, with the earlier step each of its inputs comes from | |
 | Specification | The document that defines a procedure | |
-| Case | One run of a procedure: what a claim is about | |
+| Case | One run of a procedure: the question and the evidence a verdict is of. On a blockchain, what a claim is about | |
 | Claim | What a claimer posts about a case: the statement, the checkpoint list and what the procedure requires beside them | |
 | Claimer, challenger, defender | Who posts a claim, who disputes one of its stages, and who answers that dispute | |
 | Phase | A part of a procedure with one purpose: the source, an inference, the result. A phase's logic is written once, under `phases/`, and every way of running the procedure uses it | |
@@ -27,7 +28,8 @@ follows, so this page says which is which until they agree.
 | Text digest | What a run states of its input text before any stage has read the text: its SHA-256, its length, and the span the template's trim keeps. Every prompt range uses it, and the range the text ends in checks it | |
 | Procedure id | The hash over a procedure: its stage programs, its models, its parameters and what it requires of a run's source and result. Two parties that name one id have agreed to one procedure. The question, the criteria and the evidence of a case are not in it: they are inputs of a run. A contract registers a procedure under this id | |
 | Run record | What the party that made a run hands to anyone who wants to make it again: the procedure id with the procedure, the inputs the run was given and each inference's result, with the backings of that statement. A directory `iwebs run --record` writes and `iwebs record check` reads. It needs no blockchain | |
-| Backing | What one method leaves behind a run record's statement, besides making the run again. A record names the method of each. One is built: `fault_provable`, the count and root of the run's checkpoints | |
+| Method | A way a verdict is backed for someone who did not make the run. Making the run again needs only the record. One other is built: fault provable, where the run leaves a checkpoint for each stage so that one stage can be proven wrong | |
+| Backing | What one method leaves behind what a run record states, besides making the run again. A record names the method of each. One is built: `fault_provable`, the count and root of the run's checkpoints | |
 | Challenge period | How long a claim stays open to challenge after it is submitted | |
 | Fault-proof period | How long a defender has to answer a challenge | |
 | Scenario | One test of the parity gate | |

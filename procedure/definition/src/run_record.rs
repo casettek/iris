@@ -1,12 +1,12 @@
 //! The record of a run: what the party that made a run hands to anyone who
 //! wants to make it again.
 //!
-//! A record has two parts. The statement is the same whatever method the run
-//! was made for: the id of the procedure the run is of, the inputs it was
-//! given, and each inference's result. The backings are what stands behind
-//! the statement besides making the run again: one entry for each method the
-//! run was made for, named by its method. A record with none is backed by
-//! making the run again, and by nothing else.
+//! A record has two parts. What it states is the same whatever method the
+//! run was made for: the id of the procedure the run is of, the inputs it was
+//! given, and each inference's result. Its backings are what stands behind
+//! that besides making the run again: one entry for each method the run was
+//! made for, named by its method. A record with none is backed by making the
+//! run again, and by nothing else.
 //!
 //! One method has a backing today. A run made to be fault provable leaves a
 //! checkpoint at every stage, and its backing is the count and root of those
@@ -47,13 +47,13 @@ pub struct RunRecord {
     /// What a consensus run states of its two inferences.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub consensus: Option<ConsensusOutcome>,
-    /// What stands behind the statement besides making the run again: at
-    /// most one entry for each method. With none, the record is backed by
-    /// making the run again alone.
+    /// What stands behind what the record states, besides making the run
+    /// again: at most one entry for each method. With none, the record is
+    /// backed by making the run again alone.
     pub backings: Vec<Backing>,
 }
 
-/// What one method leaves behind a record's statement. The method is the
+/// What one method leaves behind what a record states. The method is the
 /// entry's tag, so a record says which methods its run was made for.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "method", rename_all = "snake_case")]
@@ -255,7 +255,7 @@ mod tests {
     }
 
     #[test]
-    fn a_record_with_no_backing_is_the_statement_alone() {
+    fn a_record_with_no_backing_states_its_run_and_nothing_more() {
         let record = RunRecord::of("ab".repeat(32), Vec::new(), None, Vec::new());
         assert_eq!(record.fault_provable(), None);
         record.one_backing_for_each_method().unwrap();
