@@ -39,9 +39,13 @@ raster_samples="prompt-bind:prompt_bind_p0 prompt-check:prompt_check_p0 input-em
     claim-result:result"
 
 claim() {
-    local reference=$1 out=$2
+    local reference=$1 out=$2 stated
+    # A claim states its output, so the output is found first, by the
+    # procedure that finds one.
+    stated=$(python3 "$repo_root/scripts/state-output.py" "$repo_root/target/release/iwebs" \
+        "$reference/specification.toml" "$reference/case.toml" "$out/stated") || return 1
     "$repo_root/target/release/iwebs" claim build --specification "$reference/specification.toml" \
-        --case "$reference/case.toml" > "$out/claim.log" 2>&1 \
+        --case "$stated" > "$out/claim.log" 2>&1 \
         || { tail -20 "$out/claim.log"; return 1; }
     grep -E "^faults:|^stop reason:" "$out/claim.log"
     grep -q "^faults: prompt 0, check 0, output 0, model 0; claim mismatches: 0" "$out/claim.log" \

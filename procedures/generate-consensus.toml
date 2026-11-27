@@ -1,5 +1,8 @@
-# The same inference on two models, one after the other, and whether their
-# outputs agree.
+# Finds two models' outputs on the same case, one after the other, and
+# states whether they agree.
+#
+# A generation runs natively and has no stage programs. A step's `program`
+# names which logic of its phase the step is.
 
 [[step]]
 name = "source"
@@ -8,12 +11,12 @@ program = "prompt-source"
 
 [[step]]
 name = "first"
-segment = "inference"
+segment = "generation"
 inputs.source = "source"
 
 [[step]]
 name = "second"
-segment = "inference"
+segment = "generation"
 inputs.source = "source"
 
 [[step]]

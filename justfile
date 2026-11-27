@@ -6,9 +6,6 @@ default:
 import model:
     cargo run --release -p iwebs-cli -- model import --model "{{model}}"
 
-infer specification="specification.toml" case="case.toml":
-    cargo run --release -p iwebs-cli -- infer --specification "{{specification}}" --case "{{case}}"
-
 run specification="specification.toml" case="case.toml":
     cargo run --release -p iwebs-cli -- run --specification "{{specification}}" --case "{{case}}"
 

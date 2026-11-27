@@ -180,9 +180,18 @@ impl Shape {
                 .enumerate()
                 .filter(move |(_, step)| step.segment == kind)
         };
+        // A procedure finds an output or verifies a stated one, and never
+        // both: they are different logic, and a procedure is one.
+        let verifying = of(SegmentKind::Inference).count();
+        let generating = of(SegmentKind::Generation).count();
         ensure!(
-            of(SegmentKind::Inference).count() >= 1,
-            "the `{name}` shape has no inference"
+            verifying + generating >= 1,
+            "the `{name}` shape has no inference and no generation"
+        );
+        ensure!(
+            verifying == 0 || generating == 0,
+            "the `{name}` shape has an inference step and a generation step: a procedure \
+             verifies a stated output or finds one, and not both"
         );
         // A claim's last checkpoint is its result's, and its stage is found by
         // this name.
@@ -237,12 +246,24 @@ impl Shape {
             .find_map(|(_, from)| self.inference_at(*from))
     }
 
-    /// The steps that are inferences, in the order they run.
+    /// The steps that are a model's, in the order they run: the inferences
+    /// of a shape that verifies, or the generations of one that generates.
     pub fn inference_steps(&self) -> impl Iterator<Item = (usize, &Step)> {
+        self.steps.iter().enumerate().filter(|(_, step)| {
+            matches!(
+                step.segment,
+                SegmentKind::Inference | SegmentKind::Generation
+            )
+        })
+    }
+
+    /// Whether the shape finds its output. One that does not verifies an
+    /// output stated beforehand. A shape that generates runs natively and
+    /// has no pipeline.
+    pub fn generates(&self) -> bool {
         self.steps
             .iter()
-            .enumerate()
-            .filter(|(_, step)| step.segment == SegmentKind::Inference)
+            .any(|step| step.segment == SegmentKind::Generation)
     }
 
     /// How many inferences a run makes: one per model.
@@ -310,6 +331,11 @@ impl Shape {
     /// The template has every step. A run whose text is taken as given
     /// removes the source stage when it renders its own pipeline.
     pub fn pipeline_template(&self, segments: &[&str]) -> Result<String> {
+        ensure!(
+            !self.generates(),
+            "the `{}` procedure kind finds its output: it runs natively and has no pipeline",
+            self.name
+        );
         ensure!(
             segments.len() == self.inferences(),
             "the `{}` procedure kind makes {} inference(s), and {} model(s) were given",
@@ -676,7 +702,7 @@ inputs.prompt = { from = "prompt_bind_p@LAST_PROMPT_RANGE@" }
             (
                 format!("{SOURCE}{one}{RESULT}")
                     .replace("segment = \"source\"", "segment = \"evidence\""),
-                "the kinds are `source`, `inference`, `result`",
+                "the kinds are `source`, `inference`, `generation`, `result`",
             ),
             (
                 format!("{SOURCE}{one}{}{RESULT}", inference("only", true)),

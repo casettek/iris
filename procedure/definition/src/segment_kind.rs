@@ -15,7 +15,8 @@
 pub enum Gives {
     /// What a prompt's text was built from.
     SourceRecord,
-    /// An inference's last check: its claim record and its output.
+    /// An inference's last check: its claim record and its output. A
+    /// generation gives the same of the output it found.
     LastCheck,
     /// A procedure's result. Nothing in a pipeline takes it.
     Result,
@@ -50,8 +51,12 @@ pub enum SegmentKind {
     /// States what the prompt text was built from.
     Source,
     /// One model's inference, from its first bind to its last check. Its
-    /// stages are the ones the model's import wrote.
+    /// stages are the ones the model's import wrote. It verifies an output
+    /// that was stated beforehand.
     Inference,
+    /// One model's output found: the model run forward, each token its own
+    /// choice. It runs natively and has no stages.
+    Generation,
     /// States the procedure's result.
     Result,
 }
@@ -93,13 +98,19 @@ const RESULT_PROGRAMS: &[StageProgram] = &[
 pub const INFERENCE_TAKES: &[(&str, Gives)] = &[("source", Gives::SourceRecord)];
 
 impl SegmentKind {
-    pub const ALL: &'static [SegmentKind] = &[Self::Source, Self::Inference, Self::Result];
+    pub const ALL: &'static [SegmentKind] = &[
+        Self::Source,
+        Self::Inference,
+        Self::Generation,
+        Self::Result,
+    ];
 
     /// The name a shape uses.
     pub fn name(self) -> &'static str {
         match self {
             Self::Source => "source",
             Self::Inference => "inference",
+            Self::Generation => "generation",
             Self::Result => "result",
         }
     }
@@ -112,7 +123,7 @@ impl SegmentKind {
     pub fn gives(self) -> Gives {
         match self {
             Self::Source => Gives::SourceRecord,
-            Self::Inference => Gives::LastCheck,
+            Self::Inference | Self::Generation => Gives::LastCheck,
             Self::Result => Gives::Result,
         }
     }
@@ -122,7 +133,7 @@ impl SegmentKind {
     pub fn programs(self) -> &'static [StageProgram] {
         match self {
             Self::Source => SOURCE_PROGRAMS,
-            Self::Inference => &[],
+            Self::Inference | Self::Generation => &[],
             Self::Result => RESULT_PROGRAMS,
         }
     }

@@ -21,11 +21,13 @@ Flow:
 
 `prepared_run.json` holds no copy of the ids: the claim's output is the record the last range's check states with its edge, which also holds the input text's SHA-256, the model id and the output text's SHA-256.
 
-When `iwebs infer` has already run this specification and case, pass the ids it printed with
-`--native-output-ids 1,2,3` and step 2 is skipped: the claim is built from them
-without a second native pass. Nothing else changes. The ids must still fill
-`max_new_tokens` unless the last is EOS, the pipeline re-derives every token, and ids that
-are not the run's greedy output fail the build at step 7.
+A claim is of a verification procedure, which is given the output it verifies: `claim build`
+finds none. The case states each model's output as an `[[output]]` table with its `ids`
+([run](run.md#a-verification)), or `--output-ids 1,2,3` states the one output of a kind of one
+model. They are the ids a generation procedure printed, or ids from anywhere else: the claim
+does not ask. A case that states no output is refused. The ids must fill `max_new_tokens`
+unless the last is EOS, the pipeline re-derives every token, and ids that are not the model's
+greedy output fail the build at step 7.
 
 `iwebs test claim --ids 1,2,3` builds a claim of the given
 ids instead of discovering them. A rejection is then a warning, and the claim is

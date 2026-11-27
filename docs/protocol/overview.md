@@ -48,14 +48,20 @@ whether the two models agree.
 
 Inference is integer arithmetic with every rounding and overflow rule fixed
 ([numerics](numerics.md)), so the same inputs give the same bytes whoever runs
-them. A procedure is run in two ways, and they are held equal:
+them.
 
-| Run | What it does |
-| --- | --- |
-| Native run | Every phase in turn, with inference generating its output. It gives the verdict as fast as possible, and it is the only run that generates. |
-| Pipeline run | Stage by stage, each stage verifying its part of an output stated beforehand, with a checkpoint for each stage. |
+There are two sets of procedures, and a run is of one
+([run](../workflows/run.md#two-sets-of-procedures)):
 
-`iwebs run` makes both and fails when they differ ([run](../workflows/run.md)).
+| Set | What a run does | How it runs |
+| --- | --- | --- |
+| Generation | Finds the verdict: each model run forward, each token its own choice. | Natively, with no stages. |
+| Verification | Holds a verdict stated beforehand to each model's own choice, token by token. | Stage by stage, with a checkpoint for each stage. |
+
+They are different logic, so they are different procedures with different
+ids, and nothing pairs one with the other. Whoever needs a verdict verified
+runs a generation first and states what it found in the case of a
+verification. The parity gate holds that the two give the same result.
 
 A run that someone else can make again shows one thing: this procedure, on
 these inputs, gives this verdict. So the party that relies on a verdict need
@@ -82,8 +88,8 @@ A record names the method of each:
 
 | Method | What backs the verdict | Built |
 | --- | --- | --- |
-| Making the run again | Nothing but the record. Whoever doubts it runs the whole case and compares | Yes: `iwebs record check` |
-| Fault provable (`fault_provable`) | The count and root of the run's checkpoints, one for each stage, so that a dispute comes down to proving one stage wrong. Raster's method, and what a claim commits to | Yes: `iwebs run --record` writes it |
+| Making the run again | Nothing but the record. Whoever doubts it runs the whole case and compares. How a generation's record is checked | Yes: `iwebs record check` |
+| Fault provable (`fault_provable`) | The count and root of a verification's checkpoints, one for each stage, so that a dispute comes down to proving one stage wrong. Raster's method, and what a claim commits to | Yes: `iwebs run --record` of a verification writes it |
 
 An enclave's attestation and a validity proof would each be a further method.
 Neither is built.
@@ -91,11 +97,12 @@ Neither is built.
 ## With no blockchain
 
 1. The parties agree on a procedure and put its id in whatever binds them.
-2. A case comes up, and any of them runs it: `iwebs run --procedure <id> --record <dir>`.
+2. A case comes up, and any of them runs it: `iwebs run --procedure <id> --record <dir>`,
+   of a generation procedure.
 3. The record is handed to the others, by any means.
 4. Whoever doubts it runs `iwebs record check` under their own specification
-   of the procedure. The record holds, or the check names the first stage or
-   field that differs.
+   of the procedure, which makes the generation again. The record holds, or
+   the check names the first field that differs.
 
 IWEBS stops there. Three things are the parties' own:
 
@@ -109,7 +116,9 @@ Where two runs differ, a third settles which is the procedure's.
 ## On a blockchain
 
 The rest of this page is the fault provable method with a blockchain as the
-place a verdict is settled. A contract is given a procedure, registered under
+place a verdict is settled. Every procedure in it is a verification procedure:
+the claimer has found the output beforehand, with a generation procedure or
+any other way. A contract is given a procedure, registered under
 its id ([availability](availability.md#the-procedure-registry)). A claim
 names one, and is judged by it. The claims contract is also deployed with the
 ids of Raster's two proof programs and RISC Zero's verifier.

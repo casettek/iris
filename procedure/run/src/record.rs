@@ -24,15 +24,16 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{bail, ensure, Context, Result};
 use procedure_definition::divergence::locate_divergence;
+use procedure_definition::generation::{GenerationProcedure, RegisteredGeneration};
 use procedure_definition::registry::{Procedure, Registered};
 use procedure_definition::run_record::{
     Backing, RunRecord, RECORD_PROCEDURE_JSON, RUN_RECORD_JSON,
 };
 use procedure_definition::{
-    read_case, read_checkpoint_list, read_json, read_specification, write_json, Divergence,
-    InferenceResult, CHECKPOINTS_TXT, CHECKPOINT_LIST_JSON,
+    read_case, read_checkpoint_list, read_json, read_specification, write_json, ConsensusOutcome,
+    Divergence, InferenceResult, ProcedureKind, CHECKPOINTS_TXT, CHECKPOINT_LIST_JSON,
 };
-use procedure_native::absolute;
+use procedure_native::{absolute, InferRun};
 use procedure_pipeline::pipeline_runner::NativeStageBackend;
 use procedure_prepare::pipeline_run::PipelineRun;
 use procedure_prepare::run_inputs;
@@ -226,14 +227,23 @@ pub fn check_record(options: &CheckOptions) -> Result<RecordCheck> {
 
 /// The first thing a record states of a result that a run does not.
 fn stated_difference(record: &RunRecord, run: &CheckpointedRun) -> Result<Option<String>> {
-    if record.results.len() != run.results.len() {
+    results_difference(record, &run.results, run.consensus)
+}
+
+/// The first thing a record states of a result that these results do not.
+fn results_difference(
+    record: &RunRecord,
+    results: &[InferenceResult],
+    consensus: Option<ConsensusOutcome>,
+) -> Result<Option<String>> {
+    if record.results.len() != results.len() {
         return Ok(Some(format!(
             "the record states {} result(s), and the run on its inputs {}",
             record.results.len(),
-            run.results.len()
+            results.len()
         )));
     }
-    for (inference, (recorded, stated)) in record.results.iter().zip(&run.results).enumerate() {
+    for (inference, (recorded, stated)) in record.results.iter().zip(results).enumerate() {
         if let Some(difference) = differing_field(recorded, stated)? {
             return Ok(Some(match difference {
                 Some((field, recorded, stated)) => format!(
@@ -247,12 +257,133 @@ fn stated_difference(record: &RunRecord, run: &CheckpointedRun) -> Result<Option
             }));
         }
     }
-    Ok((record.consensus != run.consensus).then(|| {
+    Ok((record.consensus != consensus).then(|| {
         format!(
             "the record states the consensus {:?}, and the run on its inputs {:?}",
-            record.consensus, run.consensus
+            record.consensus, consensus
         )
     }))
+}
+
+/// Writes the record of a generation of `procedure` into `dir`, and returns
+/// the path of its `record.json`. The record has no backing: a generation
+/// leaves no checkpoints, and whoever doubts it makes the run again.
+pub fn write_generation_record(
+    specification_path: &Path,
+    case_path: &Path,
+    run: &InferRun,
+    procedure: &GenerationProcedure,
+    dir: &Path,
+) -> Result<PathBuf> {
+    let specification = read_specification(specification_path)?;
+    let case = read_case(case_path)?;
+    procedure_prepare::generation_inputs::save(&specification, case_path, &case, dir)?;
+    let id = procedure.id();
+    write_json(
+        &dir.join(RECORD_PROCEDURE_JSON),
+        &RegisteredGeneration {
+            id: id.clone(),
+            procedure: procedure.clone(),
+        },
+    )?;
+    let path = dir.join(RUN_RECORD_JSON);
+    write_json(
+        &path,
+        &RunRecord::of(
+            id,
+            run.reports
+                .iter()
+                .map(|report| report.result.clone())
+                .collect(),
+            run.consensus,
+            Vec::new(),
+        ),
+    )?;
+    Ok(path)
+}
+
+/// Whether the record is of a generation: its procedure is of a kind that
+/// finds its output. One that is not is of a verification.
+pub fn record_generates(options: &CheckOptions) -> Result<bool> {
+    let path = absolute(&options.base_dir, &options.record_dir).join(RECORD_PROCEDURE_JSON);
+    let held: serde_json::Value = read_json(&path)?;
+    let kind = held["procedure"]["procedure_kind"]
+        .as_str()
+        .with_context(|| format!("{} names no procedure kind", path.display()))?;
+    Ok(ProcedureKind::named(kind)?.generates())
+}
+
+/// How a generation's record came out against the generation made again.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GenerationCheck {
+    /// The id of the procedure the record and the checker's specification
+    /// both name.
+    pub procedure: String,
+    /// Each inference's result, as the checker's own generation gives it.
+    pub results: Vec<InferenceResult>,
+    /// The first thing the record states of a result that the generation
+    /// made again does not.
+    pub result_difference: Option<String>,
+}
+
+/// Makes a recorded generation again, natively, and compares its results
+/// with the record's. No stage runs.
+///
+/// It fails, before anything runs, when the record is not one: its procedure
+/// does not hash to the id it states, the checker's specification describes
+/// another procedure, or it carries a backing, which a generation has none
+/// of. The run is made on the record's own inputs: its evidence, and the
+/// question the evidence is read by.
+pub fn check_generation_record(options: &CheckOptions) -> Result<GenerationCheck> {
+    let record_dir = absolute(&options.base_dir, &options.record_dir);
+    let record = RunRecord::read(&record_dir)?;
+    ensure!(
+        record.backings.is_empty(),
+        "the record is of a generation, which leaves no checkpoints, and it carries a backing"
+    );
+    let procedure_path = record_dir.join(RECORD_PROCEDURE_JSON);
+    let held: RegisteredGeneration = read_json(&procedure_path)?;
+    ensure!(
+        held.id == record.procedure && held.procedure.id() == held.id,
+        "the procedure in {} does not hash to the id the record states, {}",
+        procedure_path.display(),
+        record.procedure
+    );
+    let specification_path = absolute(&options.base_dir, &options.specification_path);
+    let specification = read_specification(&specification_path)?;
+    ensure!(
+        specification.procedure_kind.generates(),
+        "the record is of a generation, and {} describes a procedure of the `{}` kind, which \
+         verifies a stated output",
+        specification_path.display(),
+        specification.procedure_kind
+    );
+    let procedure =
+        procedure_prepare::procedure::generation_procedure_of(&specification_path, &specification)?;
+    ensure!(
+        procedure.id() == record.procedure,
+        "the record is of procedure {}, and {} describes {}",
+        record.procedure,
+        specification_path.display(),
+        procedure.id()
+    );
+    let (specification_path, case_path) = procedure_prepare::generation_inputs::restore(
+        &record_dir,
+        &specification_path,
+        &work_dir(&options.base_dir),
+    )?;
+    let run = procedure_native::run_infer(specification_path, case_path)?;
+    let results: Vec<InferenceResult> = run
+        .reports
+        .iter()
+        .map(|report| report.result.clone())
+        .collect();
+    let result_difference = results_difference(&record, &results, run.consensus)?;
+    Ok(GenerationCheck {
+        procedure: record.procedure,
+        results,
+        result_difference,
+    })
 }
 
 /// A new directory for the case a check reads the record's inputs as.
@@ -268,11 +399,10 @@ fn work_dir(base_dir: &Path) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use procedure_definition::ProcedureKind;
 
     fn run(results: Vec<InferenceResult>) -> CheckpointedRun {
         CheckpointedRun {
-            procedure_kind: ProcedureKind::single(),
+            procedure_kind: ProcedureKind::verify_single(),
             manifest_path: PathBuf::new(),
             pipeline_dir: PathBuf::new(),
             checkpoint_list_path: PathBuf::new(),

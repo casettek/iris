@@ -26,7 +26,7 @@ each range's cut and each claimed range are written under
 
 A run is described by two files. `specification.toml` defines the procedure:
 
-- `procedure_kind`: optional, `single` when absent. See [Procedure kinds](procedure-kinds.md)
+- `procedure_kind`: optional, `verify-single` when absent. A procedure that finds its output names a kind that generates, such as `generate-single`. See [Procedure kinds](procedure-kinds.md)
 - `raw_prompt`
 - `max_new_tokens`
 - One `[[model]]` table per model, in the order the procedure kind runs them, each with a `manifest`
@@ -35,7 +35,7 @@ A run is described by two files. `specification.toml` defines the procedure:
 - `[relay]`: in a specification of a procedure kind that relays an output, and only there. The text `before` and `after` the earlier inference's output in the prompt of the next. See [the relay procedure kind](procedure-kinds.md#the-relay-procedure-kind)
 
 ```toml
-procedure_kind = "consensus"
+procedure_kind = "verify-consensus"
 raw_prompt = false
 max_new_tokens = 4
 
@@ -92,6 +92,15 @@ file = "event.bin"
 attestation = "event.attestation.json"
 ```
 
+A case of a procedure that verifies also states the output each model is held
+to, one `[[output]]` table for each model in order, with the ids of its tokens.
+A case of a procedure that generates states none:
+
+```toml
+[[output]]
+ids = [4443, 106]
+```
+
 Paths in a specification are relative to the specification, and paths in a
 case to the case. A key neither file knows is refused. Stage inputs are built
 from the values the files hold and not from their bytes, so two files that
@@ -132,7 +141,7 @@ Every checkpointed stage directory must include:
 
 The claim bundle records the first checkpoint input commitment, final checkpoint output commitment, checkpoint list path, and prepared-run metadata path.
 
-The claim submission is what a claimer would post to a [contract](checks.md): the procedure kind, the input text hash, the source record of a run that has one, for each inference its output text, its last check's claim record (statement digest, output text hash, valid flag) and its result code, for a consensus the agreement, the claimer's address, and the root of the checkpoint list, which commits to every stage boundary. A model import's `contract_pins.json` is the other side: what a contract of the `single` procedure kind over that model pins, as the procedure kind's name, a program entry (the stage programs and the inputs each takes from earlier stages) and a model entry. `iwebs claim pins` writes the same file for any procedure kind over the models a specification names.
+The claim submission is what a claimer would post to a [contract](checks.md): the procedure kind, the input text hash, the source record of a run that has one, for each inference its output text, its last check's claim record (statement digest, output text hash, valid flag) and its result code, for a consensus the agreement, the claimer's address, and the root of the checkpoint list, which commits to every stage boundary. A model import's `contract_pins.json` is the other side: what a contract of the `verify-single` procedure kind over that model pins, as the procedure kind's name, a program entry (the stage programs and the inputs each takes from earlier stages) and a model entry. `iwebs claim pins` writes the same file for any procedure kind over the models a specification names.
 
 ## Challenges
 

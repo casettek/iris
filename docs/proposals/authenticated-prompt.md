@@ -256,7 +256,8 @@ test tier's lock check passes.
   key, and in the case a list of documents, each with its attestation. When this step
   was built the recipe and the key were files a run spec named.
 - `iwebs source render`, which prints the record and can write the prompt text.
-- `iwebs infer` and `iwebs claim build` on such a specification use the prompt the source gives. A
+- `iwebs infer` (since replaced by `iwebs run` on a generation procedure) and
+  `iwebs claim build` on such a specification use the prompt the source gives. A
   source with a fault gives none, and the run stops there. `iwebs infer` also prints the
   source's facts and the result code. They are computed by the host from the same
   functions, and no pipeline states them yet.

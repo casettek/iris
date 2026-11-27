@@ -1,12 +1,19 @@
 # Procedure kinds
 
-A procedure kind is a named arrangement of the segments a claim is made of. Three exist:
-`single`, one inference on one model; `consensus`, the same inference on
-two models and whether they agree; and `relay`, two inferences with the first
-one's output inside the second one's prompt. Others can be added beside them
-without each command growing its own switch.
+A procedure kind is a named arrangement of the steps a procedure is made of. There are two
+sets, told apart by name. A kind that verifies holds an output stated beforehand to each
+model's own choice: `verify-single`, one inference on one model; `verify-consensus`, the
+same inference on two models and whether they agree; and `verify-relay`, two inferences
+with the first one's output inside the second one's prompt. A kind that generates finds
+that output: `generate-single`, `generate-consensus` and `generate-relay`, each with the
+same steps and a generation where the other has an inference. A generation runs natively
+and has no stages, so it has no pipeline, no claim and no contract: everything on this page
+about stages, pipelines, submissions and contracts is of the kinds that verify
+([run](../workflows/run.md#two-sets-of-procedures)). Nothing pairs a kind of one set with
+a kind of the other. Others can be added beside them without each command growing its own
+switch.
 
-`consensus` and `relay` each run directly, build a claim with a submission,
+`verify-consensus` and `verify-relay` each run directly, build a claim with a submission,
 pass a contract's checks, can be challenged, and have a scenario in the parity
 gate and a claim in the blockchain tier. The backend runs any kind: it passes
 the kind's name on and holds no list of them.
@@ -21,9 +28,9 @@ the kind's name on and holds no list of them.
 
 | Procedure kind | Inferences | Result program | Its result |
 | --- | --- | --- | --- |
-| `single` | 1 | `claim-result` | The code of the first form the output is, or zero |
-| `consensus` | 2, one after the other | `consensus-result` | Each output's code, and whether the two agree |
-| `relay` | 2, the second on the first one's output | `claim-result` | The code of the first form the second output is, or zero |
+| `verify-single` | 1 | `claim-result` | The code of the first form the output is, or zero |
+| `verify-consensus` | 2, one after the other | `consensus-result` | Each output's code, and whether the two agree |
+| `verify-relay` | 2, the second on the first one's output | `claim-result` | The code of the first form the second output is, or zero |
 
 See [Raster pipeline](raster-pipeline.md) for the stages and
 [the contract](checks.md) for what is checked.
@@ -78,16 +85,16 @@ keeps its files in `prompt/`.
 
 | Place | Field | Notes |
 | --- | --- | --- |
-| Specification | `procedure_kind = "consensus"` | Optional. A specification that names none is of `single`. A name that is no procedure kind is an error |
+| Specification | `procedure_kind = "verify-consensus"` | Optional. A specification that names none is of `verify-single`. A procedure that finds its output names a `generate-` kind. A name that is no procedure kind is an error |
 | `prepared_run.json` | `procedure_kind` | The claim's frozen run, which its claim bundle points at. Required, version 20 |
-| `claim_submission.json` | `procedure_kind` | Required. It holds one entry per inference, for `consensus` the agreement, and for `relay` the relay's record |
-| `iwebs infer`, `iwebs claim build` | a `procedure_kind:` line | Printed before the result |
+| `claim_submission.json` | `procedure_kind` | Required. It holds one entry per inference, for `verify-consensus` the agreement, and for `verify-relay` the relay's record |
+| `iwebs claim build` | a `procedure_kind:` line | Printed before the result |
 
 A specification names its models as `[[model]]` tables, in the order the
-procedure kind runs them: one for `single`, two for `consensus`.
+procedure kind runs them: one for `verify-single`, two for `verify-consensus`.
 
 ```toml
-procedure_kind = "consensus"
+procedure_kind = "verify-consensus"
 max_new_tokens = 16
 
 [[model]]
@@ -104,7 +111,7 @@ documents ([artifacts](artifacts.md#models-specifications-and-cases)).
 inference. So are the prompt and the source, except for an inference a relay
 gives its prompt. Each model tokenizes its text with its own tokenizer and
 chat template, so the inferences have different prompt tokens, range counts and
-statements. In `consensus` both statements name the same input text hash and
+statements. In `verify-consensus` both statements name the same input text hash and
 source digest.
 
 A caller that runs procedures need hold no list of kinds. `iwebs procedure
@@ -119,7 +126,7 @@ there is naming it for all of them:
 
 | Command | What it does with the name |
 | --- | --- |
-| `iwebs infer` | Runs the procedure kind directly: each inference in turn, then the result |
+| `iwebs run` | Runs the procedure the specification describes: a kind that generates natively, each model in turn and then the result; a kind that verifies stage by stage, on the output its case states |
 | `iwebs claim build` | Builds the procedure kind's pipeline and records the name in the frozen run and the submission |
 | `iwebs claim pins` | Writes what a contract of the specification's procedure kind over its models pins |
 | `iwebs claim check` | Requires the submission to be of the specification's procedure kind and to hold what a claim of it does, each inference to be of the model the specification names for it, and the claim's last stage to run that procedure kind's result program |
@@ -155,7 +162,7 @@ A run in which the models disagree is still a claim. What makes it not one is
 an invalid claim record in either inference: `claim build` refuses to write
 such a claim, and a challenger rejects it on that record.
 
-`iwebs infer` and `iwebs claim build` print the answer first, then each
+`iwebs run` on a generation and `iwebs claim build` print the answer first, then each
 inference's result under an `inference:` line:
 
 ```text
@@ -189,7 +196,7 @@ table. The second prompt is `before`, the first inference's output exactly as
 generated, `after`:
 
 ```toml
-procedure_kind = "relay"
+procedure_kind = "verify-relay"
 max_new_tokens = 16
 
 [[model]]
@@ -223,14 +230,14 @@ built on, and no stage of the inference segment differs for a relay.
 
 A first inference with no valid claim record gives a relay record with a
 fault, which the second inference's bind publishes as a prompt fault. Nothing
-aborts. `iwebs infer` refuses such a run before the second inference, as it
+aborts. A generation refuses such a run before the second inference, as it
 refuses a source with a fault.
 
 `result` runs `claim-result` on the second inference's last check. The first
 output is in the run as the first inference's result, which has no code: the
 result stage did not read it.
 
-`iwebs infer`, `iwebs run` and `iwebs claim build` print which inference the
+`iwebs run` and `iwebs claim build` print which inference the
 result is of, then each inference's result under an `inference:` line, in
 the order they were made:
 
@@ -267,7 +274,7 @@ kind's arrangement (`Arrangement` in `procedure/definition/src/registry.rs`), an
 the contract reads that. Registering a procedure of a new kind made of
 existing segments needs no change to the contracts.
 
-| Field | Meaning | `single` | `consensus` | `relay` |
+| Field | Meaning | `verify-single` | `verify-consensus` | `verify-relay` |
 | --- | --- | --- | --- | --- |
 | `result_program` | The stage program that states the result | `claim-result` | `consensus-result` | `claim-result` |
 | `result_inputs` | For each inference, the result stage's input that reads its last check, or empty | `check` | `first`, `second` | empty, `check` |
@@ -327,12 +334,12 @@ builds one relay claim, and the blockchain tier submits one to the contracts.
 
 ## What is not built
 
-For `consensus`:
+For `verify-consensus`:
 
 Nothing in IWEBS itself. `iwebs claim pins` writes a consensus contract's pins as
 a file, and `iwebs claim check --pins` checks a claim against it.
 
-For `relay`:
+For `verify-relay`:
 
 - A second prompt that also reads the signed documents. It is fixed text
   around the first output.
@@ -383,7 +390,7 @@ What a new kind needs depends on what it is made of:
 | The kind uses | What to add |
 | --- | --- |
 | Existing segments and programs, arranged another way | Its file in `procedures/`, and its registration on the contract |
-| A new program of an existing segment | The stage project under `raster-stages/`, its logic under `phases/`, its native stage in the segment's folder under `procedure/pipeline/src/segments/` with its entry in that segment's `Stage`, and the program's entry in `procedure/definition/src/segment_kind.rs`. A new result program also needs what `iwebs infer` and `iwebs claim build` print for it and how a claim of it is judged when every checkpoint matches |
+| A new program of an existing segment | The stage project under `raster-stages/`, its logic under `phases/`, its native stage in the segment's folder under `procedure/pipeline/src/segments/` with its entry in that segment's `Stage`, and the program's entry in `procedure/definition/src/segment_kind.rs`. A new result program also needs what `iwebs run` on a generation and `iwebs claim build` print for it and how a claim of it is judged when every checkpoint matches |
 | A new segment kind | As a new program, with a folder of its own under `segments/` and the kind's entry in `segment_kind.rs` |
 
 A registration on the contract is a call, not a change to it: the registered

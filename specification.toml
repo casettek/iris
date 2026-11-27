@@ -1,3 +1,4 @@
+procedure_kind = "generate-single"
 raw_prompt = false
 max_new_tokens = 3
 

@@ -1070,7 +1070,7 @@ mod tests {
 
         let prepared = PreparedRun {
             version: procedure_definition::PREPARED_RUN_VERSION,
-            procedure_kind: procedure_definition::ProcedureKind::single(),
+            procedure_kind: procedure_definition::ProcedureKind::verify_single(),
             specification_path: base.join("specification.toml"),
             case_path: Some(base.join("case.toml")),
             inferences: vec![procedure_definition::PreparedInference {

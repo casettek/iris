@@ -31,11 +31,14 @@ fn pins_are_of_one_procedure_kind_over_its_models_in_order() {
     };
     let single = pins();
     let first = manifest(&single.models[0]);
-    assert_eq!(single.mismatch(ProcedureKind::single(), &[&first]), None);
+    assert_eq!(
+        single.mismatch(ProcedureKind::verify_single(), &[&first]),
+        None
+    );
     // The file says which procedure kind it is of and which models, in order.
     let written = serde_json::to_value(&single).unwrap();
-    assert_eq!(written["version"], 7);
-    assert_eq!(written["procedure_kind"], "single");
+    assert_eq!(written["version"], 8);
+    assert_eq!(written["procedure_kind"], "verify-single");
     assert_eq!(written["models"].as_array().unwrap().len(), 1);
     assert!(written["programs"]["stage_programs"].is_array());
     assert_eq!(
@@ -53,14 +56,14 @@ fn pins_are_of_one_procedure_kind_over_its_models_in_order() {
     let (programs, models) = consensus_pins();
     let consensus = ContractPins {
         version: CONTRACT_PINS_VERSION,
-        procedure_kind: ProcedureKind::named("consensus").unwrap(),
+        procedure_kind: ProcedureKind::named("verify-consensus").unwrap(),
         programs,
         models: models.to_vec(),
     };
     let second = manifest(&models[1]);
     assert_eq!(
         consensus.mismatch(
-            ProcedureKind::named("consensus").unwrap(),
+            ProcedureKind::named("verify-consensus").unwrap(),
             &[&first, &second]
         ),
         None
@@ -68,30 +71,35 @@ fn pins_are_of_one_procedure_kind_over_its_models_in_order() {
     // Another procedure kind, the models the other way round, one model, or a
     // file of another version: not this contract's pins.
     for (procedure_kind, models) in [
-        (ProcedureKind::single(), vec![&first, &second]),
+        (ProcedureKind::verify_single(), vec![&first, &second]),
         (
-            ProcedureKind::named("consensus").unwrap(),
+            ProcedureKind::named("verify-consensus").unwrap(),
             vec![&second, &first],
         ),
-        (ProcedureKind::named("consensus").unwrap(), vec![&first]),
         (
-            ProcedureKind::named("consensus").unwrap(),
+            ProcedureKind::named("verify-consensus").unwrap(),
+            vec![&first],
+        ),
+        (
+            ProcedureKind::named("verify-consensus").unwrap(),
             vec![&first, &first],
         ),
     ] {
         assert!(consensus.mismatch(procedure_kind, &models).is_some());
     }
     assert!(single
-        .mismatch(ProcedureKind::named("consensus").unwrap(), &[&first])
+        .mismatch(ProcedureKind::named("verify-consensus").unwrap(), &[&first])
         .is_some());
     let mut other_range = manifest(&single.models[0]);
     other_range.range_size = 256;
     assert!(single
-        .mismatch(ProcedureKind::single(), &[&other_range])
+        .mismatch(ProcedureKind::verify_single(), &[&other_range])
         .is_some());
     let mut old = single.clone();
     old.version = 3;
-    assert!(old.mismatch(ProcedureKind::single(), &[&first]).is_some());
+    assert!(old
+        .mismatch(ProcedureKind::verify_single(), &[&first])
+        .is_some());
 }
 
 #[test]

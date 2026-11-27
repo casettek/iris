@@ -1,18 +1,7 @@
-//! The native run, `iwebs infer`, and how a result is printed.
+//! How a result is printed: a generation's, which `iwebs run` makes of a
+//! generation procedure, and a claim's.
 
 use crate::*;
-
-#[derive(Debug, Args)]
-pub(crate) struct InferArgs {
-    /// The specification of the procedure to run.
-    #[arg(long, default_value = procedure_definition::SPECIFICATION_TOML)]
-    specification: PathBuf,
-
-    /// The case to run it on: the prompt, or the documents of the
-    /// specification's source.
-    #[arg(long, default_value = procedure_definition::CASE_TOML)]
-    case: PathBuf,
-}
 
 /// What a consensus states of its two inferences. Printed before either
 /// inference's result, whose last lines are its generated text.
@@ -461,13 +450,6 @@ pub(crate) fn print_native_run(
         }
     }
     Ok(())
-}
-
-pub(crate) fn run(args: InferArgs) -> Result<ExitCode> {
-    warn_if_debug_build("infer");
-    let run = run_infer(args.specification.clone(), args.case.clone())?;
-    print_native_run(&run, &args.specification, &args.case)?;
-    Ok(ExitCode::SUCCESS)
 }
 
 #[cfg(test)]

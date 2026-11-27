@@ -66,12 +66,14 @@ the pipeline then checks it.
   inherited or its own, equals the native run's entry at the same position. The native run runs no
   pass for its last token, so the pipeline's row for it has no reference. Nothing is
   scored from that row, and it still matches between Raster and pipeline-native.
-- `iwebs run` and the claim: [a run with no blockchain](run.md) of the same
-  specification and case leaves the checkpoints the claim's pipeline-native run
-  left, at every stage, and its pipeline run states the result its native run did.
-  The consensus claim is held to the same. That run writes its [record](run.md#the-record-of-a-run),
-  and `iwebs record check` makes the run again from the record alone: every checkpoint and
-  the result are the record's.
+- `iwebs run` and the claim: the claim's case is [run with no blockchain](run.md), as
+  anyone runs one. The procedure that finds the output runs first, writes its
+  [record](run.md#the-record-of-a-run), and `iwebs record check` makes the generation again and
+  finds the record's result. The output it found is stated in the case, and the claim's own
+  procedure verifies it: that run leaves the checkpoints the claim's pipeline-native run left,
+  at every stage. The consensus claim and the relay claim are held to the same. The
+  verification writes its record too, and `iwebs record check` makes it again from the record
+  alone: every checkpoint and the result are the record's.
 - Layers 2 and 3 of every range borrow layers 0 and 1 of the same range.
 - The last prompt context: no fault, complete, and holding the prompt's SHA-256, the
   model id and the prompt's token count.
@@ -220,7 +222,7 @@ and no replay is asked for.
 
 ## Relay scenario
 
-After the source scenario the gate builds one claim of the `relay`
+After the source scenario the gate builds one claim of the `verify-relay`
 [procedure kind](../protocol/procedure-kinds.md#the-relay-procedure-kind)
 (`testing/src/parity/relay.rs`). Its first model is the gate's own and its
 second the other family's bundle, imported into the run. The first prompt is
@@ -256,7 +258,7 @@ stage. The stage ladder runs `prompt-relay` on this scenario's `relay` stage.
 
 ## Consensus scenario
 
-After the source scenario the gate builds one claim of the `consensus`
+After the source scenario the gate builds one claim of the `verify-consensus`
 [procedure kind](../protocol/procedure-kinds.md) (`testing/src/parity/consensus.rs`).
 Its first model is the gate's own. Its second is the other family's bundle,
 imported into the run, so one pipeline holds both families' stage programs under
@@ -343,7 +345,7 @@ stage, first differing value where available, and byte offset. Execution failure
 identify the corresponding log. Tests never rewrite existing model imports or
 `Raster.lock` files.
 
-Normal `infer` remains free of diagnostic serialization. Library users can opt
+A normal generation remains free of diagnostic serialization. Library users can opt
 into `NativeInferenceExecutor::run_with_diagnostics` to receive canonical boundary
 bytes, indexes, and commitments alongside the ordinary inference report.
 

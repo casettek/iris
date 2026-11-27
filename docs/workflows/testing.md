@@ -82,7 +82,7 @@ Everything it makes is kept under `target/blockchain-test/<run>`.
 The small model is the gemma family's, from the newest parity run of it. Its
 check stage is under the replay window, so there the forged verdict is
 followed only as far as the replay. The tier also builds a claim of the
-`relay` procedure kind, on the run the gate's relay scenario made: the
+`verify-relay` procedure kind, on the run the gate's relay scenario made: the
 contract must take it and agree with IWEBS on changed copies of it, and a lie
 in its second inference must be challenged by a replay of a run rebuilt from
 what the claim posted. `--real-model <specification>` adds a

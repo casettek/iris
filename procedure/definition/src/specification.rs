@@ -182,6 +182,20 @@ pub struct Case {
     /// one `[[document]]` table each.
     #[serde(default, rename = "document", skip_serializing_if = "Vec::is_empty")]
     pub documents: Vec<CaseDocument>,
+    /// The output each model is held to, for a procedure that verifies one:
+    /// an `[[output]]` table each, in the order the procedure kind runs its
+    /// models. A procedure that finds its output is given none.
+    #[serde(default, rename = "output", skip_serializing_if = "Vec::is_empty")]
+    pub outputs: Vec<CaseOutput>,
+}
+
+/// One model's output, stated: the ids of its tokens, with the token that
+/// ends it. Where they came from is not said, and does not matter: a
+/// verification procedure holds each to the model's own choice.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct CaseOutput {
+    pub ids: Vec<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -372,6 +386,23 @@ impl Case {
     /// can be made of.
     pub fn validate_for(&self, specification: &Specification) -> Result<()> {
         self.validate()?;
+        let procedure_kind = specification.procedure_kind;
+        if procedure_kind.generates() {
+            anyhow::ensure!(
+                self.outputs.is_empty(),
+                "the `{procedure_kind}` procedure kind finds its output, and the case states \
+                 one: remove its `[[output]]` tables, or name the procedure that verifies an \
+                 output"
+            );
+        } else {
+            anyhow::ensure!(
+                self.outputs.is_empty() || self.outputs.len() == procedure_kind.inferences(),
+                "the case states {} output(s), and the `{procedure_kind}` procedure kind \
+                 verifies {}: one `[[output]]` table for each model, in order",
+                self.outputs.len(),
+                procedure_kind.inferences()
+            );
+        }
         match &specification.source {
             Some(_) => anyhow::ensure!(
                 self.prompt.is_none() && self.prompt_file.is_none(),

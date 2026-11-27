@@ -62,7 +62,7 @@ pub(super) fn run_relay_scenario(
     let specification = source::write_run_of(
         &claim_dir,
         &source,
-        ProcedureKind::named("relay")?,
+        ProcedureKind::named("verify-relay")?,
         &models,
         Some(relay),
     )?;
@@ -110,7 +110,7 @@ pub(super) fn run_relay_scenario(
     })
     .context("the relay claim")?;
     ensure!(
-        built.procedure_kind.name() == "relay"
+        built.procedure_kind.name() == "verify-relay"
             && built
                 .results
                 .iter()
@@ -226,7 +226,7 @@ pub(super) fn run_relay_scenario(
     let pins = blockchain_host::claim_check::run_pins(&claim_dir, &specification)
         .context("the contract's pins")?;
     ensure!(
-        pins.procedure_kind.name() == "relay"
+        pins.procedure_kind.name() == "verify-relay"
             && pins.models.len() == 2
             && pins.models[0].model_id == prepared.inferences[0].model_id
             && pins.models[1].model_id == prepared.inferences[1].model_id,

@@ -144,7 +144,7 @@ risc0-zkvm={{path={:?}}}
     )
     .unwrap();
     let prepared = dir.join("prepared.json");
-    write_json(&prepared,&json!({"version":procedure_definition::PREPARED_RUN_VERSION,"procedure_kind":"single","specification_path":dir.join("specification.toml"),"raw_prompt":true,
+    write_json(&prepared,&json!({"version":procedure_definition::PREPARED_RUN_VERSION,"procedure_kind":"verify-single","specification_path":dir.join("specification.toml"),"raw_prompt":true,
         "inferences":[{"model_manifest_path":model,"model_id":"",
         "model_manifest_sha256":file_sha256(&model).unwrap(),"prompt":{"resolved_prompt":"","rendered_prompt":"","initial_pieces":[],"eos_token_ids":[]}}],
         "max_new_tokens":1,"run_manifest_path":manifest,"run_manifest_sha256":file_sha256(&manifest).unwrap()})).unwrap();

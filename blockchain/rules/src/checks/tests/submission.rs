@@ -163,7 +163,7 @@ fn a_claim_that_does_not_end_in_its_checks_and_the_result_stage_is_refused() {
     assert_eq!(
         check_stated_records(&programs, &claim.submission, &posted(stated)),
         Err(SubmissionRejection::NotTheResultStage {
-            expected: ProcedureKind::single().result_program(),
+            expected: ProcedureKind::verify_single().result_program(),
         })
     );
 
@@ -207,7 +207,10 @@ fn a_consensus_submission_is_two_inferences_of_one_input_and_their_agreement() {
     let submission = &claim.submission;
     let origin = no_source(forms());
     assert_eq!(
-        check_procedure_kind(ProcedureKind::named("consensus").unwrap(), submission),
+        check_procedure_kind(
+            ProcedureKind::named("verify-consensus").unwrap(),
+            submission
+        ),
         Ok(())
     );
     for (inference, model) in models.iter().enumerate() {
@@ -304,22 +307,28 @@ fn a_consensus_submission_is_two_inferences_of_one_input_and_their_agreement() {
     };
     let mut one = submission.clone();
     one.inferences.pop();
-    assert!(shape(&one, ProcedureKind::named("consensus").unwrap()));
+    assert!(shape(
+        &one,
+        ProcedureKind::named("verify-consensus").unwrap()
+    ));
     let mut unstated = submission.clone();
     unstated.consensus = None;
-    assert!(shape(&unstated, ProcedureKind::named("consensus").unwrap()));
+    assert!(shape(
+        &unstated,
+        ProcedureKind::named("verify-consensus").unwrap()
+    ));
     let mut single = Claim::honest().submission;
     assert_eq!(
-        check_procedure_kind(ProcedureKind::single(), &single),
+        check_procedure_kind(ProcedureKind::verify_single(), &single),
         Ok(())
     );
     single.consensus = submission.consensus;
-    assert!(shape(&single, ProcedureKind::single()));
+    assert!(shape(&single, ProcedureKind::verify_single()));
     assert_eq!(
-        check_procedure_kind(ProcedureKind::single(), submission),
+        check_procedure_kind(ProcedureKind::verify_single(), submission),
         Err(SubmissionRejection::AnotherProcedureKind {
-            expected: ProcedureKind::single(),
-            submitted: ProcedureKind::named("consensus").unwrap()
+            expected: ProcedureKind::verify_single(),
+            submitted: ProcedureKind::named("verify-consensus").unwrap()
         })
     );
 }
@@ -400,7 +409,9 @@ fn a_consensus_claim_states_each_record_of_its_own_last_check() {
     assert_eq!(
         check_stated_records(&pins().programs, submission, &posted(honest)),
         Err(SubmissionRejection::NotTheResultStage {
-            expected: ProcedureKind::named("consensus").unwrap().result_program()
+            expected: ProcedureKind::named("verify-consensus")
+                .unwrap()
+                .result_program()
         })
     );
 }
@@ -409,11 +420,11 @@ fn a_consensus_claim_states_each_record_of_its_own_last_check() {
 fn a_submission_names_its_procedure_kind() {
     let submission = Claim::honest().submission;
     assert_eq!(
-        check_procedure_kind(ProcedureKind::single(), &submission),
+        check_procedure_kind(ProcedureKind::verify_single(), &submission),
         Ok(())
     );
     let written = serde_json::to_value(&submission).unwrap();
-    assert_eq!(written["procedure_kind"], "single");
+    assert_eq!(written["procedure_kind"], "verify-single");
     assert_eq!(written["version"], 8);
 
     // A submission that names no procedure kind, or one that does not exist, is
@@ -427,19 +438,25 @@ fn a_submission_names_its_procedure_kind() {
 
     // A contract accepts claims of one procedure kind.
     assert_eq!(
-        check_procedure_kind(ProcedureKind::named("consensus").unwrap(), &submission),
+        check_procedure_kind(
+            ProcedureKind::named("verify-consensus").unwrap(),
+            &submission
+        ),
         Err(SubmissionRejection::AnotherProcedureKind {
-            expected: ProcedureKind::named("consensus").unwrap(),
-            submitted: ProcedureKind::single(),
+            expected: ProcedureKind::named("verify-consensus").unwrap(),
+            submitted: ProcedureKind::verify_single(),
         })
     );
     // The label alone does not make a claim another procedure kind's: it holds
     // one inference, and its last stage runs the single procedure kind's result
     // program.
     let mut relabelled = submission.clone();
-    relabelled.procedure_kind = ProcedureKind::named("consensus").unwrap();
+    relabelled.procedure_kind = ProcedureKind::named("verify-consensus").unwrap();
     assert!(matches!(
-        check_procedure_kind(ProcedureKind::named("consensus").unwrap(), &relabelled),
+        check_procedure_kind(
+            ProcedureKind::named("verify-consensus").unwrap(),
+            &relabelled
+        ),
         Err(SubmissionRejection::AnotherShape { .. })
     ));
     let claim = Claim::honest();
@@ -448,7 +465,9 @@ fn a_submission_names_its_procedure_kind() {
     assert_eq!(
         check_stated_records(&pins().programs, &relabelled, &posted(stated)),
         Err(SubmissionRejection::NotTheResultStage {
-            expected: ProcedureKind::named("consensus").unwrap().result_program()
+            expected: ProcedureKind::named("verify-consensus")
+                .unwrap()
+                .result_program()
         })
     );
 }
@@ -579,7 +598,7 @@ fn the_source_and_the_forms_are_held_to_what_the_contract_requires() {
 fn relay_submission() -> (ClaimSubmission, Vec<ModelPins>, String) {
     let (_, models) = consensus_pins();
     let mut submission = consensus_claim(" ZK\n").submission;
-    submission.procedure_kind = ProcedureKind::named("relay").unwrap();
+    submission.procedure_kind = ProcedureKind::named("verify-relay").unwrap();
     submission.consensus = None;
     // The result stage does not read the first inference.
     submission.inferences[0].result = SubmittedResult::default();
@@ -617,7 +636,7 @@ fn relay_submission() -> (ClaimSubmission, Vec<ModelPins>, String) {
 
 #[test]
 fn a_relay_submission_holds_the_second_inference_to_the_first_ones_record() {
-    let relay = ProcedureKind::named("relay").unwrap();
+    let relay = ProcedureKind::named("verify-relay").unwrap();
     let (submission, models, recipe) = relay_submission();
     let origin = RequiredOrigin {
         relay_recipe_sha256: Some(recipe),

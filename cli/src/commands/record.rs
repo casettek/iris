@@ -38,7 +38,7 @@ pub(crate) fn run(command: RecordCommand) -> Result<ExitCode> {
 
 fn check(args: RecordCheckArgs) -> Result<ExitCode> {
     warn_if_debug_build("record check");
-    let check = procedure_run::record::check_record(&procedure_run::record::CheckOptions {
+    let options = procedure_run::record::CheckOptions {
         base_dir: std::env::current_dir().context("failed to read current directory")?,
         specification_path: args.specification,
         record_dir: args.record,
@@ -48,7 +48,11 @@ fn check(args: RecordCheckArgs) -> Result<ExitCode> {
         } else {
             procedure_pipeline::pipeline_runner::NativeStageBackend::InProcess
         },
-    })?;
+    };
+    if procedure_run::record::record_generates(&options)? {
+        return check_generation(&options);
+    }
+    let check = procedure_run::record::check_record(&options)?;
     println!("procedure: {}", check.procedure);
     println!(
         "pipeline run: {} stages, on the record's inputs",
@@ -84,5 +88,25 @@ fn check(args: RecordCheckArgs) -> Result<ExitCode> {
     } else {
         println!("record: the result it states; it carries no checkpoints to compare");
     }
+    Ok(ExitCode::SUCCESS)
+}
+
+/// The record of a generation: the generation is made again natively, and
+/// its results are compared with the record's.
+fn check_generation(options: &procedure_run::record::CheckOptions) -> Result<ExitCode> {
+    let check = procedure_run::record::check_generation_record(options)?;
+    println!("procedure: {}", check.procedure);
+    println!("generation: made again natively, on the record's inputs");
+    if let Some(difference) = &check.result_difference {
+        println!("record: {difference}");
+        return Ok(ExitCode::FAILURE);
+    }
+    for (inference, result) in check.results.iter().enumerate() {
+        println!(
+            "inference {inference}: valid: {}, result code: {}",
+            result.valid, result.result_code
+        );
+    }
+    println!("record: the result it states");
     Ok(ExitCode::SUCCESS)
 }

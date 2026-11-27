@@ -1,6 +1,6 @@
 {
-  "version": 7,
-  "procedure_kind": "single",
+  "version": 8,
+  "procedure_kind": "verify-single",
   "programs": {
     "family": "gemma-dense",
     "stage_programs": [

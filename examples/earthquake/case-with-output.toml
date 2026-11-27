@@ -1,0 +1,10 @@
+# The evidence of one case: the report a server gave, and the signature that
+# it gave it.
+[[document]]
+file = "event.json"
+attestation = "event.attestation.json"
+
+# The output the verification holds: the ids the generation printed, with the
+# token that ends the output. Where they came from is not said.
+[[output]]
+ids = [4443, 106]

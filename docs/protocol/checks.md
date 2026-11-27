@@ -25,15 +25,15 @@ A contract judges a claim by the registered procedure the claim names
 (`Procedure`, see [data availability and the registry](availability.md)):
 the [procedure kind](procedure-kinds.md), that procedure kind's stage programs, one model per
 inference the procedure kind makes, and the contract's own parameters. The first
-three are the pins, a file, `contract_pins.json` (version 5):
+three are the pins, a file, `contract_pins.json` (version 8):
 
 | Field | Meaning |
 | --- | --- |
-| `procedure_kind` | The procedure kind's name: `single` or `consensus` |
+| `procedure_kind` | The procedure kind's name: `verify-single` or `verify-consensus` |
 | `programs` | The program entry, below |
 | `models` | One model entry per inference, in the order the procedure kind runs them |
 
-A model import writes the pins of the `single` procedure kind over that model beside
+A model import writes the pins of the `verify-single` procedure kind over that model beside
 the import's `manifest.json`. `iwebs claim pins --specification <file> --out <file>` writes
 those of the specification's procedure kind over the models it names, from their imports and
 the stage projects' locks as they are when it runs.
@@ -83,7 +83,7 @@ pipeline template over the imports.
 
 `iwebs claim check --pins <file>` checks a claim against a pins file, and refuses
 one that is of another procedure kind, of other models or of the same models in another
-order. Without `--pins`, a `single` claim is checked against its model's import's
+order. Without `--pins`, a `verify-single` claim is checked against its model's import's
 file, and a claim of several models against pins made from the imports at that
 moment, as `iwebs claim pins` would make them.
 
@@ -129,14 +129,14 @@ tree over those hashes, with their count: `checkpoints_root`. See
 | `source_sha256` | The digest of the source record the text was built from, or 64 zeros. The statement names it |
 | `source` | The source record itself, for a claim that has one: the text's hash and length, the recipe's hash, the count and chained hash of the documents' attested facts, the signer's key, and the fault, which must be zero |
 | `relays` | For a claim of a kind that relays an output: the record each relay stage states, one per inference a relay gives its prompt. That inference's statement is recomputed over the record's text hash and digest. Absent otherwise |
-| `inferences` | One entry per inference, in the order the procedure kind runs them: one for `single`, two for `consensus` and `relay`. Each holds the five values below |
+| `inferences` | One entry per inference, in the order the procedure kind runs them: one for `verify-single`, two for `verify-consensus` and `verify-relay`. Each holds the five values below |
 | `output_text` | The inference's plaintext: what the contract acts on |
 | `record.statement_sha256` | `Statement::digest()` over the input text hash, the source digest, model id, raw prompt flag, token budget and range size |
 | `record.output_text_sha256` | SHA-256 of the plaintext's exact UTF-8 bytes |
 | `record.valid` | The pipeline found nothing wrong with the inference |
 | `result.code` | The code of the first form the plaintext is, or zero. Zero, with an empty forms hash, for an inference the result stage does not read |
 | `result.forms_sha256` | A hash chained over the forms the plaintext was compared with |
-| `consensus` | For a `consensus` claim: `same_input`, `agree` and `code`, as its result stage states them. Absent for `single` |
+| `consensus` | For a `verify-consensus` claim: `same_input`, `agree` and `code`, as its result stage states them. Absent for `verify-single` |
 | `checkpoint_count` | How many checkpoints the claim has |
 | `checkpoints_root` | The claim's commitment to its checkpoint list: the count and the root of the tree over the checkpoint hashes |
 | `availability` | The blobs the claimer posted: the inputs its run was given, and the checkpoint hashes with every checkpoint, each with where it is, what it holds and its availability proof ([availability](availability.md)) |
@@ -164,8 +164,8 @@ in the prompt context, from where it reaches the statement.
 A contract first finds the procedure the claim names, and judges the claim
 by it. It then requires the submission to name that procedure's procedure kind
 and to hold what a claim of it does (`check_procedure_kind`): one inference for
-`single`, two with their agreement for `consensus`, and two with the relay's
-record for `relay`. A contract reads how many and which from the arrangement
+`verify-single`, two with their agreement for `verify-consensus`, and two with the relay's
+record for `verify-relay`. A contract reads how many and which from the arrangement
 the procedure states, not from the kind's name
 ([procedure kinds](procedure-kinds.md#what-a-contract-reads-of-a-kind)).
 Checks 1 and 2 are then made of each inference, against the model the
@@ -196,7 +196,7 @@ procedure pins for it (`check_submission`).
    contract can afford this, and it means a false result is refused at
    submission and needs no dispute. It does this for each inference the
    result stage reads. An inference it does not read has no result.
-5. **Agreement matches**, for a `consensus` claim. The contract reads both
+5. **Agreement matches**, for a `verify-consensus` claim. The contract reads both
    submitted plaintexts by its forms and works out whether they agree, as the
    consensus result stage does, and rejects a claim that states another
    agreement or another code. A claim in which the models disagree is accepted
@@ -212,8 +212,8 @@ procedure pins for it (`check_submission`).
    its procedure kind's result stage: its last checkpoint's program must be that
    procedure kind's result program. That checkpoint names, for each inference, the
    earlier checkpoint whose output it read as that inference's check (`check`
-   in a `single` claim, `first` and `second` in a `consensus` one, `check`
-   for the second inference of a `relay` one), whose program must be the
+   in a `verify-single` claim, `first` and `second` in a `verify-consensus` one, `check`
+   for the second inference of a `verify-relay` one), whose program must be the
    check. The record submitted for an inference must be
    the one in that check's output, and what the last stage's output states,
    every record with its result and the agreement, must be what was
@@ -373,7 +373,7 @@ data-availability layer: the stand-in directory (`--da-dir`, default
 `IWEBS_CELESTIA_RPC` is set and no directory is given. It makes the procedure and procedure kind checks,
 the submission checks, the availability check and the challenge-time
 comparisons, the link comparison for every piped input of every stage. It
-prints eight lines for a `single` claim and nine for a `consensus` one, which
+prints eight lines for a `verify-single` claim and nine for a `verify-consensus` one, which
 has a statement line per inference. `--registry <file>` judges the claim by the
 procedure it names in that registry; without it, by the one the specification
 and the pins describe. `--submitted-at <seconds>` sets when the claim is taken

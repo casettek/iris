@@ -308,8 +308,8 @@ mod tests {
     fn procedure(max_new_tokens: u32) -> Procedure {
         Procedure {
             version: PROCEDURE_VERSION,
-            procedure_kind: ProcedureKind::single(),
-            arrangement: Arrangement::of(ProcedureKind::single()),
+            procedure_kind: ProcedureKind::verify_single(),
+            arrangement: Arrangement::of(ProcedureKind::verify_single()),
             programs: ProgramPins {
                 family: String::from("gemma-dense"),
                 stage_programs: Vec::new(),
@@ -325,7 +325,7 @@ mod tests {
 
     #[test]
     fn an_arrangement_is_what_a_contract_reads_of_a_kind() {
-        let single = Arrangement::of(ProcedureKind::single());
+        let single = Arrangement::of(ProcedureKind::verify_single());
         assert_eq!(
             (single.result_program.as_str(), single.agreement),
             ("claim-result", false)
@@ -333,7 +333,7 @@ mod tests {
         assert_eq!(single.result_inputs, ["check"]);
         assert_eq!(single.relayed_from, [0]);
 
-        let consensus = Arrangement::of(ProcedureKind::named("consensus").unwrap());
+        let consensus = Arrangement::of(ProcedureKind::named("verify-consensus").unwrap());
         assert_eq!(consensus.result_program, "consensus-result");
         assert!(consensus.agreement);
         assert_eq!(consensus.result_inputs, ["first", "second"]);
@@ -341,7 +341,7 @@ mod tests {
 
         // A relay's result reads its second inference, whose prompt holds
         // the first one's output.
-        let relay = Arrangement::of(ProcedureKind::named("relay").unwrap());
+        let relay = Arrangement::of(ProcedureKind::named("verify-relay").unwrap());
         assert_eq!(relay.result_program, "claim-result");
         assert!(!relay.agreement);
         assert_eq!(relay.result_inputs, ["", "check"]);

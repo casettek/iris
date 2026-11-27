@@ -14,6 +14,7 @@ use procedure_definition::{Case, PreparedPrompt, Specification};
 use prompt_check::input::{PromptText, RunConfig, RunSchedule, TextDigest};
 use raster::List;
 
+pub mod generation_inputs;
 pub mod pipeline_run;
 pub mod procedure;
 pub mod run_inputs;

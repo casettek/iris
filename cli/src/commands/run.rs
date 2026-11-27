@@ -1,4 +1,6 @@
-//! A procedure run with no blockchain, `iwebs run`.
+//! A procedure run with no blockchain, `iwebs run`: a generation procedure
+//! natively, or a verification procedure stage by stage on the output its
+//! case states.
 
 use super::infer::print_native_run;
 use crate::*;
@@ -14,9 +16,9 @@ pub(crate) struct RunArgs {
     #[arg(long, default_value = procedure_definition::CASE_TOML)]
     case: PathBuf,
 
-    /// The `checkpoint_list.json` of another run of the same specification
-    /// and case. This run's checkpoints are compared with it in order, and
-    /// the first stage where the two differ is named.
+    /// The `checkpoint_list.json` of another run of the same verification
+    /// procedure and case. This run's checkpoints are compared with it in
+    /// order, and the first stage where the two differ is named.
     #[arg(long)]
     compare: Option<PathBuf>,
 
@@ -27,8 +29,9 @@ pub(crate) struct RunArgs {
     procedure: Option<String>,
 
     /// Write the record of the run into this directory: the procedure, the
-    /// inputs the run was given, the result it states and its checkpoint
-    /// list. `iwebs record check` makes the run again from it.
+    /// inputs the run was given and the result it states, and for a
+    /// verification its checkpoint list. `iwebs record check` makes the run
+    /// again from it.
     #[arg(long)]
     record: Option<PathBuf>,
 
@@ -40,6 +43,52 @@ pub(crate) struct RunArgs {
 /// Why a specification's procedure has no id.
 const NOT_IDENTIFIED: &str = "a model the specification names has no contract_pins.json, so \
      its stage programs are not pinned: import it again from the iwebs root";
+
+/// Runs a generation procedure: every model's output found natively, and
+/// what the procedure states of them. It leaves no checkpoints, so its record
+/// has no backing.
+fn run_generation(
+    args: &RunArgs,
+    options: &procedure_run::RunOptions,
+    specification_path: &Path,
+    specification: &procedure_definition::Specification,
+) -> Result<ExitCode> {
+    if args.compare.is_some() {
+        bail!(
+            "`--compare` compares checkpoints, and a generation leaves none: compare the output \
+             it prints, or check its record with `iwebs record check`"
+        );
+    }
+    let procedure =
+        procedure_prepare::procedure::generation_procedure_of(specification_path, specification)?;
+    let id = procedure.id();
+    if let Some(wanted) = &args.procedure {
+        if *wanted != id {
+            bail!(
+                "{} describes procedure {id}, not {wanted}",
+                args.specification.display()
+            );
+        }
+    }
+    // The id is known before anything runs, and is printed first: a result
+    // ends in its generated text, and a caller reads it to the end.
+    println!("procedure: {id}");
+    let native_run = procedure_run::run_native(options)?;
+    print_native_run(&native_run, &args.specification, &args.case)?;
+    if let Some(dir) = &args.record {
+        let dir = absolute(&options.base_dir, dir);
+        procedure_run::record::write_generation_record(
+            specification_path,
+            &absolute(&options.base_dir, &args.case),
+            &native_run,
+            &procedure,
+            &dir,
+        )?;
+        // Not on stdout, for the same reason.
+        eprintln!("record: {}", dir.display());
+    }
+    Ok(ExitCode::SUCCESS)
+}
 
 pub(crate) fn run(args: RunArgs) -> Result<ExitCode> {
     warn_if_debug_build("run");
@@ -55,6 +104,12 @@ pub(crate) fn run(args: RunArgs) -> Result<ExitCode> {
         },
         base_dir: base_dir.clone(),
     };
+    // A generation finds its output natively, and no stage runs.
+    let specification_path = absolute(&base_dir, &args.specification);
+    let specification = procedure_definition::read_specification(&specification_path)?;
+    if specification.procedure_kind.generates() {
+        return run_generation(&args, &options, &specification_path, &specification);
+    }
     // A list that cannot be read is found now, not after the run.
     let compare = args.compare.map(|other| absolute(&base_dir, &other));
     if let Some(other) = &compare {
@@ -80,12 +135,18 @@ pub(crate) fn run(args: RunArgs) -> Result<ExitCode> {
             args.specification.display()
         );
     }
-    // The result first: it is known before any stage runs.
-    let native_run = procedure_run::run_native(&options)?;
-    print_native_run(&native_run, &args.specification, &args.case)?;
-    let pipeline_run = procedure_run::run_pipeline(&options, &native_run)?;
+    // The stages hold the output the case states to each model's own choice.
+    // Nothing is generated.
+    let pipeline_run = procedure_run::run_verification(&options)?;
+    for (inference, result) in pipeline_run.results.iter().enumerate() {
+        println!(
+            "inference {inference}: valid: {}, result code: {}",
+            result.valid, result.result_code
+        );
+        println!("inference {inference}: output: {:?}", result.generated_text);
+    }
     println!(
-        "pipeline run: {} stages, and the result the native run stated",
+        "pipeline run: {} stages, on the output the case states",
         pipeline_run.checkpoints
     );
     println!(
@@ -96,6 +157,10 @@ pub(crate) fn run(args: RunArgs) -> Result<ExitCode> {
         "checkpoints: {}",
         pipeline_run.checkpoint_hashes_path.display()
     );
+    if pipeline_run.results.iter().any(|result| !result.valid) {
+        println!("verification: an output the case states is not what the procedure gives");
+        return Ok(ExitCode::FAILURE);
+    }
     // The run is of the procedure only if every stage ran a program the
     // procedure approves.
     let of = match &procedure {

@@ -1428,7 +1428,8 @@ fn not_greedy_ids(scenario: &Scenario) -> Result<Vec<u32>> {
 /// This model's pipeline over these inputs.
 fn render(model_path: &Path, model: &ModelManifest, run: &RunInputs, dir: &Path) -> Result<String> {
     let (template_path, segment) = model.verified_raster_template(model_path)?;
-    let template = procedure_definition::ProcedureKind::single().pipeline_template(&[&segment])?;
+    let template =
+        procedure_definition::ProcedureKind::verify_single().pipeline_template(&[&segment])?;
     let range_size = run.config.range_size as usize;
     let mark_files = procedure_prepare::write_marks(&run.marks, dir)?;
     let claimed_files = procedure_prepare::write_claimed_ranges(&run.ids, range_size, dir)?;

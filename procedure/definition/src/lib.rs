@@ -5,6 +5,7 @@
 pub mod checkpoint;
 pub mod divergence;
 pub mod encoding;
+pub mod generation;
 pub mod inference;
 pub mod pins;
 pub mod procedure_kind;
@@ -39,7 +40,7 @@ pub use run::{
 pub use segment_kind::{ResultKind, SegmentKind};
 pub use shape::Shape;
 pub use specification::{
-    read_case, read_specification, Case, CaseDocument, PathStep, Specification,
+    read_case, read_specification, Case, CaseDocument, CaseOutput, PathStep, Specification,
     SpecificationDocument, SpecificationField, SpecificationForm, SpecificationModel,
     SpecificationRelay, SpecificationSource, CASE_TOML, SPECIFICATION_TOML,
 };
@@ -187,7 +188,7 @@ mod tests {
         let both = Case {
             prompt: Some(String::from("hello")),
             prompt_file: Some(PathBuf::from("prompt.txt")),
-            documents: Vec::new(),
+            ..Case::default()
         };
         assert!(both
             .validate_for(&specification)
@@ -257,12 +258,16 @@ mod tests {
         fs::write(&path, MODEL).unwrap();
         assert_eq!(
             read_specification(&path).unwrap().procedure_kind,
-            ProcedureKind::single()
+            ProcedureKind::verify_single()
         );
-        fs::write(&path, format!("procedure_kind = \"single\"\n{MODEL}")).unwrap();
+        fs::write(
+            &path,
+            format!("procedure_kind = \"verify-single\"\n{MODEL}"),
+        )
+        .unwrap();
         assert_eq!(
             read_specification(&path).unwrap().procedure_kind,
-            ProcedureKind::single()
+            ProcedureKind::verify_single()
         );
         // A name that is no procedure kind must not silently be the single one.
         fs::write(&path, format!("procedure_kind = \"committee\"\n{MODEL}")).unwrap();
@@ -282,13 +287,13 @@ mod tests {
         let models = "[[model]]\nmanifest = \"a/manifest.json\"\n[[model]]\nmanifest = \"b/manifest.json\"\n";
         fs::write(
             &path,
-            format!("procedure_kind = \"consensus\"\nmax_new_tokens = 4\n{models}"),
+            format!("procedure_kind = \"verify-consensus\"\nmax_new_tokens = 4\n{models}"),
         )
         .unwrap();
         let specification = read_specification(&path).unwrap();
         assert_eq!(
             specification.procedure_kind,
-            ProcedureKind::named("consensus").unwrap()
+            ProcedureKind::named("verify-consensus").unwrap()
         );
         assert_eq!(specification.max_new_tokens, 4);
         assert_eq!(
@@ -305,7 +310,11 @@ mod tests {
         // refusal says how the models are named.
         let one = "[[model]]\nmanifest = \"a/manifest.json\"\n";
         for body in [String::new(), one.to_string(), format!("{models}{one}")] {
-            fs::write(&path, format!("procedure_kind = \"consensus\"\n{body}")).unwrap();
+            fs::write(
+                &path,
+                format!("procedure_kind = \"verify-consensus\"\n{body}"),
+            )
+            .unwrap();
             let error = format!("{:#}", read_specification(&path).unwrap_err());
             assert!(error.contains("[[model]]"), "{error}");
         }
@@ -451,7 +460,7 @@ mod tests {
     fn prepared_run_metadata_round_trips_as_json() {
         let prepared = PreparedRun {
             version: PREPARED_RUN_VERSION,
-            procedure_kind: ProcedureKind::single(),
+            procedure_kind: ProcedureKind::verify_single(),
             specification_path: PathBuf::from("specification.toml"),
             case_path: Some(PathBuf::from("case.toml")),
             inferences: vec![PreparedInference {

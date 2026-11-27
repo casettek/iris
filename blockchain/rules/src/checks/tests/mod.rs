@@ -72,7 +72,7 @@ fn pins() -> ContractPins {
     };
     ContractPins {
         version: CONTRACT_PINS_VERSION,
-        procedure_kind: ProcedureKind::single(),
+        procedure_kind: ProcedureKind::verify_single(),
         programs: ProgramPins {
             family: String::from("gemma-dense"),
             stage_programs: vec![
@@ -188,7 +188,7 @@ impl Claim {
         let hashes = checkpoints_txt(&list);
         let submission = ClaimSubmission {
             version: CLAIM_SUBMISSION_VERSION,
-            procedure_kind: ProcedureKind::single(),
+            procedure_kind: ProcedureKind::verify_single(),
             procedure: String::new(),
             claimer: NO_ADDRESS.to_string(),
             inferences: vec![inference(&pins.models[0], &input, "ZK")],
@@ -405,7 +405,7 @@ fn consensus_claim(second_output: &str) -> Claim {
     ]);
     let mut claim = Claim::of(checkpoints, manifests);
     let input = claim.submission.input_text_sha256.clone();
-    claim.submission.procedure_kind = ProcedureKind::named("consensus").unwrap();
+    claim.submission.procedure_kind = ProcedureKind::named("verify-consensus").unwrap();
     claim
         .submission
         .inferences

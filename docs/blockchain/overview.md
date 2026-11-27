@@ -420,7 +420,7 @@ honest party runs.
   nothing in it.
 - `--fault verdict --stage <the last check>` writes the lie of a claimer
   whose claimed output is not the model's. Give it a claim built with such
-  ids (`claim build --native-output-ids`), whose own record is not valid. The
+  ids (`claim build --output-ids`), whose own record is not valid. The
   check is run on the claim's inputs and its record stated valid, with no
   claimed token differing, and the result stage is run on that record. The
   claim arrives with a valid record, and a replay of the check shows it.

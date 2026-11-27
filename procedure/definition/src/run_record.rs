@@ -30,11 +30,35 @@ use serde::{Deserialize, Serialize};
 
 use crate::checkpoint::{checkpoint_hashes, checkpoints_root, CheckpointList};
 use crate::inference::{ConsensusOutcome, InferenceResult};
+use crate::specification::{CaseDocument, SpecificationSource};
 
 pub const RUN_RECORD_JSON: &str = "record.json";
 /// The procedure a record's run is of, with its id, as a registry holds one.
 pub const RECORD_PROCEDURE_JSON: &str = "procedure.json";
 pub const RUN_RECORD_VERSION: u32 = 1;
+/// The inputs of a generation, in the record of one.
+pub const GENERATION_INPUTS_JSON: &str = "inputs.json";
+
+/// What a generation was run on: its case's inputs, as a record holds them.
+/// A verification's inputs are the values its stages are given
+/// (`posted_run.bin`), which hold the output it verifies; a generation is
+/// given none.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct GenerationInputs {
+    /// The prompt, for a case that is one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt: Option<String>,
+    /// The question the evidence is read by: the `[source]` table of the
+    /// specification the run was made under. Its signer is the procedure's;
+    /// the rest is an input of the run.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<SpecificationSource>,
+    /// The evidence: each document with its attestation, as files beside
+    /// this one.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub documents: Vec<CaseDocument>,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]

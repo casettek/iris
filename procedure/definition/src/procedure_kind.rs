@@ -43,7 +43,7 @@ pub const RELAY_STAGE: &str = "relay";
 /// The stage program of that stage.
 pub const RELAY_PROGRAM: &str = "prompt-relay";
 /// The kind a specification that names none is of.
-pub const DEFAULT_KIND: &str = "single";
+pub const DEFAULT_KIND: &str = "verify-single";
 
 /// The shapes of `procedures/`, in name order. A file that is no shape stops
 /// the program where the kinds are first asked for: the files are compiled
@@ -90,8 +90,15 @@ impl ProcedureKind {
     }
 
     /// The kind a specification that names none is of.
-    pub fn single() -> Self {
-        Self::named(DEFAULT_KIND).expect("procedures/single.toml is compiled in")
+    pub fn verify_single() -> Self {
+        Self::named(DEFAULT_KIND).expect("procedures/verify-single.toml is compiled in")
+    }
+
+    /// Whether a procedure of this kind finds its output. One that does not
+    /// verifies an output stated beforehand. The two are different procedures
+    /// and are told apart by name.
+    pub fn generates(self) -> bool {
+        self.0.generates()
     }
 
     /// The kind's steps in order.
@@ -173,7 +180,7 @@ impl ProcedureKind {
 
 impl Default for ProcedureKind {
     fn default() -> Self {
-        Self::single()
+        Self::verify_single()
     }
 }
 
@@ -245,7 +252,7 @@ mod tests {
     use crate::shape::tests::PART;
 
     fn consensus() -> ProcedureKind {
-        ProcedureKind::named("consensus").unwrap()
+        ProcedureKind::named("verify-consensus").unwrap()
     }
 
     #[test]
@@ -269,7 +276,7 @@ mod tests {
 
     #[test]
     fn the_single_procedure_kind_puts_a_source_before_its_inference_and_a_result_after() {
-        let single = ProcedureKind::single();
+        let single = ProcedureKind::verify_single();
         let template = single.pipeline_template(&[PART]).unwrap();
         let expected = PART
             .replacen(
@@ -310,7 +317,7 @@ mod tests {
 
     #[test]
     fn a_label_is_taken_off_a_stage_name() {
-        assert_eq!(ProcedureKind::single().label(0), "");
+        assert_eq!(ProcedureKind::verify_single().label(0), "");
         for (stage, name) in [
             ("m0_check_c0", "check_c0"),
             ("m12_range_p3_l{l}", "range_p3_l{l}"),
@@ -341,7 +348,7 @@ mod tests {
             );
             assert_eq!(procedure_kind.to_string(), procedure_kind.name());
         }
-        assert_eq!(ProcedureKind::default(), ProcedureKind::single());
+        assert_eq!(ProcedureKind::default(), ProcedureKind::verify_single());
         assert!(ProcedureKind::default().is_default());
         assert!(!consensus().is_default());
         // A name that is no procedure kind is refused where it is read, and the
@@ -409,13 +416,16 @@ mod tests {
 
     #[test]
     fn the_relay_procedure_kind_gives_the_second_inference_the_firsts_output() {
-        let relay = ProcedureKind::named("relay").unwrap();
+        let relay = ProcedureKind::named("verify-relay").unwrap();
         assert_eq!(relay.inferences(), 2);
         assert!(relay.relays());
         // Its answer is the second output, and the other kinds' the first.
         assert_eq!(relay.answer(), 1);
-        assert_eq!(ProcedureKind::single().answer(), 0);
-        assert_eq!(ProcedureKind::named("consensus").unwrap().answer(), 0);
+        assert_eq!(ProcedureKind::verify_single().answer(), 0);
+        assert_eq!(
+            ProcedureKind::named("verify-consensus").unwrap().answer(),
+            0
+        );
         assert_eq!(
             [relay.relayed_from(0), relay.relayed_from(1)],
             [None, Some(0)]

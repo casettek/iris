@@ -1,0 +1,32 @@
+# Finds one model's output on a case, then a second model's output on a
+# prompt that holds the first, and states the code of the form the second is.
+#
+# A generation runs natively and has no stage programs. A step's `program`
+# names which logic of its phase the step is.
+
+[[step]]
+name = "source"
+segment = "source"
+program = "prompt-source"
+
+[[step]]
+name = "first"
+segment = "generation"
+inputs.source = "source"
+
+[[step]]
+name = "relay"
+segment = "source"
+program = "prompt-relay"
+inputs.check = "first"
+
+[[step]]
+name = "second"
+segment = "generation"
+inputs.source = "relay"
+
+[[step]]
+name = "result"
+segment = "result"
+program = "claim-result"
+inputs.check = "second"

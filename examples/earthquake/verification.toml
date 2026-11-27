@@ -1,0 +1,53 @@
+# An example verification procedure: it holds a verdict stated beforehand to
+# the model's own choice, stage by stage. Everything but its kind is what
+# generation.toml says, and nothing in IWEBS pairs the two.
+procedure_kind = "verify-single"
+raw_prompt = false
+max_new_tokens = 3
+
+[[model]]
+manifest = "../../runtime/model-artifacts/gemma-4-E2B-q8/manifest.json"
+
+# The question, and where in the evidence its facts are read from.
+[source]
+base = """
+An insurance policy pays out if an earthquake of magnitude 5.0 or greater is reported near the insured site. Is the magnitude in this report 5.0 or greater? Answer with one word: yes or no.
+
+"""
+tail = """
+
+"""
+
+# Whose signature the evidence must carry.
+[source.signer]
+scheme = 1
+key = "0374bb4c353bfbc0df59e843e7bd5f58061630bc1c9e9be0c4b0cc05c307c03c52"
+
+[[source.document]]
+server = "earthquake.example.org"
+target = "/event/ex70012345.geojson"
+
+[[source.field]]
+lead = "place: "
+path = ["properties", "place"]
+
+[[source.field]]
+lead = """
+
+magnitude: """
+path = ["properties", "mag"]
+
+[[source.field]]
+lead = """
+
+status: """
+path = ["properties", "status"]
+
+# The answers a verdict may take. Any other output is code 0.
+[[form]]
+text = "yes"
+code = 1
+
+[[form]]
+text = "no"
+code = 2

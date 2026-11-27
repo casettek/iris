@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{ensure, Context, Result};
 use inference_manifest::ModelManifest;
+use procedure_definition::generation::GenerationProcedure;
 use procedure_definition::pins::{
     ContractPins, RequiredOrigin, RequiredParameters, RequiredSource, CONTRACT_PINS_JSON,
 };
@@ -125,6 +126,11 @@ pub fn procedure_of(
     pins_path: Option<&Path>,
 ) -> Result<Option<Procedure>> {
     let procedure_kind = specification.procedure_kind;
+    ensure!(
+        !procedure_kind.generates(),
+        "the `{procedure_kind}` procedure kind finds its output: it has no stage programs to \
+         pin, and its procedure is a generation procedure"
+    );
     let imports = run_imports(specification_path, specification)?;
     let manifests: Vec<&ModelManifest> = imports.iter().map(|(_, manifest, _)| manifest).collect();
     let pins = match (pins_path, imports.as_slice()) {
@@ -173,4 +179,32 @@ pub fn spec_procedure(specification_path: &Path, pins_path: Option<&Path>) -> Re
             specification_path.display()
         )
     })
+}
+
+/// The generation procedure a specification describes: its kind, each model
+/// by the id its import gave it, its parameters, and what it requires of a
+/// run's source and result. No stage program is read: a generation has none.
+pub fn generation_procedure_of(
+    specification_path: &Path,
+    specification: &Specification,
+) -> Result<GenerationProcedure> {
+    let specification_dir = specification_path
+        .parent()
+        .context("specification has no parent directory")?;
+    let models = specification
+        .model_manifests()
+        .into_iter()
+        .map(|manifest| {
+            Ok(ModelManifest::load_verified(&absolute(specification_dir, manifest))?.model_id)
+        })
+        .collect::<Result<Vec<String>>>()?;
+    GenerationProcedure::of(
+        specification.procedure_kind,
+        models,
+        RequiredParameters {
+            raw_prompt: specification.raw_prompt,
+            max_new_tokens: specification.max_new_tokens,
+        },
+        required_origin(specification),
+    )
 }

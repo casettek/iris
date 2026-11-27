@@ -151,10 +151,15 @@ pub(crate) struct ClaimBuildArgs {
     #[arg(long, default_value = procedure_definition::CASE_TOML)]
     pub(crate) case: PathBuf,
 
-    /// The comma-separated output ids `iwebs infer` printed for this same
-    /// specification and case. The claim is built from them without running the native run
-    /// again; the pipeline still re-derives every token and rejects any other ids.
-    #[arg(long = "native-output-ids", value_delimiter = ',')]
+    /// The output the claim states, as comma-separated token ids, for a
+    /// procedure kind of one model. It is the case's `[[output]]` table given
+    /// here instead. The pipeline holds every token to the model's own
+    /// choice, and a claim it rejects is not written.
+    #[arg(
+        long = "output-ids",
+        alias = "native-output-ids",
+        value_delimiter = ','
+    )]
     native_output_ids: Option<Vec<u32>>,
 
     /// Run each native stage in a child process of its own, as the previous runner did.
@@ -191,6 +196,20 @@ impl ClaimBuildArgs {
 /// Build a claim and print what it states and where it is.
 pub(crate) fn build(options: ClaimBuildOptions, specification_path: PathBuf) -> Result<ExitCode> {
     warn_if_debug_build("claim build");
+    // A claim is of a verification procedure, which is given the output it
+    // verifies. Nothing here finds one.
+    if options.claimed_token_ids.is_none() && options.native_output_ids.is_none() {
+        if let Some(case_path) = &options.case_path {
+            let case = procedure_definition::read_case(&absolute(&options.base_dir, case_path))?;
+            anyhow::ensure!(
+                !case.outputs.is_empty(),
+                "{} states no output, and a claim states one: give each model's output in the \
+                 case as an `[[output]]` table with its `ids`, or one model's with \
+                 `--output-ids`. A generation procedure finds an output (`iwebs run`)",
+                case_path.display()
+            );
+        }
+    }
     let result = build_claim(options)?;
     println!("procedure kind: {}", result.procedure_kind);
     match (result.results.as_slice(), result.consensus.as_ref()) {

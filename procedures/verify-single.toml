@@ -1,5 +1,6 @@
-# One inference on one model, and the code of the form its output is.
-# What a specification that names no procedure kind runs.
+# Verifies one model's stated output on a case, and states the code of the
+# form that output is. What a specification that names no procedure kind
+# runs.
 
 [[step]]
 name = "source"

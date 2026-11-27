@@ -854,7 +854,8 @@ fn run_pipeline_fault_scenario(
         .map(|index| index + 1)
         .context("the pinned case's prompt is a single token")?;
     let (template_path, segment) = model.verified_raster_template(model_path)?;
-    let template = procedure_definition::ProcedureKind::single().pipeline_template(&[&segment])?;
+    let template =
+        procedure_definition::ProcedureKind::verify_single().pipeline_template(&[&segment])?;
     let template_dir = template_path
         .parent()
         .context("manifest template has no parent directory")?;
@@ -2181,15 +2182,20 @@ pub fn worker(specification: &Path, case: &Path, output: &Path, native_run: bool
     Ok(())
 }
 
-/// `iwebs run` on a claim's specification and case, in a directory of its
-/// own: a procedure run with no blockchain. The command fails unless its
-/// pipeline run states the result its native run did, and unless every one of
-/// its checkpoints is the one the claim's pipeline run left in `claim_pipeline`.
-/// So the run a claim is built on is the run anyone makes without one.
+/// A claim's case run with no blockchain, as anyone runs one: the procedure
+/// that finds the output, then the procedure that verifies it, each through
+/// `iwebs run` and each in a directory of its own.
 ///
-/// The run writes its record, and `iwebs record check` then makes the run
-/// again from that record and fails unless every checkpoint and the result
-/// are the record's.
+/// The generation's specification is the claim's with the kind that
+/// generates. Its run writes its record, and `iwebs record check` makes the
+/// generation again from that record and fails unless the result is the
+/// record's. The output it found is then stated in the case, and the claim's
+/// own specification is run on that case: the command fails unless every one
+/// of its checkpoints is the one the claim's pipeline run left in
+/// `claim_pipeline`. So the run a claim is built on is the run anyone makes
+/// without one. That run writes its record too, and `iwebs record check`
+/// makes it again and fails unless every checkpoint and the result are the
+/// record's.
 fn run_with_no_blockchain(
     root: &Path,
     exe: &Path,
@@ -2197,19 +2203,73 @@ fn run_with_no_blockchain(
     specification: &Path,
     claim_pipeline: &Path,
 ) -> Result<f64> {
+    use procedure_definition::{CaseOutput, ProcedureKind};
     fs::create_dir(dir)?;
+    let verifying = procedure_definition::read_specification(specification)?;
+    let mut generating = verifying.clone();
+    generating.procedure_kind = ProcedureKind::named(&verifying.procedure_kind.name().replacen(
+        "verify-",
+        "generate-",
+        1,
+    ))?;
+    let generation = dir.join("generation.toml");
+    fs::write(&generation, toml::to_string(&generating)?)?;
+    let case_path = case_beside(specification);
+    let found = dir.join("generation-record");
+    let mut generate = command(exe, root);
+    generate
+        .current_dir(dir)
+        .args(["run", "--specification"])
+        .arg(&generation)
+        .arg("--case")
+        .arg(&case_path)
+        .arg("--record")
+        .arg(&found);
+    let mut seconds = logged(generate, &dir.join("generation.log"))
+        .context("`iwebs run`, of the procedure that finds the output")?;
+    let mut check = command(exe, root);
+    check
+        .current_dir(dir)
+        .args(["record", "check", "--record"])
+        .arg(&found)
+        .arg("--specification")
+        .arg(&generation);
+    logged(check, &dir.join("generation-record-check.log"))
+        .context("`iwebs record check`, on the record of the generation")?;
+
+    // The case a verification is given: the same case, with the output the
+    // generation found stated in it.
+    let mut case = procedure_definition::read_case(&case_path)?;
+    let case_dir = case_path.parent().context("the case has no directory")?;
+    for document in &mut case.documents {
+        document.file = case_dir.join(&document.file);
+        document.attestation = case_dir.join(&document.attestation);
+    }
+    if let Some(file) = case.prompt_file.take() {
+        case.prompt_file = Some(case_dir.join(file));
+    }
+    case.outputs = procedure_definition::run_record::RunRecord::read(&found)?
+        .results
+        .iter()
+        .map(|result| CaseOutput {
+            ids: result.generated_token_ids.clone(),
+        })
+        .collect();
+    let stated = dir.join(procedure_definition::CASE_TOML);
+    fs::write(&stated, toml::to_string(&case)?)?;
+
     let record = dir.join("record");
     let mut run = command(exe, root);
     run.current_dir(dir)
         .args(["run", "--specification"])
         .arg(specification)
         .arg("--case")
-        .arg(case_beside(specification))
+        .arg(&stated)
         .arg("--compare")
         .arg(claim_pipeline.join(procedure_definition::CHECKPOINT_LIST_JSON))
         .arg("--record")
         .arg(&record);
-    let seconds = logged(run, &dir.join("run.log"))
+    seconds += logged(run, &dir.join("run.log"))
         .context("`iwebs run`, held to the claim's checkpoints")?;
     // The record that run left, checked as another party checks one: the run
     // made again from the record's inputs alone and held to its checkpoints.

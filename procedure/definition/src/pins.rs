@@ -21,7 +21,7 @@ use inference_manifest::native_run::{model_id_of, ModelCommitment, ModelManifest
 /// Written beside a model import's `manifest.json`.
 pub const CONTRACT_PINS_JSON: &str = "contract_pins.json";
 
-pub const CONTRACT_PINS_VERSION: u32 = 7;
+pub const CONTRACT_PINS_VERSION: u32 = 8;
 
 /// What a contract pins before any claim arrives: the procedure kind it accepts
 /// claims of, that procedure kind's stage programs, and the model of each inference
@@ -157,7 +157,7 @@ impl ContractPins {
     /// The pins of an import: its model, and the procedure kind its pipeline template
     /// describes, with the program id each stage project has locked.
     pub fn from_import(manifest: &ModelManifest, segment: &str) -> Result<Self> {
-        Self::of(ProcedureKind::single(), &[(manifest, segment)])
+        Self::of(ProcedureKind::verify_single(), &[(manifest, segment)])
     }
 
     /// The pins of a procedure kind over imported models: each model as its import

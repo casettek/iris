@@ -1,5 +1,6 @@
-# An example procedure: one model judges whether a reported earthquake
-# reaches the magnitude a policy pays out at.
+# An example generation procedure: one model judges whether a reported
+# earthquake reaches the magnitude a policy pays out at. It finds the verdict.
+procedure_kind = "generate-single"
 raw_prompt = false
 max_new_tokens = 3
 

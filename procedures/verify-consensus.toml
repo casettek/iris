@@ -1,0 +1,24 @@
+# Verifies two models' stated outputs on the same case, one after the other,
+# and states whether they agree.
+
+[[step]]
+name = "source"
+segment = "source"
+program = "prompt-source"
+
+[[step]]
+name = "first"
+segment = "inference"
+inputs.source = "source"
+
+[[step]]
+name = "second"
+segment = "inference"
+inputs.source = "source"
+
+[[step]]
+name = "result"
+segment = "result"
+program = "consensus-result"
+inputs.first = "first"
+inputs.second = "second"

@@ -3,13 +3,20 @@
 One file per procedure kind. The file's name is the kind's name, and what a
 specification writes as `procedure_kind`.
 
+There are two sets, told apart by name. A `verify-` kind holds an output stated
+beforehand to each model's own choice: its models' steps are of the segment
+kind `inference`, and it is run as a pipeline of stages. A `generate-` kind
+finds that output: its models' steps are of the segment kind `generation`, and
+it runs natively, with no stages. A file has steps of one or of the other, and
+nothing pairs a file of one set with a file of the other.
+
 A file is the kind's shape: its steps in order. Each step is a use of a
 segment kind, and says which earlier step each of its inputs comes from.
 
 ```toml
 [[step]]
 name = "source"          # the step's name; a later step takes from it by this
-segment = "source"       # source, inference or result
+segment = "source"       # source, inference, generation or result
 program = "prompt-source" # needed where the segment has several programs
 
 [[step]]
@@ -32,8 +39,8 @@ takes are declared in `procedure/definition/src/segment_kind.rs`.
 What a shape must hold today:
 
 - its last step is its one result step, named `result`;
-- it has at least one inference, and one model per inference in the
-  specification, in order;
+- it has at least one inference or one generation, and not both, and one
+  model for each in the specification, in order;
 - it has at most one `prompt-source` step, first and named `source`. A case
   with no documents runs without it;
 - it has at most one `prompt-relay` step, named `relay`, after the inference

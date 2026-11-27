@@ -29,9 +29,9 @@ Three kinds of page. Start with [how IWEBS works](protocol/overview.md). The
   question judged on a signed report, from the procedure's id to a checked
   record.
 - [Model import](workflows/model-import.md)
-- [Infer](workflows/infer.md)
-- [Run](workflows/run.md): a procedure with no blockchain, the id of the procedure a run is
-  of, and the record another party checks
+- [Run](workflows/run.md): a procedure with no blockchain. The two sets of procedures,
+  one that finds an output and one that verifies it, the id of the procedure a run is of,
+  and the record another party checks
 - [Claim build](workflows/claim-build.md)
 - [Challenge build](workflows/challenge-build.md)
 - [Fault proving](workflows/fault-prove.md)

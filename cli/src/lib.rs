@@ -46,7 +46,6 @@ use commands::claim::ClaimCommand;
 use commands::da::DaCommand;
 use commands::evm::EvmCommand;
 use commands::fault::FaultCommand;
-use commands::infer::InferArgs;
 use commands::model::ModelCommand;
 use commands::registry::RegistryCommand;
 use commands::run::RunArgs;
@@ -90,10 +89,9 @@ enum Commands {
         #[command(subcommand)]
         command: ClaimCommand,
     },
-    /// Fast deterministic inference: the output a claim then states.
-    Infer(InferArgs),
-    /// Run a procedure with no blockchain: its native result, then a pipeline
-    /// run of it with a checkpoint per stage.
+    /// Run a procedure with no blockchain. A generation procedure finds its
+    /// output natively. A verification procedure holds the output its case
+    /// states to the model's own choice, with a checkpoint per stage.
     Run(RunArgs),
     /// The record of a run: check one by making the run again.
     Record {
@@ -259,7 +257,6 @@ fn execute(cli: Cli) -> Result<ExitCode> {
         }
         Some(Commands::Model { command }) => commands::model::run(command),
         Some(Commands::Claim { command }) => commands::claim::run(command),
-        Some(Commands::Infer(args)) => commands::infer::run(args),
         Some(Commands::Run(args)) => commands::run::run(args),
         Some(Commands::Attest { command }) => {
             match command {
@@ -303,9 +300,7 @@ fn execute(cli: Cli) -> Result<ExitCode> {
         Some(Commands::Record { command }) => commands::record::run(command),
         Some(Commands::Fault { command }) => commands::fault::run(command),
         None => {
-            bail!(
-                "iwebs requires a workflow command; try `model import`, `claim build`, or `infer`"
-            )
+            bail!("iwebs requires a workflow command; try `model import`, `run`, or `claim build`")
         }
     }
 }
@@ -402,15 +397,6 @@ mod tests {
         .unwrap();
         parse_for_test([
             "iwebs",
-            "infer",
-            "--specification",
-            "specification.toml",
-            "--case",
-            "case.toml",
-        ])
-        .unwrap();
-        parse_for_test([
-            "iwebs",
             "run",
             "--specification",
             "specification.toml",
@@ -420,8 +406,9 @@ mod tests {
             "checkpoint_list.json",
         ])
         .unwrap();
-        // The flag the two replaced is no flag any more.
-        assert!(parse_for_test(["iwebs", "infer", "--run", "inference.toml"]).is_err());
+        // Finding an output is `run` on a generation procedure: `infer` is
+        // no command.
+        assert!(parse_for_test(["iwebs", "infer"]).is_err());
         parse_for_test([
             "iwebs",
             "model",
@@ -462,10 +449,10 @@ mod tests {
     }
 
     #[test]
-    fn infer_requires_an_imported_workspace() {
-        let error = execute_from(["iwebs", "infer"]).unwrap_err();
+    fn run_requires_a_specification() {
+        let error = execute_from(["iwebs", "run"]).unwrap_err();
 
-        assert!(format!("{error:#}").contains("failed to load specification"));
+        assert!(format!("{error:#}").contains("specification"), "{error:#}");
     }
 
     /// The one table of formats and versions says what the code says. The
@@ -481,6 +468,7 @@ mod tests {
         use common_identity::common_statement::EXECUTION_VERSION;
         use common_identity::DESCRIPTOR_VERSION;
         use inference_manifest::MODEL_MANIFEST_VERSION;
+        use procedure_definition::generation::GENERATION_PROCEDURE_VERSION;
         use procedure_definition::run_record::RUN_RECORD_VERSION;
         use procedure_definition::PREPARED_RUN_VERSION;
 
@@ -500,6 +488,7 @@ mod tests {
             ("PROCEDURE_VERSION", PROCEDURE_VERSION),
             ("REGISTRY_VERSION", REGISTRY_VERSION),
             ("RUN_RECORD_VERSION", RUN_RECORD_VERSION),
+            ("GENERATION_PROCEDURE_VERSION", GENERATION_PROCEDURE_VERSION),
             ("CLAIM_SUBMISSION_VERSION", CLAIM_SUBMISSION_VERSION),
             ("CHALLENGE_SUBMISSION_VERSION", CHALLENGE_SUBMISSION_VERSION),
             ("BLOB_MAGIC", blob_version),

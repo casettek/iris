@@ -457,8 +457,26 @@ fn prepare_run(
     given: Option<&blockchain_rules::availability::PostedRun>,
     check_claimed_length: bool,
 ) -> Result<PreparedPipelineRun> {
-    let discover =
+    // The output the case states. A case that states none has its output
+    // found by the native run here, which is the test harness's way of
+    // running the two procedures one after the other: `iwebs claim build`
+    // refuses such a case.
+    let found =
         procedure_run::native_output(&options.base_dir, &specification_path, case_path.as_deref());
+    let stated = procedure_run::stated_output(
+        &options.base_dir,
+        &options.current_exe,
+        options.native_stage_backend,
+        &specification_path,
+        specification,
+        case_path.as_deref(),
+        case,
+    );
+    let discover: &procedure_prepare::pipeline_run::Discover<'_> = if case.outputs.is_empty() {
+        &found
+    } else {
+        &stated
+    };
     procedure_prepare::pipeline_run::prepare_run(procedure_prepare::pipeline_run::PipelineRun {
         base_dir: &options.base_dir,
         specification_path: specification_path.clone(),
@@ -473,7 +491,7 @@ fn prepare_run(
             .as_ref()
             .or(options.native_output_ids.as_ref()),
         check_claimed_length,
-        discover: &discover,
+        discover,
     })
 }
 
@@ -696,7 +714,7 @@ mod tests {
             &manifest_path,
             &PreparedRun {
                 version: procedure_definition::PREPARED_RUN_VERSION,
-                procedure_kind: procedure_definition::ProcedureKind::single(),
+                procedure_kind: procedure_definition::ProcedureKind::verify_single(),
                 specification_path: base.join("specification.toml"),
                 case_path: Some(base.join("case.toml")),
                 inferences: vec![procedure_definition::PreparedInference {
@@ -829,7 +847,7 @@ mod tests {
         let specification = dir.join("specification.toml");
         fs::write(
             &specification,
-            "procedure_kind = \"consensus\"\nraw_prompt = true\nmax_new_tokens = 3\n\
+            "procedure_kind = \"verify-consensus\"\nraw_prompt = true\nmax_new_tokens = 3\n\
              [[model]]\nmanifest = \"../models/alpha/manifest.json\"\n\
              [[model]]\nmanifest = \"../models/beta/manifest.json\"\n",
         )
@@ -857,7 +875,7 @@ mod tests {
         let run = &prepared.prepared_run;
         assert_eq!(
             run.procedure_kind,
-            procedure_definition::ProcedureKind::named("consensus").unwrap()
+            procedure_definition::ProcedureKind::named("verify-consensus").unwrap()
         );
         assert_eq!(run.inferences.len(), 2);
         assert_ne!(run.inferences[0].model_id, run.inferences[1].model_id);

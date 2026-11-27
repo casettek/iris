@@ -114,7 +114,7 @@ reads the case from beside the submission.
 checkpoint names for it, each of which the claim posted, the procedure
 pins or an earlier stage made. It tokenizes nothing and runs no native
 inference: the stages check the marks and the claimed ids they are given,
-and `--native-output-ids` is not used. It writes the pipeline the checkpoints
+and `--output-ids` is not used. It writes the pipeline the checkpoints
 describe as `claim_arranged.toml` beside the run's manifest and prints a
 line for each input the claim gives a stage otherwise than the pipeline does
 (`checkpoint 61 (range_p1_l2) gives layer another value than the pipeline

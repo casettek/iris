@@ -6,10 +6,17 @@ gives does not depend on who ran it.
 
 | Word | What it is |
 | --- | --- |
-| Procedure | How a judgment is made, fixed before any case: the model, by a hash of its weights and tokenizer; the parameters of a run; whose signature the evidence must carry; the answers a verdict may take; and the programs that run it. A procedure has an id, a hash over all of that. Two parties that name one id have agreed to one procedure. |
+| Procedure | How a judgment is made, fixed before any case: the model, by a hash of its weights and tokenizer; the parameters of a run; whose signature the evidence must carry; and the answers a verdict may take. A procedure has an id, a hash over all of that. Two parties that name one id have agreed to one procedure. |
 | Case | One run of a procedure: a question, and the evidence it is judged on. These are inputs of the run and are not in the procedure's id. |
 | Verdict | What the procedure gives on the case. Inference is integer arithmetic with every rounding rule fixed, so the same inputs give the same bytes whoever runs them. |
 | Record | What the party that ran a case hands to everyone else: the procedure's id, the case's inputs and the verdict, with what backs them. |
+
+There are two sets of procedures. A **generation procedure** finds the
+verdict: it runs the model forward, natively. A **verification procedure**
+holds a verdict stated beforehand to the model's own choice, stage by stage,
+so that one stage of it can be disputed. They are different logic, so they
+have different names and different ids, and nothing pairs them: whoever needs
+a verdict verified runs the first, then the second on what it found.
 
 So the party that relies on a verdict need not trust the party that ran the
 model. What IWEBS shows is that the procedure was followed on those inputs.
@@ -26,8 +33,8 @@ method that spares a checker the whole run, and it names the method of each.
 
 | Method | What backs the verdict | Built |
 | --- | --- | --- |
-| Making the run again | Nothing but the record. Whoever doubts it runs the whole case and compares. | Yes: `iwebs record check` |
-| Fault provable | A checkpoint for each stage of the run, so that a dispute comes down to proving one stage wrong. Inference is cut into stages for this, each a Raster program. | Yes: `iwebs run --record` writes it |
+| Making the run again | Nothing but the record. Whoever doubts it runs the whole case and compares. How a generation's record is checked. | Yes: `iwebs record check` |
+| Fault provable | A checkpoint for each stage of a verification, so that a dispute comes down to proving one stage wrong. Verification is cut into stages for this, each a Raster program. | Yes: `iwebs run --record` of a verification writes it |
 
 An enclave's attestation and a validity proof would each be a further method.
 Neither is built.
@@ -36,13 +43,15 @@ Neither is built.
 
 IWEBS does not enforce a verdict. Whoever relies on one does.
 
-- **With no blockchain**, the parties put a procedure's id in whatever binds
-  them, one of them runs the case, and the others check the record. `iwebs
-  procedure id`, `iwebs run --record` and `iwebs record check` are all of it
+- **With no blockchain**, the parties put a generation procedure's id in
+  whatever binds them, one of them runs the case, and the others check the
+  record by making the generation again. `iwebs procedure id`, `iwebs run
+  --record` and `iwebs record check` are all of it
   ([run](docs/workflows/run.md)). A record is not signed, and what happens
   when a check differs is the parties' to settle.
-- **On a blockchain**, a contract registers the procedure and a claimer
-  submits a claim, which posts what a record holds: its inputs and
+- **On a blockchain**, a contract registers a verification procedure. A
+  claimer finds the verdict first, with a generation procedure, then submits
+  a claim of it, which posts what a verification's record holds: its inputs and
   checkpoints go to Celestia, and the claim to contracts on an EVM
   blockchain. Anyone can check the claim by running the model themselves,
   and a claim that is wrong is caught: either the contract voids it on the
@@ -71,16 +80,15 @@ takes.
 
 | Command | What it does |
 | --- | --- |
-| `iwebs infer` | Fast deterministic inference of a case under a specification. This is the only path that generates: it finds the output a record or a claim then states. |
-| `iwebs run` | Run a procedure with no blockchain: the result of its native run, then a pipeline run of it with a checkpoint per stage. `--compare` names the first stage where it differs from another run. It prints the id of the procedure the run is of, and `--procedure <id>` refuses to run any other. `--record <dir>` writes the run's record. |
-| `iwebs procedure id` | The id of the procedure a specification describes: a hash over its stage programs, its models, its parameters and what it requires of the source and the result. Two parties that name one id have agreed to one procedure. `--json` prints the whole procedure. No blockchain is read. |
-| `iwebs record check` | Make a recorded run again, from the record's own inputs and under your specification of its procedure, and compare every checkpoint and the result with the record's. Nothing is generated. Anyone with the record and the models can do it. |
+| `iwebs run` | Run a procedure with no blockchain. A generation procedure (`generate-single` and the like) finds its output natively. A verification procedure (`verify-single` and the like) holds the output its case states to the model's own choice, stage by stage with a checkpoint for each, and `--compare` names the first stage where it differs from another run. It prints the id of the procedure the run is of, and `--procedure <id>` refuses to run any other. `--record <dir>` writes the run's record. |
+| `iwebs procedure id` | The id of the procedure a specification describes: a hash over its kind, its models, its parameters and what it requires of the source and the result, and for a verification its stage programs. Two parties that name one id have agreed to one procedure. `--json` prints the whole procedure. No blockchain is read. |
+| `iwebs record check` | Make a recorded run again, from the record's own inputs and under your specification of its procedure, and compare the result with the record's: a generation natively, a verification stage by stage with every checkpoint compared. Anyone with the record and the models can do it. |
 
 ### Claim
 
 | Command | What it does |
 | --- | --- |
-| `iwebs claim build` | Run the model stage by stage, write a checkpoint per stage, and write the claim and the data it has to post. Posts nothing. |
+| `iwebs claim build` | Verify the output the case states stage by stage, write a checkpoint per stage, and write the claim and the data it has to post. It finds no output: the case states one. Posts nothing. |
 | `iwebs claim post` | Post the claim's run inputs, checkpoint hashes and checkpoints to the data-availability layer. |
 | `iwebs claim check` | Make the checks a contract makes when a claim arrives. |
 | `iwebs evm claim` | Write the contract call that submits the claim. |
@@ -160,23 +168,28 @@ cargo run --release -p iwebs-cli -- model import --model <your bundle>
 # an earthquake.
 example=examples/earthquake
 
-# The id of the procedure its specification describes: what parties agree on.
-cargo run --release -p iwebs-cli -- procedure id --specification $example/specification.toml
+# The id of the generation procedure: what parties with no blockchain agree on.
+cargo run --release -p iwebs-cli -- procedure id --specification $example/generation.toml
 
-# Run the case and write its record.
-cargo run --release -p iwebs-cli -- run --specification $example/specification.toml --case $example/case.toml --record my-record
+# Find the verdict, and write the record of the run.
+cargo run --release -p iwebs-cli -- run --specification $example/generation.toml --case $example/case.toml --record my-record
 
 # Check a record, as anyone who holds it and the model can.
-cargo run --release -p iwebs-cli -- record check --record my-record --specification $example/specification.toml
+cargo run --release -p iwebs-cli -- record check --record my-record --specification $example/generation.toml
 
-# To settle the same run on a blockchain, build a claim of it.
-cargo run --release -p iwebs-cli -- claim build --specification $example/specification.toml --case $example/case.toml
+# Verify the verdict stage by stage. This is another procedure, and its case
+# states the output the generation found.
+cargo run --release -p iwebs-cli -- run --specification $example/verification.toml --case $example/case-with-output.toml
+
+# To settle it on a blockchain, build a claim of the same verification.
+cargo run --release -p iwebs-cli -- claim build --specification $example/verification.toml --case $example/case-with-output.toml
 ```
 
 [The example's own page](examples/earthquake/README.md) says what each file
 is and what the judge is given. With no `--specification` or `--case`, a
 command reads `specification.toml` and `case.toml` where it is run: the two at
-the root are the smallest case there is, a prompt with no evidence.
+the root are the smallest case there is, a generation on a prompt with no
+evidence.
 
 The local blockchains, and a claim and a challenge taken through them, are in
 [blockchain/devstack/README.md](blockchain/devstack/README.md). `just --list` shows the shortcuts.

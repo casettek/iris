@@ -1,15 +1,19 @@
 //! A procedure run with no blockchain.
 //!
-//! The native run comes first, for the result as fast as possible. The
-//! pipeline run follows on the output the native run generated: it verifies
-//! every token of that output and leaves a checkpoint per stage. The two
-//! results are then held equal.
+//! A procedure finds an output or verifies a stated one, and a run is of one
+//! procedure. [`run_native`] runs a generation procedure: every model's
+//! output found natively. [`run_verification`] runs a verification
+//! procedure: the output its case states is held to the model's own choice,
+//! token by token, with a checkpoint per stage. Neither makes the other.
+//! Whoever needs an output verified runs the first, states what it found in
+//! the case, and runs the second.
 //!
-//! A run is of a procedure, named by its id ([`procedure_of`]): the id a
-//! contract registers is the id two parties with no contract agree to.
+//! A run is of a procedure, named by its id: the id a contract registers is
+//! the id two parties with no contract agree to.
 //!
-//! A claim is this and what a blockchain needs besides. `blockchain/host`
-//! takes from here the function that asks the native run for an output.
+//! A claim is a verification run and what a blockchain needs besides.
+//! `blockchain/host` takes from here the functions that give a pipeline
+//! run's preparation its output.
 
 use std::path::{Path, PathBuf};
 
@@ -17,8 +21,8 @@ use anyhow::{Context, Result};
 use procedure_definition::divergence::locate_divergence;
 use procedure_definition::registry::Procedure;
 use procedure_definition::{
-    build_checkpoint_list, read_case, read_checkpoint_list, read_specification, ConsensusOutcome,
-    Divergence, InferenceResult, ProcedureKind,
+    build_checkpoint_list, read_case, read_checkpoint_list, read_specification, Case, CaseOutput,
+    ConsensusOutcome, Divergence, InferenceResult, ProcedureKind, Specification,
 };
 use procedure_native::{absolute, InferRun, NativeInferenceConfig, NativeInferenceExecutor};
 use procedure_pipeline::pipeline_runner::NativeStageBackend;
@@ -59,22 +63,6 @@ pub struct CheckpointedRun {
     pub consensus: Option<ConsensusOutcome>,
 }
 
-/// A procedure run both ways.
-pub struct ProcedureRun {
-    pub native_run: InferRun,
-    pub pipeline_run: CheckpointedRun,
-}
-
-/// Runs a procedure: [`run_native`], then [`run_pipeline`] on its output.
-pub fn run(options: &RunOptions) -> Result<ProcedureRun> {
-    let native_run = run_native(options)?;
-    let pipeline_run = run_pipeline(options, &native_run)?;
-    Ok(ProcedureRun {
-        native_run,
-        pipeline_run,
-    })
-}
-
 /// The procedure the options' specification describes, which its id names.
 /// `Ok(None)` when a model it names was imported where the stage projects are
 /// not locked: its stage programs then have no identity to pin.
@@ -95,81 +83,151 @@ pub fn first_unapproved(run: &CheckpointedRun, procedure: &Procedure) -> Result<
         .map(|checkpoint| checkpoint.stage))
 }
 
-/// The native run: every inference of the procedure generated, and what the
-/// procedure states of them.
+/// A run of a generation procedure: every model's output found natively,
+/// and what the procedure states of them. No stage runs.
 pub fn run_native(options: &RunOptions) -> Result<InferRun> {
+    let specification_path = absolute(&options.base_dir, &options.specification_path);
+    let procedure_kind = read_specification(&specification_path)?.procedure_kind;
+    anyhow::ensure!(
+        procedure_kind.generates(),
+        "the `{procedure_kind}` procedure kind verifies a stated output, and finds none"
+    );
     procedure_native::run_infer(
-        absolute(&options.base_dir, &options.specification_path),
+        specification_path,
         absolute(&options.base_dir, &options.case_path),
     )
 }
 
-/// The pipeline run on the output a native run generated: prepared, run stage
-/// by stage, and its checkpoints written. It fails unless the pipeline run
-/// states the result the native run did.
-pub fn run_pipeline(options: &RunOptions, native_run: &InferRun) -> Result<CheckpointedRun> {
+/// A run of a verification procedure: the output the case states is held to
+/// each model's own choice, stage by stage, and a checkpoint is left for each
+/// stage. Nothing is generated.
+pub fn run_verification(options: &RunOptions) -> Result<CheckpointedRun> {
     let specification_path = absolute(&options.base_dir, &options.specification_path);
     let specification = read_specification(&specification_path)?;
     let case_path = absolute(&options.base_dir, &options.case_path);
     let case = read_case(&case_path)?;
     let procedure_kind = specification.procedure_kind;
     anyhow::ensure!(
-        native_run.procedure_kind == procedure_kind
-            && native_run.reports.len() == procedure_kind.inferences(),
-        "the native run is of {} inference(s) of the `{}` procedure kind, and the specification \
-         names the `{procedure_kind}` procedure kind",
-        native_run.reports.len(),
-        native_run.procedure_kind
+        !procedure_kind.generates(),
+        "the `{procedure_kind}` procedure kind finds its output: it runs natively and has no \
+         stages"
     );
-    let generated = |inference: usize, _: Option<&InferenceResult>| -> Result<InferenceResult> {
-        Ok(native_run
-            .reports
-            .get(inference)
-            .with_context(|| format!("the native run made no inference {inference}"))?
-            .result
-            .clone())
-    };
+    case.validate_for(&specification)?;
+    anyhow::ensure!(
+        !case.outputs.is_empty(),
+        "the case states no output, and the `{procedure_kind}` procedure kind verifies one: \
+         state each model's output in the case as an `[[output]]` table with its `ids`. A \
+         generation procedure finds an output"
+    );
+    let stated = stated_output(
+        &options.base_dir,
+        &options.current_exe,
+        options.native_stage_backend,
+        &specification_path,
+        &specification,
+        Some(&case_path),
+        &case,
+    );
     let prepared = procedure_prepare::pipeline_run::prepare_run(PipelineRun {
         base_dir: &options.base_dir,
-        specification_path,
+        specification_path: specification_path.clone(),
         specification: &specification,
-        case_path: Some(case_path),
+        case_path: Some(case_path.clone()),
         case: &case,
         frozen: None,
         given: None,
         given_ids: None,
         check_claimed_length: true,
-        discover: &generated,
+        discover: &stated,
     })?;
-    let pipeline_run = execute(
+    execute(
         &options.base_dir,
         &options.current_exe,
         options.native_stage_backend,
         &prepared,
         procedure_kind,
-    )?;
-    let stated = &pipeline_run.results;
-    anyhow::ensure!(
-        stated.len() == native_run.reports.len(),
-        "the pipeline run states {} result(s), and the native run made {} inference(s)",
-        stated.len(),
-        native_run.reports.len()
-    );
-    for (inference, (report, pipeline_run)) in native_run.reports.iter().zip(stated).enumerate() {
-        if let Some(difference) = result_difference(&report.result, pipeline_run)? {
-            anyhow::bail!(
-                "inference {inference}: {difference}; the native run and the pipeline run are not in \
-                 parity"
-            );
+    )
+}
+
+/// The function a pipeline run's preparation asks for the output of an
+/// inference: the one the case states for it. Nothing is generated.
+///
+/// The ids are all a run needs of an output, with one exception. A later
+/// model's prompt may hold an earlier one's output, and that prompt is made
+/// of the earlier output's text and of the record its last check states. So
+/// an output a later prompt holds is verified on its own first, as a run of
+/// one model, and what that run states of it is what the prompt is made of.
+/// Such an output is verified twice: there, and in the run itself.
+pub fn stated_output<'a>(
+    base_dir: &'a Path,
+    current_exe: &'a Path,
+    native_stage_backend: NativeStageBackend,
+    specification_path: &'a Path,
+    specification: &'a Specification,
+    case_path: Option<&'a Path>,
+    case: &'a Case,
+) -> impl Fn(usize, Option<&InferenceResult>) -> Result<InferenceResult> + 'a {
+    move |inference, _relayed| {
+        let ids = case
+            .outputs
+            .get(inference)
+            .with_context(|| format!("the case states no output for inference {inference}"))?
+            .ids
+            .clone();
+        let of_ids = |ids: Vec<u32>| InferenceResult {
+            generated_token_ids: ids,
+            ..Default::default()
+        };
+        let procedure_kind = specification.procedure_kind;
+        let held_later = (0..procedure_kind.inferences())
+            .any(|later| procedure_kind.relayed_from(later) == Some(inference));
+        if !held_later {
+            return Ok(of_ids(ids));
         }
+        anyhow::ensure!(
+            procedure_kind.relayed_from(inference).is_none(),
+            "inference {inference} of the `{procedure_kind}` procedure kind has its prompt from \
+             an earlier output and gives its own to a later one, which a stated output does \
+             not hold"
+        );
+        let mut alone = specification.clone();
+        alone.procedure_kind = ProcedureKind::verify_single();
+        alone.models = vec![specification
+            .models
+            .get(inference)
+            .with_context(|| format!("the specification names no model {inference}"))?
+            .clone()];
+        alone.relay = None;
+        let mut alone_case = case.clone();
+        alone_case.outputs = vec![CaseOutput { ids: ids.clone() }];
+        let stated = |_: usize, _: Option<&InferenceResult>| Ok(of_ids(ids.clone()));
+        let prepared = procedure_prepare::pipeline_run::prepare_run(PipelineRun {
+            base_dir,
+            specification_path: specification_path.to_path_buf(),
+            specification: &alone,
+            case_path: case_path.map(Path::to_path_buf),
+            case: &alone_case,
+            frozen: None,
+            given: None,
+            given_ids: None,
+            check_claimed_length: true,
+            discover: &stated,
+        })
+        .with_context(|| {
+            format!("preparing inference {inference} alone, whose output a later prompt holds")
+        })?;
+        execute(
+            base_dir,
+            current_exe,
+            native_stage_backend,
+            &prepared,
+            alone.procedure_kind,
+        )?
+        .results
+        .into_iter()
+        .next()
+        .with_context(|| format!("inference {inference}, run alone, stated no result"))
     }
-    anyhow::ensure!(
-        native_run.consensus == pipeline_run.consensus,
-        "the pipeline run states another consensus than the native run: {:?} and {:?}",
-        pipeline_run.consensus,
-        native_run.consensus
-    );
-    Ok(pipeline_run)
 }
 
 /// Runs a prepared pipeline run stage by stage and writes its checkpoints.
@@ -211,22 +269,6 @@ pub(crate) fn execute(
         results: pipeline_run.results,
         consensus: pipeline_run.consensus,
     })
-}
-
-/// The first field of an inference's result that a pipeline run states
-/// otherwise than the native run did, if there is one.
-fn result_difference(
-    native_run: &InferenceResult,
-    pipeline_run: &InferenceResult,
-) -> Result<Option<String>> {
-    Ok(
-        differing_field(native_run, pipeline_run)?.map(|difference| match difference {
-            Some((field, native_run, pipeline_run)) => format!(
-                "the pipeline run states `{field}` as {pipeline_run}, and the native run as {native_run}"
-            ),
-            None => String::from("the pipeline run's result is not the native run's"),
-        }),
-    )
 }
 
 /// The first field two results differ in, with each one's value. `Some(None)`
@@ -298,25 +340,21 @@ mod tests {
 
     #[test]
     fn a_difference_names_the_first_field_that_differs() {
-        let native_run = InferenceResult {
+        let stated = InferenceResult {
             generated_token_count: 2,
             generated_token_ids: vec![7, 9],
             generated_text: String::from("ciao"),
             ..Default::default()
         };
-        assert_eq!(
-            result_difference(&native_run, &native_run.clone()).unwrap(),
-            None
-        );
+        assert_eq!(differing_field(&stated, &stated.clone()).unwrap(), None);
 
-        let mut pipeline_run = native_run.clone();
-        pipeline_run.claim_mismatches = 1;
-        let difference = result_difference(&native_run, &pipeline_run)
-            .unwrap()
-            .unwrap();
-        assert!(
-            difference.contains("`claim_mismatches` as 1") && difference.ends_with("as 0"),
-            "{difference}"
+        let mut other = stated.clone();
+        other.claim_mismatches = 1;
+        let (field, first, second) = differing_field(&stated, &other).unwrap().unwrap().unwrap();
+        assert_eq!(field, "claim_mismatches");
+        assert_eq!(
+            (first, second),
+            (serde_json::json!(0), serde_json::json!(1))
         );
     }
 

@@ -153,11 +153,15 @@ case_of() {
 build_claim() (
     set -euo pipefail
     local name=$1 specification=$2 ids=${3:-}
-    local build=(claim build)
+    local build=(claim build) case
+    case=$(case_of "$specification")
     [ -n "$ids" ] && build=(test claim --ids "$ids")
     mkdir -p "$out/$name"
     cd "$out/$name"
-    "$iwebs" "${build[@]}" --specification "$specification" --case "$(case_of "$specification")" --claimer "$(address "$name")" > build.log 2>&1 || {
+    # A claim states its output. For the model's own, the output is found
+    # first, by the procedure that finds one.
+    [ -n "$ids" ] || case=$(python3 "$repo_root/scripts/state-output.py" "$iwebs" "$specification" "$case" "$out/$name/stated")
+    "$iwebs" "${build[@]}" --specification "$specification" --case "$case" --claimer "$(address "$name")" > build.log 2>&1 || {
         tail -5 build.log >&2
         exit 1
     }

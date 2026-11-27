@@ -161,8 +161,32 @@ pub(crate) fn run(command: ProcedureCommand) -> Result<ExitCode> {
         } => {
             let base_dir =
                 std::env::current_dir().context("failed to resolve current directory")?;
+            let specification_path = absolute(&base_dir, &specification);
+            let described = procedure_definition::read_specification(&specification_path)?;
+            if described.procedure_kind.generates() {
+                if pins.is_some() {
+                    bail!(
+                        "the `{}` procedure kind finds its output: it has no stage programs, \
+                         and takes no pins",
+                        described.procedure_kind
+                    );
+                }
+                let procedure = procedure_prepare::procedure::generation_procedure_of(
+                    &specification_path,
+                    &described,
+                )?;
+                let id = procedure.id();
+                if json {
+                    let registered =
+                        procedure_definition::generation::RegisteredGeneration { id, procedure };
+                    println!("{}", serde_json::to_string_pretty(&registered)?);
+                } else {
+                    println!("procedure: {id}");
+                }
+                return Ok(ExitCode::SUCCESS);
+            }
             let procedure = procedure_prepare::procedure::spec_procedure(
-                &absolute(&base_dir, &specification),
+                &specification_path,
                 pins.map(|path| absolute(&base_dir, &path)).as_deref(),
             )?;
             let id = procedure.id();
@@ -184,14 +208,14 @@ mod tests {
     #[test]
     fn a_description_says_how_many_models_and_which_inference_the_result_is_of() {
         let described = |name: &str| description(ProcedureKind::named(name).unwrap());
-        let single = described("single");
+        let single = described("verify-single");
         assert_eq!(single["inferences"], 1);
         assert_eq!(single["answer"], 0);
         assert_eq!(single["agreement"], false);
         assert_eq!(single["relays"], json!([]));
         assert_eq!(single["specification"]["relay"], false);
 
-        let consensus = described("consensus");
+        let consensus = described("verify-consensus");
         assert_eq!(consensus["inferences"], 2);
         assert_eq!(consensus["agreement"], true);
         assert_eq!(
@@ -201,7 +225,7 @@ mod tests {
 
         // A relay's result is of its second inference, whose prompt holds
         // the first one's output, and its specification has a relay table.
-        let relay = described("relay");
+        let relay = described("verify-relay");
         assert_eq!(relay["inferences"], 2);
         assert_eq!(relay["answer"], 1);
         assert_eq!(relay["relays"], json!([{"inference": 1, "from": 0}]));
